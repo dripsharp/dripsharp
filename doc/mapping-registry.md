@@ -1,7 +1,7 @@
 # Declarative Resolved-Symbol Mapping Registry
 
 DripSharp's product-neutral Java-to-C# layer represents reusable type and
-member adaptations as validated data. Pkl and PdfCube may contribute entries,
+member adaptations as validated data. Pkl and PdfCarton may contribute entries,
 but neither product owns the registry schema or interpreter.
 
 The executable contract is

@@ -306,7 +306,7 @@ when .NET already provides suitable semantics.
 The product-neutral recursive dispatch and resolved-symbol registry live in
 `dripsharp.java-translate`. Product rule bundles depend inward on that kernel;
 the Pkl body, declaration, destination, and runtime-bridge rules live under
-`dripsharp.pkl.*`, while PdfCube destination policy and adaptations live under
+`dripsharp.pkl.*`, while PdfCarton destination policy and adaptations live under
 `dripsharp.pdfcube.*`. Generic namespaces must not depend on a product bundle.
 Each Java target supplies its own structural and semantic registries to the same
 kernel instead of inheriting another target's source identities, destination

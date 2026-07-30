@@ -1,9 +1,9 @@
-# PdfCube Dependency Mappings
+# PdfCarton Dependency Mappings
 
 ## Purpose
 
 This document records approved dependency and platform mappings for the five
-PdfCube source modules. SkiaSharp and the optional `SkiaSharp.HarfBuzz` and
+PdfCarton source modules. SkiaSharp and the optional `SkiaSharp.HarfBuzz` and
 `HarfBuzzSharp` text-shaping packages are the approved third-party product
 dependencies; .NET standard-library and Microsoft-package mappings remain
 allowed.
@@ -12,21 +12,21 @@ The absence of a resolved mapping is not a product exclusion. It is blocking
 product work under the [authoritative product goal](product-goal.md).
 
 The initial source baseline is Apache PDFBox `3.0.8`. Dependency versions and
-usage must be re-audited whenever PdfCube advances to a greater stable upstream
+usage must be re-audited whenever PdfCarton advances to a greater stable upstream
 release under the monotonic version-selection policy in the
 [authoritative product goal](product-goal.md).
 
-## PdfCube Package Dependencies
+## PdfCarton Package Dependencies
 
-The selected upstream libraries become separately packaged PdfCube libraries:
+The selected upstream libraries become separately packaged PdfCarton libraries:
 
-| Source module | Destination package | PdfCube dependencies |
+| Source module | Destination package | PdfCarton dependencies |
 | --- | --- | --- |
-| `pdfbox-io` | `PdfCube.IO` | None. |
-| `fontbox` | `PdfCube.FontBox` | `PdfCube.IO`. |
-| `xmpbox` | `PdfCube.XmpBox` | None. |
-| `pdfbox` | `PdfCube.PdfBox` | `PdfCube.IO`, `PdfCube.FontBox`. |
-| `preflight` | `PdfCube.Preflight` | `PdfCube.PdfBox`, `PdfCube.XmpBox`. |
+| `pdfbox-io` | `DripSharp.PdfCarton.IO` | None. |
+| `fontbox` | `DripSharp.PdfCarton.Fonts` | `DripSharp.PdfCarton.IO`. |
+| `xmpbox` | `DripSharp.PdfCarton.Xmp` | None. |
+| `pdfbox` | `DripSharp.PdfCarton` | `DripSharp.PdfCarton.IO`, `DripSharp.PdfCarton.Fonts`. |
+| `preflight` | `DripSharp.PdfCarton.Preflight` | `DripSharp.PdfCarton`, `DripSharp.PdfCarton.Xmp`. |
 
 These are project/package references, not compatibility helpers. Their public
 types and behavior are mechanically translated with their owning modules.
@@ -48,7 +48,7 @@ PDFBox uses Commons Logging for diagnostic messages rather than as a central
 public data model. Translation should map `Log` and `LogFactory` behavior
 systematically to `ILogger`-based behavior, using a focused compatibility
 facade when that preserves the mechanically translated call sites more cleanly.
-PdfCube libraries must not require a particular logging provider.
+PdfCarton libraries must not require a particular logging provider.
 
 ### Bouncy Castle CMS, ASN.1, and X.509 Usage
 
@@ -68,7 +68,7 @@ Destination:
 * `System.Security.Cryptography` for supported algorithms and key operations.
 
 The upstream production imports are concentrated in public-key PDF encryption
-and security-provider integration. PdfCube should implement that behavior with
+and security-provider integration. PdfCarton should implement that behavior with
 the Microsoft cryptographic APIs rather than porting the Java provider model or
 adding Bouncy Castle by default. The mapping must retain upstream recipient,
 certificate-selection, CMS encoding, decryption, and failure behavior.
@@ -85,10 +85,10 @@ releases during upstream synchronization.
 SkiaSharp supplies the canvas, paths, matrices, bitmaps, shaders, clipping,
 strokes, PDF blend modes, and common JPEG/PNG-style codecs. Map `GeneralPath`
 to `SKPath`, `AffineTransform` to `SKMatrix`, mutable `BufferedImage` to
-`SKBitmap`, and `Graphics2D` to a PdfCube compatibility facade over `SKCanvas`.
+`SKBitmap`, and `Graphics2D` to a PdfCarton compatibility facade over `SKCanvas`.
 Use the CPU raster backend for canonical differential validation.
 
-SkiaSharp is not a Java2D or general `Raster` implementation. PdfCube must keep
+SkiaSharp is not a Java2D or general `Raster` implementation. PdfCarton must keep
 an internal managed raster model for packed, indexed, CMYK, DeviceN, and other
 arbitrary-component data before conversion to a Skia image. SkiaSharp's ICC
 support may accelerate representable RGB profiles but does not replace full ICC
@@ -102,7 +102,7 @@ deployment artifacts of this approved dependency.
 [`SkiaSharp.HarfBuzz` `4.150.1`](https://www.nuget.org/packages/SkiaSharp.HarfBuzz/4.150.1)
 and its [`HarfBuzzSharp`](https://www.nuget.org/packages/HarfBuzzSharp)
 dependency may be used when they help preserve complex-script text shaping or
-Java2D-style glyph-layout behavior. PdfCube may also use `HarfBuzzSharp`
+Java2D-style glyph-layout behavior. PdfCarton may also use `HarfBuzzSharp`
 directly when its lower-level buffer, font, feature, cluster, or glyph-position
 APIs are a better fit than the SkiaSharp integration layer.
 
@@ -110,13 +110,13 @@ Their use is optional and should be selected from concrete translated call
 sites and behavior evidence. They are appropriate for contextual glyph
 selection, OpenType substitution and positioning, ligatures, joining forms,
 combining marks, clusters, and glyph advances. Text in PDF content streams is
-often already encoded and positioned as glyphs; PdfCube must not reshape it
+often already encoded and positioned as glyphs; PdfCarton must not reshape it
 when doing so would change the source behavior.
 
 HarfBuzz is a shaping engine, not an implementation of the Unicode
 Bidirectional Algorithm. Mixed-direction run analysis, embedding levels, visual
 run ordering, and behavior matching `java.text.Bidi` remain a separate required
-capability. When both capabilities apply, PdfCube must perform bidirectional
+capability. When both capabilities apply, PdfCarton must perform bidirectional
 segmentation first and shape each resulting uniform-direction run.
 
 When either HarfBuzz package is used, the corresponding official
@@ -190,7 +190,7 @@ unresolved.
 
 ## Test-Only and Build-Only Dependencies
 
-The following upstream dependencies do not become PdfCube runtime package
+The following upstream dependencies do not become PdfCarton runtime package
 dependencies:
 
 | Source dependency | Treatment |
@@ -203,13 +203,13 @@ dependencies:
 | Maven parent POMs and build plugins | Use them only for upstream project discovery, source/resource resolution, and oracle execution. They are not translated or shipped. |
 | Downloaded PDFs, fonts, and validation corpora | Retain as checksum-pinned behavior evidence when permitted; they are not product dependencies. |
 
-Image-codec dependencies used in upstream tests do not become PdfCube runtime
-dependencies; their cases validate SkiaSharp or PdfCube's internal decoders.
+Image-codec dependencies used in upstream tests do not become PdfCarton runtime
+dependencies; their cases validate SkiaSharp or PdfCarton's internal decoders.
 
 ## Required Internal Capabilities
 
 The approved SkiaSharp and HarfBuzz packages do not supply the following
-behavior, which must be implemented or mechanically translated inside PdfCube
+behavior, which must be implemented or mechanically translated inside PdfCarton
 without another third-party dependency:
 
 * The Java2D compatibility facade and arbitrary-component raster model described
@@ -224,14 +224,14 @@ without another third-party dependency:
 These are required implementation work, not product exclusions.
 
 They may be implemented by mechanically porting source from projects licensed
-under Apache-2.0, MIT, BSD, or ISC terms. Such source is built into PdfCube
+under Apache-2.0, MIT, BSD, or ISC terms. Such source is built into PdfCarton
 rather than referenced as another package dependency; its pinned upstream
 identity, license, copyright, and required notices must be preserved. Source
 under other license terms requires explicit approval.
 
 ### Pinned Internal Image Codec Source
 
-PdfCube builds the following codec source directly into `PdfCube.PdfBox`; it
+PdfCarton builds the following codec source directly into `DripSharp.PdfCarton`; it
 does not reference either codec as a package dependency:
 
 | Capability | Pinned source identity | License and notices |
@@ -241,7 +241,7 @@ does not reference either codec as a package dependency:
 
 The exact source snapshots live under `vendor/pdfcube/jbig2` and
 `vendor/pdfcube/jpx`. Generation copies their C# source into the internal codec
-area of `PdfCube.PdfBox`, adds only compiler-warning and nullable wrappers, and
+area of `DripSharp.PdfCarton`, adds only compiler-warning and nullable wrappers, and
 packs the license and copyright files under `THIRD-PARTY/`. Advancing either
 pin requires re-running the image differential corpus and updating the recorded
 identity and legal-file digests.

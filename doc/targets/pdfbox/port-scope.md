@@ -1,42 +1,42 @@
-# PdfCube Port Scope
+# PdfCarton Port Scope
 
 ## Product and Source Baseline
 
-PdfCube mechanically translates the reusable library modules of the latest
+PdfCarton mechanically translates the reusable library modules of the latest
 stable Apache PDFBox release into separately consumable .NET packages. The
 initial baseline is PDFBox `3.0.8`; later stable releases, including stable major
 releases, replace that baseline only when their numeric major, minor, and patch
 version is greater than the current baseline, through the synchronization
 workflow defined in the [product goal](product-goal.md). Publication of a
-maintenance release on a lower major line does not downgrade PdfCube.
+maintenance release on a lower major line does not downgrade PdfCarton.
 
 Development snapshots and release candidates may provide advance compatibility
 evidence, but they are not the product baseline while a stable release exists.
 
 ## Included Modules and Packages
 
-| Upstream module | PdfCube package | Responsibility |
+| Upstream module | PdfCarton package | Responsibility |
 | --- | --- | --- |
-| `pdfbox-io` | `PdfCube.IO` | Random-access I/O, buffering, stream caches, scratch storage, and shared I/O utilities. |
-| `fontbox` | `PdfCube.FontBox` | Font parsing, CMaps, encodings, subsetting, discovery, and supported TrueType/OpenType, Type 1, CFF, and related behavior. |
-| `xmpbox` | `PdfCube.XmpBox` | XMP metadata modeling, parsing, serialization, creation, and validation. |
-| `pdfbox` | `PdfCube.PdfBox` | The complete core PDF object model, parsing, writing, document APIs, content processing, rendering, extraction, manipulation, forms, security, signing, printing, and related behavior. |
-| `preflight` | `PdfCube.Preflight` | PDF/A validation behavior supplied by Apache Preflight. |
+| `pdfbox-io` | `DripSharp.PdfCarton.IO` | Random-access I/O, buffering, stream caches, scratch storage, and shared I/O utilities. |
+| `fontbox` | `DripSharp.PdfCarton.Fonts` | Font parsing, CMaps, encodings, subsetting, discovery, and supported TrueType/OpenType, Type 1, CFF, and related behavior. |
+| `xmpbox` | `DripSharp.PdfCarton.Xmp` | XMP metadata modeling, parsing, serialization, creation, and validation. |
+| `pdfbox` | `DripSharp.PdfCarton` | The complete core PDF object model, parsing, writing, document APIs, content processing, rendering, extraction, manipulation, forms, security, signing, printing, and related behavior. |
+| `preflight` | `DripSharp.PdfCarton.Preflight` | PDF/A validation behavior supplied by Apache Preflight. |
 
 The package dependency graph mirrors the source modules:
 
 ```text
-PdfCube.IO
+DripSharp.PdfCarton.IO
 
-PdfCube.FontBox -> PdfCube.IO
+DripSharp.PdfCarton.Fonts -> DripSharp.PdfCarton.IO
 
-PdfCube.XmpBox
+DripSharp.PdfCarton.Xmp
 
-PdfCube.PdfBox -> PdfCube.IO
-               -> PdfCube.FontBox
+DripSharp.PdfCarton -> DripSharp.PdfCarton.IO
+                    -> DripSharp.PdfCarton.Fonts
 
-PdfCube.Preflight -> PdfCube.PdfBox
-                  -> PdfCube.XmpBox
+DripSharp.PdfCarton.Preflight -> DripSharp.PdfCarton
+                              -> DripSharp.PdfCarton.Xmp
 ```
 
 These five packages are the complete public package family. Reusable
@@ -50,7 +50,7 @@ the authoritative product goal explicitly excludes it.
 
 ## Mechanical API Policy
 
-PdfCube preserves upstream library structure and semantics rather than choosing
+PdfCarton preserves upstream library structure and semantics rather than choosing
 a smaller task-oriented API. Translation must retain, as closely as C# and .NET
 permit:
 
@@ -67,12 +67,13 @@ permit:
 resolved upstream symbols. Convenience APIs may be added later without
 replacing or weakening the mechanically translated contract.
 
-Java packages map deterministically into `PdfCube` namespaces, and public names
-use C# casing. Member kinds remain mechanical: a Java method remains a method,
-a field remains a field, and overload families remain overload families. For
-example, `getNumberOfPages()` maps to `GetNumberOfPages()`, not to a property.
+Java packages map deterministically into `DripSharp.PdfCarton` namespaces, and
+public names use C# casing. Member kinds remain mechanical: a Java method
+remains a method, a field remains a field, and overload families remain
+overload families. For example, `getNumberOfPages()` maps to
+`GetNumberOfPages()`, not to a property.
 
-Generated PdfCube projects disable C# nullable reference types. Translation
+Generated PdfCarton projects disable C# nullable reference types. Translation
 does not infer or publish nullable-reference annotations for the Java API.
 
 If a literal Java signature has no C# representation, the translator must use
@@ -95,7 +96,7 @@ not a product exclusion.
 
 ## Excluded Artifacts
 
-The following upstream artifacts are not shipped as PdfCube products:
+The following upstream artifacts are not shipped as PdfCarton products:
 
 * `debugger` and `debugger-app`.
 * `tools` and `app`.
@@ -114,17 +115,17 @@ DripSharp to discover the real Maven reactor, selected source sets, generated
 sources, resources, toolchain, module dependencies, and external classpath.
 
 Maven support must be implemented as reusable DripSharp project ingestion.
-Hand-maintained PdfCube source inventories or classpaths are not a durable
+Hand-maintained PdfCarton source inventories or classpaths are not a durable
 substitute for semantic project resolution.
 
 ## Platform and Dependency Adaptation
 
-Generated PdfCube projects target `net10.0`. Supported hosts are Windows,
+Generated PdfCarton projects target `net10.0`. Supported hosts are Windows,
 Linux, and macOS on x64 and ARM64.
 
 Approved standard-library and Microsoft-package mappings are recorded in
 [Dependency Mappings](dependencies.md). That document also records the
-SkiaSharp boundary and specialized capabilities implemented inside PdfCube.
+SkiaSharp boundary and specialized capabilities implemented inside PdfCarton.
 
 Each Java or third-party dependency used by an included module becomes one of:
 
@@ -132,7 +133,7 @@ Each Java or third-party dependency used by an included module becomes one of:
 * A mechanically translated project or package.
 * An appropriate .NET dependency.
 * A reusable compatibility capability.
-* Focused PdfCube runtime code for destination-specific semantics.
+* Focused PdfCarton runtime code for destination-specific semantics.
 * A blocking unsupported dependency pending implementation.
 
 A blocking dependency is not an exclusion. Java AWT, ImageIO, printing,
@@ -158,5 +159,5 @@ required, or treated as a completion blocker.
 
 Generated C# is disposable and must not be edited into correctness. Failures are
 fixed in source discovery, symbol mappings, translation rules, project emission,
-compatibility capabilities, or focused PdfCube runtime code, then regenerated
+compatibility capabilities, or focused PdfCarton runtime code, then regenerated
 from scratch.

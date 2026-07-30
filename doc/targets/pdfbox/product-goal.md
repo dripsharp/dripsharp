@@ -1,8 +1,8 @@
-# Authoritative PdfCube Product Goal
+# Authoritative PdfCarton Product Goal
 
 ## Authority
 
-This document is the user-owned product contract for the PdfCube target. It
+This document is the user-owned product contract for the PdfCarton target. It
 takes precedence over bounded source slices, milestones, manifests, acceptance
 documents, and release-readiness reports for this target.
 
@@ -25,16 +25,21 @@ in the user-approved exclusion list below.
 
 ## Product Target
 
-PdfCube is a family of five separately packaged reusable .NET libraries for
+PdfCarton is a family of five separately packaged reusable .NET libraries for
 ordinary .NET developers who need the capabilities of Apache PDFBox. It is a
 mechanical Java-to-C# port, not a feature-selected reimplementation or a
 redesigned PDF API.
+
+The approved product identity is **PdfCarton**. Its generated publication
+repository is `dripsharp/pdfcarton`, its parent-repository submodule path is
+`products/pdfcarton`, and its public assembly, package, and namespace family is
+rooted at `DripSharp.PdfCarton`.
 
 The target preserves the selected upstream modules' public type organization,
 member contracts, overloads, extension points, and observable semantics as
 closely as the .NET platform permits. Systematic Java-to-.NET adaptations must
 be implemented through resolved-symbol mappings, reusable compatibility
-capabilities, or focused PdfCube runtime code. They must not silently redesign
+capabilities, or focused PdfCarton runtime code. They must not silently redesign
 or remove upstream behavior.
 
 The selected reusable upstream libraries are:
@@ -45,20 +50,20 @@ The selected reusable upstream libraries are:
 * `pdfbox`.
 * `preflight`.
 
-Their initial .NET package family is:
+Their approved .NET package family is:
 
-* `PdfCube.IO`.
-* `PdfCube.FontBox`.
-* `PdfCube.XmpBox`.
-* `PdfCube.PdfBox`.
-* `PdfCube.Preflight`.
+* `DripSharp.PdfCarton.IO`.
+* `DripSharp.PdfCarton.Fonts`.
+* `DripSharp.PdfCarton.Xmp`.
+* `DripSharp.PdfCarton`.
+* `DripSharp.PdfCarton.Preflight`.
 
 Each library is packaged separately with dependency relationships corresponding
 to the upstream module graph.
 
 ## Supported Destination Platforms
 
-PdfCube targets `net10.0`. Its supported host matrix is Windows, Linux, and
+PdfCarton targets `net10.0`. Its supported host matrix is Windows, Linux, and
 macOS on x64 and ARM64. Mobile, WebAssembly, and NativeAOT are outside this
 platform contract.
 
@@ -69,7 +74,7 @@ requested, required, or treated as a completion blocker.
 
 ## Stable Upstream Synchronization
 
-PdfCube tracks the latest stable Apache PDFBox release. The initial stable
+PdfCarton tracks the latest stable Apache PDFBox release. The initial stable
 baseline is PDFBox `3.0.8`, tag commit
 `9286e47d89d6877005c9d2d0f2fd38793a62519a`.
 
@@ -85,19 +90,19 @@ Synchronization includes those later stable patch, minor, and major releases. A
 pre-release, snapshot, release candidate, or development branch does not replace
 the current stable baseline. When Apache publishes a greater stable release,
 moving the source baseline and preserving the selected modules' updated public
-behavior is PdfCube maintenance work, not a reason to freeze or narrow the
+behavior is PdfCarton maintenance work, not a reason to freeze or narrow the
 target.
 
 An upstream module rename, split, merge, or removal does not silently remove an
-already selected PdfCube library or behavior. The package mapping must be
+already selected PdfCarton library or behavior. The package mapping must be
 updated to follow the stable upstream implementation while preserving the
 approved product surface unless the user explicitly changes that surface. A new
 upstream reusable library module requires an explicit target-scope decision
-before becoming an additional PdfCube product.
+before becoming an additional PdfCarton product.
 
 ## User-Approved Product Exclusions
 
-Only these upstream product artifacts are excluded from the shipped PdfCube
+Only these upstream product artifacts are excluded from the shipped PdfCarton
 surface:
 
 * The PDFBox command-line tools.
@@ -118,12 +123,12 @@ The absence of a literal JVM facility or direct .NET package does not exclude
 behavior. Java standard-library, AWT, ImageIO, font, graphics, printing,
 cryptographic, XML, logging, compression, and provider behavior required by the
 selected modules must be represented through generated C#, ordinary .NET APIs,
-reusable compatibility code, focused PdfCube runtime code, or appropriate .NET
+reusable compatibility code, focused PdfCarton runtime code, or appropriate .NET
 dependencies.
 
 Maven project discovery required to resolve PDFBox sources, generated inputs,
 resources, and dependencies belongs in DripSharp's reusable project-ingestion
-layer rather than a PdfCube-only source manifest.
+layer rather than a PdfCarton-only source manifest.
 
 ## Behavior Evidence
 
@@ -135,7 +140,7 @@ release.
 
 ## Completion Rule
 
-PdfCube completion requires all production behavior and the complete public API
+PdfCarton completion requires all production behavior and the complete public API
 of the five selected modules from the latest stable upstream release to be
 translated or faithfully adapted; all remaining exclusions to match the
 user-approved list; clean from-scratch generation; zero public implementation
@@ -145,8 +150,8 @@ selected-module goal on macOS x64 and ARM64. Windows and Linux execution
 evidence is not required for completion.
 
 The reusable translator work used to reach that result must remain suitable for
-future Java targets. PdfCube-specific PDF semantics and platform adaptations
+future Java targets. PdfCarton-specific PDF semantics and platform adaptations
 must not be embedded into the product-neutral Java translation kernel.
 
-A bounded milestone may report milestone readiness. It must not report PdfCube
+A bounded milestone may report milestone readiness. It must not report PdfCarton
 completion or turn unimplemented selected-module behavior into an exclusion.

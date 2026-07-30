@@ -13,3 +13,6 @@
 [submodule "products/brine"]
 	path = products/brine
 	url = https://github.com/dripsharp/brine.git
+[submodule "products/pdfcarton"]
+	path = products/pdfcarton
+	url = https://github.com/dripsharp/pdfcarton.git

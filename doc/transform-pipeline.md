@@ -98,7 +98,7 @@ declaration accounting, collision gates, resource copying, and deterministic
 project files. A destination supplies one explicit rule bundle with structural
 declaration rules, resolved Java/JDK mappings, namespace/project/resource
 policy, destination bridges, and optional product runtime assets. Pkl and
-PdfCube each select their own bundle from product-owned configuration; the
+PdfCarton each select their own bundle from product-owned configuration; the
 reusable emitter neither imports nor falls back to either bundle.
 
 Profile orchestration resolves the profile, destination, bundle factory, and

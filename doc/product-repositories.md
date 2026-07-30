@@ -81,3 +81,24 @@ The Pkl product family uses this mapping:
 
 The Brine repository contains both generated projects. Splitting the parser
 into a second repository is not part of this model.
+
+## PdfCarton Mapping
+
+The Apache PDFBox-derived product family uses this mapping:
+
+| Property | Approved value |
+| --- | --- |
+| Product name | PdfCarton |
+| GitHub repository | `dripsharp/pdfcarton` |
+| Parent submodule | `products/pdfcarton` |
+| Default branch | `master` |
+| Core project | `src/DripSharp.PdfCarton` |
+| I/O project | `src/DripSharp.PdfCarton.IO` |
+| Fonts project | `src/DripSharp.PdfCarton.Fonts` |
+| XMP project | `src/DripSharp.PdfCarton.Xmp` |
+| Preflight project | `src/DripSharp.PdfCarton.Preflight` |
+| Managed repository files | `src/`, `LICENSE`, `NOTICE`, `README.md` |
+
+The PdfCarton repository contains all five generated projects as one versioned
+product family. Repository creation remains an explicit owner action and is not
+implied by this approved mapping.
