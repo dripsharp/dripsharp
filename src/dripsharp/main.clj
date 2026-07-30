@@ -15,7 +15,8 @@
    "|proof <target>"
    "|product-sync <target>"
    "|product-prepare <target> <branch> <commit-message>"
-   "|alpha-release-prepare <target> <authorized-alpha-tag> <product-commit>"
+   "|alpha-release-prepare <target> <authorized-alpha-tag> <product-commit> "
+   "[platform-id,...]"
    "|java-compat-differential"
    "|pdfcube-family-host-matrix <evidence-root> <output-root>"
    "|rebaseline <pkl|pdfcube|rawhttp> [--approve <token>]"))
@@ -68,11 +69,15 @@
       (and (= "alpha-release-prepare" command)
            target
            selector
-           (= 1 (count extra)))
+           (contains? #{1 2} (count extra)))
       (target-execution/prepare-alpha-release!
-       {:target target
-        :authorized-tag selector
-        :product-commit (first extra)})
+       (cond->
+        {:target target
+         :authorized-tag selector
+         :product-commit (first extra)}
+         (= 2 (count extra))
+         (assoc :platform-ids
+                (str/split (second extra) #"," -1))))
 
       (and (= "java-compat-differential" command)
            (nil? target)

@@ -75,6 +75,12 @@
                "v0.1.0-alpha.1"
                "0123456789abcdef0123456789abcdef01234567"])))
       (is (= :ok
+             (main/dispatch!
+              ["alpha-release-prepare" "acme"
+               "v0.1.0-alpha.1"
+               "0123456789abcdef0123456789abcdef01234567"
+               "osx-x64,osx-arm64"])))
+      (is (= :ok
              (main/dispatch! ["java-compat-differential"])))
       (is (= :ok
              (main/dispatch!
@@ -95,6 +101,12 @@
                 :authorized-tag "v0.1.0-alpha.1"
                 :product-commit
                 "0123456789abcdef0123456789abcdef01234567"}]
+              [:alpha-release-prepare
+               {:target "acme"
+                :authorized-tag "v0.1.0-alpha.1"
+                :product-commit
+                "0123456789abcdef0123456789abcdef01234567"
+                :platform-ids ["osx-x64" "osx-arm64"]}]
               [:java-compat-differential]
               [:pdfcube-family-host-matrix "evidence" "output"]
               [:rebaseline
@@ -117,7 +129,8 @@
                 ["alpha-release-prepare" "pkl"]
                 ["alpha-release-prepare" "pkl" "v0.1.0-alpha.1"]
                 ["alpha-release-prepare" "pkl" "v0.1.0-alpha.1"
-                 "0123456789abcdef0123456789abcdef01234567" "extra"]
+                 "0123456789abcdef0123456789abcdef01234567"
+                 "osx-x64,osx-arm64" "extra"]
                 ["java-compat-differential" "pkl"]
                 ["pdfcube-family-host-matrix"]
                 ["pdfcube-family-host-matrix" "evidence"]

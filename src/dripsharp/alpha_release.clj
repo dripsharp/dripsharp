@@ -374,6 +374,34 @@
    :version (semver-version! authorized-tag)
    :product-commit (exact-commit! product-commit)})
 
+(defn select-platforms!
+  "Returns the inventory platforms selected for this preparation. A nil
+  selection preserves the all-platform default; an explicit selection must be
+  a nonempty vector of unique exact inventory platform ids."
+  [inventory platform-ids]
+  (if (nil? platform-ids)
+    (:platforms inventory)
+    (let [available (into {} (map (juxt :id identity)) (:platforms inventory))]
+      (when-not (and (vector? platform-ids)
+                     (seq platform-ids)
+                     (every? non-blank-string? platform-ids)
+                     (= (count platform-ids)
+                        (count (distinct platform-ids))))
+        (fail! "Release platform selection must be a nonempty vector of unique platform ids"
+               {:reason :invalid-release-platform-selection
+                :platform-ids platform-ids
+                :available (vec (sort (keys available)))}))
+      (let [unknown (vec (sort (remove #(contains? available %)
+                                       platform-ids)))]
+        (when (seq unknown)
+          (fail! "Release platform selection contains unknown platform ids"
+                 {:reason :invalid-release-platform-selection
+                  :platform-ids platform-ids
+                  :unknown unknown
+                  :available (vec (sort (keys available)))})))
+      (let [selected (set platform-ids)]
+        (filterv #(contains? selected (:id %)) (:platforms inventory))))))
+
 (defn- command-output
   [run-command! directory command]
   (-> (run-command! {:command command :directory directory})
@@ -865,7 +893,7 @@
   proof. This function checks that proved staging and the exact clean product
   commit still agree before and after all Release builds."
   [{:keys [workspace-root target-contract inventory authorized-tag
-           product-commit output-root run-command! build-fn
+           product-commit platform-ids output-root run-command! build-fn
            framework-assemblies]
     :or {run-command! process/run!
          build-fn default-build!}}]
@@ -875,6 +903,7 @@
         (validate-inventory! target-contract
                              (or inventory
                                  (read-inventory! target-contract)))
+        platforms (select-platforms! inventory platform-ids)
         {:keys [version product-commit]}
         (validate-request! authorized-tag product-commit)
         initial-state
@@ -940,7 +969,7 @@
                     :sha256 (:sha256 verification)
                     :entries (:entries verification)
                     :build-configuration "Release"})))
-             (:platforms inventory))
+             platforms)
             final-state
             (exact-product-state! workspace-root target-contract product-commit
                                   run-command!)
@@ -966,6 +995,7 @@
              :product-family (:product-family inventory)
              :version version
              :target-framework (:target-framework inventory)
+             :platforms (mapv :id platforms)
              :product-commit product-commit
              :proved-source-sha256 (:proved-source-sha256 final-state)
              :assets assets

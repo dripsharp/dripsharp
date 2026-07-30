@@ -171,7 +171,7 @@
           :consumer-tests-fn :staging-cleanup-fn
           :release-fn :build-fn :framework-assemblies :inventory
           :branch :commit-message :pull-request-title :pull-request-body
-          :authorized-tag :product-commit :output-root))
+          :authorized-tag :product-commit :platform-ids :output-root))
 
 (defn- generate-loaded!
   [execution options generate-fn]
@@ -511,6 +511,8 @@
            (:contract execution) inventory)
         _ (alpha-release/validate-request!
            (:authorized-tag options) (:product-commit options))
+        _ (alpha-release/select-platforms!
+           inventory (:platform-ids options))
         proof (publication-proof! execution options)
         release-fn (or (:release-fn options) alpha-release/prepare!)
         preparation
@@ -521,6 +523,8 @@
            :inventory inventory
            :authorized-tag (:authorized-tag options)
            :product-commit (:product-commit options)}
+           (:platform-ids options)
+           (assoc :platform-ids (:platform-ids options))
            (:output-root options)
            (assoc :output-root (:output-root options))
            (:run-command! options)

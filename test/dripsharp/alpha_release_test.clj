@@ -252,6 +252,22 @@
     (is (= #{"win-x64" "win-arm64" "linux-x64" "linux-arm64"
              "osx-x64" "osx-arm64"}
            (set (map :id (:platforms pdfcarton)))))
+    (is (= ["osx-x64" "osx-arm64"]
+           (mapv :id
+                 (alpha-release/select-platforms!
+                  pdfcarton ["osx-arm64" "osx-x64"]))))
+    (doseq [selection [[] ["osx-x64" "osx-x64"] [""] "osx-x64"]]
+      (is (= :invalid-release-platform-selection
+             (:reason
+              (failure
+               #(alpha-release/select-platforms!
+                 pdfcarton selection))))))
+    (let [result
+          (failure
+           #(alpha-release/select-platforms!
+             pdfcarton ["osx-x64" "plan9-x64"]))]
+      (is (= :invalid-release-platform-selection (:reason result)))
+      (is (= ["plan9-x64"] (:unknown result))))
     (is (every? #(= 1 (count (:native-assets %)))
                 (:platforms pdfcarton)))
     (is (= #{"SkiaSharp.NativeAssets.Win32"
@@ -290,12 +306,31 @@
             (alpha-release/prepare!
              (assoc options :output-root
                     (paths/resolve-path workspace "release-b")))
+            selected
+            (alpha-release/prepare!
+             (assoc options
+                    :platform-ids ["osx-arm64" "osx-x64"]
+                    :output-root
+                    (paths/resolve-path workspace "release-c")))
             first-sha
             (into {} (map (juxt :filename :sha256)) (:assets first))
             second-sha
             (into {} (map (juxt :filename :sha256)) (:assets second))]
         (is (= first-sha second-sha))
         (is (= 6 (count first-sha)))
+        (is (= ["osx-x64" "osx-arm64"] (:platforms selected)))
+        (is (= #{"DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-x64.zip"
+                 "DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-arm64.zip"}
+               (set (map :filename (:assets selected)))))
+        (is (= (set (map :filename (:assets selected)))
+               (set
+                (map :filename
+                     (get-in selected [:github-release :assets])))))
+        (is (str/includes?
+             (get-in selected [:github-release :notes]) "`osx-x64`"))
+        (is (not
+             (str/includes?
+              (get-in selected [:github-release :notes]) "`win-x64`")))
         (is (contains?
              first-sha
              "DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-arm64.zip"))
@@ -717,6 +752,7 @@
         (target-execution/prepare-alpha-release!
          {:target :pkl
           :authorized-tag "v0.1.0-alpha.1"
+          :platform-ids ["portable"]
           :product-commit
           "0123456789abcdef0123456789abcdef01234567"
           :proof-fn
@@ -728,7 +764,8 @@
             (swap! calls conj
                    [:release
                     (select-keys options
-                                 [:authorized-tag :product-commit])])
+                                 [:authorized-tag :platform-ids
+                                  :product-commit])])
             :prepared)})]
     (is (= :proved (:proof result)))
     (is (= :prepared (:preparation result)))
@@ -736,6 +773,7 @@
                      :target :pkl}]
             [:release
              {:authorized-tag "v0.1.0-alpha.1"
+              :platform-ids ["portable"]
               :product-commit
               "0123456789abcdef0123456789abcdef01234567"}]]
            @calls)))
@@ -750,4 +788,18 @@
             :proof-fn (fn [_] (reset! proved? true))
             :release-fn (fn [_] :unexpected)}))]
     (is (= :invalid-alpha-tag (:reason result)))
+    (is (false? @proved?)))
+  (let [proved? (atom false)
+        result
+        (failure
+         #(target-execution/prepare-alpha-release!
+           {:target :pkl
+            :authorized-tag "v0.1.0-alpha.1"
+            :product-commit
+            "0123456789abcdef0123456789abcdef01234567"
+            :platform-ids ["osx-x64"]
+            :proof-fn (fn [_] (reset! proved? true))
+            :release-fn (fn [_] :unexpected)}))]
+    (is (= :invalid-release-platform-selection (:reason result)))
+    (is (= ["osx-x64"] (:unknown result)))
     (is (false? @proved?))))
