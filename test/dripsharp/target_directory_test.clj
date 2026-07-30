@@ -638,6 +638,40 @@
                 (:path failure)))
          (is (= "a selection with distinct legal-file package paths"
                 (:expected failure)))))
+     (testing "selected legal destinations cannot collide by case"
+       (create-target-workspace! root)
+       (update-edn!
+        root "targets/acme/baseline.edn"
+        update-in [:legal-sets :upstream]
+        conj
+        (assoc (second (get-in (baseline-record) [:legal-sets :upstream]))
+               :destination "legal/notice.txt"
+               :package-path "ALT-NOTICE.txt"))
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :profile-legal-sets "acme-core"]
+                (:path failure)))
+         (is (= (str "a selection with case-insensitively distinct "
+                     "legal-file destinations")
+                (:expected failure)))))
+     (testing "selected legal package paths cannot collide by case"
+       (create-target-workspace! root)
+       (update-edn!
+        root "targets/acme/baseline.edn"
+        update-in [:legal-sets :upstream]
+        conj
+        (assoc (second (get-in (baseline-record) [:legal-sets :upstream]))
+               :destination "Legal/ALT-NOTICE.txt"
+               :package-path "notice.txt"))
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :profile-legal-sets "acme-core"]
+                (:path failure)))
+         (is (= (str "a selection with case-insensitively distinct "
+                     "legal-file package paths")
+                (:expected failure)))))
      (testing "profiles retain a declared upstream NOTICE input"
        (create-target-workspace! root)
        (update-edn! root "targets/acme/baseline.edn"

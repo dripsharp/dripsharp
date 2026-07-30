@@ -586,9 +586,23 @@
                  (count (distinct (map :destination %)))))
             (validation/check!
              context path selected-entries
+             "a selection with case-insensitively distinct legal-file destinations"
+             #(= (count %)
+                 (count
+                  (distinct
+                   (map (comp str/lower-case :destination) %)))))
+            (validation/check!
+             context path selected-entries
              "a selection with distinct legal-file package paths"
              #(= (count %)
                  (count (distinct (map :package-path %)))))
+            (validation/check!
+             context path selected-entries
+             "a selection with case-insensitively distinct legal-file package paths"
+             #(= (count %)
+                 (count
+                  (distinct
+                   (map (comp str/lower-case :package-path) %)))))
             (validation/check!
              context path license-entries
              "a selection containing exactly one pinned LICENSE input"
