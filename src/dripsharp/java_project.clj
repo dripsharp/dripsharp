@@ -220,7 +220,8 @@
      #(and (string? %)
            (not (str/blank? %))
            (project-xml/valid-text? %))))
-  (let [legal-files (:legal-files configuration)]
+  (let [legal-files (:legal-files configuration)
+        license-expression (get-in configuration [:package :license-expression])]
     (when (contains? configuration :legal-files)
       (let [context
             (destination-context "Destination legal-file packaging contract")]
@@ -280,13 +281,20 @@
         (when (< 1 (count (filter #(= :license (:kind %)) legal-files)))
           (validation/fail! context [:legal-files] legal-files
                             "at most one :license entry"))))
-    (when (and (seq legal-files)
-               (get-in configuration [:package :license-expression]))
-      (destination-error
-       "Destination license expression and packed license file are mutually exclusive"
-       {:license-expression
-        (get-in configuration [:package :license-expression])
-        :legal-files legal-files})))
+    (let [license-files
+          (filterv #(= :license (:kind %)) legal-files)]
+      (when (and (seq license-files) license-expression)
+        (destination-error
+         "Destination license expression and packed license file are mutually exclusive"
+         {:license-expression license-expression
+          :legal-files legal-files}))
+      (when-not (or license-expression (seq license-files))
+        (validation/fail!
+         (destination-context "Destination package license metadata")
+         [:package]
+         {:license-expression license-expression
+          :legal-files legal-files}
+         "a license expression or exactly one pinned :license legal file"))))
   (when-let [attribution (:resource-notice-attribution configuration)]
     (let [context
           (destination-context

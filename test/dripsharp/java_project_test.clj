@@ -277,6 +277,49 @@
       (is (= candidate
              (project-emission/validate-configuration! candidate))))))
 
+(deftest destination-requires-exactly-one-package-license-mechanism
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")
+        notices
+        (filterv #(= :notice (:kind %)) (:legal-files configuration))]
+    (doseq [[label candidate]
+            [[:omitted-legal-files
+              (dissoc configuration :legal-files)]
+             [:notice-only-legal-files
+              (assoc configuration :legal-files notices)]]]
+      (testing (name label)
+        (let [error
+              (try
+                (project-emission/validate-configuration! candidate)
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:package] (:path (ex-data error))))
+          (is (= "a license expression or exactly one pinned :license legal file"
+                 (:expected (ex-data error)))))))
+    (testing "a license expression may accompany notice-only legal files"
+      (let [candidate
+            (-> configuration
+                (assoc :legal-files notices)
+                (assoc-in [:package :license-expression] "Apache-2.0"))]
+        (is (= candidate
+               (project-emission/validate-configuration! candidate)))))
+    (testing "a license expression and packed license remain mutually exclusive"
+      (let [error
+            (try
+              (project-emission/validate-configuration!
+               (assoc-in configuration
+                         [:package :license-expression]
+                         "Apache-2.0"))
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (is (= :invalid-destination-configuration
+               (:kind (ex-data error))))
+        (is (= "Apache-2.0" (:license-expression (ex-data error))))))))
+
 (deftest destination-legal-file-paths-must-be-normalized-and-portable
   (let [configuration
         (project-emission/read-configuration
