@@ -1071,6 +1071,8 @@
         (paths/resolve-path workspace "hostile-custom-import.props")
         hostile-custom-targets
         (paths/resolve-path workspace "hostile-custom-import.targets")
+        hostile-user-extensions
+        (paths/resolve-path workspace "hostile-user-extensions")
         run-command!
         (fn [request]
           (swap! requests conj request)
@@ -1102,7 +1104,9 @@
                 "MSBuildSDKsPath"
                 "/host-controlled/nonexistent-msbuild-sdks"
                 "MSBuildExtensionsPath"
-                "/host-controlled/nonexistent-msbuild-extensions"}
+                "/host-controlled/nonexistent-msbuild-extensions"
+                "MSBuildUserExtensionsPath"
+                (str hostile-user-extensions)}
                (when restore?
                  {"RestoreSources"
                   "/host-controlled/alternate-package-source"
@@ -1122,6 +1126,12 @@
        (str "<Project><Target Name=\"RejectAmbientCustomImport\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient Microsoft.Common "
             "custom import was loaded\" /></Target></Project>\n"))
+      (write!
+       hostile-user-extensions
+       "Current/Microsoft.Common.targets/ImportBefore/RejectAmbientUserExtension.targets"
+       (str "<Project><Target Name=\"RejectAmbientUserExtension\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient MSBuild user "
+            "extension was loaded\" /></Target></Project>\n"))
       (write!
        workspace "global.json"
        "{\"sdk\":{\"version\":\"99.0.100\",\"rollForward\":\"disable\"}}\n")
@@ -1182,7 +1192,16 @@
             packages-path
             (paths/absolute
              (subs packages-option
-                   (count "-p:RestorePackagesPath=")))]
+                   (count "-p:RestorePackagesPath=")))
+            user-extensions-option
+            (first
+             (filter #(str/starts-with?
+                       % "-p:MSBuildUserExtensionsPath=")
+                     dotnet-command))
+            user-extensions-path
+            (paths/absolute
+             (subs user-extensions-option
+                   (count "-p:MSBuildUserExtensionsPath=")))]
         (is (= #{"DripSharp.Brine.dll"
                  "DripSharp.Brine.Parser.dll"}
                (set (keys (:entries (first (:assets prepared)))))))
@@ -1193,6 +1212,13 @@
         (is (= build-directory restore-directory))
         (is (= artifacts-path restore-artifacts-path))
         (is (= packages-path restore-packages-path))
+        (is (not (.startsWith user-extensions-path
+                              (paths/absolute workspace))))
+        (is (= user-extensions-option
+               (first
+                (filter #(str/starts-with?
+                          % "-p:MSBuildUserExtensionsPath=")
+                        restore-command))))
         (is (= "NuGet.Config" (str (.getFileName config-path))))
         (is (= "restore-config"
                (str (.getFileName (.getParent config-path)))))
@@ -1229,14 +1255,16 @@
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
-                 "MSBuildSDKsPath"}
+                 "MSBuildSDKsPath"
+                 "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
         (is (= #{"CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
-                 "MSBuildSDKsPath"}
+                 "MSBuildSDKsPath"
+                 "MSBuildUserExtensionsPath"}
                (:unset-environment dotnet-request)))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"

@@ -59,7 +59,8 @@
     "CustomBeforeMicrosoftCommonProps"
     "CustomBeforeMicrosoftCommonTargets"
     "MSBuildExtensionsPath"
-    "MSBuildSDKsPath"})
+    "MSBuildSDKsPath"
+    "MSBuildUserExtensionsPath"})
 
 (def ^:private isolated-nuget-config
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
@@ -772,12 +773,16 @@
         build-directory (.getParent ^Path build-output)
         artifacts-path
         (paths/resolve-path build-directory "artifacts")
+        user-extensions-path
+        (paths/resolve-path build-directory "user-extensions")
         restore-config-directory
         (paths/resolve-path build-directory "restore-config")
         restore-config
         (paths/resolve-path restore-config-directory "NuGet.Config")
         _ (Files/createDirectories
            restore-config-directory (make-array FileAttribute 0))
+        _ (Files/createDirectories
+           user-extensions-path (make-array FileAttribute 0))
         _ (Files/writeString
            restore-config isolated-nuget-config StandardCharsets/UTF_8
            (into-array OpenOption [StandardOpenOption/CREATE_NEW
@@ -790,6 +795,7 @@
           "--packages" (str packages-root)
           "--artifacts-path" (str artifacts-path)
           (str "-p:RestoreSources=" nuget-org-v3-source)
+          (str "-p:MSBuildUserExtensionsPath=" user-extensions-path)
           "-p:RestoreAdditionalProjectSources="
           "-p:RestoreFallbackFolders="
           "-p:ImportDirectoryBuildProps=false"
@@ -811,6 +817,7 @@
           "--artifacts-path" (str artifacts-path)
           "--output" (str build-output)
           (str "-p:RestorePackagesPath=" packages-root)
+          (str "-p:MSBuildUserExtensionsPath=" user-extensions-path)
           "-p:CopyLocalLockFileAssemblies=true"
           "-p:ImportDirectoryBuildProps=false"
           "-p:ImportDirectoryBuildTargets=false"
