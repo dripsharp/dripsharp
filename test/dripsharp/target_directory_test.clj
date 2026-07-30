@@ -608,6 +608,36 @@
                 (:path failure)))
          (is (= "a selection containing exactly one pinned LICENSE input"
                 (:expected failure)))))
+     (testing "selected legal inputs require distinct generated destinations"
+       (create-target-workspace! root)
+       (update-edn!
+        root "targets/acme/baseline.edn"
+        update-in [:legal-sets :upstream]
+        conj
+        (assoc (second (get-in (baseline-record) [:legal-sets :upstream]))
+               :package-path "ALT-NOTICE.txt"))
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :profile-legal-sets "acme-core"]
+                (:path failure)))
+         (is (= "a selection with distinct legal-file destinations"
+                (:expected failure)))))
+     (testing "selected legal inputs require distinct package paths"
+       (create-target-workspace! root)
+       (update-edn!
+        root "targets/acme/baseline.edn"
+        update-in [:legal-sets :upstream]
+        conj
+        (assoc (second (get-in (baseline-record) [:legal-sets :upstream]))
+               :destination "Legal/ALT-NOTICE.txt"))
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :profile-legal-sets "acme-core"]
+                (:path failure)))
+         (is (= "a selection with distinct legal-file package paths"
+                (:expected failure)))))
      (testing "profiles retain a declared upstream NOTICE input"
        (create-target-workspace! root)
        (update-edn! root "targets/acme/baseline.edn"

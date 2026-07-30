@@ -574,11 +574,21 @@
                                   (vec (sort legal-sets)))
                              #(set/subset? (set %) legal-sets))
           (let [selected-entries
-                (mapcat #(get-in baseline-record [:legal-sets %]) sets)
+                (vec (mapcat #(get-in baseline-record [:legal-sets %]) sets))
                 license-entries
                 (filter #(= :license (:kind %)) selected-entries)
                 notice-entries
                 (filter #(= :notice (:kind %)) selected-entries)]
+            (validation/check!
+             context path selected-entries
+             "a selection with distinct legal-file destinations"
+             #(= (count %)
+                 (count (distinct (map :destination %)))))
+            (validation/check!
+             context path selected-entries
+             "a selection with distinct legal-file package paths"
+             #(= (count %)
+                 (count (distinct (map :package-path %)))))
             (validation/check!
              context path license-entries
              "a selection containing exactly one pinned LICENSE input"
