@@ -37,3 +37,10 @@ Java-to-C# machinery used by this target.
 
 The shared [product repository contract](../../product-repositories.md) governs
 Brine's generated-publication lifecycle.
+
+The generated Brine checkout includes repository-local xUnit coverage derived
+from the pinned upstream LanguageSnippet and Pkl.Core contracts. DripSharp owns
+the disposable generator, authored package adapters, fixture inventory,
+mechanical/authored/vendored provenance boundary, and fail-closed checks; the
+generated product repository remains a consumer of those inputs rather than a
+durable source of manual test fixes.

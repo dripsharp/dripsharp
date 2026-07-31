@@ -74,16 +74,21 @@ product submodule would be modified. Manual patches to generated C# are not a
 durable fix: the corresponding translator, mapping, runtime input, or target
 contract must change in `dripsharp/dripsharp`, followed by regeneration.
 
-Each generated product repository contains one focused public-API test project
-under `tests/`. Its project references resolve only to that checkout's `src/`
-tree, and its `tests/README.md` records clean restore, build, and test commands.
+Each generated product repository contains a public-API test project under
+`tests/`. Its project references resolve only to that checkout's `src/` tree,
+and its `tests/README.md` records clean restore, build, and test commands.
 Target-owned checksums, fixture attribution, and generated `SHA256SUMS` files
-make the suite deterministic. Comprehensive translator, differential,
-conformance, packaging, and large-corpus gates remain in
-`dripsharp/dripsharp` and run before this focused suite and synchronization.
+make the suite deterministic. Brine additionally publishes independently named
+xUnit rows generated from the pinned LanguageSnippet and Pkl.Core contracts,
+with the bounded upstream fixtures and authored .NET adapters needed to run
+without a DripSharp checkout or JVM. Its generated test-provenance and
+authorship ledgers keep normalized upstream material, vendored fixtures,
+authored adapters, and deterministic wrapper glue distinct. Comprehensive
+translator, differential, conformance, and packaging gates remain in
+`dripsharp/dripsharp` and run before the generated suite and synchronization.
 Translator-only `source-map.edn` files likewise remain in the proved staging
 tree and are excluded from generated product repositories. They are not needed
-to restore, build, or run the focused consumer tests.
+to restore, build, or run the generated consumer tests.
 
 ## GitHub Alpha-Release Assets
 

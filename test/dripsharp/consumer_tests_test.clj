@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.consumer-tests :as consumer-tests]
+            [dripsharp.pkl.brine-xunit :as brine-xunit]
             [dripsharp.target-directory :as target-directory])
   (:import [java.nio.file FileVisitOption Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]))
@@ -72,8 +73,9 @@
               (Files/readString (:inventory-file second))
               project-reference-count
               (count (re-seq #"<ProjectReference " project-first))]
-          (is (= (count (get-in contract
-                                [:publication :profile-projects]))
+          (is (= (+ (count (get-in contract
+                                   [:publication :profile-projects]))
+                    (if (= :pkl target) 2 0))
                  project-reference-count))
           (is (str/includes? project-first "../../src/"))
           (is (not (str/includes? project-first
@@ -83,6 +85,16 @@
           (is (str/includes? inventory-first "README.md"))
           (is (str/includes? inventory-first "NOTICE.md"))
           (is (str/includes? inventory-first "Fixtures/"))
+          (when (= :pkl target)
+            (is (str/includes? inventory-first
+                               "Contracts/LanguageSnippetContract.tsv"))
+            (is (str/includes? inventory-first
+                               "Contracts/PklCoreTestContract.tsv"))
+            (is (str/includes? inventory-first "TEST-PROVENANCE.tsv"))
+            (is (str/includes?
+                 (Files/readString
+                  (.resolve ^Path (:tests-root second) "README.md"))
+                 "TEST-BOUNDARY.md")))
           (is (not (str/includes? inventory-first "SHA256SUMS")))
           (is (str/includes?
                (Files/readString
@@ -134,5 +146,29 @@
                 :run-command! (fn [_] (reset! called? true))}))]
         (is (= :test-inventory-mismatch (:reason result)))
         (is (false? @called?)))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest brine-upstream-suite-is-complete-and-false-mechanical-fails-closed
+  (let [workspace (temp-directory)]
+    (try
+      (let [{:keys [result]} (emission workspace :pkl)
+            tests-root (:tests-root result)
+            ledger (.resolve ^Path tests-root "TEST-PROVENANCE.tsv")
+            original (Files/readString ledger)
+            proof (brine-xunit/verify-provenance! tests-root)]
+        (is (= 1129 (count (:rows proof))))
+        (is (= 4 (count (:counts proof))))
+        (Files/writeString
+         ledger
+         (str/replace-first
+          original
+          "\tdripsharp-authored-test-infrastructure\t-\t"
+          (str "\tmechanically-upstream-derived\t"
+               "f7cac257ade5775c1dfc255f4fda2eacc296e9d0\t"))
+         (make-array OpenOption 0))
+        (is (= :invalid-mechanical-test-provenance
+               (:reason (failure
+                         #(brine-xunit/verify-provenance! tests-root))))))
       (finally
         (delete-tree! workspace)))))

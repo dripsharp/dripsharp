@@ -7,6 +7,7 @@
   an authored source of test changes."
   (:require [clojure.string :as str]
             [dripsharp.paths :as paths]
+            [dripsharp.pkl.brine-xunit :as brine-xunit]
             [dripsharp.process :as process]
             [dripsharp.project-xml :as project-xml]
             [dripsharp.util :as util])
@@ -105,7 +106,11 @@
                                [:publication :consumer-tests])
         {:keys [directory assembly-name target-framework packages]}
         (:project consumer-tests)
-        references (project-reference-paths target-contract directory)
+        references
+        (cond-> (project-reference-paths target-contract directory)
+          (= :pkl (:target target-contract))
+          (into ["../DripSharp.Brine.LanguageSnippetRunner/DripSharp.Brine.LanguageSnippetRunner.csproj"
+                 "../DripSharp.Brine.CoreTestRunner/DripSharp.Brine.CoreTestRunner.csproj"]))
         fixtures (:fixtures consumer-tests)]
     (project-xml/render
      (project-xml/element
@@ -177,7 +182,13 @@
          "Its test host permits major-version roll-forward so a later .NET "
          "runtime can exercise an earlier-targeted product family. "
          "`SHA256SUMS` inventories every generated test file except the "
-         "inventory itself.\n")))
+         "inventory itself.\n"
+         (when (= :pkl (:target target-contract))
+           (str "\nThe upstream-derived Brine suite exposes independently named "
+                "xUnit rows from the pinned LanguageSnippet and Pkl.Core "
+                "contracts. See [`TEST-BOUNDARY.md`](TEST-BOUNDARY.md) for "
+                "the mechanical/authored/vendored boundary and "
+                "`TEST-PROVENANCE.tsv` for exact hashes.\n")))))
 
 (defn- render-notice
   [target-contract]
@@ -203,6 +214,21 @@
          (filter paths/regular-file?)
          (sort-by str)
          vec)))
+
+(defn- delete-build-artifacts!
+  [tests-root]
+  (let [tests-root (paths/absolute tests-root)]
+    (doseq [directory
+            (with-open [entries (Files/walk tests-root
+                                            (make-array FileVisitOption 0))]
+              (->> (.toArray entries)
+                   (map #(cast Path %))
+                   (filter paths/directory?)
+                   (filter #(contains? #{"bin" "obj"}
+                                       (str (.getFileName ^Path %))))
+                   (sort-by #(.getNameCount ^Path %) >)
+                   vec))]
+      (delete-tree! directory))))
 
 (defn- render-inventory
   [tests-root inventory-file]
@@ -305,6 +331,11 @@
                    (render-readme target-contract))
       (write-text! (paths/resolve-path tests-root "NOTICE.md")
                    (render-notice target-contract))
+      (when (= :pkl (:target target-contract))
+        (brine-xunit/emit!
+         {:workspace-root root
+          :target-contract target-contract
+          :tests-root tests-root}))
       (let [inventory-file (paths/resolve-path tests-root "SHA256SUMS")]
         (write-text! inventory-file
                      (render-inventory tests-root inventory-file)))
@@ -333,6 +364,9 @@
               :target (:target target-contract)
               :path (str project)}))
     (verify-inventory! (paths/resolve-path staging "tests"))
+    (when (= :pkl (:target target-contract))
+      (brine-xunit/verify-provenance!
+       (paths/resolve-path staging "tests")))
     (try
       (doseq [phase [:restore :build :test]]
         (run-command! {:command (get commands phase)
@@ -340,7 +374,8 @@
                        :timeout-ms timeout-ms}))
       (finally
         (delete-tree! (paths/resolve-path project-root "bin"))
-        (delete-tree! (paths/resolve-path project-root "obj"))))
+        (delete-tree! (paths/resolve-path project-root "obj"))
+        (delete-build-artifacts! (paths/resolve-path staging "tests"))))
     (verify-inventory! (paths/resolve-path staging "tests"))
     {:project-file project
      :commands commands}))
