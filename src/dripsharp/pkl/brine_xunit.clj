@@ -12,7 +12,9 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file FileVisitOption Files LinkOption OpenOption Path
             StandardCopyOption]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute FileAttribute]
+           [java.time LocalDateTime]
+           [java.util.zip ZipEntry ZipFile ZipOutputStream]))
 
 (def ^:private provenance-columns
   ["path" "class" "upstream-revision" "source-path" "source-sha256"
@@ -30,6 +32,12 @@
 
 (def ^:private authorship-columns
   ["source-path" "sha256" "lines" "line-budget" "review-evidence" "role"])
+
+(def ^:private encoded-package-entries
+  #{"hash#query?.pkl" "hello world.pkl" "reserved/slash.pkl" "雪.pkl"})
+
+(def ^:private zip-epoch
+  (LocalDateTime/of 1980 1 1 0 0))
 
 (def ^:private required-authored-sources
   #{"src/dripsharp/consumer_tests.clj"
@@ -386,6 +394,63 @@
       (swap! rows conj
              (vendored-row tests-root revision upstream source output)))))
 
+(defn- normalize-encoded-package!
+  [upstream]
+  (let [directory
+        (paths/resolve-path
+         upstream "pkl-commons-test/build/test-packages/encoded-assets@1.0.0")
+        archive (paths/resolve-path directory "encoded-assets@1.0.0.zip")
+        metadata (paths/resolve-path directory "encoded-assets@1.0.0.json")]
+    (when-not (and (paths/regular-file? archive)
+                   (paths/regular-file? metadata))
+      (fail! "Synthetic encoded package fixture is missing"
+             {:reason :missing-encoded-package-fixture
+              :archive (str archive)
+              :metadata (str metadata)}))
+    (let [temporary
+          (Files/createTempFile
+           directory ".encoded-assets-" ".zip" (make-array FileAttribute 0))]
+      (try
+        (with-open [source (ZipFile. (.toFile archive))
+                    output
+                    (ZipOutputStream.
+                     (Files/newOutputStream temporary
+                                            (make-array OpenOption 0)))]
+          (let [entries
+                (->> (enumeration-seq (.entries source))
+                     (remove #(.isDirectory ^ZipEntry %))
+                     (sort-by #(.getName ^ZipEntry %))
+                     vec)
+                names (set (map #(.getName ^ZipEntry %) entries))]
+            (when-not (= encoded-package-entries names)
+              (fail! "Synthetic encoded package entry boundary changed"
+                     {:reason :encoded-package-entry-drift
+                      :expected (vec (sort encoded-package-entries))
+                      :actual (vec (sort names))}))
+            (doseq [^ZipEntry source-entry entries]
+              (let [entry (doto (ZipEntry. (.getName source-entry))
+                            (.setTimeLocal zip-epoch))]
+                (.putNextEntry output entry)
+                (with-open [input (.getInputStream source source-entry)]
+                  (.transferTo input output))
+                (.closeEntry output)))))
+        (Files/move temporary archive
+                    (into-array StandardCopyOption
+                                [StandardCopyOption/REPLACE_EXISTING]))
+        (let [checksum (util/sha256-file archive)
+              contents (Files/readString metadata StandardCharsets/UTF_8)
+              pattern #"[0-9a-f]{64}"
+              matches (re-seq pattern contents)]
+          (when-not (= 1 (count matches))
+            (fail! "Synthetic encoded package metadata checksum is malformed"
+                   {:reason :encoded-package-metadata-drift
+                    :path (str metadata)}))
+          (write-text!
+           metadata
+           (str/replace contents pattern checksum)))
+        (finally
+          (Files/deleteIfExists temporary))))))
+
 (defn- add-existing-rows!
   [root tests-root generator rows]
   (let [authored
@@ -488,6 +553,7 @@
         (copy-file! source output)
         (swap! rows conj (authored-row root tests-root source output))))
     (let [fixture-root (paths/resolve-path tests-root "Fixtures" "pkl")]
+      (normalize-encoded-package! upstream)
       (doseq [[source-relative destination-relative]
               [["pkl-core/src/test/files/LanguageSnippetTests/input"
                 "pkl-core/src/test/files/LanguageSnippetTests/input"]

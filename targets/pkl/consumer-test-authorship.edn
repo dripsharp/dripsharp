@@ -8,9 +8,9 @@
    :review-evidence "beads:pkl-nk5q"
    :role :generic-test-emitter}
   {:path "src/dripsharp/pkl/brine_xunit.clj"
-   :sha256 "3923debe25373993bad7408f710f0b3cd18ee6713bcd4bbcf139a06adc03319b"
-   :lines 565
-   :line-budget 565
+   :sha256 "544dc0f1ea266d9e684367ff510a41eea15416d6355058831118207735541ed7"
+   :lines 631
+   :line-budget 631
    :review-evidence "beads:pkl-nk5q"
    :role :brine-test-generator}
   {:path "targets/pkl/consumer-tests/CoreConsumerTests.cs"

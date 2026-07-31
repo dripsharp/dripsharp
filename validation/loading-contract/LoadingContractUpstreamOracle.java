@@ -1483,7 +1483,7 @@ public final class LoadingContractUpstreamOracle {
       Files.walk(source).filter(Files::isRegularFile).sorted().forEach(file -> {
         try {
           ZipEntry entry = new ZipEntry(prefix + source.relativize(file).toString().replace('\\', '/'));
-          entry.setTime(0);
+          entry.setTimeLocal(java.time.LocalDateTime.of(1980, 1, 1, 0, 0));
           zip.putNextEntry(entry);
           Files.copy(file, zip);
           zip.closeEntry();
