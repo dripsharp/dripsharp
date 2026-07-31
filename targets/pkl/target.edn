@@ -79,6 +79,9 @@
   {"pkl-parser" "src/DripSharp.Brine.Parser"
    "pkl-core-value-model" "src/DripSharp.Brine"}
   :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+  :excluded-paths
+  ["src/DripSharp.Brine.Parser/source-map.edn"
+   "src/DripSharp.Brine/source-map.edn"]
   :consumer-tests "consumer-tests.edn"
   :publication-mode :pull-request}
  :proof

@@ -68,6 +68,7 @@
    :staging-path "target/generated/brine"
    :profile-projects {"pkl-core" "src/DripSharp.Brine"}
    :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+   :excluded-paths ["src/DripSharp.Brine/source-map.edn"]
    :consumer-tests {:schema-version 1}
    :publication-mode :pull-request})
 
@@ -102,6 +103,7 @@
         (init-repository!
          brine "https://github.com/dripsharp/brine.git"
          [["README.md" "old readme\n"]
+          ["src/DripSharp.Brine/source-map.edn" "old map\n"]
           ["CONTRIBUTING.md" "preserve me\n"]])
         pdfcarton-commit
         (init-repository!
@@ -118,6 +120,9 @@
         _ (write! workspace
                   "target/generated/brine/src/DripSharp.Brine/Generated.cs"
                   "namespace DripSharp.Brine;\n")
+        _ (write! workspace
+                  "target/generated/brine/src/DripSharp.Brine/source-map.edn"
+                  "{:schema-version 1 :mappings []}\n")
         _ (write! workspace "target/generated/brine/LICENSE"
                   "Apache License\n")
         _ (write! workspace "target/generated/brine/NOTICE"
@@ -155,6 +160,9 @@
         rawhttp (:publication (target-directory/read-target :rawhttp))]
     (is (= ["src" "tests" "LICENSE" "NOTICE" "README.md"]
            (:managed-paths brine)))
+    (is (= ["src/DripSharp.Brine.Parser/source-map.edn"
+            "src/DripSharp.Brine/source-map.edn"]
+           (:excluded-paths brine)))
     (is (= "DripSharp.Brine.Tests"
            (get-in brine [:consumer-tests :project :assembly-name])))
     (is (= #{"pkl-parser" "pkl-core-value-model"}
@@ -162,6 +170,12 @@
                               [:consumer-tests :assembly-tests])))))
     (is (= "target/generated/pdfcarton" (:staging-path pdfcarton)))
     (is (= "products/pdfcarton" (:submodule-path pdfcarton)))
+    (is (= #{"src/DripSharp.PdfCarton.IO/source-map.edn"
+             "src/DripSharp.PdfCarton.Fonts/source-map.edn"
+             "src/DripSharp.PdfCarton.Xmp/source-map.edn"
+             "src/DripSharp.PdfCarton/source-map.edn"
+             "src/DripSharp.PdfCarton.Preflight/source-map.edn"}
+           (set (:excluded-paths pdfcarton))))
     (is (= #{"src/DripSharp.PdfCarton"
              "src/DripSharp.PdfCarton.IO"
              "src/DripSharp.PdfCarton.Fonts"
@@ -179,6 +193,7 @@
              {:workspace-root workspace :target-contract contract})]
         (is (= ["LICENSE" "NOTICE" "README.md"
                 "src/DripSharp.Brine/Generated.cs"
+                "src/DripSharp.Brine/source-map.edn"
                 "tests/DripSharp.Brine.Tests/ConsumerTests.cs"]
                (:changes first)))
         (is (= "namespace DripSharp.Brine;\n"
@@ -188,6 +203,13 @@
                (slurp (str (.resolve brine "CONTRIBUTING.md")))))
         (is (not (Files/exists (.resolve brine "proof-only.txt")
                                (make-array java.nio.file.LinkOption 0))))
+        (is (not (Files/exists
+                  (.resolve brine "src/DripSharp.Brine/source-map.edn")
+                  (make-array java.nio.file.LinkOption 0))))
+        (is (Files/isRegularFile
+             (.resolve workspace
+                       "target/generated/brine/src/DripSharp.Brine/source-map.edn")
+             (make-array java.nio.file.LinkOption 0)))
         (is (= other-head (git-output pdfcarton "rev-parse" "HEAD")))
         (is (= [] (:external-actions first)))
         (commit-synchronization! fixture)

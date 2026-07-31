@@ -21,7 +21,7 @@
 (def ^:private generated-publication-keys
   #{:kind :repository-slug :repository-url :default-branch
     :submodule-path :staging-path :profile-projects :managed-paths
-    :consumer-tests :publication-mode})
+    :excluded-paths :consumer-tests :publication-mode})
 
 (defn- fail!
   [message data]
@@ -53,6 +53,15 @@
               :subject subject
               :path value}))
   value)
+
+(defn- relative-under?
+  [root candidate]
+  (or (= root candidate)
+      (str/starts-with? candidate (str root "/"))))
+
+(defn- excluded-path?
+  [excluded-paths candidate]
+  (some #(relative-under? % candidate) excluded-paths))
 
 (defn- generated-publication!
   [target-contract]
@@ -101,6 +110,7 @@
                 :expected value
                 :actual (get publication field)})))
     (let [managed-paths (:managed-paths publication)
+          excluded-paths (:excluded-paths publication)
           profile-projects (:profile-projects publication)
           consumer-tests (:consumer-tests publication)]
       (when-not (and (vector? managed-paths)
@@ -116,6 +126,22 @@
           (fail! "Managed publication path must be top-level"
                  {:reason :nested-managed-path
                   :path managed-path})))
+      (when-not (and (vector? excluded-paths)
+                     (= (count excluded-paths)
+                        (count (distinct excluded-paths))))
+        (fail! "Generated product publication has invalid excluded paths"
+               {:reason :invalid-excluded-paths
+                :excluded-paths excluded-paths}))
+      (doseq [excluded-path excluded-paths]
+        (relative-path! "Excluded publication path" excluded-path)
+        (when-not
+         (some #(and (not= % excluded-path)
+                     (relative-under? % excluded-path))
+               managed-paths)
+          (fail! "Excluded publication path must be nested under a managed path"
+                 {:reason :unmanaged-excluded-path
+                  :path excluded-path
+                  :managed-paths managed-paths})))
       (when-not (and (map? profile-projects)
                      (seq profile-projects))
         (fail! "Generated product publication has no profile project mapping"
@@ -298,7 +324,7 @@
   managed-paths)
 
 (defn- managed-inventory
-  [staging managed-paths]
+  [staging managed-paths excluded-paths]
   (->> managed-paths
        (mapcat
         (fn [managed]
@@ -306,12 +332,14 @@
                                              "Managed staging path")]
             (if (directory-no-follow? source)
               (for [^Path entry (walk-entries source
-                                              "Managed staging directory")]
-                (let [relative (portable (.relativize staging entry))]
-                  (if (directory-no-follow? entry)
-                    [:directory relative nil]
-                    [:file relative (util/sha256-file entry)])))
-              [[:file managed (util/sha256-file source)]]))))
+                                              "Managed staging directory")
+                    :let [relative (portable (.relativize staging entry))]
+                    :when (not (excluded-path? excluded-paths relative))]
+                (if (directory-no-follow? entry)
+                  [:directory relative nil]
+                  [:file relative (util/sha256-file entry)]))
+              (when-not (excluded-path? excluded-paths managed)
+                [[:file managed (util/sha256-file source)]])))))
        (sort-by (juxt second first))
        vec))
 
@@ -436,7 +464,8 @@
         target-contract (resolve-target-contract
                          (assoc options :workspace-root workspace-root))
         publication (exact-runtime-publication! target-contract)
-        {:keys [repository-url submodule-path staging-path managed-paths]}
+        {:keys [repository-url submodule-path staging-path managed-paths
+                excluded-paths]}
         publication
         staging (safe-contained-path! workspace-root staging-path
                                       "Product staging path")
@@ -503,7 +532,7 @@
         other-products
         (other-product-states! workspace-root run-command!
                                entries submodule-path)
-        inventory (managed-inventory staging managed-paths)]
+        inventory (managed-inventory staging managed-paths excluded-paths)]
     {:workspace-root workspace-root
      :target-contract target-contract
      :publication publication
@@ -530,22 +559,26 @@
         (Files/delete path)))))
 
 (defn- copy-path!
-  [source destination]
+  [staging source destination excluded-paths]
   (if (directory-no-follow? source)
     (let [source (paths/absolute source)
           destination (paths/absolute destination)]
       (doseq [^Path entry (walk-entries source "Managed staging directory")]
-        (let [relative (.relativize source entry)
-              target (.resolve destination relative)]
-          (if (directory-no-follow? entry)
-            (Files/createDirectories target (make-array FileAttribute 0))
-            (do
-              (Files/createDirectories (.getParent target)
-                                       (make-array FileAttribute 0))
-              (Files/copy
-               entry target
-               (into-array
-                CopyOption [StandardCopyOption/REPLACE_EXISTING])))))))
+        (let [publication-relative
+              (portable (.relativize (paths/path staging) entry))]
+          (when-not (excluded-path? excluded-paths publication-relative)
+            (let [relative (.relativize source entry)
+                  target (.resolve destination relative)]
+              (if (directory-no-follow? entry)
+                (Files/createDirectories target (make-array FileAttribute 0))
+                (do
+                  (Files/createDirectories (.getParent target)
+                                           (make-array FileAttribute 0))
+                  (Files/copy
+                   entry target
+                   (into-array
+                    CopyOption
+                    [StandardCopyOption/REPLACE_EXISTING])))))))))
     (do
       (Files/createDirectories (.getParent (paths/path destination))
                                (make-array FileAttribute 0))
@@ -575,9 +608,7 @@
 
 (defn- managed-change?
   [managed-paths changed]
-  (some #(or (= % changed)
-             (str/starts-with? changed (str % "/")))
-        managed-paths))
+  (some #(relative-under? % changed) managed-paths))
 
 (defn synchronize!
   "Copies only declared managed paths from proved staging into one clean
@@ -588,15 +619,17 @@
   (let [{:keys [workspace-root publication staging product other-products]
          :as preflight}
         (preflight! (assoc options :run-command! run-command!))
-        managed-paths (:managed-paths publication)]
+        managed-paths (:managed-paths publication)
+        excluded-paths (:excluded-paths publication)]
     (doseq [relative managed-paths]
       (let [source (safe-contained-path! staging relative
                                          "Managed staging path")
             destination (safe-contained-path! product relative
                                               "Managed product path")]
         (delete-tree! destination)
-        (copy-path! source destination)))
-    (let [destination-inventory (managed-inventory product managed-paths)
+        (copy-path! staging source destination excluded-paths)))
+    (let [destination-inventory
+          (managed-inventory product managed-paths excluded-paths)
           _ (when-not (= (:inventory preflight) destination-inventory)
               (fail! "Synchronized managed files differ from staged output"
                      {:reason :synchronized-content-mismatch
@@ -632,6 +665,7 @@
        :submodule-path (:submodule-path publication)
        :base-commit (:base-commit preflight)
        :managed-paths managed-paths
+       :excluded-paths excluded-paths
        :source-sha256 (:source-sha256 preflight)
        :inventory (:inventory preflight)
        :changes changes

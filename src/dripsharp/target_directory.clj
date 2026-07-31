@@ -89,7 +89,7 @@
 (def ^:private generated-publication-keys
   #{:kind :repository-slug :repository-url :default-branch
     :submodule-path :staging-path :profile-projects :managed-paths
-    :consumer-tests :publication-mode})
+    :excluded-paths :consumer-tests :publication-mode})
 
 (def ^:private conformance-publication-keys
   #{:kind})
@@ -1647,6 +1647,7 @@
               staging-path (:staging-path publication)
               profile-projects (:profile-projects publication)
               managed-paths (:managed-paths publication)
+              excluded-paths (:excluded-paths publication)
               consumer-tests-path (:consumer-tests publication)
               publication-mode (:publication-mode publication)
               profile-ids (set (keys profiles))]
@@ -1678,6 +1679,20 @@
              context [:publication :managed-paths index] managed-path
              "a top-level repository path"
              #(= 1 (count (relative-components %)))))
+          (validation/check!
+           context [:publication :excluded-paths] excluded-paths
+           "a vector of distinct paths nested below managed repository paths"
+           #(and (vector? %)
+                 (= (count %) (count (distinct %)))))
+          (doseq [[index excluded-path] (map-indexed vector excluded-paths)]
+            (relative-path! "Excluded publication path" excluded-path)
+            (validation/check!
+             context [:publication :excluded-paths index] excluded-path
+             "a path nested below a declared managed path"
+             #(some (fn [managed]
+                      (and (not= managed %)
+                           (path-contained-by? managed %)))
+                    managed-paths)))
           (validation/check!
            context [:publication :profile-projects] profile-projects
            "a map from every target profile id to one distinct project path"

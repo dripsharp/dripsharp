@@ -260,6 +260,7 @@
     :staging-path "target/generated/acme"
     :profile-projects {"acme-core" "src/Acme.Core"}
     :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+    :excluded-paths []
     :consumer-tests "consumer-tests.edn"
     :publication-mode :pull-request}
    :proof
@@ -483,6 +484,16 @@
          (update-edn! root "targets/acme/target.edn"
                       assoc-in [:publication :managed-paths 0]
                       managed-path)
+         (is (= :invalid-target-directory
+                (:kind
+                 (failure-data
+                  #(target-directory/read-target root :acme)))))))
+     (testing "excluded paths must remain nested below managed paths"
+       (doseq [excluded-path ["../outside" "proof/source-map.edn" "src"]]
+         (write-edn! root "targets/acme/target.edn" (target-manifest))
+         (update-edn! root "targets/acme/target.edn"
+                      assoc-in [:publication :excluded-paths]
+                      [excluded-path])
          (is (= :invalid-target-directory
                 (:kind
                  (failure-data

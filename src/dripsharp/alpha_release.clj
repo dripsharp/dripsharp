@@ -644,8 +644,14 @@
   [relative]
   (some #{"bin" "obj"} (relative-components relative)))
 
+(defn- excluded-managed-path?
+  [excluded-paths relative]
+  (some #(or (= % relative)
+             (str/starts-with? relative (str % "/")))
+        excluded-paths))
+
 (defn- managed-file-inventory
-  [root managed-paths {:keys [ignore-build-components?]}]
+  [root managed-paths {:keys [ignore-build-components? excluded-paths]}]
   (let [root (paths/absolute root)]
     (into
      (sorted-map)
@@ -689,9 +695,12 @@
                        (Files/isRegularFile
                         entry (make-array LinkOption 0)))
                      :when (or (not ignore-build-components?)
-                               (not (ignored-build-component? relative)))]
+                               (not (ignored-build-component? relative)))
+                     :when (not (excluded-managed-path?
+                                 excluded-paths relative))]
                  [relative (util/sha256-file entry)])))
-            [[managed (util/sha256-file managed-root)]])))
+            (when-not (excluded-managed-path? excluded-paths managed)
+              [[managed (util/sha256-file managed-root)]]))))
       managed-paths))))
 
 (defn- inventory-sha256
@@ -760,12 +769,17 @@
                 :actual (second gitlink-match)
                 :git-entry gitlink-output}))
       (let [managed-paths (:managed-paths publication)
+            excluded-paths (:excluded-paths publication)
             staged
             (managed-file-inventory
-             staging managed-paths {:ignore-build-components? true})
+             staging managed-paths
+             {:ignore-build-components? true
+              :excluded-paths excluded-paths})
             committed
             (managed-file-inventory
-             product managed-paths {:ignore-build-components? false})]
+             product managed-paths
+             {:ignore-build-components? false
+              :excluded-paths excluded-paths})]
         (when-not (= staged committed)
           (fail! "Product commit differs from the exact proved generated state"
                  {:reason :proved-state-mismatch

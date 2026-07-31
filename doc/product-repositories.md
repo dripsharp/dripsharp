@@ -81,6 +81,9 @@ Target-owned checksums, fixture attribution, and generated `SHA256SUMS` files
 make the suite deterministic. Comprehensive translator, differential,
 conformance, packaging, and large-corpus gates remain in
 `dripsharp/dripsharp` and run before this focused suite and synchronization.
+Translator-only `source-map.edn` files likewise remain in the proved staging
+tree and are excluded from generated product repositories. They are not needed
+to restore, build, or run the focused consumer tests.
 
 ## GitHub Alpha-Release Assets
 

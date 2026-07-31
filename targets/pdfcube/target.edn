@@ -147,6 +147,12 @@
    "pdfcube-pdfbox" "src/DripSharp.PdfCarton"
    "pdfcube-preflight" "src/DripSharp.PdfCarton.Preflight"}
   :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+  :excluded-paths
+  ["src/DripSharp.PdfCarton.IO/source-map.edn"
+   "src/DripSharp.PdfCarton.Fonts/source-map.edn"
+   "src/DripSharp.PdfCarton.Xmp/source-map.edn"
+   "src/DripSharp.PdfCarton/source-map.edn"
+   "src/DripSharp.PdfCarton.Preflight/source-map.edn"]
   :consumer-tests "consumer-tests.edn"
   :publication-mode :pull-request}
  :proof

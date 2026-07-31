@@ -105,6 +105,7 @@
       :staging-path (str "target/generated/" product-id)
       :profile-projects profile-projects
       :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+      :excluded-paths []
       :consumer-tests {:schema-version 1}
       :publication-mode :pull-request}}))
 
