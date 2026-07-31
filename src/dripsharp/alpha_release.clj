@@ -832,8 +832,6 @@
         (paths/resolve-path build-directory "dotnet-cli-home")
         nuget-scratch-path
         (paths/resolve-path build-directory "nuget-scratch")
-        nuget-plugins-path
-        (paths/resolve-path build-directory "nuget-plugins")
         restore-config-directory
         (paths/resolve-path build-directory "restore-config")
         restore-config
@@ -846,8 +844,6 @@
            dotnet-cli-home (make-array FileAttribute 0))
         _ (Files/createDirectories
            nuget-scratch-path (make-array FileAttribute 0))
-        _ (Files/createDirectories
-           nuget-plugins-path (make-array FileAttribute 0))
         _ (Files/writeString
            restore-config isolated-nuget-config StandardCharsets/UTF_8
            (into-array OpenOption [StandardOpenOption/CREATE_NEW
@@ -858,8 +854,8 @@
          "DOTNET_NOLOGO" "1"
          "DOTNET_SKIP_FIRST_TIME_EXPERIENCE" "1"
          "NUGET_SCRATCH" (str nuget-scratch-path)
-         "NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
-         "NUGET_PLUGIN_PATHS" (str nuget-plugins-path)}
+         "NUGET_NETCORE_PLUGIN_PATHS" ""
+         "NUGET_PLUGIN_PATHS" ""}
         restore-command
         (cond->
          ["dotnet" "restore" (str project-file)
