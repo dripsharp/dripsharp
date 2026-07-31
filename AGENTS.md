@@ -27,6 +27,16 @@ difficult behavior is pending work unless the user-approved PdfCarton exclusion
 list says otherwise. Changes to the PdfCarton goal, exclusions, synchronization
 policy, or completion semantics also require explicit user approval.
 
+The SqlTrellis target is governed independently by
+`doc/targets/jsqlparser/product-goal.md` and its target scope. The complete
+published JSqlParser library is mechanically translated, and the complete
+adapted upstream test suite and fixtures ship as a runnable project in the
+generated repository without becoming a NuGet package. Missing or difficult
+production behavior, tests, helpers, or fixtures are pending work unless the
+user-approved SqlTrellis exclusion list says otherwise. Changes to the
+SqlTrellis goal, exclusions, synchronization policy, shipped-test policy, or
+completion semantics require explicit user approval.
+
 Use Beads, not `doc/`, for temporary planning, current status,
 next-slice selection, progress logs, and deferred follow-up work. Documentation
 should contain only durable product goals, architecture, contracts, and

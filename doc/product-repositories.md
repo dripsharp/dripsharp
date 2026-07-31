@@ -174,3 +174,23 @@ The Apache PDFBox-derived product family uses this mapping:
 The PdfCarton repository contains all five generated projects as one versioned
 product family. Repository creation remains an explicit owner action and is not
 implied by this approved mapping.
+
+## SqlTrellis Mapping
+
+The JSqlParser-derived product family uses this mapping:
+
+| Property | Approved value |
+| --- | --- |
+| Product name | SqlTrellis — JSqlParser for .NET |
+| GitHub repository | `dripsharp/sqltrellis` |
+| Parent submodule | `products/sqltrellis` |
+| Default branch | `master` |
+| Product project | `src/DripSharp.SqlTrellis` |
+| Test project | `tests/DripSharp.SqlTrellis.Tests` |
+| Managed repository files | `src/`, `tests/`, `LICENSE`, `NOTICE`, `README.md` |
+
+The SqlTrellis repository contains the generated production project and the
+complete adapted upstream test suite and fixtures. The test project is included
+in the generated solution and must run independently through `dotnet test`, but
+it is not packed or published to NuGet. Repository creation remains an explicit
+owner action and is not implied by this approved mapping.
