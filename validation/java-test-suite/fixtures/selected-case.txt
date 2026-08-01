@@ -1,0 +1,1 @@
+cross-target fixture retained by generated shipped tests

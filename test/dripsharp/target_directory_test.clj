@@ -570,6 +570,41 @@
                   (set (map :policy
                             (get-in contract
                                     [:publication :test-suites :strategies]))))))))
+     (testing "shared adapted Java strategies pin their suite declaration"
+       (create-target-workspace! root)
+       (let [suite-text "{:schema-version 1}\n"
+             base-project (first (:projects (consumer-tests)))
+             validation-project
+             (assoc base-project
+                    :id "DripSharp.Acme.Adapted.Tests"
+                    :assembly-name "DripSharp.Acme.Adapted.Tests"
+                    :directory "tests/validation/DripSharp.Acme.Adapted.Tests")
+             strategy
+             {:id :adapted-java
+              :kind :adapted-upstream
+              :policy :validation-only
+              :project "DripSharp.Acme.Adapted.Tests"
+              :handler 'dripsharp.java-test-suite/strategy!
+              :suite {:source "adapted-tests/suite.edn"
+                      :sha256 (util/sha256-text suite-text)}}]
+         (write-text! root "targets/acme/adapted-tests/suite.edn" suite-text)
+         (update-edn! root "targets/acme/target.edn"
+                      assoc-in [:publication :excluded-paths]
+                      ["tests/validation"])
+         (update-edn! root "targets/acme/test-suites.edn"
+                      (fn [contract]
+                        (-> contract
+                            (update :projects conj validation-project)
+                            (update :strategies conj strategy))))
+         (let [contract (target-directory/read-target root :acme)]
+           (is (= (:suite strategy)
+                  (get-in contract
+                          [:publication :test-suites :strategies 1 :suite]))))
+         (write-text! root "targets/acme/adapted-tests/suite.edn"
+                      "{:schema-version 2}\n")
+         (is (= :adapted-upstream-suite-checksum-mismatch
+                (:reason
+                 (failure-data #(target-directory/read-target root :acme)))))))
      (testing "validation-only projects must be excluded from publication"
        (create-target-workspace! root)
        (update-edn! root "targets/acme/test-suites.edn"

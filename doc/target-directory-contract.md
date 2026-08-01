@@ -144,7 +144,8 @@ project):
    :packages
    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
     {:id "xunit" :version "2.9.3"}
-    {:id "xunit.runner.visualstudio" :version "3.1.4"}]}]
+    {:id "xunit.runner.visualstudio" :version "3.1.4"}
+    {:id "Castle.Core" :version "5.1.1"}]}]
  :strategies
  [{:id :focused-consumer
    :kind :focused-consumer
@@ -161,7 +162,15 @@ project):
      :destination "Fixtures/example.txt"
      :sha256 "<lowercase SHA-256>"
      :license "Apache-2.0"
-     :attribution "Authored for the generated consumer suite."}]}]}
+     :attribution "Authored for the generated consumer suite."}]}
+  {:id :adapted-java
+   :kind :adapted-upstream
+   :policy :shipped
+   :project "DripSharp.Example.Tests"
+   :handler dripsharp.java-test-suite/strategy!
+   :suite
+   {:source "adapted-tests/java-suite.edn"
+    :sha256 "<lowercase SHA-256>"}}]}
 ```
 
 Project ids and assembly names agree exactly, including casing. Profile
@@ -181,6 +190,16 @@ attribution, `SHA256SUMS`, build-artifact cleanup, and ordered `dotnet restore`,
 `dotnet build`, and `dotnet test` execution. Strategy handlers contribute
 target-specific adapted sources or provenance checks without target branches
 in shared orchestration.
+
+The reusable `dripsharp.java-test-suite/strategy!` handler requires the exact
+`:suite` record shown above. Its source is a checksum-pinned target-owned EDN
+declaration below `adapted-tests/`. That declaration pins each selected Java
+source and governed upstream revision, adapted C# helper, fixture, destination,
+attribution, and loss-sensitive accounting digest. Custom target handlers such
+as Brine's existing upstream-derived strategy may omit `:suite`; they remain
+responsible for an equivalent target-owned provenance and integrity contract.
+Adding `:suite` does not change a strategy's target-specific `:shipped` or
+`:validation-only` policy.
 
 A target that exists only as permanent translator conformance instead uses
 the exact variant:

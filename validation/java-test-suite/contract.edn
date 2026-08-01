@@ -1,0 +1,53 @@
+{:schema-version 1
+ :suite-id "cross-target-java-framework-proof"
+ :generated-namespace "DripSharp.CrossTarget.Generated"
+ :sources
+ [{:target :pkl
+   :path "java/representative/pkl/PklRepresentativeTest.java"
+   :sha256 "6a9761df66647c025251312b5c8306ac1cf02880b967d375fd25f848f1c54b53"
+   :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+   :upstream-path "pkl-config-java/src/test/java/org/pkl/config/java/mapper/PObjectToPObjectTest.java"
+   :selected-surface "JUnit Jupiter lifecycle with AssertJ assertions"}
+  {:target :pdfcarton
+   :path "java/representative/pdfcarton/PdfCartonRepresentativeTest.java"
+   :sha256 "34c7746b326a5324a9baf5df368a9c309fcafa9f643e27190f7b3f874796d1ad"
+   :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+   :upstream-path "pdfbox/src/test/java/org/apache/pdfbox/pdmodel/font/TestFontEmbedding.java"
+   :selected-surface "JUnit Jupiter assertions and Mockito mock, stubbing, spy, and verification"}
+  {:target :pdfcarton
+   :path "java/representative/pdfcarton/PdfCartonParameterRepresentativeTest.java"
+   :sha256 "cc76e98e07cd9e64b5ea38a44045aa90753f7ba883a7c797a4f90c7218dc992d"
+   :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+   :upstream-path "fontbox/src/test/java/org/apache/fontbox/ttf/GlyphSubstitutionTableLiberationFontTest.java"
+   :selected-surface "JUnit Jupiter parameterization with all seven selected ValueSource rows"}
+  {:target :rawhttp
+   :path "java/representative/rawhttp/RawHttpRepresentativeTest.java"
+   :sha256 "509be0e10d4a9026022cfed7827abb3e44db27a03ebaa8dcba6f11d7de75e54f"
+   :revision "947cfdc619100a23f5e429ccb3c42ba6fedc8141"
+   :upstream-path "rawhttp-cli/src/test/java/rawhttp/cli/OptionsParserTest.java"
+   :selected-surface "JUnit 4 assertion messages and expected exceptions"}
+  {:target :sqltrellis
+   :path "java/representative/sqltrellis/SqlTrellisRepresentativeTest.java"
+   :sha256 "32339274eba876b26e464fc344b8892fe2d40f075cf2d76cfe68894d929c2915"
+   :revision "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa"
+   :upstream-path "src/test/java/net/sf/jsqlparser/util/validation/ValidationTest.java"
+   :selected-surface "JUnit Jupiter enablement and Hamcrest assertions"}]
+ :support-sources
+ [{:path "support/RepresentativeTypes.cs"
+   :destination "RepresentativeTypes.cs"
+   :sha256 "825dac96833f1de2aa2fcc3867c50fb8fe4e786f4683a398963e41ca7f723f67"
+   :kind :target-test-helper
+   :targets #{:pdfcarton}}]
+ :fixtures
+ [{:path "fixtures/selected-case.txt"
+   :destination "Fixtures/selected-case.txt"
+   :sha256 "ee70cba3d2d61d54c51675fc943ebd71d5ed8a2cdce3017bf838a0bd3b7a08ab"
+   :license "Apache-2.0"
+   :attribution "Authored cross-target Java test-adaptation proof fixture."}]
+ :expected-accounting
+ {:tests "cdb9eacd904dafd7ff2dd3ad851d55efc5392d13243108dd8e6ff08e11936a21"
+  :parameter-rows "dba19d92aa5afd8089e789e1d273f39121ad9dae6801b98cb3b2149822713ba2"
+  :helpers "2aa216d0ad724a6d1a0bf4f0356fa4cd96e9a860e8bd3d2f401545b6edca84ba"
+  :fixtures ["Fixtures/selected-case.txt"]
+  :enablement "7c415607fbcacd48131f1532eb6fef4f0b75fc3e738bce22a30e3538a3548a01"
+  :framework-calls "413cf2dc4104816323de1fd51c986653de54562c1f73e97591bbb56298d5b619"}}

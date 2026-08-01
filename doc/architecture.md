@@ -218,6 +218,57 @@ and its focused executable evidence. The pinned source-language and reuse
 classification lives in
 `validation/java-test-frameworks/assertion-mocking-inventory.edn`.
 
+#### Deterministic Adapted Java Suite Emission
+
+`dripsharp.java-test-suite` connects the neutral suite strategy contract to the
+resolved JUnit and framework adapters. Its target-owned declaration is an exact,
+checksum-pinned input below `adapted-tests/`. Each selected Java compilation
+unit records the governed target, immutable upstream revision, upstream test
+path, and represented framework surface. Adapted C# helpers and fixtures carry
+their own hashes, output paths, ownership classification, license, and
+attribution. The declaration also pins independent digests for selected tests,
+parameter rows, Java helper types and methods, enablement states, and every
+resolved assertion, matcher, and mocking call.
+
+Emission builds one resolved Spoon model from those Java test inputs, plans
+JUnit semantics, verifies the loss-sensitive accounting projections, translates
+ordinary bodies through the production Java body translator with the shared
+test adapters installed, and writes only disposable generated C# and
+repository-local support. The generated project contains:
+
+* `GeneratedJavaTests.cs` for the selected xUnit cases and static parameter
+  rows;
+* `JavaTestSupport.cs` and explicitly declared adapted target helpers;
+* `Directory.Build.targets` plus complete copied fixtures;
+* `JAVA-TEST-INVENTORY.edn` and `JAVA-TEST-PROVENANCE.tsv` accounting for every
+  selected test, row, helper, fixture, enablement state, and source revision;
+* `SUITE-CONTRACT.edn` and a generated integrity test that verifies fixture
+  hashes from the test output directory.
+
+The outer suite emitter includes all of these files in `SHA256SUMS`. Its verify
+phase reads only the generated ledgers and files; it does not rebuild a Spoon
+model or invoke Java. Consequently a shipped suite can restore, build, and run
+with `dotnet test` in a clean checkout containing only the generated product
+repository. Project references remain contained in that checkout, and the test
+project remains non-packable.
+
+To extend the shared proof, add or update a target-owned Java source selection,
+pin its real upstream provenance and checksum, declare every adapted helper and
+fixture, run discovery to review the complete generated accounting, and pin the
+new projection digests. An unsupported JUnit construct, runtime parameter
+provider, assertion, matcher, mock, lifecycle shape, or target facility must
+stop generation with its resolved source identity until its reusable adapter or
+target strategy is implemented. It must not be omitted, weakened, or converted
+into a product exclusion. Register the suite through the qualified shared
+handler and retain the target's existing shipped-versus-validation-only policy.
+
+The cross-target integration proof is pinned in
+`validation/java-test-suite/contract.edn`. It represents current governed Pkl,
+PDFBox, RawHTTP, and JSqlParser Java cases across JUnit 4, JUnit Jupiter,
+AssertJ, Hamcrest, and Mockito. It proves the shared mechanism only; it neither
+replaces complete target test adaptation nor changes any product goal,
+exclusion, synchronization rule, shipped-test rule, or completion semantic.
+
 ### Recursive Translation Kernel
 
 The translation kernel has two dispatch mechanisms over the same live Spoon

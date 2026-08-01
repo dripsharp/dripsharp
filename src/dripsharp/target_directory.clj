@@ -107,6 +107,12 @@
 (def ^:private test-suite-strategy-keys
   #{:id :kind :policy :project :handler})
 
+(def ^:private adapted-upstream-strategy-keys
+  (conj test-suite-strategy-keys :suite))
+
+(def ^:private adapted-upstream-suite-keys
+  #{:source :sha256})
+
 (def ^:private focused-consumer-strategy-keys
   (into test-suite-strategy-keys #{:profile-tests :fixtures}))
 
@@ -1506,6 +1512,26 @@
                 :reason :consumer-test-source-checksum-mismatch}))))
   entry)
 
+(defn- validate-adapted-upstream-suite!
+  [target-root path suite]
+  (exact-keys! "Adapted-upstream suite declaration" path
+               adapted-upstream-suite-keys suite)
+  (let [source-file
+        (target-file! target-root "Adapted-upstream suite declaration"
+                      ["adapted-tests"] (:source suite))
+        expected (:sha256 suite)
+        actual (util/sha256-file source-file)]
+    (validation/check!
+     (validation-context "Adapted-upstream suite declaration")
+     (conj path :sha256) expected "a lowercase SHA-256 digest" sha256?)
+    (when-not (= expected actual)
+      (fail! "Adapted-upstream suite declaration checksum changed"
+             {:path (:source suite)
+              :expected expected
+              :actual actual
+              :reason :adapted-upstream-suite-checksum-mismatch})))
+  suite)
+
 (defn- resolve-test-suite-handler!
   [selector strategy-id]
   (when-not (qualified-symbol? selector)
@@ -1647,7 +1673,10 @@
               strategy-path [:publication :test-suites :strategies index]
               expected-keys (case kind
                               :focused-consumer focused-consumer-strategy-keys
-                              :adapted-upstream test-suite-strategy-keys
+                              :adapted-upstream
+                              (if (contains? strategy :suite)
+                                adapted-upstream-strategy-keys
+                                test-suite-strategy-keys)
                               test-suite-strategy-keys)]
           (exact-keys! "Test-suite strategy" strategy-path
                        expected-keys strategy)
@@ -1663,6 +1692,14 @@
                              "an exact declared test project identity"
                              project-ids)
           (resolve-test-suite-handler! handler id)
+          (when-let [suite (:suite strategy)]
+            (validate-adapted-upstream-suite!
+             target-root (conj strategy-path :suite) suite))
+          (when (and (= handler 'dripsharp.java-test-suite/strategy!)
+                     (nil? (:suite strategy)))
+            (fail! "Shared adapted Java strategy requires a pinned suite declaration"
+                   {:target target :strategy id
+                    :reason :missing-adapted-upstream-suite}))
           (when (= :focused-consumer kind)
             (let [profile-tests (:profile-tests strategy)
                   fixtures (:fixtures strategy)
