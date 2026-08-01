@@ -58,4 +58,13 @@
   {:source-scope :compile-only
    :runtime-package false
    :destination-semantics :benchmark-build-input}}
- :public-surface {:strategy dripsharp.sqltrellis.java-project/public-surface-strategy}}
+ :public-surface
+ {:strategy dripsharp.sqltrellis.java-project/public-surface-strategy
+  :compiled-contract-file
+  "targets/sqltrellis/validation/contracts/CompiledPublicSurface.tsv"}
+ :package-consumer
+ {:strategy :source-file
+  :project-file "SqlTrellis.PackageConsumer.csproj"
+  :source-path
+  "targets/sqltrellis/validation/probe/SqlTrellisModelApiProgram.cs"
+  :success-message "Independent SqlTrellis model API behavior passed."}}

@@ -1124,6 +1124,8 @@ internal static partial class JavaCompat
         new BigInteger(magnitude.Select(value => unchecked((byte)value)).ToArray(), true, true) * Math.Sign(signum);
     internal static BigInteger NewBigInteger(int signum, byte[] magnitude) =>
         new BigInteger(magnitude, true, true) * Math.Sign(signum);
+    internal static BigInteger BigIntegerParse(string value) =>
+        BigInteger.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
     internal static sbyte[] BigIntegerToByteArray(BigInteger value) =>
         ToSignedBytes(value.ToByteArray(isUnsigned: false, isBigEndian: true));
     internal static BigInteger BigIntegerMod(BigInteger value, BigInteger modulus)

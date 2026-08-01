@@ -4,6 +4,7 @@
   This namespace owns only target identity and discovery-accounting policy.
   JSqlParser SQL semantics do not belong here or in the shared translator."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [dripsharp.baseline :as baseline]
             [dripsharp.java-library :as java-library]
             [dripsharp.paths :as paths]))
@@ -14,6 +15,11 @@
     "src/test/java/net/sf/jsqlparser/benchmark/LatestClasspathRunner.java"
     "src/test/java/net/sf/jsqlparser/benchmark/SqlParserRunner.java"})
 
+(def ^:private model-statement-source-prefixes
+  ["src/main/java/net/sf/jsqlparser/expression/"
+   "src/main/java/net/sf/jsqlparser/schema/"
+   "src/main/java/net/sf/jsqlparser/statement/"])
+
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :sqltrellis-registration-failed))))
 
@@ -22,6 +28,29 @@
       (.relativize (paths/absolute path))
       str
       (.replace \\ \/)))
+
+(defn- model-statement-source? [path]
+  (some #(str/starts-with? path %) model-statement-source-prefixes))
+
+(defn- model-statement-type-key [path]
+  (str "type:"
+       (-> path
+           (str/replace #"^src/main/java/" "")
+           (str/replace #"\.java$" "")
+           (str/replace "/" "."))))
+
+(defn model-statement-seeds
+  "Derives the exact selected milestone identities from the pinned ordinary
+  production graph. The returned identities remain ordinary closure seeds,
+  not a source allowlist: Spoon must resolve each one exactly and recursively
+  retains every project dependency required by its complete body."
+  [project-root project-input]
+  (->> (:production-sources project-input)
+       (map #(relative-to-project project-root %))
+       (filter model-statement-source?)
+       (map #(hash-map :key (model-statement-type-key %) :expand :body))
+       (sort-by :key)
+       vec))
 
 (defn- dependency-hashes [project-input]
   (->> (concat (:classpath-artifacts project-input)
@@ -49,7 +78,8 @@
         (set (map :coordinate
                   (concat (:external-dependencies project-input)
                           (:test-external-dependencies project-input))))
-        hashes (dependency-hashes project-input)]
+        hashes (dependency-hashes project-input)
+        selected-seeds (model-statement-seeds project-root project-input)]
     (baseline/validate-project-input!
      workspace-root :sqltrellis (:profile profile) project-input)
     (when-not (= expected actual)
@@ -69,6 +99,14 @@
     (when-not (= (:artifacts record) hashes)
       (fail! "SqlTrellis production/test dependency bytes changed"
              {:expected (:artifacts record) :actual hashes}))
+    (when-not (= selected-seeds (:seeds profile))
+      (fail! "SqlTrellis model/statement closure seeds changed"
+             {:expected-count (count selected-seeds)
+              :actual-count (count (:seeds profile))
+              :missing (vec (take 30 (set/difference (set selected-seeds)
+                                                     (set (:seeds profile)))))
+              :unexpected (vec (take 30 (set/difference (set (:seeds profile))
+                                                        (set selected-seeds))))}))
     project-input))
 
 (defn rule-bundle

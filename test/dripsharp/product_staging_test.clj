@@ -110,6 +110,30 @@
       (finally
         (delete-tree! (:workspace fixture))))))
 
+(deftest product-root-derives-notice-when-upstream-publishes-none
+  (let [workspace (temp-directory)
+        contract (target-directory/read-target :sqltrellis)
+        staging (paths/resolve-path workspace "target/generated/sqltrellis")
+        project-relative
+        (get-in contract [:publication :profile-projects "sqltrellis"])
+        project-root (paths/resolve-path staging project-relative)]
+    (try
+      (write! project-root "src/Legal/LICENSE.txt" "Apache License\n")
+      (let [result
+            (product-staging/emit!
+             {:workspace-root workspace
+              :target-contract contract
+              :generation {:dependency-emissions []
+                           :emission {:project-root project-root}}})
+            notice
+            (Files/readString (paths/resolve-path (:staging result) "NOTICE"))]
+        (is (str/includes? notice "JSqlParser 5.3"))
+        (is (str/includes? notice "independent mechanical .NET translation"))
+        (is (str/includes? notice
+                           "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa")))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest cleanup-removes-only-declared-project-build-artifacts
   (let [{:keys [workspace contract project-roots] :as fixture} (fixture!)
         source (write! (first project-roots) "src/Generated.cs"

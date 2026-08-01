@@ -174,6 +174,79 @@ internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal delegate long JavaToLongFunction<in TValue>(TValue value);
 internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
 
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaLogLevel
+{
+    internal static readonly JavaLogLevel All = new("ALL", int.MinValue);
+    internal static readonly JavaLogLevel Finest = new("FINEST", 300);
+    internal static readonly JavaLogLevel Finer = new("FINER", 400);
+    internal static readonly JavaLogLevel Fine = new("FINE", 500);
+    internal static readonly JavaLogLevel Config = new("CONFIG", 700);
+    internal static readonly JavaLogLevel Info = new("INFO", 800);
+    internal static readonly JavaLogLevel Warning = new("WARNING", 900);
+    internal static readonly JavaLogLevel Severe = new("SEVERE", 1000);
+    internal static readonly JavaLogLevel Off = new("OFF", int.MaxValue);
+
+    internal string Name { get; }
+    internal int Value { get; }
+
+    private JavaLogLevel(string name, int value)
+    {
+        Name = name;
+        Value = value;
+    }
+}
+
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaLogger
+{
+    private static readonly ConcurrentDictionary<string, JavaLogger> Loggers = new();
+    private readonly string name;
+    private JavaLogLevel? level;
+
+    private JavaLogger(string name) => this.name = name;
+
+    internal static JavaLogger GetLogger(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return Loggers.GetOrAdd(name, static value => new JavaLogger(value));
+    }
+
+    internal bool IsLoggable(JavaLogLevel candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        var threshold = level ?? JavaLogLevel.Info;
+        return threshold != JavaLogLevel.Off && candidate.Value >= threshold.Value;
+    }
+
+    internal void SetLevel(JavaLogLevel? value) => level = value;
+
+    internal void Log(JavaLogLevel candidate, string message) =>
+        Log(candidate, message, null);
+
+    internal void Log(JavaLogLevel candidate, string message, Exception? error)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        if (!IsLoggable(candidate)) return;
+        var rendered = $"{candidate.Name}: {name}: {message}";
+        if (error is not null) rendered += Environment.NewLine + error;
+        if (candidate.Value >= JavaLogLevel.Severe.Value)
+            Trace.TraceError(rendered);
+        else if (candidate.Value >= JavaLogLevel.Warning.Value)
+            Trace.TraceWarning(rendered);
+        else
+            Trace.TraceInformation(rendered);
+    }
+}
+
 internal interface IJavaEconomicMapCursor<out K, out V>
 {
     bool Advance();
@@ -1648,7 +1721,7 @@ sealed class JavaDeque<T> : ICollection<T>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-internal
+public
 class JavaLinkedHashMap<K, V> :
     IDictionary<K, V>,
     IDictionary,
@@ -2308,12 +2381,12 @@ internal static partial class JavaCompat
         return true;
     }
 
-    internal static bool AddAll<T>(ICollection<T> collection, IEnumerable<T> values)
+    internal static bool AddAll<T>(ICollection<T> collection, System.Collections.IEnumerable values)
     {
         var changed = false;
         foreach (var value in values)
         {
-            collection.Add(value);
+            collection.Add((T)value!);
             changed = true;
         }
         return changed;
@@ -2548,9 +2621,7 @@ internal static partial class JavaCompat
         new HashSet<T>(type.GetFields(BindingFlags.Public | BindingFlags.Static)
             .Where(field => type.IsAssignableFrom(field.FieldType))
             .Select(field => (T)field.GetValue(null)!));
-    internal static ISet<T> EnumSetOf<T>(T value) => new HashSet<T> { value };
-    internal static ISet<T> EnumSetOf<T>(T value, params T[] additional) =>
-        new HashSet<T>(new[] { value }.Concat(additional));
+    internal static ISet<T> EnumSetOf<T>(params T[] values) => new HashSet<T>(values);
     internal static ISet<T> EnumSetCopyOf<T>(IEnumerable<T> values) => new HashSet<T>(values);
 
     internal static ReadOnlyCollection<T> UnmodifiableList<T>(IEnumerable<T> values) =>
@@ -3128,6 +3199,9 @@ internal static partial class JavaCompat
         if (target.Length > source.Length) target[source.Length] = default!;
         return target;
     }
+    internal static TTarget[] CollectionToArray<TSource, TTarget>(
+        IEnumerable<TSource> values, Func<int, TTarget[]> generator) =>
+        CollectionToArray(values, generator(0));
     internal static ICollection<object> CastObjects(System.Collections.IEnumerable values) =>
         values.Cast<object>().ToList();
     internal static T CastReference<T>(object? value) => (T)value!;
@@ -3278,6 +3352,12 @@ internal static partial class JavaCompat
     {
         foreach (var value in values) action(value);
     }
+    internal static void ReplaceAll<T>(IList<T> values, Func<T, T> operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        for (var index = 0; index < values.Count; index++)
+            values[index] = operation(values[index]);
+    }
     internal static IEnumerable<T> StreamOf<T>(params T[] values) => values;
     internal static IEnumerable<R> FlatMap<T, R>(IEnumerable<T> values,
         Func<T, IEnumerable<R>> mapper) => values.SelectMany(mapper);
@@ -3341,7 +3421,7 @@ internal static partial class JavaCompat
             .Select(type => (T)Activator.CreateInstance(type!)!);
 
     internal static int HashCode(object? value) => JavaHashCode(value);
-    internal static IEnumerable<T> Stream<T>(IEnumerable<T> values) => values;
+    internal static JavaStream<T> Stream<T>(IEnumerable<T> values) => new(values);
     internal static IEnumerable<object> BoxValues<T>(IEnumerable<T> values) => values.Cast<object>();
     internal static JavaCollector ToList<T>() => new(values => values.Cast<T>().ToList());
     internal static JavaCollector ToSet<T>() => new(values => new HashSet<T>(values.Cast<T>()));

@@ -23,8 +23,13 @@
                              (make-array FileAttribute 0)))
 
 (deftest compiled-contract-file-is-serialized-in-generated-metadata
-  (let [validate-generated!
-        (:validate-generated! (java-library/public-surface-strategy))
+  (let [strategy (java-library/public-surface-strategy)
+        validate-generated! (:validate-generated! strategy)
+        workspace (paths/workspace-root)
+        compiled-only
+        ((:read! strategy)
+         workspace
+         {:compiled-contract-file "test/dripsharp/java_library_test.clj"})
         metadata
         (validate-generated!
          {:derivation :compiled-contract
@@ -35,7 +40,11 @@
           :declarations []
           :configuration {}})]
     (is (= "validation/example-public-surface.tsv"
-           (:compiled-contract-file metadata)))))
+           (:compiled-contract-file metadata)))
+    (is (= :resolved-spoon-model (:derivation compiled-only)))
+    (is (= (paths/resolve-path workspace
+                              "test/dripsharp/java_library_test.clj")
+           (:compiled-contract-file compiled-only)))))
 
 (defn- write-sources! [source-root sources]
   (mapv
@@ -338,6 +347,43 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest generic-method-contracts-and-java-markers-remain-csharp-valid
+  (let [fixture
+        (model!
+         {"example/Visitor.java"
+          (str "package example; public interface Visitor<T> { "
+               "<S> T visit(Statement statement, S context); }")
+          "example/Statement.java"
+          (str "package example; public interface Statement "
+               "extends java.io.Serializable { "
+               "<T, S> T accept(Visitor<T> visitor, S context); "
+               "default void accept(Visitor<?> visitor) { accept(visitor, null); } }")
+          "example/Box.java"
+          (str "package example; public class Box<T> implements Statement { "
+               "public <K, S> K accept(Visitor<K> visitor, S context) { "
+               "return visitor.visit(this, context); } "
+               "public int getType() { return 1; } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        statement
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Statement.cs")))
+        box
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Box.cs")))]
+    (is (not (str/includes? statement ": object")))
+    (is (not (str/includes? statement "FunctionalAdapter")))
+    (is (str/includes?
+         statement
+         "this.accept<TWildcard0_0, object>(visitor, (object)default!);"))
+    (is (not (str/includes? box "Expression.accept")))
+    (is (not (str/includes? box "new virtual int getType()")))
+    (is (str/includes? box "public virtual int getType()"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest project-functional-interfaces-adapt-lambdas-and-method-references
   (let [fixture
         (model! {"example/Handler.java"
@@ -437,16 +483,146 @@
              (java-types/mapping "java.net.Socket")))
       (is (nil? (java-types/mapping "java.util.TimerTask"))))))
 
+(deftest closure-emission-keeps-shell-dependencies-to-selected-members
+  (let [fixture
+        (model!
+         {"example/Api.java"
+          (str "package example; public final class Api { "
+               "public Dependency dependency() { return new Dependency(); } }")
+          "example/BaseDependency.java"
+          (str "package example; public class BaseDependency { "
+               "protected Object unselectedBase; }")
+          "example/Dependency.java"
+          (str "package example; public class Dependency extends BaseDependency { "
+               "protected Object unselected; public Dependency() {} "
+               "public void unused() { unselected = new Object(); } }")})
+        frontend (spoon/build-frontend-model! (:root fixture) (:discovery fixture))
+        closure
+        (spoon/select-resolved-closure!
+         frontend [{:key "type:example.Api" :expand :body}])
+        emission
+        (emit! (assoc fixture :model closure) 1
+               #{:java-compat :java-regex-unicode})
+        surface-strategy (java-library/public-surface-strategy)
+        selected-surface
+        ((:validate-selected! surface-strategy)
+         (paths/workspace-root)
+         ((:read! surface-strategy) (paths/workspace-root) {})
+         closure)
+        public-metadata
+        ((:validate-generated! surface-strategy) selected-surface emission)
+        dependency
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Dependency.cs")))
+        base-dependency
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/BaseDependency.cs")))]
+    (is (str/includes? dependency "public Dependency()"))
+    (is (not (str/includes? dependency "unselected")))
+    (is (not (str/includes? dependency "unused")))
+    (is (not (str/includes? base-dependency "unselectedBase")))
+    (is (not (str/includes? base-dependency "internal BaseDependency()")))
+    (is (pos? (:required-rows public-metadata)))
+    (is (some
+         #(= "executable:example.BaseDependency#<init>()"
+             (get-in % [:row :identity]))
+         (:rows public-metadata)))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest body-expanded-types-retain-complete-nested-type-bodies
+  (let [fixture
+        (model!
+         {"example/Container.java"
+          (str "package example; public final class Container { "
+               "public String format(Option option) { return option.format(); } "
+               "public static class Option { private final String value; "
+               "public Option(String value) { this.value = value; } "
+               "public String getValue() { return value; } "
+               "public String format() { return value; } "
+               "public Option withValue(String ignored) { return this; } } }")})
+        frontend (spoon/build-frontend-model! (:root fixture) (:discovery fixture))
+        closure
+        (spoon/select-resolved-closure!
+         frontend [{:key "type:example.Container" :expand :body}])
+        emission
+        (emit! (assoc fixture :model closure) 1
+               #{:java-compat :java-regex-unicode})
+        surface-strategy (java-library/public-surface-strategy)
+        selected-surface
+        ((:validate-selected! surface-strategy)
+         (paths/workspace-root)
+         ((:read! surface-strategy) (paths/workspace-root) {})
+         closure)
+        public-metadata
+        ((:validate-generated! surface-strategy) selected-surface emission)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Container.cs")))
+        selected-identities
+        (set (map #(get-in % [:row :identity])
+                  (:rows public-metadata)))]
+    (is (str/includes? source "public Option(string value)"))
+    (is (str/includes? source "public virtual string getValue()"))
+    (is (str/includes?
+         source
+         (str "public virtual global::Example.Java.Library.Container.Option "
+              "withValue(string ignored)")))
+    (is (every? selected-identities
+                ["executable:example.Container$Option#<init>(java.lang.String)"
+                 "executable:example.Container$Option#getValue()"
+                 (str "executable:example.Container$Option#withValue("
+                      "java.lang.String)")]))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest shell-types-do-not-acquire-clr-only-public-default-constructors
+  (let [fixture
+        (model!
+         {"example/Api.java"
+          (str "package example; public final class Api { "
+               "public Support inspect() { return null; } }")
+          "example/Support.java"
+          (str "package example; public class Support { "
+               "public Support(int value) {} public void unused() {} }")})
+        frontend (spoon/build-frontend-model! (:root fixture) (:discovery fixture))
+        closure
+        (spoon/select-resolved-closure!
+         frontend [{:key "type:example.Api" :expand :body}])
+        emission
+        (emit! (assoc fixture :model closure) 1
+               #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Support.cs")))]
+    (is (str/includes? source "internal Support() {}"))
+    (is (not (str/includes? source "public Support()")))
+    (is (not (str/includes? source "public Support(int value)")))
+    (is (not (str/includes? source "unused")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest resolved-deprecated-annotation-is-recorded-as-source-metadata
   (let [fixture
         (model! {"example/Legacy.java"
-                 "package example; @Deprecated public interface Legacy {}\n"})
+                 (str "package example; @Deprecated public interface Legacy { "
+                      "@SafeVarargs static <T> void accept(T... values) {} }")})
         model (:model fixture)
         context (mapping-context model (java/resolved-occurrence-index model))
         decisions ((annotation-decider) context)]
-    (is (= [["annotation:java.lang.Deprecated" :source-deprecation-metadata]]
+    (is (= [["annotation:java.lang.Deprecated" :source-deprecation-metadata]
+            ["annotation:java.lang.SafeVarargs" :source-analysis-only]]
            (mapv (juxt :resolved-key :strategy) decisions)))
-    (is (false? (:emitted-runtime-attribute (first decisions))))))
+    (is (every? (comp false? :emitted-runtime-attribute) decisions))))
 
 (deftest project-runtime-annotations-preserve-reflection-semantics
   (let [fixture
@@ -608,6 +784,8 @@
                       "public final class Variance { "
                       "private List<? extends String> field; "
                       "public List<? extends String> values() { return null; } "
+                      "private List<Object> objects; "
+                      "public List<?> objectValues() { return objects; } "
                       "public void accept(List<? extends String> input) {} "
                       "public void copy() { "
                       "List<? extends String> local = field; field = local; } "
@@ -616,7 +794,7 @@
                       "public List<String> concreteValues() { return null; } "
                       "public void copyUnbounded() { "
                       "List<?> local = concreteValues(); } }")})
-        emission (emit! fixture 1)
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Variance.cs")))]
@@ -626,6 +804,10 @@
     (is (str/includes?
          source
          "public global::System.Collections.Generic.IReadOnlyList<string> values()"))
+    (is (str/includes?
+         source
+         (str "public global::System.Collections.Generic.IReadOnlyList<object> objectValues() {\n"
+              "return global::DripSharp.Runtime.JavaCompat.ToReadOnlyList<object>(this.objects);")))
     (is (str/includes?
          source
          "public void accept(global::System.Collections.Generic.IEnumerable<string> input)"))
@@ -643,6 +825,50 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest raw-list-uses-are-adapted-to-resolved-generic-context
+  (let [fixture
+        (model! {"example/RawLists.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "import java.util.Collections; import java.util.List; "
+                      "import java.util.Optional; "
+                      "public final class RawLists { private List<String> typed; "
+                      "private void set(List<String> values) {} "
+                      "private void raw(List values) {} "
+                      "public void fromParameter(List values) { set(values); } "
+                      "public void fromInitializer() { List values = "
+                      "Optional.ofNullable(typed).orElseGet(ArrayList::new); "
+                      "set(values); } public void empty() { set(new ArrayList()); } "
+                      "public void erase() { raw(typed); } "
+                      "public void eraseLocal() { List values = "
+                      "Optional.ofNullable(typed).orElseGet(ArrayList::new); "
+                      "raw(values); } public void addRaw(Object... additions) { "
+                      "List values = typed; Collections.addAll(values, additions); } }")})
+        result (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/RawLists.cs")))]
+    (is (str/includes?
+         source
+         "JavaCompat.CastList<string>(values)"))
+    (is (str/includes?
+         source
+         (str "global::System.Collections.Generic.IList<string> values = "
+              "global::DripSharp.Runtime.JavaOptional<")))
+    (is (str/includes?
+         source
+         "this.set(new global::System.Collections.Generic.List<string>())"))
+    (is (= 2
+           (count
+            (re-seq
+             #"this\.raw\(\(global::System\.Collections\.IList\)\(object\)\("
+             source))))
+    (is (str/includes? source "JavaCompat.AddAll(values, additions)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -1143,6 +1369,8 @@
                       "return value < 0; } "
                       "public static String render(Object value) { "
                       "return value.toString(); } "
+                      "public static String renderBoolean(boolean value) { "
+                      "return Boolean.toString(value); } "
                       "public String renderParent() { "
                       "return super.toString(); } "
                       "public static boolean isSet(Object value) { "
@@ -1172,6 +1400,9 @@
     (is (str/includes?
          source
          "return global::DripSharp.Runtime.JavaCompat.StringValueOf(value);"))
+    (is (= 2 (count (re-seq
+                     #"return global::DripSharp\.Runtime\.JavaCompat\.StringValueOf\(value\);"
+                     source))))
     (is (str/includes? source "return base.ToString()!;"))
     (is (str/includes?
          source
@@ -1343,7 +1574,8 @@
         (model! {"example/Empty.java"
                  (str "package example; import java.util.ArrayList; "
                       "import java.util.Collections; import java.util.LinkedHashMap; "
-                      "import java.util.List; import java.util.Map; "
+                      "import java.util.Collection; import java.util.List; import java.util.Map; "
+                      "import java.util.Set; "
                       "public final class Empty { "
                       "private final Map<String, Integer> immutable = Collections.emptyMap(); "
                       "private final Map<String, Integer> ordered = new LinkedHashMap<>(); "
@@ -1358,6 +1590,14 @@
                       "values.add(\"item\"); "
                       "values.removeIf(value -> value.equalsIgnoreCase(\"drop\")); "
                       "target.remove(\"x\"); } "
+                      "private static String lookup(LinkedHashMap<String, String> target) { "
+                      "return target.get(\"x\"); } "
+                      "private static Collection<String> mapValues("
+                      "LinkedHashMap<String, String> target) { return target.values(); } "
+                      "private static boolean empty(LinkedHashMap<String, String> target) { "
+                      "return target.isEmpty(); } "
+                      "private static Set<Map.Entry<String, String>> entries("
+                      "LinkedHashMap<String, String> target) { return target.entrySet(); } "
                       "public static void fail() { throw new java.util.NoSuchElementException(); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
@@ -1401,6 +1641,12 @@
     (is (str/includes?
          first-source
          "throw new global::System.InvalidOperationException();"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.MapGet(target, \"x\");"))
+    (is (str/includes? first-source "return target.Values;"))
+    (is (str/includes? first-source "JavaCompat.MapIsEmpty(target)"))
+    (is (str/includes? first-source "JavaCompat.MapEntrySet(target)"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -2362,7 +2608,11 @@
                       "public final class Prepending { "
                       "static LinkedList<String> values(String value) { "
                       "LinkedList<String> values = new LinkedList<>(); "
-                      "values.addFirst(value); return values; } }")})
+                      "LinkedList<String> other = new LinkedList<>(); "
+                      "values.addAll(other); values.clear(); "
+                      "values.addFirst(value); values.add(0, value); return values; } "
+                      "static String first(LinkedList<String> values) { "
+                      "return values.get(0); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -2375,6 +2625,16 @@
     (is (str/includes?
          first-source
          "global::DripSharp.Runtime.JavaCompat.ListAddFirst(values, value);"))
+    (is (str/includes?
+         first-source
+         "global::DripSharp.Runtime.JavaCompat.AddAll(values, other);"))
+    (is (str/includes? first-source "values.Clear();"))
+    (is (str/includes?
+         first-source
+         "global::DripSharp.Runtime.JavaCompat.ListAdd(values, 0, value);"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.ListGet(values, 0);"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -3211,7 +3471,8 @@
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.SetOfValues<string>("
               "global::DripSharp.Runtime.JavaCompat.StreamSorted("
-              "global::DripSharp.Runtime.JavaCompat.Map(values, "
+              "global::DripSharp.Runtime.JavaCompat.Map("
+              "global::DripSharp.Runtime.JavaCompat.Stream(values), "
               "global::Example.Java.Library.References.upper)));")))
     (is (str/includes?
          first-source
@@ -3225,10 +3486,13 @@
               "target, value0, value1); });")))
     (is (str/includes?
          first-source
-         "global::DripSharp.Runtime.JavaCompat.ForEach(values, this.accept);"))
+         (str "global::DripSharp.Runtime.JavaCompat.ForEach("
+              "global::DripSharp.Runtime.JavaCompat.Stream(values), "
+              "this.accept);")))
     (is (str/includes?
          first-source
-         (str "global::DripSharp.Runtime.JavaCompat.StreamFilter(values, "
+         (str "global::DripSharp.Runtime.JavaCompat.StreamFilter("
+              "global::DripSharp.Runtime.JavaCompat.Stream(values), "
               "(value0) => typeof(string).IsInstanceOfType(value0))")))
     (is (str/includes?
          first-source
@@ -3266,7 +3530,8 @@
     (is (str/includes?
          source
          (str "global::DripSharp.Runtime.JavaCompat.Collect("
-              "global::DripSharp.Runtime.JavaCompat.MapEntrySet(source), "
+              "global::DripSharp.Runtime.JavaCompat.Stream("
+              "global::DripSharp.Runtime.JavaCompat.MapEntrySet(source)), "
               "global::DripSharp.Runtime.JavaCompat.ToMap<"
               "global::DripSharp.Runtime.JavaMapEntry<string, int>, string, int>(")))
     (is (zero? (:exit
@@ -3443,7 +3708,8 @@
     (is (str/includes?
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.ReduceOptional("
-              "global::DripSharp.Runtime.JavaCompat.MapKeySet(values), "
+              "global::DripSharp.Runtime.JavaCompat.Stream("
+              "global::DripSharp.Runtime.JavaCompat.MapKeySet(values)), "
               "global::System.Math.Max);")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
@@ -4421,6 +4687,7 @@
         (model! {"example/Mode.java"
                  (str "package example; public enum Mode { ALPHA(1), BETA(2); "
                       "private final int codeValue; Mode(int code) { this.codeValue = code; } "
+                      "static Mode from(String name) { return Enum.valueOf(Mode.class, name); } "
                       "int code() { return codeValue; } "
                       "boolean before(Mode other) { return ordinal() < other.ordinal(); } "
                       "int selected() { switch (this) { case ALPHA: return 1; "
@@ -4452,6 +4719,10 @@
          "public static Mode[] values() => global::DripSharp.Runtime.JavaCompat.EnumValues<Mode>();"))
     (is (str/includes?
          first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.EnumValueOf<"
+              "global::Example.Java.Library.Mode>(name);")))
+    (is (str/includes?
+         first-source
          (str "return (global::DripSharp.Runtime.JavaCompat.EnumOrdinal(this) < "
               "global::DripSharp.Runtime.JavaCompat.EnumOrdinal(other));")))
     (is (str/includes?
@@ -4463,6 +4734,31 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest java-util-logging-preserves-level-filtering-and-error-overload
+  (let [fixture
+        (model! {"example/Logging.java"
+                 (str "package example; import java.util.logging.Level; "
+                      "import java.util.logging.Logger; public final class Logging { "
+                      "public static void fine(String message, Exception error) { "
+                      "Logger logger = Logger.getLogger(Logging.class.getName()); "
+                      "logger.log(Level.FINE, message); logger.log(Level.FINE, message, error); "
+                      "} }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Logging.cs")))]
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaLogger.GetLogger("))
+    (is (= 2 (count (re-seq #"logger\.Log\(global::DripSharp.Runtime.JavaLogLevel\.Fine"
+                             source))))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -4753,7 +5049,9 @@
                       "return BigInteger.valueOf(value).toByteArray(); } "
                       "public static int remainder(byte[] magnitude) { "
                       "BigInteger value = new BigInteger(1, magnitude); "
-                      "return value.mod(BigInteger.valueOf(3)).intValue(); } }")})
+                      "return value.mod(BigInteger.valueOf(3)).intValue(); } "
+                      "public static BigInteger parse(String value) { "
+                      "return new BigInteger(value); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         emission (emit! fixture 1 capabilities)
         project-root (:project-root emission)
@@ -4763,6 +5061,7 @@
     (is (str/includes? source "JavaCompat.BigIntegerToByteArray("))
     (is (str/includes? source "JavaCompat.NewBigInteger(1, magnitude)"))
     (is (str/includes? source "JavaCompat.BigIntegerMod("))
+    (is (str/includes? source "JavaCompat.BigIntegerParse(value)"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory project-root
@@ -4828,7 +5127,8 @@
     (is (str/includes?
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.Sum("
-              "global::DripSharp.Runtime.JavaCompat.MapToLong(chunks, "
+              "global::DripSharp.Runtime.JavaCompat.MapToLong("
+              "global::DripSharp.Runtime.JavaCompat.Stream(chunks), "
               "(value0) => value0.size()));")))
     (is (str/includes?
          first-source
@@ -4961,7 +5261,8 @@
   (let [fixture
         (model!
          {"example/Interop.java"
-          (str "package example; import java.util.List; "
+          (str "package example; import java.util.List; import java.util.Spliterator; "
+               "import java.util.function.UnaryOperator; "
                "import java.util.concurrent.atomic.AtomicReference; "
                "public final class Interop { "
                "static String clear(AtomicReference<String> value) { "
@@ -4969,10 +5270,39 @@
                "static String first(List<String> values) { "
                "return values.iterator().next(); } "
                "static String firstProjectList(ProjectList values) { "
-               "return values.iterator().next(); } }")
+               "return values.iterator().next(); } "
+               "static Spliterator<String> split(List<String> values) { "
+               "return values.spliterator(); } "
+               "static void replace(List<String> values, UnaryOperator<String> operator) { "
+               "values.replaceAll(operator); } }")
           "example/ProjectList.java"
-          (str "package example; import java.util.ArrayList; "
-               "public final class ProjectList extends ArrayList<String> { }")
+          (str "package example; import java.util.*; import java.util.function.*; "
+               "import java.util.stream.*; "
+               "public final class ProjectList extends ArrayList<String> { "
+               "public String replace(int index, String value) { "
+               "return set(index, value); } "
+               "public void insert(int index, String value) { "
+               "add(index, value); } "
+               "public boolean removeValue(Object value) { return remove(value); } "
+               "public void update(Collection<String> values, Consumer<String> action, "
+               "Predicate<String> filter, UnaryOperator<String> operator) { "
+               "removeAll(values); retainAll(values); forEach(action); "
+               "removeIf(filter); replaceAll(operator); } "
+               "public List<String> section() { return subList(0, size()); } "
+               "public Spliterator<String> split() { return spliterator(); } "
+               "public boolean containsValue(Object value) { return contains(value); } "
+               "public int firstIndex(Object value) { return indexOf(value); } "
+               "public int lastIndex(Object value) { return lastIndexOf(value); } "
+               "public static String firstStream(String[] values) { "
+               "return Arrays.stream(values).iterator().next(); } "
+               "public void compact() { trimToSize(); } "
+               "public String[] generatedArray(IntFunction<String[]> generator) { "
+               "return toArray(generator); } "
+               "public Stream<String> streamValues() { return stream(); } "
+               "public Stream<String> parallelValues() { return parallelStream(); } "
+               "public ListIterator<String> positions() { return listIterator(); } "
+               "public ListIterator<String> positions(int index) { "
+               "return listIterator(index); } }")
           "example/Base.java"
           (str "package example; public class Base<T> { "
                "public Eager<T> eager() { return Eager.from(this); } }")
@@ -4983,6 +5313,9 @@
         interop
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Interop.cs")))
+        project-list
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/ProjectList.cs")))
         base
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Base.cs")))]
@@ -4990,6 +5323,33 @@
     (is (not (str/includes? interop ".GetAndSet((object)default!)")))
     (is (str/includes? interop ".Next()!"))
     (is (= 2 (count (re-seq #"JavaCompat\.Iterator" interop))))
+    (is (str/includes? interop "return values;"))
+    (is (str/includes? interop "global::DripSharp.Runtime.JavaCompat.ReplaceAll"))
+    (is (str/includes?
+         project-list
+         "return global::DripSharp.Runtime.JavaCompat.ListSet(this, index, value);"))
+    (is (str/includes?
+         project-list
+         "global::DripSharp.Runtime.JavaCompat.ListAdd(this, index, value);"))
+    (is (str/includes?
+         project-list
+         "return global::DripSharp.Runtime.JavaCompat.CollectionRemove(this, value);"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.RemoveAll"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.RetainAll"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.ForEach"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.RemoveIf"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.ReplaceAll"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.SubList"))
+    (is (str/includes? project-list "return this;"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.CollectionContains"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.ListIndexOf"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.ListLastIndexOf"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.StreamOf"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.Iterator"))
+    (is (str/includes? project-list "this.TrimExcess();"))
+    (is (str/includes? project-list "global::DripSharp.Runtime.JavaCompat.CollectionToArray"))
+    (is (= 2 (count (re-seq #"JavaCompat\.Stream\(this\)" project-list))))
+    (is (= 2 (count (re-seq #"JavaCompat\.ListIterator" project-list))))
     (is (str/includes? base ".from(this)"))
     (is (not (str/includes? base "<MethodT>")))
     (is (zero? (:exit
@@ -5920,12 +6280,214 @@
                                         "src/Example/Java/Library/Collecting.cs")))]
     (is (str/includes?
          first-source
-         "return new global::System.Collections.Generic.List<string>(values);"))
+         (str "return new global::System.Collections.Generic.List<string>("
+              "global::DripSharp.Runtime.JavaCompat.Stream(values));")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest inferred-array-list-constructor-references-retain-element-types
+  (let [fixture
+        (model! {"example/Lists.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "import java.util.List; import java.util.Optional; "
+                      "public final class Lists { static List<String> values("
+                      "List<String> existing) { return Optional.ofNullable(existing)"
+                      ".orElseGet(ArrayList::new); } }")})
+        result (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Lists.cs")))]
+    (is (str/includes?
+         source
+         "OrElseGet(() => new global::System.Collections.Generic.List<string>())"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest raw-and-wildcard-self-generic-returns-retain-owner-arguments
+  (let [fixture
+        (model! {"example/Fluent.java"
+                 (str "package example; public class Fluent<T> { "
+                      "public Fluent add(T value) { return this; } "
+                      "public Fluent<?> again() { return this; } "
+                      "public static Fluent<?> from() { "
+                      "return new Fluent<String>(); } }")
+                 "example/Wrapper.java"
+                 (str "package example; public final class Wrapper { "
+                      "private Fluent<String> fluent; public Fluent<?> again() { "
+                      "return fluent.again(); } }")})
+        result (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Fluent.cs")))
+        wrapper
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Wrapper.cs")))]
+    (is (= 2
+           (count
+            (re-seq
+             #"public virtual global::Example.Java.Library.Fluent<T> (?:add|again)"
+             source))))
+    (is (str/includes?
+         source
+         "public static global::Example.Java.Library.Fluent<string> from()"))
+    (is (str/includes?
+         wrapper
+         "public global::Example.Java.Library.Fluent<string> again()"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest primitive-fields-preserve-java-default-initialization
+  (let [fixture
+        (model! {"example/Flags.java"
+                 (str "package example; public final class Flags { "
+                      "private boolean enabled; "
+                      "public boolean isEnabled() { return enabled; } }")})
+        result (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Flags.cs")))]
+    (is (str/includes? source "private bool enabled = default;"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest type-parameter-casts-survive-constructor-delegation
+  (let [fixture
+        (model! {"example/Value.java"
+                 "package example; public class Value { public Value(long value) {} }"
+                 "example/Label.java"
+                 "package example; public final class Label {}"
+                 "example/Generic.java"
+                 (str "package example; public class Generic<T extends Value> { "
+                      "public Generic(T value, String label) {} "
+                      "public Generic(T value, Label label) {} "
+                      "public Generic(Long value, String label) { "
+                      "this((T) new Value(value), label); } }")})
+        result (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Generic.cs")))]
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.CastReference<T>(new global::Example.Java.Library.Value"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest project-wildcard-visitor-parameters-lift-to-method-generics
+  (let [fixture
+        (model! {"example/Node.java"
+                 "package example; public interface Node {}"
+                 "example/Box.java"
+                 (str "package example; public final class Box<T extends Node> { "
+                      "public <R,S> R accept(Visitor<R> visitor, S context) { "
+                      "return visitor.visit(this, context); } }")
+                 "example/Visitor.java"
+                 (str "package example; public interface Visitor<R> { "
+                      "<S> R visit(Box<? extends Node> box, S context); "
+                      "default void visit(Box<? extends Node> box) { "
+                      "this.visit(box, null); } }")
+                 "example/VisitorImpl.java"
+                 (str "package example; public final class VisitorImpl<R> "
+                      "implements Visitor<R> { public <S> R visit("
+                      "Box<? extends Node> box, S context) { return null; } }")
+                 "example/ModelVisitor.java"
+                 (str "package example; public interface ModelVisitor<R> { "
+                      "<S> R visit(Node node, S context); }")
+                 "example/Visitable.java"
+                 (str "package example; public interface Visitable { "
+                      "<R,S> R accept(ModelVisitor<R> visitor, S context); "
+                      "default void accept(ModelVisitor<?> visitor) { "
+                      "this.accept(visitor, null); } }")})
+        result (emit! fixture 1)
+        visitor
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Visitor.cs")))
+        box
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Box.cs")))
+        visitable
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Visitable.cs")))]
+    (is (str/includes?
+         visitor
+         "visit<S, TWildcard0_0>(global::Example.Java.Library.Box<TWildcard0_0> box, S context)"))
+    (is (str/includes?
+         visitor
+         "this.visit<object, TWildcard0_0>(box, (object)default!)"))
+    (is (str/includes? box "visitor.visit<S, T>(this, context)"))
+    (is (str/includes?
+         visitable
+         "this.accept<TWildcard0_0, object>(visitor, (object)default!)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest generic-owner-method-parameters-substitute-from-invocation-target
+  (let [fixture
+        (model! {"example/Holder.java"
+                 (str "package example; import java.util.List; "
+                      "public final class Holder<T> { public Holder<T> add(T value) { "
+                      "return this; } public void set(List<T> values) {} }")
+                 "example/Use.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "public final class Use { private Holder<String> holder; "
+                      "public Holder<String> add(String value) { "
+                      "return holder.add(value); } public void clear() { "
+                      "holder.set(new ArrayList()); } }")})
+        result (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Use.cs")))]
+    (is (not (str/includes? source "CastReference<T>")))
+    (is (str/includes?
+         source
+         "holder.set(new global::System.Collections.Generic.List<string>())"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest default-interface-super-fluent-calls-preserve-java-dispatch
+  (let [fixture
+        (model! {"example/Named.java"
+                 (str "package example; public interface Named { "
+                      "void setName(String name); default Named withName(String name) { "
+                      "setName(name); return this; } }")
+                 "example/Item.java"
+                 (str "package example; public final class Item implements Named { "
+                      "private String name; public void setName(String name) { "
+                      "this.name = name; } public String getName() { return name; } "
+                      "public Item withName(String name) { "
+                      "return (Item) Named.super.withName(name); } }")})
+        result (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Item.cs")))]
+    (is (str/includes?
+         source
+         "(() => { this.setName(name); return this; }))()"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -5971,8 +6533,12 @@
 (deftest string-last-index-from-offset-is-shared
   (let [fixture
         (model! {"example/Unsupported.java"
-                 (str "package example; public final class Unsupported { "
-                      "static int search(String value) { return value.lastIndexOf('x', 2); } }")})
+                 (str "package example; import java.util.Objects; "
+                      "public final class Unsupported { "
+                      "static int search(String value) { return value.lastIndexOf('x', 2); } "
+                      "static int searchText(String value) { return value.indexOf(\"xx\", 2); } "
+                      "static String render(Object value, String fallback) { "
+                      "return Objects.toString(value, fallback); } }")})
         emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
         (slurp (str (paths/resolve-path (:project-root emission)
@@ -5981,6 +6547,12 @@
          source
          (str "return global::DripSharp.Runtime.JavaCompat.StringLastIndexOf("
               "value, (int)('x'), 2);")))
+    (is (str/includes?
+         source
+         "return value.IndexOf(\"xx\", 2, global::System.StringComparison.Ordinal);"))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.ObjectsToString(value, fallback);"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
@@ -6702,7 +7274,8 @@
         second-source
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/Options.cs")))]
-    (is (str/includes? first-source "private bool __field_enabled2;"))
+    (is (str/includes? first-source
+                       "private bool __field_enabled2 = default;"))
     (is (str/includes? first-source "private int __field_enabled = 1;"))
     (is (str/includes? first-source "public bool enabled()"))
     (is (str/includes? first-source "return this.__field_enabled2;"))

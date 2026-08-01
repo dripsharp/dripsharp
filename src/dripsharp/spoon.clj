@@ -1012,13 +1012,28 @@
 
 (defn- member-items
   [^CtType declaration expansion members]
-  (when (= :public-api expansion)
+  (case expansion
+    :body
+    ;; A nested type is part of its containing type's body, not merely a type
+    ;; reference reached from whichever nested members happen to be used.
+    ;; Carry body expansion through that lexical boundary so unused public
+    ;; constructors and methods cannot silently disappear from a body seed.
+    (->> (.getTypeMembers declaration)
+         (filter #(instance? CtType %))
+         (mapv (fn [^CtType nested]
+                 {:key (declaration-key nested)
+                  :declaration nested
+                  :expand :body})))
+
+    :public-api
     (->> (direct-public-members declaration)
          (filter #(or (nil? members) (members (public-member-selector %))))
          (mapv (fn [^CtElement member]
                  {:key (declaration-key member)
                   :declaration member
-                  :expand (if (instance? CtType member) :public-api :body)})))))
+                  :expand (if (instance? CtType member) :public-api :body)})))
+
+    nil))
 
 (defn- compilation-obligation-items
   "Selects real frontend bodies required for a selected type to remain a

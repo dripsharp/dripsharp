@@ -438,6 +438,8 @@
                      :dotnet.type/list-interface]
    "java.util.ListIterator" ["global::DripSharp.Runtime.JavaListIterator"
                              :dotnet.type/java-list-iterator]
+   "java.util.Spliterator" ["global::System.Collections.Generic.IEnumerable"
+                             :dotnet.type/enumerable]
    "java.util.NavigableSet" ["global::System.Collections.Generic.SortedSet"
                              :dotnet.type/navigable-set]
    "java.util.Map" ["global::System.Collections.Generic.IDictionary"
@@ -503,7 +505,11 @@
    "java.util.Base64$Encoder" ["global::DripSharp.Runtime.JavaBase64Encoder"
                                :dotnet.type/base64-encoder]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet"
-                        :dotnet.type/sorted-set]
+                         :dotnet.type/sorted-set]
+   "java.util.logging.Level" ["global::DripSharp.Runtime.JavaLogLevel"
+                               :dotnet.type/java-log-level]
+   "java.util.logging.Logger" ["global::DripSharp.Runtime.JavaLogger"
+                                :dotnet.type/java-logger]
 
    "java.util.concurrent.Callable" ["global::System.Func" :dotnet.type/func]
    "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary"
@@ -539,10 +545,12 @@
    "java.util.function.BinaryOperator" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.Function" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.IntFunction" ["global::System.Func" :dotnet.type/func]
    "java.util.function.LongConsumer" ["global::System.Action<long>"
                                       :dotnet.type/long-consumer]
    "java.util.function.Predicate" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Supplier" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.UnaryOperator" ["global::System.Func" :dotnet.type/func]
    "java.util.function.ToLongFunction" ["global::DripSharp.Runtime.JavaToLongFunction"
                                         :dotnet.type/to-long-function]
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex"
@@ -551,6 +559,8 @@
                               :dotnet.type/regex-matcher]
    "java.util.stream.Stream" ["global::DripSharp.Runtime.JavaStream"
                               :dotnet.type/java-stream]
+   "java.util.stream.BaseStream" ["global::DripSharp.Runtime.JavaStream"
+                                   :dotnet.type/java-stream]
    "java.util.stream.IntStream" ["global::System.Collections.Generic.IEnumerable<int>"
                                  :dotnet.type/int-stream]
    "java.util.stream.LongStream" ["global::System.Collections.Generic.IEnumerable<long>"

@@ -989,8 +989,8 @@
 (defn- selected-declaration-index [resolved-model]
   (when-let [declarations (:declarations resolved-model)]
     (let [index (IdentityHashMap.)]
-      (doseq [[_ {:keys [declaration]}] declarations]
-        (.put index declaration true))
+      (doseq [[_ {:keys [declaration] :as entry}] declarations]
+        (.put index declaration entry))
       index)))
 
 (defn- element-weight [^CtElement element]

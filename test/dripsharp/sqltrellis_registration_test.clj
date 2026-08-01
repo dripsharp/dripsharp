@@ -88,13 +88,14 @@
     (is (= :sqltrellis (:target target)))
     (is (= revision (str/trim (:output checkout))))
     (is (= "Apache-2.0" (get-in target [:baseline :record :upstream :license])))
-    (is (= :pending
+    (is (nil?
+         (get-in target
+                 [:baseline :record :profiles :core
+                  :public-contract-status])))
+    (is (= 5421
            (get-in target
                    [:baseline :record :profiles :core
-                    :public-contract-status])))
-    (is (nil? (get-in target
-                      [:baseline :record :profiles :core
-                       :public-contract-rows])))
+                    :public-contract-rows])))
     (is (= "dripsharp/sqltrellis"
            (get-in target [:publication :repository-slug])))
     (is (= "products/sqltrellis"
@@ -116,6 +117,9 @@
 (deftest neutral-model-retains-the-pinned-production-and-test-graph
   (let [input @live-input
         project-root (paths/resolve-path workspace "research/jsqlparser")
+        profile (harness/read-profile workspace profile-file)
+        model-statement-seeds
+        (sqltrellis/model-statement-seeds project-root input)
         benchmarks
         (->> (:test-sources input)
              (map #(relative-path project-root %))
@@ -124,7 +128,7 @@
              sort vec)]
     (sqltrellis/validate-project-input!
      {:workspace-root workspace
-      :profile (harness/read-profile workspace profile-file)
+      :profile profile
       :project-input input})
     (is (= 444 (count (:production-sources input))))
     (is (= 15 (count (:generated-production-sources input))))
@@ -135,6 +139,20 @@
     (is (= 48 (count (:test-external-dependencies input))))
     (is (= 7 (count (:classpath-artifacts input))))
     (is (= 48 (count (:test-classpath-artifacts input))))
+    (is (= 310 (count model-statement-seeds)))
+    (is (= model-statement-seeds (:seeds profile)))
+    (is (= {:expression 131 :schema 8 :statement 171}
+           (frequencies
+            (map (fn [{:keys [key]}]
+                   (cond
+                     (str/starts-with? key
+                                       "type:net.sf.jsqlparser.expression.")
+                     :expression
+                     (str/starts-with? key
+                                       "type:net.sf.jsqlparser.schema.")
+                     :schema
+                     :else :statement))
+                 model-statement-seeds))))
     (is (empty?
          (set/intersection
           (set (concat (:production-sources input)

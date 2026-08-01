@@ -85,31 +85,62 @@
                 :declared (mapv (comp str :project-root) records)})))
      emitted)))
 
+(defn- derived-notice
+  [target-contract]
+  (let [upstream (get-in target-contract [:baseline :record :upstream])]
+    (str (:name upstream) " " (:version upstream) "\n\n"
+         "This repository contains an independent mechanical .NET translation "
+         "of " (:name upstream) ". It is not affiliated with or endorsed by "
+         "the upstream project.\n\n"
+         "The translated upstream source is provided under the "
+         (:license upstream) " license selected by this target. See LICENSE "
+         "for the complete license text.\n\n"
+         "Upstream source revision: " (:revision upstream) "\n"
+         "Upstream repository: " (:repository upstream) "\n")))
+
 (defn- generated-legal-content!
-  [selected file-name]
+  [target-contract selected file-name]
   (let [entries
         (mapv
          (fn [{:keys [profile project-root source-directory]}]
            (let [file (paths/resolve-path project-root source-directory
                                           "Legal" (str file-name ".txt"))]
-             (when-not (paths/regular-file? file)
-               (fail! "Generated product legal file is missing"
-                      {:reason :missing-generated-legal-file
-                       :profile profile
-                       :path (str file)}))
-             {:profile profile
-              :path file
-              :sha256 (util/sha256-file file)
-              :content (Files/readString file StandardCharsets/UTF_8)}))
+             (when (paths/regular-file? file)
+               {:profile profile
+                :path file
+                :sha256 (util/sha256-file file)
+                :content (Files/readString file StandardCharsets/UTF_8)})))
          selected)
-        hashes (set (map :sha256 entries))]
-    (when-not (= 1 (count hashes))
-      (fail! "Generated product projects disagree on repository legal content"
-             {:reason :inconsistent-generated-legal-file
+        present (vec (remove nil? entries))
+        hashes (set (map :sha256 present))]
+    (when (and (not= (count present) (count selected))
+               (seq present))
+      (fail! "Generated product legal file is missing"
+             {:reason :missing-generated-legal-file
               :file file-name
-              :projects
-              (mapv #(select-keys % [:profile :path :sha256]) entries)}))
-    (:content (first entries))))
+              :missing-profiles
+              (mapv :profile
+                    (keep-indexed
+                     (fn [index entry]
+                       (when-not entry (nth selected index)))
+                     entries))}))
+    (if (empty? present)
+      (if (and (= "NOTICE" file-name)
+               (nil? (get-in target-contract
+                             [:baseline :record :upstream :notice-reference])))
+        (derived-notice target-contract)
+        (fail! "Generated product legal file is missing"
+               {:reason :missing-generated-legal-file
+                :file file-name
+                :profiles (mapv :profile selected)}))
+      (do
+        (when-not (= 1 (count hashes))
+          (fail! "Generated product projects disagree on repository legal content"
+                 {:reason :inconsistent-generated-legal-file
+                  :file file-name
+                  :projects
+                  (mapv #(select-keys % [:profile :path :sha256]) present)}))
+        (:content (first present))))))
 
 (defn- project-line
   [{:keys [assembly-name package-title target-framework repository-path
@@ -194,8 +225,8 @@
     (let [records (profile-records target-contract staging)
           selected (selected-records! records generation staging)
           content
-          {"LICENSE" (generated-legal-content! selected "LICENSE")
-           "NOTICE" (generated-legal-content! selected "NOTICE")
+          {"LICENSE" (generated-legal-content! target-contract selected "LICENSE")
+           "NOTICE" (generated-legal-content! target-contract selected "NOTICE")
            "README.md" (render-readme target-contract records)}]
       (doseq [[relative text] content]
         (util/write-text! (paths/resolve-path staging relative) text))

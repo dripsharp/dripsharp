@@ -52,8 +52,7 @@
    :source-project-dependencies []
    :package-id "DripSharp.SqlTrellis"
    :source-counts {:ordinary 444 :generated 15}
-   :public-contract-rows nil
-   :public-contract-status :pending}}
+   :public-contract-rows 5421}}
  :contracts
  {:discovery
   {:production-resources 1

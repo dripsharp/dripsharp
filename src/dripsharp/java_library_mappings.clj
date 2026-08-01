@@ -65,6 +65,10 @@
     :java.lang.boolean/string-value
     "executable:java.lang.Boolean#toString()"
     "global::DripSharp.Runtime.JavaCompat.StringValueOf")
+   (static-call
+    :java.lang.boolean/string-value-static
+    "executable:java.lang.Boolean#toString(boolean)"
+    "global::DripSharp.Runtime.JavaCompat.StringValueOf")
    (compat-call
     :java.lang.double/string-value
     "executable:java.lang.Double#toString()"
@@ -88,7 +92,35 @@
    (compat-call
     :java.lang.class/get-constructor
     "executable:java.lang.Class#getConstructor(java.lang.Class[])"
-    "global::DripSharp.Runtime.JavaCompat.ClassGetConstructor")])
+    "global::DripSharp.Runtime.JavaCompat.ClassGetConstructor")
+   (custom
+    :java.lang.string/index-of-from
+    "executable:java.lang.String#indexOf(java.lang.String,int)"
+    :java-library.mapping/string-index-of-from
+    #{}
+    #{:test/shared-java-library})
+   (static-call
+    :java.util.objects/to-string-default
+    "executable:java.util.Objects#toString(java.lang.Object,java.lang.String)"
+    "global::DripSharp.Runtime.JavaCompat.ObjectsToString")
+   (custom
+    :java.lang.enum/value-of
+    "executable:java.lang.Enum#valueOf(java.lang.Class,java.lang.String)"
+    :java-library.mapping/enum-value-of
+    #{}
+    #{:test/shared-java-library})
+   (static-call
+    :java.util.logging.logger/get-logger
+    "executable:java.util.logging.Logger#getLogger(java.lang.String)"
+    "global::DripSharp.Runtime.JavaLogger.GetLogger")
+   (rename
+    :java.util.logging.logger/log
+    "executable:java.util.logging.Logger#log(java.util.logging.Level,java.lang.String)"
+    "Log")
+   (rename
+    :java.util.logging.logger/log-with-error
+    "executable:java.util.logging.Logger#log(java.util.logging.Level,java.lang.String,java.lang.Throwable)"
+    "Log")])
 
 (def sql-entries
   [(static-call
@@ -186,6 +218,42 @@
    (compat-call
     :java.util.array-list/get
     "executable:java.util.ArrayList#get(int)"
+    "global::DripSharp.Runtime.JavaCompat.ListGet")
+   (custom
+    :java.util.array-list/spliterator
+    "executable:java.util.ArrayList#spliterator()"
+    :java-library.mapping/array-list-spliterator
+    #{}
+    #{:test/shared-java-library})
+   (custom
+    :java.util.list/spliterator
+    "executable:java.util.List#spliterator()"
+    :java-library.mapping/array-list-spliterator
+    #{}
+    #{:test/shared-java-library})
+   (compat-call
+    :java.util.array-list/replace-all
+    "executable:java.util.ArrayList#replaceAll(java.util.function.UnaryOperator)"
+    "global::DripSharp.Runtime.JavaCompat.ReplaceAll")
+   (compat-call
+    :java.util.list/replace-all
+    "executable:java.util.List#replaceAll(java.util.function.UnaryOperator)"
+    "global::DripSharp.Runtime.JavaCompat.ReplaceAll")
+   (compat-call
+    :java.util.stream.base-stream/iterator
+    "executable:java.util.stream.BaseStream#iterator()"
+    "global::DripSharp.Runtime.JavaCompat.Iterator")
+   (rename
+    :java.util.array-list/trim-to-size
+    "executable:java.util.ArrayList#trimToSize()"
+    "TrimExcess")
+   (compat-call
+    :java.util.collection/to-array-generator
+    "executable:java.util.Collection#toArray(java.util.function.IntFunction)"
+    "global::DripSharp.Runtime.JavaCompat.CollectionToArray")
+   (compat-call
+    :java.util.linked-list/get
+    "executable:java.util.LinkedList#get(int)"
     "global::DripSharp.Runtime.JavaCompat.ListGet")
    (compat-call
     :java.util.list/add
@@ -671,7 +739,8 @@
    [:java-library.mapping.executable/handler-0208
     ["executable:java.util.Deque#add(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0209
-    ["executable:java.util.Deque#addAll(java.util.Collection)"]]
+    ["executable:java.util.Deque#addAll(java.util.Collection)"
+     "executable:java.util.LinkedList#addAll(java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0210
     ["executable:java.util.Deque#contains(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0211 ["executable:java.util.Deque#isEmpty()"]]
@@ -703,11 +772,13 @@
    [:java-library.mapping.executable/handler-0229
     ["executable:java.util.Collection#removeAll(java.util.Collection)"
      "executable:java.util.AbstractCollection#removeAll(java.util.Collection)"
-     "executable:java.util.List#removeAll(java.util.Collection)"]]
+     "executable:java.util.List#removeAll(java.util.Collection)"
+     "executable:java.util.ArrayList#removeAll(java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0230
     ["executable:java.util.Collection#retainAll(java.util.Collection)"
      "executable:java.util.AbstractCollection#retainAll(java.util.Collection)"
-     "executable:java.util.List#retainAll(java.util.Collection)"]]
+     "executable:java.util.List#retainAll(java.util.Collection)"
+     "executable:java.util.ArrayList#retainAll(java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0231
     ["executable:java.util.Collections#sort(java.util.List)"
      "executable:java.util.Collections#sort(java.util.List,java.util.Comparator)"]]
@@ -738,21 +809,28 @@
    [:java-library.mapping.executable/handler-0245
     ["executable:java.util.Comparator#comparing(java.util.function.Function)"]]
    [:java-library.mapping.executable/handler-0246
-    ["executable:java.util.List#add(int,java.lang.Object)"]]
+    ["executable:java.util.List#add(int,java.lang.Object)"
+     "executable:java.util.ArrayList#add(int,java.lang.Object)"
+     "executable:java.util.LinkedList#add(int,java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0247
     ["executable:java.util.List#addAll(int,java.util.Collection)"
      "executable:java.util.ArrayList#addAll(int,java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0248
-    ["executable:java.util.List#indexOf(java.lang.Object)"]]
+    ["executable:java.util.List#indexOf(java.lang.Object)"
+     "executable:java.util.ArrayList#indexOf(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0249
-    ["executable:java.util.List#lastIndexOf(java.lang.Object)"]]
+    ["executable:java.util.List#lastIndexOf(java.lang.Object)"
+     "executable:java.util.ArrayList#lastIndexOf(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0250 ["executable:java.util.List#remove(int)"]]
    [:java-library.mapping.executable/handler-0251
-    ["executable:java.util.List#set(int,java.lang.Object)"]]
+    ["executable:java.util.List#set(int,java.lang.Object)"
+     "executable:java.util.ArrayList#set(int,java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0252
     ["executable:java.util.List#sort(java.util.Comparator)"
      "executable:java.util.ArrayList#sort(java.util.Comparator)"]]
-   [:java-library.mapping.executable/handler-0253 ["executable:java.util.List#subList(int,int)"]]
+   [:java-library.mapping.executable/handler-0253
+    ["executable:java.util.List#subList(int,int)"
+     "executable:java.util.ArrayList#subList(int,int)"]]
    [:java-library.mapping.executable/handler-0254
     ["executable:java.util.Stack#push(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0255 ["executable:java.util.Stack#pop()"]]
@@ -765,7 +843,9 @@
    [:java-library.mapping.executable/handler-0261 ["executable:java.util.Vector#clear()"]]
    [:java-library.mapping.executable/handler-0262 ["executable:java.util.Vector#subList(int,int)"]]
    [:java-library.mapping.executable/handler-0263
-    ["executable:java.util.Map#isEmpty()" "executable:java.util.TreeMap#isEmpty()"]]
+    ["executable:java.util.Map#isEmpty()"
+     "executable:java.util.TreeMap#isEmpty()"
+     "executable:java.util.HashMap#isEmpty()"]]
    [:java-library.mapping.executable/handler-0264
     ["executable:java.util.Set#addAll(java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0265 ["executable:java.util.Set#isEmpty()"]]
@@ -1176,7 +1256,9 @@
     ["executable:java.lang.StringBuilder#substring(int,int)"
      "executable:java.lang.AbstractStringBuilder#substring(int,int)"]]
    [:java-library.mapping.executable/handler-0499 ["executable:java.lang.StringBuilder#toString()"]]
-   [:java-library.mapping.executable/handler-0500 ["executable:java.util.Collection#stream()"]]
+   [:java-library.mapping.executable/handler-0500
+    ["executable:java.util.Collection#stream()"
+     "executable:java.util.Collection#parallelStream()"]]
    [:java-library.mapping.executable/handler-0501 ["executable:java.lang.Object#getClass()"]]
    [:java-library.mapping.executable/handler-0502
     ["executable:java.lang.Class#forName(java.lang.String)"]]
@@ -1271,7 +1353,10 @@
     ["executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"]]
    [:java-library.mapping.executable/handler-0551
     ["executable:java.util.Map#entry(java.lang.Object,java.lang.Object)"]]
-   [:java-library.mapping.executable/handler-0552 ["executable:java.util.Map#entrySet()"]]
+   [:java-library.mapping.executable/handler-0552
+    ["executable:java.util.Map#entrySet()"
+     "executable:java.util.HashMap#entrySet()"
+     "executable:java.util.LinkedHashMap#entrySet()"]]
    [:java-library.mapping.executable/handler-0553
     ["executable:java.util.Map#containsKey(java.lang.Object)"
      "executable:java.util.TreeMap#containsKey(java.lang.Object)"]]
@@ -1302,7 +1387,8 @@
    [:java-library.mapping.executable/handler-0566
     ["executable:java.util.Map#values()"
      "executable:java.util.SortedMap#values()"
-     "executable:java.util.TreeMap#values()"]]
+     "executable:java.util.TreeMap#values()"
+     "executable:java.util.LinkedHashMap#values()"]]
    [:java-library.mapping.executable/handler-0567
     ["executable:java.util.Map#clear()"
      "executable:java.util.HashMap#clear()"
@@ -1323,7 +1409,8 @@
    [:java-library.mapping.executable/handler-0574 ["executable:java.util.HashMap#size()"]]
    [:java-library.mapping.executable/handler-0575
     ["executable:java.util.Map#get(java.lang.Object)"
-     "executable:java.util.TreeMap#get(java.lang.Object)"]]
+     "executable:java.util.TreeMap#get(java.lang.Object)"
+     "executable:java.util.LinkedHashMap#get(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0576
     ["executable:java.util.Map#remove(java.lang.Object)"
      "executable:java.util.TreeMap#remove(java.lang.Object)"]]
@@ -1334,7 +1421,8 @@
    [:java-library.mapping.executable/handler-0579 ["executable:java.util.Map#hashCode()"]]
    [:java-library.mapping.executable/handler-0580 ["executable:java.util.Map$Entry#getKey()"]]
    [:java-library.mapping.executable/handler-0581
-    ["executable:java.lang.Iterable#forEach(java.util.function.Consumer)"]]
+    ["executable:java.lang.Iterable#forEach(java.util.function.Consumer)"
+     "executable:java.util.ArrayList#forEach(java.util.function.Consumer)"]]
    [:java-library.mapping.executable/handler-0582 ["executable:java.util.Map$Entry#getValue()"]]
    [:java-library.mapping.executable/handler-0583
     ["executable:java.util.Map$Entry#setValue(java.lang.Object)"]]
@@ -1352,13 +1440,16 @@
    [:java-library.mapping.executable/handler-0590
     ["executable:java.util.Collection#clear()"
      "executable:java.util.Set#clear()"
-     "executable:java.util.HashSet#clear()"]]
+     "executable:java.util.HashSet#clear()"
+     "executable:java.util.LinkedList#clear()"]]
    [:java-library.mapping.executable/handler-0591
     ["executable:java.util.ArrayList#ensureCapacity(int)"]]
    [:java-library.mapping.executable/handler-0592
-    ["executable:java.util.List#remove(java.lang.Object)"]]
+    ["executable:java.util.List#remove(java.lang.Object)"
+     "executable:java.util.ArrayList#remove(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0593
-    ["executable:java.util.List#removeIf(java.util.function.Predicate)"]]
+    ["executable:java.util.List#removeIf(java.util.function.Predicate)"
+     "executable:java.util.ArrayList#removeIf(java.util.function.Predicate)"]]
    [:java-library.mapping.executable/handler-0594
     ["executable:java.util.Collection#removeIf(java.util.function.Predicate)"]]
    [:java-library.mapping.executable/handler-0595
@@ -1369,8 +1460,12 @@
     ["executable:java.util.ArrayList#iterator()"
      "executable:java.util.List#iterator()"
      "executable:java.util.AbstractSequentialList#iterator()"]]
-   [:java-library.mapping.executable/handler-0604 ["executable:java.util.List#listIterator()"]]
-   [:java-library.mapping.executable/handler-0605 ["executable:java.util.List#listIterator(int)"]]
+   [:java-library.mapping.executable/handler-0604
+    ["executable:java.util.List#listIterator()"
+     "executable:java.util.ArrayList#listIterator()"]]
+   [:java-library.mapping.executable/handler-0605
+    ["executable:java.util.List#listIterator(int)"
+     "executable:java.util.ArrayList#listIterator(int)"]]
    [:java-library.mapping.executable/handler-0606
     ["executable:java.util.List#containsAll(java.util.Collection)"
      "executable:java.util.Collection#containsAll(java.util.Collection)"
@@ -1424,6 +1519,7 @@
    [:java-library.mapping.executable/handler-0627
     ["executable:java.util.Collection#contains(java.lang.Object)"
      "executable:java.util.AbstractCollection#contains(java.lang.Object)"
+     "executable:java.util.ArrayList#contains(java.lang.Object)"
      "executable:java.util.Set#contains(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0628
     ["executable:java.util.HashSet#contains(java.lang.Object)"]]
@@ -2027,6 +2123,8 @@
     ["executable:java.io.SequenceInputStream#<init>(java.io.InputStream,java.io.InputStream)"]]
    [:java-library.mapping.constructor/handler-0025
     ["executable:java.math.BigInteger#<init>(int,byte[])"]]
+   [:java-library.mapping.constructor/handler-0046
+    ["executable:java.math.BigInteger#<init>(java.lang.String)"]]
    [:java-library.mapping.constructor/handler-0026 ["executable:java.math.BigDecimal#<init>(int)"]]
    [:java-library.mapping.constructor/handler-0027
     ["executable:java.math.BigDecimal#<init>(java.lang.String)"]]
@@ -2374,6 +2472,8 @@
    "global::System.Globalization.CultureInfo.InvariantCulture"
    "field:java.util.Locale#US"
    "global::System.Globalization.CultureInfo.GetCultureInfo(\"en-US\")"
+   "field:java.util.logging.Level#FINE"
+   "global::DripSharp.Runtime.JavaLogLevel.Fine"
    "field:java.util.regex.Pattern#CANON_EQ" "128"
    "field:java.util.regex.Pattern#CASE_INSENSITIVE" "2"
    "field:java.util.regex.Pattern#COMMENTS" "4"

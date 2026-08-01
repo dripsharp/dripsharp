@@ -734,6 +734,8 @@ internal static partial class JavaCompat
         string.Join(delimiter, values);
     internal static string StringValueOf(float value) => JavaFloatingString(value);
     internal static string StringValueOf(double value) => JavaFloatingString(value);
+    internal static string ObjectsToString(object? value, string? nullDefault) =>
+        value is null ? nullDefault! : StringValueOf(value);
     internal static string Normalize(string value, NormalizationForm form) =>
         value.Normalize(form);
     internal static StringBuilder AppendValue(StringBuilder builder, object? value)

@@ -164,7 +164,7 @@
   (str (identifier (.getSimpleName type)) ".cs"))
 
 (declare type-node create-body-context functional-expression-node
-         functional-interface-method)
+         functional-interface-method owner-type-node)
 
 (defn- context [options]
   (let [ctx-holder (atom nil)
@@ -436,6 +436,24 @@
                  [(recur-node argument)
                   (recur-node argument)
                   (recur-node argument)]))
+
+             (= "java.util.function.Predicate"
+                (.getQualifiedName reference))
+             (let [argument (first actual-arguments)]
+               (when argument
+                 [(recur-node argument) (raw "bool")]))
+
+             (= "java.util.function.IntFunction"
+                (.getQualifiedName reference))
+             (let [result (first actual-arguments)]
+               (when result
+                 [(raw "int") (recur-node result)]))
+
+             (= "java.util.function.UnaryOperator"
+                (.getQualifiedName reference))
+             (let [argument (first actual-arguments)]
+               (when argument
+                 [(recur-node argument) (recur-node argument)]))
 
              (and (empty? actual-arguments)
                   (instance? CtType declaration)
@@ -742,10 +760,18 @@
 
 (defn- unbounded-wildcard-collection-reference?
   [^CtTypeReference reference]
-  (and (= "java.util.Collection" (some-> reference .getQualifiedName))
+  (let [qualified-name (some-> reference .getQualifiedName)
+        parent (when (.isParentInitialized reference) (.getParent reference))
+        method (when (instance? CtParameter parent)
+                 (some-> ^CtParameter parent .getParent))
+        project-method?
+        (and (instance? CtMethod method)
+             (some-> ^CtMethod method .getDeclaringType .isShadow not))]
+    (and (or (= "java.util.Collection" qualified-name)
+             (and (= "java.util.List" qualified-name) project-method?))
        (= 1 (count (.getActualTypeArguments reference)))
        (unbounded-wildcard-reference?
-        (first (.getActualTypeArguments reference)))))
+        (first (.getActualTypeArguments reference))))))
 
 (defn- unbounded-wildcard-map-reference?
   [^CtTypeReference reference]
@@ -868,10 +894,38 @@
      (raw target)
      [(sequence-node [(type-node ctx element) (raw "?")])])))
 
+(defn- project-wildcard-reference?
+  [^CtTypeReference reference]
+  (let [declaration (.getTypeDeclaration reference)]
+    (and (instance? CtType declaration)
+         (not (.isShadow ^CtType declaration))
+         (some #(instance? CtWildcardReference %)
+               (.getActualTypeArguments reference)))))
+
 (defn- declaration-type-node [ctx ^CtElement element ^CtTypeReference reference]
-  (let [base (or (when (nullable-boxed-collection-declaration?
+  (let [initializer-reference
+        (when (instance? CtLocalVariable element)
+          (some-> ^CtLocalVariable element .getDefaultExpression .getType))
+        inferred-raw-local-reference
+        (when (and initializer-reference
+                   (empty? (.getActualTypeArguments reference))
+                   (= (.getQualifiedName reference)
+                      (.getQualifiedName ^CtTypeReference initializer-reference))
+                   (seq (.getActualTypeArguments
+                         ^CtTypeReference initializer-reference)))
+          initializer-reference)
+        inferred-wildcard-local?
+        (and (instance? CtLocalVariable element)
+             (project-wildcard-reference? reference)
+             (or initializer-reference
+                 (and (.isParentInitialized element)
+                      (instance? CtForEach (.getParent element)))))
+        base (or (when inferred-wildcard-local? (raw "var"))
+                 (when (nullable-boxed-collection-declaration?
                         element reference)
                    (nullable-boxed-collection-node ctx reference))
+                 (when inferred-raw-local-reference
+                   (type-node ctx inferred-raw-local-reference))
                  (when (or (instance? CtParameter element)
                            (instance? CtMethod element)
                            (and (instance? CtLocalVariable element)
@@ -1468,9 +1522,10 @@
                   (raw "?)(") inner (raw ")")])
 
                 (and (not (.isPrimitive cast))
-                     (instance?
-                      CtTypeParameterReference
-                      (.getType expression)))
+                     (or (instance? CtTypeParameterReference cast)
+                         (instance?
+                          CtTypeParameterReference
+                          (.getType expression))))
                 (sequence-node
                  [(raw "global::DripSharp.Runtime.JavaCompat.CastReference<")
                   (type-node ctx cast) (raw ">(") inner (raw ")")])
@@ -1528,7 +1583,37 @@
           :else node)]
     (destination-value-node
      ctx :assignment assignment assigned-reference assigned
-     (cond (nullable-boxed-collection-declaration? assigned assigned-reference) (let [element (boxed-primitive-collection-element assigned-reference)] (sequence-node [(raw "global::DripSharp.Runtime.JavaCompat.CastList<") (type-node ctx element) (raw "?>(") node (raw ")")])) (and (instance? CtMethod assigned) (covariant-list-node ctx assigned assigned-reference) (= "java.util.List" assignment-type) (= 1 (count (.getActualTypeArguments (.getType assignment)))) (not= (some-> (first (.getActualTypeArguments (.getType assignment))) .getQualifiedName) (some-> (first (.getActualTypeArguments assigned-reference)) .getBoundingType .getQualifiedName))) (let [bound (.getBoundingType (first (.getActualTypeArguments assigned-reference)))] (sequence-node [(raw "global::DripSharp.Runtime.JavaCompat.ToReadOnlyList<") (type-node ctx bound) (raw ">(") node (raw ")")])) (unbounded-wildcard-map-reference? assigned-reference) (sequence-node [(raw "global::DripSharp.Runtime.JavaCompat.CastDictionary<object, object>(") node (raw ")")]) (and (= "byte" assigned-type) (not= "byte" assignment-type)) (sequence-node [(raw "unchecked((sbyte)(") node (raw "))")]) (and (= "char" assigned-type) (not= "char" assignment-type)) (sequence-node [(raw "unchecked((char)(") node (raw "))")]) :else node))))
+     (cond
+       (nullable-boxed-collection-declaration? assigned assigned-reference)
+       (let [element (boxed-primitive-collection-element assigned-reference)]
+         (sequence-node
+          [(raw "global::DripSharp.Runtime.JavaCompat.CastList<")
+           (type-node ctx element) (raw "?>(") node (raw ")")]))
+
+       (and (instance? CtMethod assigned)
+            (covariant-list-node ctx assigned assigned-reference)
+            (= "java.util.List" assignment-type)
+            (= 1 (count (.getActualTypeArguments (.getType assignment)))))
+       (let [bound
+             (.getBoundingType
+              ^CtWildcardReference
+              (first (.getActualTypeArguments assigned-reference)))]
+         (sequence-node
+          [(raw "global::DripSharp.Runtime.JavaCompat.ToReadOnlyList<")
+           (type-node ctx bound) (raw ">(") node (raw ")")]))
+
+       (unbounded-wildcard-map-reference? assigned-reference)
+       (sequence-node
+        [(raw "global::DripSharp.Runtime.JavaCompat.CastDictionary<object, object>(")
+         node (raw ")")])
+
+       (and (= "byte" assigned-type) (not= "byte" assignment-type))
+       (sequence-node [(raw "unchecked((sbyte)(") node (raw "))")])
+
+       (and (= "char" assigned-type) (not= "char" assignment-type))
+       (sequence-node [(raw "unchecked((char)(") node (raw "))")])
+
+       :else node))))
 
 (defn- collection-element-type [^CtInvocation invocation]
   (or (first (.getActualTypeArguments (.getType invocation)))
@@ -1606,11 +1691,119 @@
        formals
        actual)))))
 
+(defn- wildcard-method-type-parameters
+  [^CtMethod method]
+  (if-not (contains? #{"accept" "visit"} (.getSimpleName method))
+    []
+    (vec
+     (mapcat
+    (fn [parameter-index ^CtParameter parameter]
+      (let [reference (.getType parameter)
+            declaration (.getTypeDeclaration ^CtTypeReference reference)
+            actuals (vec (.getActualTypeArguments reference))
+            formals (when (instance? CtType declaration)
+                      (vec (.getFormalCtTypeParameters ^CtType declaration)))]
+        (when (and (instance? CtType declaration)
+                   (not (.isShadow ^CtType declaration)))
+          (keep-indexed
+           (fn [argument-index ^CtTypeReference argument]
+             (when (instance? CtWildcardReference argument)
+             (let [wildcard-bound
+                   (.getBoundingType ^CtWildcardReference argument)
+                   formal-bound
+                   (some->> (nth formals argument-index nil)
+                            type-parameter-bound-references
+                            (remove #(= "java.lang.Object"
+                                        (.getQualifiedName ^CtTypeReference %)))
+                            first)
+                   bound
+                   (if (and wildcard-bound
+                            (not= "java.lang.Object"
+                                  (.getQualifiedName wildcard-bound)))
+                     wildcard-bound
+                     formal-bound)]
+               {:argument-index argument-index
+                :bound bound
+                :name (str "TWildcard" parameter-index "_" argument-index)
+                :parameter parameter
+                :parameter-index parameter-index
+                :reference reference})))
+           actuals))))
+      (range)
+      (.getParameters method)))))
+
+(defn- enclosing-method-for-element
+  [^CtElement element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) nil
+      (instance? CtMethod current) current
+      (.isParentInitialized ^CtElement current)
+      (recur (.getParent ^CtElement current))
+      :else nil)))
+
+(defn- current-wildcard-variable-node
+  [^CtExpression argument argument-index]
+  (let [parameter-declaration
+        (when (instance? CtVariableAccess argument)
+          (some-> ^CtVariableAccess argument .getVariable .getDeclaration))
+        current-method (enclosing-method-for-element argument)]
+    (when (and current-method parameter-declaration)
+      (some
+       #(when (and (identical? parameter-declaration (:parameter %))
+                   (= argument-index (:argument-index %)))
+          (raw (:name %)))
+       (wildcard-method-type-parameters current-method)))))
+
+(defn- invocation-formal-wildcard-overrides
+  [^CtInvocation invocation ^CtMethod declaration]
+  (into
+   {}
+   (keep-indexed
+    (fn [formal-index ^CtTypeParameter formal]
+      (first
+       (keep-indexed
+        (fn [parameter-index ^CtParameter parameter]
+          (let [reference (.getType parameter)]
+            (first
+             (keep-indexed
+              (fn [argument-index ^CtTypeReference argument]
+                (when (type-reference-contains-formal? argument formal)
+                  (when-let [node
+                             (some-> (nth (vec (.getArguments invocation))
+                                          parameter-index nil)
+                                     (current-wildcard-variable-node argument-index))]
+                    [formal-index node])))
+              (.getActualTypeArguments reference)))))
+        (.getParameters declaration))))
+    (.getFormalCtTypeParameters declaration))))
+
+(defn- lifted-wildcard-invocation-argument-node
+  [ctx ^CtInvocation invocation {:keys [argument-index bound parameter-index]}]
+  (let [argument (nth (vec (.getArguments invocation)) parameter-index nil)
+        argument-reference (some-> argument .getType)
+        actual (when argument-reference
+                 (nth (vec (.getActualTypeArguments
+                            ^CtTypeReference argument-reference))
+                      argument-index nil))
+        current-lift-node
+        (when argument
+          (current-wildcard-variable-node argument argument-index))]
+    (cond
+      current-lift-node current-lift-node
+      (and actual (not (instance? CtWildcardReference actual)))
+      (type-node ctx actual)
+      bound (type-node ctx bound)
+      :else (raw "object"))))
+
 (defn- project-invocation-type-arguments-node
   [ctx ^CtInvocation invocation declaration]
-  (when (and (instance? CtMethod declaration)
-             (seq (.getFormalCtTypeParameters ^CtMethod declaration)))
-    (let [actual (vec (.getActualTypeArguments (.getExecutable invocation)))
+  (when (instance? CtMethod declaration)
+    (let [formals (vec (.getFormalCtTypeParameters ^CtMethod declaration))
+          lifted (wildcard-method-type-parameters declaration)
+          actual (vec (.getActualTypeArguments (.getExecutable invocation)))
+          formal-overrides
+          (invocation-formal-wildcard-overrides invocation declaration)
           inferred
           (cond
             (inferable-formal-type-arguments? declaration actual)
@@ -1625,11 +1818,29 @@
                             (.getType ^CtMethod declaration))
                  (not (instance? CtTypeParameterReference
                                  (.getType invocation))))
-            [(.getType invocation)])]
-      (when (seq inferred)
+            [(.getType invocation)])
+          actual-nodes
+          (mapv
+           (fn [index ^CtTypeReference reference]
+             (or (get formal-overrides index) (type-node ctx reference)))
+           (range)
+           actual)
+          emitted
+          (if (seq lifted)
+            (concat
+             (if (= (count formals) (count actual))
+               actual-nodes
+               (mapv #(type-node ctx %) (or inferred actual)))
+             (mapv #(lifted-wildcard-invocation-argument-node
+                     ctx invocation %)
+                   lifted))
+            (if (seq formal-overrides)
+              actual-nodes
+              (mapv #(type-node ctx %) inferred)))]
+      (when (seq emitted)
         (sequence-node
          [(raw "<")
-          (sequence-node (mapv #(type-node ctx %) inferred) ", ")
+          (sequence-node emitted ", ")
           (raw ">")])))))
 
 (defn- compat-call [name arguments]
@@ -1820,14 +2031,89 @@
     (compat-call "Unbox" [node])
     (maybe-unbox-node ctx expression node)))
 
+(defn- raw-list-argument-adaptation
+  [ctx ^CtExpression argument ^CtTypeReference expected node]
+  (when (and expected
+             (= "java.util.List" (.getQualifiedName expected))
+             (= 1 (count (.getActualTypeArguments expected)))
+             (contains? #{"java.util.List" "java.util.ArrayList"}
+                        (some-> argument .getType .getQualifiedName))
+             (empty? (.getActualTypeArguments (.getType argument))))
+    (let [element-type (first (.getActualTypeArguments expected))]
+      (if (and (instance? CtConstructorCall argument)
+               (= "java.util.ArrayList"
+                  (some-> argument .getType .getQualifiedName)))
+        (sequence-node
+         [(raw "new global::System.Collections.Generic.List<")
+          (type-node ctx element-type) (raw ">()")])
+        (sequence-node
+         [(raw "global::DripSharp.Runtime.JavaCompat.CastList<")
+          (type-node ctx element-type) (raw ">(") node (raw ")")])))))
+
+(defn- raw-list-constructor-for-generic-owner-node
+  [ctx ^CtExpression argument ^CtTypeReference expected declaration target]
+  (when (and (instance? CtConstructorCall argument)
+             (= "java.util.ArrayList"
+                (some-> argument .getType .getQualifiedName))
+             (= "java.util.List" (some-> expected .getQualifiedName))
+             (= 1 (count (.getActualTypeArguments expected)))
+             (instance? CtMethod declaration)
+             target)
+    (let [element-type (first (.getActualTypeArguments expected))
+          owner (.getDeclaringType ^CtMethod declaration)
+          formals (vec (.getFormalCtTypeParameters ^CtType owner))
+          actuals (vec (.getActualTypeArguments (.getType ^CtExpression target)))
+          formal-index
+          (when (instance? CtTypeParameterReference element-type)
+            (first
+             (keep-indexed
+              #(when (= (.getSimpleName ^CtTypeParameter %2)
+                        (.getSimpleName ^CtTypeReference element-type))
+                 %1)
+              formals)))
+          resolved (if (some? formal-index)
+                     (nth actuals formal-index nil)
+                     element-type)]
+      (when resolved
+        (sequence-node
+         [(raw "new global::System.Collections.Generic.List<")
+          (type-node ctx resolved) (raw ">()")])))))
+
 (defn- argument-value-node
   [ctx ^CtExpression argument ^CtTypeReference expected node force-value?]
   (let [expected-name (some-> expected .getQualifiedName)
         argument-name (some-> argument .getType .getQualifiedName)
+        argument-declaration
+        (when (instance? CtVariableAccess argument)
+          (some-> ^CtVariableAccess argument .getVariable .getDeclaration))
+        emitted-argument-reference
+        (or (when (instance? CtLocalVariable argument-declaration)
+              (let [declared (.getType ^CtLocalVariable argument-declaration)
+                    initializer
+                    (some-> ^CtLocalVariable argument-declaration
+                            .getDefaultExpression .getType)]
+                (when (and initializer
+                           (empty? (.getActualTypeArguments declared))
+                           (seq (.getActualTypeArguments
+                                 ^CtTypeReference initializer)))
+                  initializer)))
+            (.getType argument))
         value-node (maybe-unbox-node ctx argument node)]
     (destination-value-node
      ctx :argument argument expected nil
      (cond
+       (raw-list-argument-adaptation ctx argument expected node)
+       (raw-list-argument-adaptation ctx argument expected node)
+
+       (and expected
+            (= "java.util.List" expected-name)
+            (empty? (.getActualTypeArguments expected))
+            (= "java.util.List" argument-name)
+            (seq (.getActualTypeArguments
+                  ^CtTypeReference emitted-argument-reference)))
+       (sequence-node
+        [(raw "(global::System.Collections.IList)(object)(") node (raw ")")])
+
        (unbounded-wildcard-collection-reference? expected)
        (compat-call "CastObjects" [node])
 
@@ -1924,6 +2210,13 @@
                    ")("))
          value-node
          (raw ")")])
+
+       (and expected
+            (instance? CtTypeParameterReference expected)
+            (not= expected-name argument-name))
+       (sequence-node
+        [(raw "global::DripSharp.Runtime.JavaCompat.CastReference<")
+         (type-node ctx expected) (raw ">(") node (raw ")")])
 
        (or force-value?
            (and expected
@@ -2197,8 +2490,11 @@
     "executable:java.util.HashMap#putIfAbsent(java.lang.Object,java.lang.Object)"
     "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
     "executable:java.util.List#add(int,java.lang.Object)"
+    "executable:java.util.ArrayList#add(int,java.lang.Object)"
+    "executable:java.util.LinkedList#add(int,java.lang.Object)"
     "executable:java.util.List#add(java.lang.Object)"
     "executable:java.util.List#set(int,java.lang.Object)"
+    "executable:java.util.ArrayList#set(int,java.lang.Object)"
     "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
     "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
     "executable:java.util.SortedSet#headSet(java.lang.Object)"})
@@ -2312,12 +2608,60 @@
 
       :else nil)))
 
+(defn- substituted-executable-type-reference
+  [^CtTypeReference reference substitutions]
+  (if (instance? CtTypeParameterReference reference)
+    (get substitutions (.getSimpleName reference) reference)
+    reference))
+
+(defn- reference-contains-type-parameter?
+  [^CtTypeReference reference]
+  (or (instance? CtTypeParameterReference reference)
+      (some reference-contains-type-parameter?
+            (.getActualTypeArguments reference))))
+
 (defn- executable-parameter-types
-  [declaration executable-reference]
+  ([declaration executable-reference]
+   (executable-parameter-types declaration executable-reference nil))
+  ([declaration executable-reference target-reference]
   (if (instance? CtExecutable declaration)
-    (mapv #(.getType ^CtParameter %)
-          (.getParameters ^CtExecutable declaration))
-    (vec (.getParameters executable-reference))))
+    (let [parameters
+          (mapv #(.getType ^CtParameter %)
+                (.getParameters ^CtExecutable declaration))
+          resolved-parameters (vec (.getParameters executable-reference))
+          method-formals
+          (vec (.getFormalCtTypeParameters ^CtExecutable declaration))
+          method-actuals (vec (.getActualTypeArguments executable-reference))
+          owner (some-> ^CtExecutable declaration .getDeclaringType)
+          owner-formals (when owner
+                          (vec (.getFormalCtTypeParameters ^CtType owner)))
+          owner-actuals (when target-reference
+                          (vec (.getActualTypeArguments
+                                ^CtTypeReference target-reference)))
+          owner-substitutions
+          (when (= (count owner-formals) (count owner-actuals))
+            (zipmap (map #(.getSimpleName ^CtTypeParameter %) owner-formals)
+                    owner-actuals))
+          method-substitutions
+          (when (= (count method-formals) (count method-actuals))
+            (zipmap (map #(.getSimpleName ^CtTypeParameter %) method-formals)
+                    method-actuals))
+          substitutions (merge owner-substitutions method-substitutions)]
+      (mapv
+       (fn [^CtTypeReference parameter ^CtTypeReference resolved]
+         (let [substituted
+               (substituted-executable-type-reference parameter substitutions)]
+           (if (and (identical? substituted parameter)
+                    resolved
+                    (= (.getQualifiedName parameter)
+                       (.getQualifiedName resolved))
+                    (seq (.getActualTypeArguments resolved))
+                    (not (reference-contains-type-parameter? resolved)))
+             resolved
+             substituted)))
+       parameters
+       resolved-parameters))
+    (vec (.getParameters executable-reference)))))
 
 (defn- constructor-call-parameter-types
   [declaration ^CtConstructorCall call]
@@ -2442,6 +2786,30 @@
      {:node
       (supplemental-neutral-invocation-node
        @ctx-holder element (:key occurrence) target-node arguments)})
+   :java-library.mapping/enum-value-of
+   (fn
+     [{:keys [arguments element]}]
+     {:node
+      (sequence-node
+       [(csharp/generic-name
+         (raw "global::DripSharp.Runtime.JavaCompat.EnumValueOf")
+         [(type-node @ctx-holder (.getType element))])
+        (raw "(")
+        (second arguments)
+        (raw ")")])})
+   :java-library.mapping/array-list-spliterator
+   (fn [{:keys [target-node]}] {:node target-node})
+   :java-library.mapping/string-index-of-from
+   (fn
+     [{:keys [target-node arguments]}]
+     {:node
+      (sequence-node
+       [target-node
+        (raw ".IndexOf(")
+        (first arguments)
+        (raw ", ")
+        (second arguments)
+        (raw ", global::System.StringComparison.Ordinal)")])})
    :java-library.mapping.executable/handler-0493
    (fn
      [{:keys [target-node arguments]}]
@@ -4521,7 +4889,8 @@
      {:node
       (sequence-node
        [target-node (raw ".CreateServerSocket(") (sequence-node arguments ", ") (raw ")")])}),
-   :java-library.mapping.executable/handler-0500 (fn [{:keys [target-node]}] {:node target-node}),
+   :java-library.mapping.executable/handler-0500
+   (fn [{:keys [target-node]}] {:node (compat-call "Stream" [target-node])}),
    :java-library.mapping.executable/handler-0011
    (fn
      [{:keys [target-node arguments]}]
@@ -4891,6 +5260,8 @@
         (raw ")")])}),
    :java-library.mapping.constructor/handler-0025
    (fn [{:keys [arguments]}] {:node (compat-call "NewBigInteger" arguments)}),
+   :java-library.mapping.constructor/handler-0046
+   (fn [{:keys [arguments]}] {:node (compat-call "BigIntegerParse" arguments)}),
    :java-library.mapping.constructor/handler-0026
    (fn
      [{:keys [arguments]}]
@@ -5073,6 +5444,29 @@
         (some #(mapping-registry/registry-entry % (:key occurrence))
               (vals registries)))))
 
+(defn- default-interface-fluent-super-node
+  [ctx target ^CtMethod declaration arguments]
+  (let [body (.getBody declaration)
+        statements (when body (vec (.getStatements body)))
+        setter (first statements)
+        returned (second statements)]
+    (when (and (instance? CtSuperAccess target)
+               (= 2 (count statements))
+               (instance? CtInvocation setter)
+               (instance? CtReturn returned)
+               (instance? CtThisAccess
+                          (.getReturnedExpression ^CtReturn returned))
+               (= (count arguments)
+                  (count (.getArguments ^CtInvocation setter))))
+      (sequence-node
+       [(raw "((global::System.Func<")
+        (type-node ctx (.getType declaration))
+        (raw ">)(() => { this.")
+        (raw (identifier
+              (.getSimpleName (.getExecutable ^CtInvocation setter))))
+        (raw "(") (sequence-node arguments ", ")
+        (raw "); return this; }))()")]))))
+
 (defn- body-rules [ctx-holder]
   (let [shared-mappings (shared-mapping-registry ctx-holder)]
     (java/structural-rules
@@ -5089,7 +5483,8 @@
                   @ctx-holder children target declaration
                   (.getExecutable element)))
                parameter-types
-               (executable-parameter-types declaration (.getExecutable element))
+               (executable-parameter-types
+                declaration (.getExecutable element) (some-> target .getType))
                arguments
                (mapv
                 (fn [index ^CtExpression argument]
@@ -5098,10 +5493,13 @@
                         (when (seq parameter-types)
                           (nth parameter-types
                                (min index (dec (count parameter-types)))))]
-                    (argument-value-node
-                     @ctx-holder argument expected node
-                     (contains? generic-value-argument-executables
-                                (:key occurrence)))))
+                    (or
+                     (raw-list-constructor-for-generic-owner-node
+                      @ctx-holder argument expected declaration target)
+                     (argument-value-node
+                      @ctx-holder argument expected node
+                      (contains? generic-value-argument-executables
+                                 (:key occurrence))))))
                 (range)
                 (.getArguments element))
                default-interface?
@@ -5122,6 +5520,9 @@
                  target-node)
                destination-adaptation
                (or
+                (when default-interface?
+                  (default-interface-fluent-super-node
+                   @ctx-holder target declaration arguments))
                 (shared-invocation-adaptation-node
                  occurrence target target-node arguments)
                 (when-let [adaptation
@@ -5579,7 +5980,31 @@
                 "(value0) => global::DripSharp.Runtime.JavaCompat.StringValueOf(value0)")
 
                (= "executable:java.util.ArrayList#<init>()" (:key occurrence))
-               (sequence-node [(raw "() => new ") target (raw "()")])
+               (let [parent
+                     (when (.isParentInitialized element)
+                       (.getParent element))
+                     parent-result-type
+                     (when (instance? CtInvocation parent)
+                       (.getType ^CtInvocation parent))
+                     supplier-type
+                     (when (= "java.util.function.Supplier" functional-type)
+                       (first (.getActualTypeArguments (.getType element))))
+                     element-type
+                     (or
+                      (some-> ^CtTypeReference supplier-type
+                              .getActualTypeArguments
+                              first)
+                      (some-> ^CtTypeReference parent-result-type
+                              .getActualTypeArguments
+                              first))]
+                 (sequence-node
+                  [(raw "() => new ")
+                   (if element-type
+                     (csharp/generic-name
+                      (raw "global::System.Collections.Generic.List")
+                      [(type-node @ctx-holder element-type)])
+                     target)
+                   (raw "()")]))
 
                constructor?
                (let [target-type
@@ -6972,6 +7397,19 @@
                        ", ")
                       (raw ">")]))))
 
+(defn- method-formals-node
+  [^CtMethod method lifted]
+  (let [parameters
+        (concat
+         (map destination-type-parameter-name
+              (.getFormalCtTypeParameters method))
+         (map :name lifted))]
+    (when (seq parameters)
+      (sequence-node
+       [(raw "<")
+        (sequence-node (mapv raw parameters) ", ")
+        (raw ">")]))))
+
 (defn- constraints-node [ctx parameters]
   (let [clauses
         (keep
@@ -6991,20 +7429,56 @@
     (when (seq clauses)
       (sequence-node clauses))))
 
-(defn- parameter-node [ctx ^CtParameter parameter]
-  (let [parent (when (.isParentInitialized parameter) (.getParent parameter))
-        object-equals-parameter?
-        (and (instance? CtMethod parent)
-             (= "equals" (.getSimpleName ^CtMethod parent))
-             (= "java.lang.Object" (.getQualifiedName (.getType parameter))))]
-    (sequence-node
-     [(when (.isVarArgs parameter) (raw "params "))
-      (if object-equals-parameter?
-        (raw (if (= "enable" (get-in ctx [:configuration :project :nullable]))
-               "object?"
-               "object"))
-        (declaration-type-node ctx parameter (.getType parameter)))
-      (raw (str " " (identifier (.getSimpleName parameter))))])))
+(defn- lifted-wildcard-constraints-node
+  [ctx lifted]
+  (let [clauses
+        (keep
+         (fn [{:keys [name bound]}]
+           (when bound
+             (sequence-node
+              [(raw (str " where " name " : "))
+               (type-node ctx bound)])))
+         lifted)]
+    (when (seq clauses)
+      (sequence-node clauses))))
+
+(defn- lifted-wildcard-parameter-type-node
+  [ctx ^CtParameter parameter lifted]
+  (let [matches (filterv #(identical? parameter (:parameter %)) lifted)]
+    (when (seq matches)
+      (let [reference (.getType parameter)
+            declaration (.getTypeDeclaration ^CtTypeReference reference)
+            replacements (into {} (map (juxt :argument-index :name) matches))
+            arguments
+            (mapv
+             (fn [argument-index ^CtTypeReference argument]
+               (if-let [name (get replacements argument-index)]
+                 (raw name)
+                 (type-node ctx argument)))
+             (range)
+             (.getActualTypeArguments reference))]
+        (csharp/generic-name
+         (raw (project-type-base ctx declaration))
+         arguments)))))
+
+(defn- parameter-node
+  ([ctx ^CtParameter parameter]
+   (parameter-node ctx parameter []))
+  ([ctx ^CtParameter parameter lifted]
+   (let [parent (when (.isParentInitialized parameter) (.getParent parameter))
+         object-equals-parameter?
+         (and (instance? CtMethod parent)
+              (= "equals" (.getSimpleName ^CtMethod parent))
+              (= "java.lang.Object" (.getQualifiedName (.getType parameter))))]
+     (sequence-node
+      [(when (.isVarArgs parameter) (raw "params "))
+       (if object-equals-parameter?
+         (raw (if (= "enable" (get-in ctx [:configuration :project :nullable]))
+                "object?"
+                "object"))
+         (or (lifted-wildcard-parameter-type-node ctx parameter lifted)
+             (declaration-type-node ctx parameter (.getType parameter))))
+       (raw (str " " (identifier (.getSimpleName parameter))))]))))
 
 (defn- base-type-references [^CtType type]
   (vec
@@ -7031,6 +7505,9 @@
 
 (defn- base-type-node [ctx ^CtType owner ^CtTypeReference reference]
   (cond
+    (= "java.io.Serializable" (.getQualifiedName reference))
+    nil
+
     (and (instance? CtClass owner)
          (contains? functional-interface-types (.getQualifiedName reference)))
     nil
@@ -7276,6 +7753,44 @@
      (contains? clr-value-type-covariant-returns
                 (.getQualifiedName (.getType method))))))
 
+(defn- concrete-generic-return-reference
+  [^CtTypeReference declared ^CtExpression expression]
+  (let [references
+        (remove
+         nil?
+         [(some-> expression .getType)
+          (when (instance? CtInvocation expression)
+            (some-> ^CtInvocation expression .getTarget .getType))])]
+    (some
+     (fn [^CtTypeReference reference]
+       (let [arguments (vec (.getActualTypeArguments reference))]
+         (when (and (= (.getQualifiedName declared)
+                       (.getQualifiedName reference))
+                    (seq arguments)
+                    (not-any? #(instance? CtWildcardReference %) arguments))
+           reference)))
+     references)))
+
+(defn- concrete-wildcard-method-return
+  [^CtMethod method]
+  (let [^CtTypeReference declared (.getType method)
+        arguments (vec (.getActualTypeArguments declared))
+        returns (when-let [body (.getBody method)]
+                  (vec (.getElements body (TypeFilter. CtReturn))))
+        concrete
+        (when (and (not (str/starts-with?
+                         (.getQualifiedName declared) "java."))
+                   (some #(instance? CtWildcardReference %) arguments)
+                   (seq returns))
+          (mapv
+           #(some->> (.getReturnedExpression ^CtReturn %)
+                     (concrete-generic-return-reference declared))
+           returns))]
+    (when (and (seq concrete)
+               (every? some? concrete)
+               (apply = (map str concrete)))
+      (first concrete))))
+
 (defn- wildcard-generic-covariant-override?
   [^CtType owner ^CtMethod method]
   (when-let [super-method (superclass-method owner method)]
@@ -7294,7 +7809,24 @@
   [^CtType owner ^CtMethod method]
   (if (covariant-value-override? owner method)
     (.getType ^CtMethod (superclass-method owner method))
-    (.getType method)))
+    (or (concrete-wildcard-method-return method)
+        (.getType method))))
+
+(defn- self-generic-method-return?
+  [^CtType owner ^CtMethod method]
+  (let [^CtTypeReference reference (.getType method)
+        arguments (vec (.getActualTypeArguments reference))]
+    (and (= (.getQualifiedName owner) (.getQualifiedName reference))
+         (not (.hasModifier method ModifierKind/STATIC))
+         (or (empty? arguments)
+             (every? #(instance? CtWildcardReference %) arguments)))))
+
+(defn- method-return-type-node
+  [ctx ^CtType owner ^CtMethod method]
+  (if (self-generic-method-return? owner method)
+    (owner-type-node ctx owner)
+    (declaration-type-node ctx method
+                           (emitted-method-return-type owner method))))
 
 (defn- interface-methods [^CtType type]
   (letfn [(methods-for [^CtTypeReference reference]
@@ -7423,8 +7955,11 @@
                     (.getSuperInterfaces ^CtClass declaration))
               (recur (.getSuperclass ^CtClass declaration))))))))
 
-(defn- method-words [^CtType owner ^CtMethod method]
-  (let [static? (.hasModifier method ModifierKind/STATIC)
+(defn- method-words
+  ([^CtType owner ^CtMethod method]
+   (method-words nil owner method))
+  ([ctx ^CtType owner ^CtMethod method]
+   (let [static? (.hasModifier method ModifierKind/STATIC)
         abstract? (and (not (interface-type? owner))
                        (.hasModifier method ModifierKind/ABSTRACT))
         super-method (when-not static? (superclass-method owner method))
@@ -7493,9 +8028,10 @@
                        wildcard-generic-covariant-override?
                        (and (= "getType" (.getSimpleName method))
                             (empty? (.getParameters method))
+                            (csharp-public-names? ctx)
                             (not (interface-type? owner))))
                "new")
-             (when virtual? "virtual")])))
+             (when virtual? "virtual")]))))
 
 (declare member-node emit-root emit-anonymous-type owner-type-node)
 
@@ -7710,6 +8246,7 @@
         java-default-value?
         (and (nil? initializer)
              (or
+              (.isPrimitive (.getType field))
               (instance? CtTypeParameterReference (.getType field))
               (contains? mapped-source-value-types
                          (.getQualifiedName (.getType field)))
@@ -7781,23 +8318,26 @@
         body-node (when body (translated-node ctx body))
         name (method-name ctx owner method)
         rule :java-library.declaration/method
-        words (method-words owner method)
+        words (method-words ctx owner method)
         formals (vec (.getFormalCtTypeParameters method))
+        lifted (wildcard-method-type-parameters method)
         id (register-member! ctx owner method name rule nil (first words))
         method-node
         (csharp/with-source
           (csharp/declaration
            (sequence-node
             [(raw (str (str/join " " words) " "))
-             (declaration-type-node ctx method
-                                    (emitted-method-return-type owner method))
+             (method-return-type-node ctx owner method)
              (raw (str " " name))
-             (executable-formals-node method)
+             (method-formals-node method lifted)
              (raw "(")
-             (sequence-node (mapv #(parameter-node ctx %) (.getParameters method)) ", ")
+             (sequence-node
+              (mapv #(parameter-node ctx % lifted) (.getParameters method)) ", ")
              (raw ")")
              (when-not (some #{"override"} words)
-               (constraints-node ctx formals))])
+               (sequence-node
+                [(constraints-node ctx formals)
+                 (lifted-wildcard-constraints-node ctx lifted)]))])
            body-node
            {:declaration-kind :method
             :name name
@@ -7852,16 +8392,14 @@
                     interface-return-reference
                     (substituted-interface-reference
                      interface-reference (.getType interface-method))
-                    interface-return
-                    (.getQualifiedName interface-return-reference)
-                    implementation-return
-                    (some-> ^CtMethod implementation .getType .getQualifiedName)
                     name (method-name ctx
                                       (.getDeclaringType interface-method)
                                       interface-method)]
                 (cond
                   (and implementation
-                       (not= interface-return implementation-return))
+                       (not (override-compatible-type?
+                             interface-return-reference
+                             (.getType ^CtMethod implementation))))
                   (let [parameters (vec (.getParameters interface-method))]
                     (sequence-node
                      [(declaration-type-node
@@ -8186,7 +8724,9 @@
 (defn- functional-interface-method [^CtType type]
   (when (interface-type? type)
     (let [methods (abstract-interface-methods type)]
-      (when (= 1 (count methods))
+      (when (and (= 1 (count methods))
+                 (empty? (.getFormalCtTypeParameters
+                          ^CtMethod (first methods))))
         (first methods)))))
 
 (defn- functional-adapter-name [^CtType interface]
@@ -8517,6 +9057,8 @@
                     :source-deprecation-metadata
                     "annotation:java.lang.SuppressWarnings"
                     :source-analysis-only
+                    "annotation:java.lang.SafeVarargs"
+                    :source-analysis-only
                     "annotation:java.lang.annotation.Retention"
                     :csharp-attribute-retention
                     "annotation:java.lang.annotation.Target"
@@ -8674,7 +9216,18 @@
         (when (instance? CtClass type)
           (filter #(contains? functional-interface-types (.getQualifiedName ^CtTypeReference %))
                   bases))
-        members (explicit-members type)
+        all-members (explicit-members type)
+        selected-declarations (:selected-declarations ctx)
+        type-selection
+        (when selected-declarations
+          (.get ^IdentityHashMap selected-declarations type))
+        members
+        (if (or (nil? selected-declarations)
+                (= :body (:expansion type-selection)))
+          all-members
+          (filterv
+           #(.containsKey ^IdentityHashMap selected-declarations %)
+           all-members))
         inner? (non-static-member-class? type)
         outer-field-name (when inner? (generated-outer-field-name type))
         nested-instance-class?
@@ -8715,8 +9268,15 @@
                           (.isImplicit ^CtConstructor %))
                  %)
               (.getTypeMembers type))
+        selected-implicit-constructor?
+        (and selected-declarations
+             implicit-constructor
+             (.containsKey ^IdentityHashMap selected-declarations
+                           implicit-constructor))
         emit-implicit-constructor?
-        (and (not inner?)
+        (and (or (nil? selected-declarations)
+                 (= :body (:expansion type-selection)))
+             (not inner?)
              implicit-constructor
              (empty? explicit-constructors)
              (or (seq initialization-events)
@@ -8725,6 +9285,13 @@
                                     ModifierKind/ABSTRACT))
                  (.hasModifier ^CtModifiable type ModifierKind/PROTECTED)
                  (public-derived-type? type)))
+        suppress-shell-default-constructor?
+        (and selected-declarations
+             (= :shell (:expansion type-selection))
+             (instance? CtClass type)
+             (not inner?)
+             (empty? explicit-constructors)
+             (not selected-implicit-constructor?))
         _ (when (and (seq initialization-events)
                      (empty? explicit-constructors)
                      (nil? implicit-constructor))
@@ -8769,6 +9336,12 @@
                                                   outer-field-name))
           emit-implicit-constructor?
           (conj (constructor-node member-ctx type implicit-constructor))
+          suppress-shell-default-constructor?
+          ;; A public CLR class with no emitted constructor acquires a public
+          ;; parameterless constructor even when the selected Java dependency
+          ;; shell has no constructor in its surface. Keep that compiler-only
+          ;; member inside the generated assembly.
+          (conj (raw (str "internal " name "() {}")))
           (seq functional-bases)
           (into (mapv #(functional-adapter-node member-ctx type %) functional-bases)))
         closeable? (some #(= "java.io.Closeable" (.getQualifiedName ^CtTypeReference %))
@@ -9112,7 +9685,7 @@
                  {:kind :unknown-java-library-surface-kind :row decoded}))]
     (assoc row :identity decoded)))
 
-(defn- read-surface!
+(defn- read-retained-surface!
   [workspace {:keys [contract-file compiled-contract-file] :as specification}]
   (let [keys (set (keys specification))]
     (when-not (or (empty? keys)
@@ -9161,6 +9734,21 @@
            :compiled-contract-file compiled-file
            :rows rows
            :seeds []})))))
+
+(defn- read-surface!
+  [workspace {:keys [compiled-contract-file] :as specification}]
+  (if (= #{:compiled-contract-file} (set (keys specification)))
+    (let [compiled-file (paths/resolve-path (paths/absolute workspace)
+                                            compiled-contract-file)]
+      (when-not (paths/regular-file? compiled-file)
+        (fail! "Java library compiled public-surface contract is missing"
+               {:kind :missing-compiled-java-library-surface-contract
+                :file (str compiled-file)}))
+      {:derivation :resolved-spoon-model
+       :compiled-contract-file compiled-file
+       :rows nil
+       :seeds []})
+    (read-retained-surface! workspace specification)))
 
 (defn- canonical-owner [value]
   (str/replace (str value) "$" "."))
@@ -9249,6 +9837,33 @@
      :shape shape
      :row (surface-row type shape systematic-adaptation)}))
 
+(defn- closure-declaration-selected?
+  [resolved-model ^CtElement declaration]
+  (if-let [declarations (:declarations resolved-model)]
+    (contains? declarations (spoon/declaration-key declaration))
+    true))
+
+(defn- closure-type-body-selected?
+  [resolved-model ^CtType type]
+  (if-let [declarations (:declarations resolved-model)]
+    (= :body (:expansion
+              (get declarations (spoon/declaration-key type))))
+    true))
+
+(defn- closure-type-members
+  [resolved-model ^CtType type]
+  (let [members (vec (.getTypeMembers type))]
+    (if (closure-type-body-selected? resolved-model type)
+      members
+      (filterv #(closure-declaration-selected? resolved-model %) members))))
+
+(defn- closure-enum-values
+  [resolved-model ^CtEnum type]
+  (let [values (vec (.getEnumValues type))]
+    (if (closure-type-body-selected? resolved-model type)
+      values
+      (filterv #(closure-declaration-selected? resolved-model %) values))))
+
 (defn- runtime-interface-surface-entries [^CtClass type]
   (mapcat
    (fn [^CtTypeReference reference]
@@ -9285,6 +9900,7 @@
                            (fn [^CtType type] (.getNestedTypes type))
                            root)))
        distinct
+       (filter #(closure-declaration-selected? resolved-model %))
        (mapcat (fn [^CtType type]
                  (when (effectively-accessible-type? type)
                    (let [promoted-base?
@@ -9331,7 +9947,7 @@
                                 (when (or (accessible? declaration) adaptation)
                                   {:declaration declaration
                                    :systematic-adaptation adaptation}))))
-                          (.getTypeMembers type))]
+                          (closure-type-members resolved-model type))]
                      (concat
                       [{:declaration type
                         :systematic-adaptation
@@ -9368,7 +9984,7 @@
                               {:declaration value
                                :shape shape
                                :row (surface-row value shape)}))
-                          (.getEnumValues ^CtEnum type))
+                          (closure-enum-values resolved-model ^CtEnum type))
                          (map (fn [[name parameter-count adaptation]]
                                 (synthetic-surface-entry
                                  type name parameter-count adaptation))
