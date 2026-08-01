@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :targets
  [{:target :pkl
    :repository "https://github.com/apple/pkl.git"
@@ -178,4 +178,201 @@
     "annotation:org.junit.jupiter.api.BeforeAll" 10
     "annotation:org.junit.jupiter.api.Disabled" 1
     "annotation:org.junit.jupiter.api.Test" 236
-    "annotation:org.junit.jupiter.api.Timeout" 4}}]}
+    "annotation:org.junit.jupiter.api.Timeout" 4}}]
+ :api-classification
+ [{:api :junit4
+   :kind :framework-api
+   :source-languages #{:java}
+   :adaptation :shared-resolved-xunit-adapter}
+  {:api :junit-jupiter
+   :kind :framework-api
+   :source-languages #{:java :kotlin}
+   :adaptation :shared-resolved-xunit-adapter
+   :kotlin-policy :evidence-only-no-kotlin-frontend}
+  {:api :junit-platform
+   :kind :framework-api
+   :source-languages #{:kotlin}
+   :adaptation :target-test-utility-evidence
+   :kotlin-policy :evidence-only-no-kotlin-frontend}
+  {:api :assertj
+   :kind :framework-api
+   :source-languages #{:java :kotlin}
+   :adaptation :shared-resolved-xunit-adapter
+   :kotlin-policy :evidence-only-no-kotlin-frontend}
+  {:api :hamcrest
+   :kind :framework-api
+   :source-languages #{:java}
+   :adaptation :shared-resolved-xunit-adapter}
+  {:api :mockito
+   :kind :framework-api
+   :source-languages #{:java}
+   :adaptation :shared-resolved-xunit-adapter}
+  {:api :kotest
+   :kind :framework-api
+   :source-languages #{:kotlin}
+   :adaptation :evidence-only-no-kotlin-frontend
+   :kotlin-policy :evidence-only-no-kotlin-frontend}
+  {:api :h2
+   :kind :target-owned-utility
+   :source-languages #{:java}
+   :adaptation :target-strategy}
+  {:api :wiremock
+   :kind :target-owned-utility
+   :source-languages #{:kotlin}
+   :adaptation :target-strategy
+   :kotlin-policy :evidence-only-no-kotlin-frontend}
+  {:api :jimfs
+   :kind :target-owned-utility
+   :source-languages #{:kotlin}
+   :adaptation :target-strategy
+   :kotlin-policy :evidence-only-no-kotlin-frontend}]
+ :framework-api-evidence
+ [{:target :pkl
+   :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+   :checkout-root "research/pkl"
+   :checkout-required? true
+   :source-groups
+   [{:language :java
+     :role :test-source
+     :roots
+     ["research/pkl/pkl-config-java/src/test/java"
+      "research/pkl/pkl-config-kotlin/src/test/java"]
+     :files 29
+     :imports {:assertj 31 :junit-jupiter 44}}
+    {:language :kotlin
+     :role :test-source
+     :roots
+     ["research/pkl/docs/src/test/kotlin"
+      "research/pkl/pkl-cli/src/test/kotlin"
+      "research/pkl/pkl-codegen-java/src/test/kotlin"
+      "research/pkl/pkl-codegen-kotlin/src/test/kotlin"
+      "research/pkl/pkl-commons-cli/src/test/kotlin"
+      "research/pkl/pkl-commons/src/test/kotlin"
+      "research/pkl/pkl-config-kotlin/src/test/kotlin"
+      "research/pkl/pkl-core/src/test/kotlin"
+      "research/pkl/pkl-doc/src/test/kotlin"
+      "research/pkl/pkl-executor/src/test/kotlin"
+      "research/pkl/pkl-formatter/src/test/kotlin"
+      "research/pkl/pkl-gradle/src/test/kotlin"
+      "research/pkl/pkl-parser/src/test/kotlin"
+      "research/pkl/pkl-server/src/test/kotlin"]
+     :files 169
+     :imports
+     {:assertj 162
+      :jimfs 4
+      :junit-jupiter 315
+      :junit-platform 18
+      :wiremock 41}}
+    {:language :kotlin
+     :role :target-test-utility
+     :roots ["research/pkl/pkl-commons-test/src/main/kotlin"]
+     :files 9
+     :imports {:assertj 2 :junit-platform 11}}]
+   :dependency-declarations
+   [{:path "research/pkl/gradle/libs.versions.toml"
+     :sha256 "d314abd3096e6120bd16e86a1ad1c227f11d6c4e77d47d5d2243417aaf6ce30b"
+     :apis #{:assertj :jimfs :junit-jupiter :junit-platform :wiremock}}]}
+  {:target :pdfcarton
+   :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+   :checkout-root "research/pdfbox"
+   :checkout-required? true
+   :source-groups
+   [{:language :java
+     :role :test-source
+     :roots
+     ["research/pdfbox/fontbox/src/test/java"
+      "research/pdfbox/io/src/test/java"
+      "research/pdfbox/pdfbox/src/test/java"
+      "research/pdfbox/preflight/src/test/java"
+      "research/pdfbox/xmpbox/src/test/java"]
+     :files 233
+     :imports {:junit-jupiter 992 :mockito 2}}]
+   :dependency-declarations
+   [{:path "research/pdfbox/parent/pom.xml"
+     :sha256 "f031373f03c0f92fb4e49210645cd53e40e9579219655363ce19644ff779283e"
+     :apis #{:junit-jupiter}}
+    {:path "research/pdfbox/io/pom.xml"
+     :sha256 "cad8e929af82493947713b03a44d08c1c9b7839aa8935ec69793da59b06b04f7"
+     :apis #{:junit-jupiter}}
+    {:path "research/pdfbox/fontbox/pom.xml"
+     :sha256 "17805de8dae9e80519661dd1c0a623d699590f212ceccdb1dc9852733f1ae96f"
+     :apis #{:junit-jupiter}}
+    {:path "research/pdfbox/xmpbox/pom.xml"
+     :sha256 "293d112c87b6683c5600c1f2d13990604fddb5a44f7fe00430d074649fbb7768"
+     :apis #{:junit-jupiter}}
+    {:path "research/pdfbox/pdfbox/pom.xml"
+     :sha256 "1acfce718edc900dff75b17afd44272b022a4f0e914adbe76531df56862403dd"
+     :apis #{:junit-jupiter :mockito}}
+    {:path "research/pdfbox/preflight/pom.xml"
+     :sha256 "a8674fadcb3c6deae5a42af872275cb0474938fa94613066b68d768979744348"
+     :apis #{:junit-jupiter}}]}
+  {:target :rawhttp
+   :revision "947cfdc619100a23f5e429ccb3c42ba6fedc8141"
+   :checkout-root "research/rawhttp"
+   :checkout-required? true
+   :source-groups
+   [{:language :java
+     :role :test-source
+     :roots
+     ["research/rawhttp/rawhttp-cli/src/test/java"
+      "research/rawhttp/rawhttp-core/src/test/java"
+      "research/rawhttp/samples/src/test/java"]
+     :files 10
+     :imports {:junit-jupiter 17 :junit4 21}}
+    {:language :kotlin
+     :role :test-source
+     :roots
+     ["research/rawhttp/rawhttp-cli-tests/src/test/kotlin"
+      "research/rawhttp/rawhttp-cookies/src/test/kotlin"
+      "research/rawhttp/rawhttp-core/src/test/kotlin"
+      "research/rawhttp/rawhttp-duplex/src/test/kotlin"
+      "research/rawhttp/rawhttp-req-in-edit/src/test/kotlin"
+      "research/rawhttp/samples/src/test/kotlin"]
+     :files 47
+     :imports {:junit-jupiter 69 :kotest 136}}]
+   :dependency-declarations
+   [{:path "research/rawhttp/build.gradle"
+     :sha256 "9293d2939dd16153afe304ba384ca475813453fd5e956154e17876f8983014d3"
+     :apis #{:junit-jupiter}}
+    {:path "research/rawhttp/gradle.properties"
+     :sha256 "021f513102b5aeccfa66c8c0e4f225140538dfc6a991ba033f648a818b65e59a"
+     :apis #{:kotest}}
+    {:path "research/rawhttp/rawhttp-cli/build.gradle"
+     :sha256 "81d03ee05f6d66293468429fd61cf4cf0af4dba031604deea82799fa729e5a8c"
+     :apis #{:junit4}}
+    {:path "research/rawhttp/rawhttp-cli-tests/build.gradle"
+     :sha256 "f32fbf7cf3f7a5b35c95a388af9785847030de0a50c47981c7b34b2388c7fc4a"
+     :apis #{:junit-jupiter :kotest}}
+    {:path "research/rawhttp/rawhttp-cookies/build.gradle"
+     :sha256 "f9bc947812f3db2a68a86c01ca6814ce675736c224158edff9741b60519727db"
+     :apis #{:kotest}}
+    {:path "research/rawhttp/rawhttp-core/build.gradle"
+     :sha256 "83abd7bee9780a2652ce1c73d695d6fe5d83808d10f19f2a21481c7522ea3a99"
+     :apis #{:kotest}}
+    {:path "research/rawhttp/rawhttp-duplex/build.gradle"
+     :sha256 "d047cb50bbc971a115d14db5b81917190e5950f588021a7e395880c4ca4b4d02"
+     :apis #{:kotest}}
+    {:path "research/rawhttp/rawhttp-req-in-edit/build.gradle"
+     :sha256 "f8e1524d69088258305532ad30ec2661f396a99c8870e08523210321fbef0fe8"
+     :apis #{:kotest}}
+    {:path "research/rawhttp/samples/build.gradle"
+     :sha256 "e88ff70243ca986c771fed57f4b90e652b856774a54d2b41d9c96eb5681a6e38"
+     :apis #{:kotest}}]}
+  {:target :sqltrellis
+   :revision "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa"
+   :checkout-root "research/jsqlparser"
+   :checkout-required? false
+   :source-groups
+   [{:language :java
+     :role :test-source
+     :roots ["research/jsqlparser/src/test/java"]
+     :files 218
+     :imports
+     {:assertj 21 :hamcrest 3 :junit-jupiter 469 :mockito 15}}]
+   :dependency-declarations
+   [{:path "research/jsqlparser/build.gradle"
+     :sha256 "98d027c49e7b0810787845d57de4058d799aa3314f7a439b586c34719231f399"
+     :apis #{:assertj :h2 :hamcrest :junit-jupiter :mockito}}
+    {:path "research/jsqlparser/pom.xml"
+     :sha256 "e35d5992ae4317c74d03395f0e7bc9b6d0cc5a68c14de9b58b4e8f40922d54fb"
+     :apis #{:assertj :h2 :hamcrest :junit-jupiter :mockito}}]}]}

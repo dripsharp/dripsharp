@@ -80,7 +80,13 @@
 (deftest pinned-target-inventory-is-machine-checked-and-keeps-kotlin-separate
   (let [inventory (junit/read-pinned-inventory)
         validated (junit/validate-pinned-inventory!
-                   inventory (paths/workspace-root))]
+                   inventory (paths/workspace-root))
+        classifications
+        (into {} (map (juxt :api identity))
+              (:api-classification validated))
+        evidence
+        (into {} (map (juxt :target identity))
+              (:framework-api-evidence validated))]
     (is (= #{:pkl :pdfcarton :rawhttp :sqltrellis}
            (set (map :target (:targets validated)))))
     (is (= #{:pkl :rawhttp}
@@ -101,6 +107,21 @@
            (get-in (some #(when (= :sqltrellis (:target %)) %)
                          (:targets validated))
                    [:semantic-forms :timeouts :count])))
+    (is (= #{:junit4 :junit-jupiter :junit-platform :assertj :hamcrest
+             :mockito :kotest :h2 :wiremock :jimfs}
+           (set (keys classifications))))
+    (is (= :target-test-utility-evidence
+           (get-in classifications [:junit-platform :adaptation])))
+    (is (= :target-owned-utility
+           (get-in classifications [:h2 :kind])))
+    (is (= 29
+           (->> (get-in evidence [:pkl :source-groups])
+                (map :imports)
+                (map #(get % :junit-platform 0))
+                (reduce +))))
+    (is (= #{:assertj :h2 :hamcrest :junit-jupiter :mockito}
+           (get-in evidence
+                   [:sqltrellis :dependency-declarations 0 :apis])))
     (testing "inventory count perturbations are rejected"
       (let [perturbed
             (update-in inventory [:targets 0 :annotations
@@ -108,7 +129,31 @@
             error (thrown-data #(junit/validate-pinned-inventory!
                                  perturbed (paths/workspace-root)))]
         (is (= :pinned-junit-inventory-drift (:reason error)))
-        (is (= :pkl (:target error)))))))
+        (is (= :pkl (:target error)))))
+    (testing "framework import and dependency perturbations are rejected"
+      (let [import-perturbed
+            (update-in inventory
+                       [:framework-api-evidence 0 :source-groups 0
+                        :imports :assertj]
+                       inc)
+            import-error
+            (thrown-data #(junit/validate-pinned-inventory!
+                           import-perturbed (paths/workspace-root)))
+            dependency-perturbed
+            (assoc-in inventory
+                      [:framework-api-evidence 0 :dependency-declarations 0
+                       :sha256]
+                      (apply str (repeat 64 "0")))
+            dependency-error
+            (thrown-data #(junit/validate-pinned-inventory!
+                           dependency-perturbed (paths/workspace-root)))]
+        (is (= :pinned-framework-source-evidence-drift
+               (:reason import-error)))
+        (is (= :pkl (:target import-error)))
+        (is (= :pinned-framework-dependency-drift
+               (:reason dependency-error)))
+        (is (= "research/pkl/gradle/libs.versions.toml"
+               (:path dependency-error)))))))
 
 (deftest resolved-plan-preserves-discovery-lifecycle-rows-and-framework-differences
   (let [plan @fixture-plan

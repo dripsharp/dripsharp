@@ -218,6 +218,15 @@ and its focused executable evidence. The pinned source-language and reuse
 classification lives in
 `validation/java-test-frameworks/assertion-mocking-inventory.edn`.
 
+The companion `junit-inventory.edn` pins exact framework and target-utility
+import counts by Java or Kotlin source group, including Pkl's target-owned
+JUnit Platform test-engine helpers, and hashes the Maven, Gradle, and version-
+catalog declarations that supply those APIs. Its machine check verifies the
+governed checkout revision, source and helper file counts, import inventory,
+dependency-declaration hashes, and the complete JUnit 4, Jupiter, Platform,
+AssertJ, Hamcrest, Mockito, Kotest, H2, WireMock, and Jimfs classification.
+Kotlin entries remain behavior evidence only and do not enter translation.
+
 #### Deterministic Adapted Java Suite Emission
 
 `dripsharp.java-test-suite` connects the neutral suite strategy contract to the

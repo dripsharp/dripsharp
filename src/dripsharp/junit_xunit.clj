@@ -6,14 +6,14 @@
   declarations, and rejects every unknown JUnit annotation. Ordinary Java test
   bodies continue through `dripsharp.java-library/translate-body`."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.string :as str]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-test-adapters :as test-adapters]
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.util :as util])
   (:import [java.nio.file Files Path]
            [java.util IdentityHashMap]
            [spoon.reflect.code CtFieldRead CtLiteral CtNewArray CtTypeAccess]
@@ -22,6 +22,59 @@
             ModifierKind]))
 
 (def schema-version 1)
+
+(def inventory-schema-version 2)
+
+(def ^:private api-classification-contract
+  [{:api :junit4
+    :kind :framework-api
+    :source-languages #{:java}
+    :adaptation :shared-resolved-xunit-adapter}
+   {:api :junit-jupiter
+    :kind :framework-api
+    :source-languages #{:java :kotlin}
+    :adaptation :shared-resolved-xunit-adapter
+    :kotlin-policy :evidence-only-no-kotlin-frontend}
+   {:api :junit-platform
+    :kind :framework-api
+    :source-languages #{:kotlin}
+    :adaptation :target-test-utility-evidence
+    :kotlin-policy :evidence-only-no-kotlin-frontend}
+   {:api :assertj
+    :kind :framework-api
+    :source-languages #{:java :kotlin}
+    :adaptation :shared-resolved-xunit-adapter
+    :kotlin-policy :evidence-only-no-kotlin-frontend}
+   {:api :hamcrest
+    :kind :framework-api
+    :source-languages #{:java}
+    :adaptation :shared-resolved-xunit-adapter}
+   {:api :mockito
+    :kind :framework-api
+    :source-languages #{:java}
+    :adaptation :shared-resolved-xunit-adapter}
+   {:api :kotest
+    :kind :framework-api
+    :source-languages #{:kotlin}
+    :adaptation :evidence-only-no-kotlin-frontend
+    :kotlin-policy :evidence-only-no-kotlin-frontend}
+   {:api :h2
+    :kind :target-owned-utility
+    :source-languages #{:java}
+    :adaptation :target-strategy}
+   {:api :wiremock
+    :kind :target-owned-utility
+    :source-languages #{:kotlin}
+    :adaptation :target-strategy
+    :kotlin-policy :evidence-only-no-kotlin-frontend}
+   {:api :jimfs
+    :kind :target-owned-utility
+    :source-languages #{:kotlin}
+    :adaptation :target-strategy
+    :kotlin-policy :evidence-only-no-kotlin-frontend}])
+
+(def ^:private governed-framework-apis
+  (set (map :api api-classification-contract)))
 
 (def ^:private canonical-disabled-reason
   "Upstream @Disabled/@Ignore has no reason.")
@@ -1144,7 +1197,7 @@
 
 (defn- java-files
   [root]
-  (let [root (.toPath (io/file root))]
+  (let [root (paths/path root)]
     (if (Files/exists root (make-array java.nio.file.LinkOption 0))
       (with-open [stream (Files/walk root (make-array java.nio.file.FileVisitOption 0))]
         (->> (.toArray stream)
@@ -1158,7 +1211,7 @@
 
 (defn- kotlin-files
   [root]
-  (let [root (.toPath (io/file root))]
+  (let [root (paths/path root)]
     (if (Files/exists root (make-array java.nio.file.LinkOption 0))
       (with-open [stream (Files/walk root (make-array java.nio.file.FileVisitOption 0))]
         (->> (.toArray stream)
@@ -1276,6 +1329,173 @@
      :annotations (into (sorted-map)
                         (frequencies (map :symbol observations)))}))
 
+(defn- framework-api
+  [imported]
+  (cond
+    (str/starts-with? imported "org.junit.jupiter.") :junit-jupiter
+    (str/starts-with? imported "org.junit.platform.") :junit-platform
+    (str/starts-with? imported "org.junit.") :junit4
+    (str/starts-with? imported "org.assertj.") :assertj
+    (str/starts-with? imported "org.hamcrest.") :hamcrest
+    (str/starts-with? imported "org.mockito.") :mockito
+    (str/starts-with? imported "io.kotest.") :kotest
+    (or (str/starts-with? imported "com.github.tomakehurst.wiremock.")
+        (str/starts-with? imported "org.wiremock.")) :wiremock
+    (or (str/starts-with? imported "com.google.common.jimfs.")
+        (str/starts-with? imported "com.google.jimfs.")) :jimfs
+    (str/starts-with? imported "org.h2.") :h2
+    :else nil))
+
+(defn scan-framework-sources
+  "Pins framework and target-utility imports separately by source language.
+  This lexical inventory is evidence only; executable adaptation continues to
+  dispatch exclusively through resolved Spoon symbols."
+  [language roots]
+  (let [files (vec (mapcat (case language
+                             :java java-files
+                             :kotlin kotlin-files
+                             (fail! "Framework inventory has an unsupported source language"
+                                    {:reason :unsupported-framework-source-language
+                                     :language language}))
+                           roots))
+        import-pattern
+        (case language
+          :java #"(?m)^\s*import\s+(?:static\s+)?([^;\s]+)\s*;"
+          :kotlin #"(?m)^\s*import\s+([^\s]+)")
+        imports
+        (mapcat
+         (fn [^Path file]
+           (->> (re-seq import-pattern (Files/readString file))
+                (map second)
+                (keep framework-api)))
+         files)]
+    {:files (count files)
+     :imports (into (sorted-map) (frequencies imports))}))
+
+(defn- exact-keys?
+  [value expected]
+  (and (map? value) (= expected (set (keys value)))))
+
+(defn- validate-framework-api-evidence!
+  [inventory workspace-root]
+  (when-not (= api-classification-contract (:api-classification inventory))
+    (fail! "Pinned Java test API classification drifted"
+           {:reason :pinned-framework-api-classification-drift
+            :expected api-classification-contract
+            :actual (:api-classification inventory)}))
+  (let [target-evidence (:framework-api-evidence inventory)]
+    (when-not (and (vector? target-evidence)
+                   (= #{:pkl :pdfcarton :rawhttp :sqltrellis}
+                      (set (map :target target-evidence)))
+                   (= (count target-evidence)
+                      (count (distinct (map :target target-evidence)))))
+      (fail! "Pinned Java test API evidence has an invalid target inventory"
+             {:reason :invalid-pinned-framework-api-evidence
+              :evidence target-evidence}))
+    (doseq [{:keys [target revision checkout-root checkout-required?
+                    source-groups dependency-declarations] :as evidence}
+            target-evidence]
+      (when-not
+       (and (exact-keys?
+             evidence
+             #{:target :revision :checkout-root :checkout-required?
+               :source-groups :dependency-declarations})
+            (keyword? target)
+            (string? revision)
+            (re-matches #"[0-9a-f]{40}" revision)
+            (string? checkout-root)
+            (boolean? checkout-required?)
+            (vector? source-groups)
+            (seq source-groups)
+            (vector? dependency-declarations)
+            (seq dependency-declarations))
+        (fail! "Pinned Java test API target evidence is invalid"
+               {:reason :invalid-pinned-framework-api-target
+                :evidence evidence}))
+      (doseq [{:keys [language role roots files imports] :as group}
+              source-groups]
+        (when-not
+         (and (exact-keys? group #{:language :role :roots :files :imports})
+              (contains? #{:java :kotlin} language)
+              (contains? #{:test-source :target-test-utility} role)
+              (vector? roots)
+              (seq roots)
+              (pos-int? files)
+              (map? imports)
+              (seq imports)
+              (every? governed-framework-apis (keys imports))
+              (every? pos-int? (vals imports)))
+          (fail! "Pinned Java test API source group is invalid"
+                 {:reason :invalid-pinned-framework-source-group
+                  :target target :group group})))
+      (doseq [{:keys [path sha256 apis] :as declaration}
+              dependency-declarations]
+        (when-not
+         (and (exact-keys? declaration #{:path :sha256 :apis})
+              (string? path)
+              (re-matches #"[0-9a-f]{64}" sha256)
+              (set? apis)
+              (seq apis)
+              (every? governed-framework-apis apis))
+          (fail! "Pinned Java test dependency declaration is invalid"
+                 {:reason :invalid-pinned-framework-dependency
+                  :target target :declaration declaration})))
+      (let [checkout (paths/resolve-path workspace-root checkout-root)
+            present? (Files/isDirectory
+                      checkout (make-array java.nio.file.LinkOption 0))]
+        (when (and checkout-required? (not present?))
+          (fail! "Required Java test API evidence checkout is missing"
+                 {:reason :missing-pinned-framework-api-checkout
+                  :target target :checkout-root checkout-root}))
+        (when present?
+          (let [actual-revision
+                (str/trim
+                 (:output
+                  (process/run!
+                   {:command ["git" "-C" (str checkout) "rev-parse" "HEAD"]
+                    :directory workspace-root})))]
+            (when-not (= revision actual-revision)
+              (fail! "Pinned Java test API evidence revision drifted"
+                     {:reason :pinned-framework-api-revision-drift
+                      :target target :expected revision
+                      :actual actual-revision})))
+          (doseq [{:keys [language role roots files imports]} source-groups]
+            (let [resolved-roots
+                  (mapv #(paths/resolve-path workspace-root %) roots)
+                  actual (scan-framework-sources language resolved-roots)
+                  expected {:files files :imports imports}]
+              (when-not (= expected actual)
+                (fail! "Pinned Java test API source evidence drifted"
+                       {:reason :pinned-framework-source-evidence-drift
+                        :target target :language language :role role
+                        :expected expected :actual actual}))))
+          (doseq [{:keys [path sha256]} dependency-declarations]
+            (let [file (paths/resolve-path workspace-root path)]
+              (when-not (.startsWith file checkout)
+                (fail! "Java test dependency declaration escapes its checkout"
+                       {:reason :pinned-framework-dependency-path-escape
+                        :target target :path path
+                        :checkout-root checkout-root}))
+              (let [actual (when (paths/regular-file? file)
+                             (util/sha256-file file))]
+                (when-not (= sha256 actual)
+                  (fail! "Pinned Java test dependency declaration drifted"
+                         {:reason :pinned-framework-dependency-drift
+                          :target target :path path
+                          :expected sha256 :actual actual}))))))))
+    (let [observed-apis
+          (set
+           (concat
+            (mapcat (comp keys :imports)
+                    (mapcat :source-groups target-evidence))
+            (mapcat :apis
+                    (mapcat :dependency-declarations target-evidence))))]
+      (when-not (= governed-framework-apis observed-apis)
+        (fail! "Pinned Java test API evidence is incomplete"
+               {:reason :incomplete-pinned-framework-api-evidence
+                :expected governed-framework-apis
+                :actual observed-apis})))))
+
 (defn read-pinned-inventory
   ([] (read-pinned-inventory "validation/java-test-frameworks/junit-inventory.edn"))
   ([path]
@@ -1286,7 +1506,10 @@
   checkout is present, re-scans the pinned Java sources."
   ([inventory] (validate-pinned-inventory! inventory "."))
   ([inventory workspace-root]
-   (when-not (and (= schema-version (:schema-version inventory))
+   (when-not (and (= inventory-schema-version (:schema-version inventory))
+                  (= #{:schema-version :targets :kotlin-evidence
+                       :api-classification :framework-api-evidence}
+                     (set (keys inventory)))
                   (vector? (:targets inventory))
                   (seq (:targets inventory)))
      (fail! "Pinned JUnit inventory has an invalid schema"
@@ -1368,4 +1591,5 @@
                     {:reason :pinned-kotlin-junit-inventory-drift
                      :target target :revision revision
                      :expected expected :actual actual}))))))
+   (validate-framework-api-evidence! inventory workspace-root)
    inventory))
