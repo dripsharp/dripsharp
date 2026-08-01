@@ -13,6 +13,10 @@
 
   :test
   {:jvm-opts ["-Xmx8g"]
+   :extra-deps
+   {junit/junit {:mvn/version "4.13.2"}
+    org.junit.jupiter/junit-jupiter-api {:mvn/version "5.13.4"}
+    org.junit.jupiter/junit-jupiter-params {:mvn/version "5.13.4"}}
    :extra-paths ["test"]
    :main-opts ["-m" "dripsharp.test-runner"]}
 
