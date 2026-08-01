@@ -27,7 +27,7 @@
    {:sources []
     :evidence [:pkl-complete-product-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 12769 :total-lines 22083}}
+    :budget {:authored-lines 12901 :total-lines 22215}}
    :required-capabilities #{:java-compat :java-regex-unicode}}
   {:id "pkl-core-value-model"
    :path "profiles/core.edn"

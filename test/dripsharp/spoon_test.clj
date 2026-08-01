@@ -277,3 +277,58 @@
                        "spoon.compiler.ModelBuildingException"))
     (is (seq (:stack-summary failure)))
     (is (<= (count (:stack-summary failure)) 8))))
+
+(deftest generated-sources-share-the-project-module-and-retain-source-paths
+  (let [root (Files/createTempDirectory "dripsharp-modular-sources"
+                                        (make-array FileAttribute 0))
+        ordinary-root (paths/resolve-path root "src/main/java")
+        generated-root (paths/resolve-path root "target/generated-sources")
+        module-info (paths/resolve-path ordinary-root "module-info.java")
+        ordinary (paths/resolve-path
+                  ordinary-root "example/shared/Ordinary.java")
+        generated (paths/resolve-path
+                   generated-root "example/shared/Generated.java")
+        _ (doseq [file [module-info ordinary generated]]
+            (Files/createDirectories (.getParent ^Path file)
+                                     (make-array FileAttribute 0)))
+        _ (Files/writeString
+           module-info
+           "module example.modular { exports example.shared; }"
+           (make-array OpenOption 0))
+        _ (Files/writeString
+           ordinary
+           (str "package example.shared; "
+                "public final class Ordinary { "
+                "public Generated value() { return new Generated(); } }")
+           (make-array OpenOption 0))
+        _ (Files/writeString
+           generated
+           "package example.shared; public final class Generated { }"
+           (make-array OpenOption 0))
+        input
+        {:schema-version 1
+         :project-id "example:modular:1.0.0"
+         :source-roots [ordinary-root generated-root]
+         :resource-roots []
+         :production-sources [module-info ordinary]
+         :generated-production-sources [generated]
+         :production-resources []
+         :java-toolchain
+         {:home (paths/absolute (System/getProperty "java.home"))
+          :release 17
+          :preview-features? false}
+         :project-dependencies []
+         :external-dependencies []
+         :classpath-artifacts []}
+        model (spoon/build-resolved-model! root input)
+        expected-files
+        (set (map #(-> ^Path % .toFile .getCanonicalPath)
+                  [module-info ordinary generated]))]
+    (is (= 3 (get-in model [:totals :compilation-units])))
+    (is (= 2 (get-in model [:totals :project-types])))
+    (is (= expected-files (:compilation-units model)))
+    (is (= 3 (:source-aliases (spoon/source-location-cache-stats model))))
+    (is (= (.getCanonicalPath (.toFile generated))
+           (get-in (spoon/source-location
+                    (get-in model [:project-types "example.shared.Generated"]))
+                   [:file])))))

@@ -31,7 +31,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 12769 :total-lines 14920}}
+    :budget {:authored-lines 12901 :total-lines 15052}}
    :required-capabilities
    #{:java-compat :java-io :java-nio :java-regex-unicode}}
   {:id "pdfcube-fontbox"
@@ -62,7 +62,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 12769 :total-lines 20233}}
+    :budget {:authored-lines 12901 :total-lines 20365}}
    :required-capabilities #{:java-compat :java-regex-unicode :xml}}
   {:id "pdfcube-pdfbox"
    :path "profiles/pdfbox.edn"

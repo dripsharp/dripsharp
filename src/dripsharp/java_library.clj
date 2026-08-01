@@ -324,6 +324,34 @@
     (type-node ctx bound)
     (raw "object")))
 
+(defn- unbounded-wildcard-reference?
+  [^CtTypeReference reference]
+  (and (instance? CtWildcardReference reference)
+       (= "?" (.getSimpleName reference))
+       (= "java.lang.Object"
+          (some-> reference
+                  ^CtWildcardReference
+                  .getBoundingType
+                  .getQualifiedName))))
+
+(defn- project-type-argument-nodes
+  [ctx actual-arguments formal-parameters]
+  (cond
+    (and (empty? actual-arguments) (seq formal-parameters))
+    (mapv #(raw-project-type-argument-node ctx %) formal-parameters)
+
+    (= (count actual-arguments) (count formal-parameters))
+    (mapv
+     (fn [^CtTypeReference argument ^CtTypeParameter parameter]
+       (if (unbounded-wildcard-reference? argument)
+         (raw-project-type-argument-node ctx parameter)
+         (type-node ctx argument)))
+     actual-arguments
+     formal-parameters)
+
+    :else
+    (mapv #(type-node ctx %) actual-arguments)))
+
 (defn- project-reference-node
   [ctx ^CtTypeReference reference ^CtType declaration]
   (let [references (reference-declaring-types reference)
@@ -335,13 +363,10 @@
         (mapcat
          (fn [index ^CtTypeReference part-reference ^CtType part-declaration]
            (let [actual-arguments (vec (.getActualTypeArguments part-reference))
-                 formal-count
-                 (count (.getFormalCtTypeParameters part-declaration))
-                 arguments
-                 (if (and (empty? actual-arguments) (pos? formal-count))
-                   (mapv #(raw-project-type-argument-node ctx %)
-                         (.getFormalCtTypeParameters part-declaration))
-                   (mapv #(type-node ctx %) actual-arguments))]
+                 formal-parameters
+                 (vec (.getFormalCtTypeParameters part-declaration))
+                 arguments (project-type-argument-nodes
+                            ctx actual-arguments formal-parameters)]
              [(when (pos? index) (raw "."))
               (raw (pascal (.getSimpleName part-declaration)))
               (when (seq arguments)
@@ -714,15 +739,6 @@
          [(if unbounded?
             (raw "object")
             (type-node ctx bound))])))))
-
-(defn- unbounded-wildcard-reference? [^CtTypeReference reference]
-  (and (instance? CtWildcardReference reference)
-       (= "?" (.getSimpleName reference))
-       (= "java.lang.Object"
-          (some-> reference
-                  ^CtWildcardReference
-                  .getBoundingType
-                  .getQualifiedName))))
 
 (defn- unbounded-wildcard-collection-reference?
   [^CtTypeReference reference]
@@ -5144,30 +5160,30 @@
                   (supplemental-neutral-invocation-node
                    @ctx-holder element (:key occurrence) target-node arguments)
                   (or
-                  (target-declarative-node
-                   ctx-holder
-                   #(declarative-shared-invocation-node
-                     %
-                     @ctx-holder
-                     element
-                     occurrence
-                     target
-                     target-node
-                     default-target-node
-                     arguments
-                     children
-                     declaration))
-                  (declarative-shared-invocation-node
-                   shared-mappings
-                   @ctx-holder
-                   element
-                   occurrence
-                   target
-                   target-node
-                   default-target-node
-                   arguments
-                   children
-                   declaration)
+                   (target-declarative-node
+                    ctx-holder
+                    #(declarative-shared-invocation-node
+                      %
+                      @ctx-holder
+                      element
+                      occurrence
+                      target
+                      target-node
+                      default-target-node
+                      arguments
+                      children
+                      declaration))
+                   (declarative-shared-invocation-node
+                    shared-mappings
+                    @ctx-holder
+                    element
+                    occurrence
+                    target
+                    target-node
+                    default-target-node
+                    arguments
+                    children
+                    declaration)
                    (sequence-node
                     [(when target
                        (sequence-node [default-target-node (raw ".")]))
@@ -5346,8 +5362,13 @@
                destination-method-reference?
                (:destination-method-reference? @ctx-holder)
                discards-result?
-               (and (instance? CtMethod declaration)
-                    (not= "void" (.getQualifiedName (.getType ^CtMethod declaration)))
+               (and (or (and (instance? CtMethod declaration)
+                             (not= "void"
+                                   (.getQualifiedName
+                                    (.getType ^CtMethod declaration))))
+                        (and (instance? Method declaration)
+                             (not= Void/TYPE
+                                   (.getReturnType ^Method declaration))))
                     (contains? #{"java.util.function.Consumer"
                                  "java.util.function.BiConsumer"}
                                functional-type))]
@@ -5380,6 +5401,7 @@
                             "executable:java.lang.Math#min(float,float)"
                             "executable:java.lang.Math#max(float,float)"
                             "executable:java.lang.Object#toString()"
+                            "executable:java.lang.StringBuilder#append(java.lang.Object)"
                             "executable:java.util.List#add(java.lang.Object)"
                             "executable:java.util.ArrayList#add(java.lang.Object)"
                             "executable:java.util.List#remove(java.lang.Object)"
@@ -5522,6 +5544,11 @@
                (= "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"
                   (:key occurrence))
                (sequence-node [target (raw ".Set")])
+
+               (= "executable:java.lang.StringBuilder#append(java.lang.Object)"
+                  (:key occurrence))
+               (sequence-node
+                [(raw "(value0) => { ") target (raw ".Append(value0); }")])
 
                (= "executable:java.util.List#of()" (:key occurrence))
                (let [parent
@@ -7513,6 +7540,27 @@
    (when-let [initializer (.getDefaultExpression field)]
      (seq (.getElements initializer (TypeFilter. CtThisAccess))))))
 
+(defn- instance-initialization-node
+  [ctx member]
+  (cond
+    (instance? CtField member)
+    (let [^CtField field member
+          initializer (.getDefaultExpression field)]
+      (sequence-node
+       [(raw (str "this." (destination-field-name ctx field) " = "))
+        (assignment-value-node
+         ctx field initializer (translated-node ctx initializer))
+        (raw ";")]))
+
+    (instance? CtAnonymousExecutable member)
+    (csharp/with-source
+      (translated-node ctx (.getBody ^CtAnonymousExecutable member))
+      (source-ref member :java-library.declaration/instance-initializer nil))
+
+    :else
+    (unsupported! "Java instance initialization member is not implemented"
+                  member)))
+
 (defn- annotation-methods [^CtAnnotationType annotation-type]
   (->> (.getAnnotationMethods annotation-type)
        (sort-by
@@ -7767,9 +7815,30 @@
 (defn- matching-class-method [^CtType owner ^CtMethod interface-method]
   (or
    (some
-    #(when (= (.getSignature interface-method) (.getSignature ^CtMethod %)) %)
+    #(when (or (= (.getSignature interface-method) (.getSignature ^CtMethod %))
+               (override-compatible-method? interface-method %))
+       %)
     (.getMethodsByName owner (.getSimpleName interface-method)))
    (superclass-method owner interface-method)))
+
+(defn- substituted-interface-reference
+  [^CtTypeReference interface-reference ^CtTypeReference member-reference]
+  (if-not (instance? CtTypeParameterReference member-reference)
+    member-reference
+    (let [interface (.getTypeDeclaration interface-reference)
+          formals (when (instance? CtType interface)
+                    (vec (.getFormalCtTypeParameters ^CtType interface)))
+          actuals (vec (.getActualTypeArguments interface-reference))]
+      (if (= (count formals) (count actuals))
+        (or
+         (some
+          (fn [[^CtTypeParameter formal ^CtTypeReference actual]]
+            (when (= (.getSimpleName formal)
+                     (.getSimpleName member-reference))
+              actual))
+          (map vector formals actuals))
+         member-reference)
+        member-reference))))
 
 (defn- interface-contract-nodes [ctx ^CtType owner]
   (when (instance? CtClass owner)
@@ -7780,8 +7849,11 @@
                        (not (.hasModifier interface-method ModifierKind/STATIC)))
               (let [implementation
                     (matching-class-method owner interface-method)
+                    interface-return-reference
+                    (substituted-interface-reference
+                     interface-reference (.getType interface-method))
                     interface-return
-                    (.getQualifiedName (.getType interface-method))
+                    (.getQualifiedName interface-return-reference)
                     implementation-return
                     (some-> ^CtMethod implementation .getType .getQualifiedName)
                     name (method-name ctx
@@ -7792,9 +7864,8 @@
                        (not= interface-return implementation-return))
                   (let [parameters (vec (.getParameters interface-method))]
                     (sequence-node
-                     [(declaration-type-node ctx
-                                             interface-method
-                                             (.getType interface-method))
+                     [(declaration-type-node
+                       ctx interface-method interface-return-reference)
                       (raw " ")
                       (type-node ctx interface-reference)
                       (raw (str "." name))
@@ -7954,9 +8025,9 @@
           (sequence-node
            [(owner-type-node ctx (.getDeclaringType owner))
             (raw (str " " outer-field-name))]))
-        deferred-fields (:deferred-field-initializers ctx)
+        initialization-events (:instance-initialization-events ctx)
         body-node
-        (if (or inner? constructor-invocation (seq deferred-fields))
+        (if (or inner? constructor-invocation (seq initialization-events))
           (let [initializers
                 (if (= "this" initializer-kind)
                   []
@@ -7965,13 +8036,8 @@
                      [(raw (str "this." outer-field-name " = "
                                 outer-field-name ";"))]
                      [])
-                   (map
-                    (fn [^CtField field]
-                      (sequence-node
-                       [(raw (str "this." (destination-field-name ctx field) " = "))
-                        (translated-node ctx (.getDefaultExpression field))
-                        (raw ";")]))
-                    deferred-fields)))
+                   (map #(instance-initialization-node ctx %)
+                        initialization-events)))
                 statements
                 (remove
                  #(or (identical? constructor-invocation %)
@@ -8032,7 +8098,9 @@
                   initializer))
   (let [initializers
         (->> (explicit-members owner)
-             (filter #(instance? CtAnonymousExecutable %))
+             (filter #(and (instance? CtAnonymousExecutable %)
+                           (.hasModifier ^CtAnonymousExecutable %
+                                         ModifierKind/STATIC)))
              vec)
         first-initializer (first initializers)
         name (pascal (.getSimpleName owner))
@@ -8059,6 +8127,21 @@
         (source-ref initializer rule
                     {:declaration-id id :declaration-kind :initializer})))))
 
+(defn- instance-initializer-node
+  [ctx ^CtType owner ^CtAnonymousExecutable initializer]
+  (let [rule :java-library.declaration/instance-initializer
+        id (register-member! ctx owner initializer ".initializer" rule)]
+    (csharp/with-source
+      (raw "/* merged instance initializer */")
+      (source-ref initializer rule
+                  {:declaration-id id :declaration-kind :initializer}))))
+
+(defn- initializer-node
+  [ctx ^CtType owner ^CtAnonymousExecutable initializer]
+  (if (.hasModifier initializer ModifierKind/STATIC)
+    (static-initializer-node ctx owner initializer)
+    (instance-initializer-node ctx owner initializer)))
+
 (defn- member-node [ctx ^CtType owner member]
   (cond
     (instance? CtEnumValue member) (field-node ctx owner member)
@@ -8067,7 +8150,7 @@
     (instance? CtConstructor member) (constructor-node ctx owner member)
     (instance? CtType member) (emit-root ctx member)
     (instance? CtAnonymousExecutable member)
-    (static-initializer-node ctx owner member)
+    (initializer-node ctx owner member)
     :else (unsupported! "Java library member shape is not implemented" member)))
 
 (defn- derived-body-context [ctx additions]
@@ -8237,7 +8320,7 @@
   [ctx ^CtType type ^CtConstructor constructor outer-field-name]
   (let [name (pascal (.getSimpleName type))
         outer (.getDeclaringType type)
-        deferred-fields (:deferred-field-initializers ctx)
+        initialization-events (:instance-initialization-events ctx)
         rule :java-library.declaration/implicit-member-constructor
         emitted-visibility (implicit-constructor-visibility type constructor)
         id (register-member! ctx type constructor name rule 1 emitted-visibility)]
@@ -8247,15 +8330,10 @@
         (owner-type-node ctx outer) (raw (str " " outer-field-name ") {\nthis."))
         (raw outer-field-name) (raw (str " = " outer-field-name ";\n"))
         (sequence-node
-         (mapv
-          (fn [^CtField field]
-            (sequence-node
-             [(raw (str "this." (destination-field-name ctx field) " = "))
-              (translated-node ctx (.getDefaultExpression field))
-              (raw ";")]))
-          deferred-fields)
+         (mapv #(instance-initialization-node ctx %)
+               initialization-events)
          "\n")
-        (when (seq deferred-fields) (raw "\n"))
+        (when (seq initialization-events) (raw "\n"))
         (raw "}")])
       (source-ref constructor rule
                   {:declaration-id id :declaration-kind :constructor}))))
@@ -8603,15 +8681,34 @@
         (some #(and (instance? CtType %)
                     (non-static-member-class? %))
               members)
+        instance-initializers
+        (->> members
+             (filter #(and (instance? CtAnonymousExecutable %)
+                           (not (.hasModifier ^CtAnonymousExecutable %
+                                              ModifierKind/STATIC))))
+             vec)
         deferred-fields
         (->> members
              (filter #(and (instance? CtField %)
                            (not (.hasModifier ^CtField % ModifierKind/STATIC))
                            (some? (.getDefaultExpression ^CtField %))
-                           (or nested-instance-class?
+                           (or (seq instance-initializers)
+                               nested-instance-class?
                                (initializer-uses-this? %)
                                (seq (field-anonymous-calls %)))))
              vec)
+        initialization-events
+        (if (seq instance-initializers)
+          (->> members
+               (filter #(or
+                         (and (instance? CtField %)
+                              (not (.hasModifier ^CtField % ModifierKind/STATIC))
+                              (some? (.getDefaultExpression ^CtField %)))
+                         (and (instance? CtAnonymousExecutable %)
+                              (not (.hasModifier ^CtAnonymousExecutable %
+                                                 ModifierKind/STATIC)))))
+               vec)
+          deferred-fields)
         explicit-constructors (filter #(instance? CtConstructor %) members)
         implicit-constructor
         (some #(when (and (instance? CtConstructor %)
@@ -8622,13 +8719,13 @@
         (and (not inner?)
              implicit-constructor
              (empty? explicit-constructors)
-             (or (seq deferred-fields)
+             (or (seq initialization-events)
                  (and (instance? CtClass type)
                       (.hasModifier ^CtModifiable type
                                     ModifierKind/ABSTRACT))
                  (.hasModifier ^CtModifiable type ModifierKind/PROTECTED)
                  (public-derived-type? type)))
-        _ (when (and (seq deferred-fields)
+        _ (when (and (seq initialization-events)
                      (empty? explicit-constructors)
                      (nil? implicit-constructor))
             (unsupported!
@@ -8639,7 +8736,8 @@
                     {:outer-type (when inner? (.getDeclaringType type))
                      :outer-field-name outer-field-name
                      :defer-field-initializers? (boolean (seq deferred-fields))
-                     :deferred-field-initializers deferred-fields})
+                     :deferred-field-initializers deferred-fields
+                     :instance-initialization-events initialization-events})
         member-nodes (if-let [emit-members (:emit-members ctx)]
                        (emit-members member-ctx type members)
                        (mapv #(member-node member-ctx type %) members))

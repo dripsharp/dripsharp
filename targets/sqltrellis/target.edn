@@ -27,7 +27,7 @@
    {:sources []
     :evidence [:sqltrellis-complete-product-proof]
     :review "pkl-e2eu.1"
-    :budget {:authored-lines 12769 :total-lines 131030}}
+    :budget {:authored-lines 12901 :total-lines 131162}}
    :required-capabilities #{:java-compat :java-regex-unicode}}]
  :destinations [{:id :core :path "destinations/core.edn"}]
  :mapping-overlays []

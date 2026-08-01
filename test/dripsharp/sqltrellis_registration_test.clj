@@ -101,6 +101,10 @@
            (get-in target [:publication :submodule-path])))
     (is (= {"sqltrellis" "src/DripSharp.SqlTrellis"}
            (get-in target [:publication :profile-projects])))
+    (is (= "disable"
+           (get-in target
+                   [:profiles "sqltrellis" :destination
+                    :configuration :project :nullable])))
     (is (= product-repository-existed?
            (paths/exists? product-repository)))
     (is (= :maven (:build-tool profile)))

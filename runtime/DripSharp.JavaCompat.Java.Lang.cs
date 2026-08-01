@@ -1216,6 +1216,13 @@ internal static partial class JavaCompat
             types: parameterTypes,
             modifiers: null)
         ?? throw new MissingMethodException(type.FullName, ".ctor");
+    internal static ConstructorInfo ClassGetConstructor(Type type, params Type[] parameterTypes) =>
+        type.GetConstructor(
+            BindingFlags.Public | BindingFlags.Instance,
+            binder: null,
+            types: parameterTypes,
+            modifiers: null)
+        ?? throw new MissingMethodException(type.FullName, ".ctor");
     internal static T ConstructorInvoke<T>(ConstructorInfo constructor, params object?[] arguments) =>
         (T)constructor.Invoke(arguments);
     internal static T? FieldGetAnnotation<T>(FieldInfo field, Type annotationType) where T : class =>

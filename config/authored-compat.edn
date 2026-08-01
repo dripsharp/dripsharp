@@ -9,14 +9,14 @@
    :charset nil
    :capability :java-compat
    :source-files 12
-   :max-source-lines 12686
-   :max-emitted-lines 12686
+   :max-source-lines 12818
+   :max-emitted-lines 12818
    :source-inventory-sha256
    "4b92c9593976f941edb72b3425c87ea37d5def1072fc9e094548e05f5af6bae6"
    :public-types
-   {:count 56
+   {:count 59
     :sha256
-    "990fdd35c019831a7f938b9c898583c6ee99aab42cfe793538bf099993dc0e41"}}
+    "545610ebbcf4627fde9d0b61dd9017fccd354061f100b6a781b3ed71e383fc62"}}
   {:id :shared/java-regex-unicode
    :kind :file
    :provenance "runtime/DripSharp.JavaRegexUnicodeData.cs"

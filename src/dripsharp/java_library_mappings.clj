@@ -84,7 +84,37 @@
    (static-call
     :java.lang.double/compare
     "executable:java.lang.Double#compare(double,double)"
-    "global::DripSharp.Runtime.JavaCompat.CompareDouble")])
+    "global::DripSharp.Runtime.JavaCompat.CompareDouble")
+   (compat-call
+    :java.lang.class/get-constructor
+    "executable:java.lang.Class#getConstructor(java.lang.Class[])"
+    "global::DripSharp.Runtime.JavaCompat.ClassGetConstructor")])
+
+(def sql-entries
+  [(static-call
+    :java.sql.date/value-of
+    "executable:java.sql.Date#valueOf(java.lang.String)"
+    "global::DripSharp.Runtime.JavaSqlDate.ValueOf")
+   (rename
+    :java.sql.date/to-string
+    "executable:java.sql.Date#toString()"
+    "ToString")
+   (static-call
+    :java.sql.time/value-of
+    "executable:java.sql.Time#valueOf(java.lang.String)"
+    "global::DripSharp.Runtime.JavaSqlTime.ValueOf")
+   (rename
+    :java.sql.time/to-string
+    "executable:java.sql.Time#toString()"
+    "ToString")
+   (static-call
+    :java.sql.timestamp/value-of
+    "executable:java.sql.Timestamp#valueOf(java.lang.String)"
+    "global::DripSharp.Runtime.JavaSqlTimestamp.ValueOf")
+   (rename
+    :java.sql.timestamp/to-string
+    "executable:java.sql.Timestamp#toString()"
+    "ToString")])
 
 (def io-entries
   [(property
@@ -169,6 +199,10 @@
     :java.util.list/contains
     "executable:java.util.List#contains(java.lang.Object)"
     "global::DripSharp.Runtime.JavaCompat.CollectionContains")
+   (static-call
+    :java.util.collections/add-all
+    "executable:java.util.Collections#addAll(java.util.Collection,java.lang.Object[])"
+    "global::DripSharp.Runtime.JavaCompat.AddAll")
    (rename
     :java.util.list/clear
     "executable:java.util.List#clear()"
@@ -1332,7 +1366,8 @@
    [:java-library.mapping.executable/handler-0596 ["executable:java.util.List#hashCode()"]]
    [:java-library.mapping.executable/handler-0602 ["executable:java.util.ArrayList#remove(int)"]]
    [:java-library.mapping.executable/handler-0603
-    ["executable:java.util.List#iterator()"
+    ["executable:java.util.ArrayList#iterator()"
+     "executable:java.util.List#iterator()"
      "executable:java.util.AbstractSequentialList#iterator()"]]
    [:java-library.mapping.executable/handler-0604 ["executable:java.util.List#listIterator()"]]
    [:java-library.mapping.executable/handler-0605 ["executable:java.util.List#listIterator(int)"]]
@@ -2182,6 +2217,7 @@
     :key
     (concat
      lang-entries
+     sql-entries
      io-entries
      collection-entries
      stream-entries
@@ -2431,6 +2467,7 @@
   "All reusable Java-library member mappings, including every shared
   executable, constructor, and field identity."
   (vec (concat lang-entries
+               sql-entries
                io-entries
                collection-entries
                stream-entries

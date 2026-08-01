@@ -6,8 +6,10 @@
   fact model or a replacement AST."
   (:require [clojure.string :as str]
             [dripsharp.diagnostics :as diagnostics]
-            [dripsharp.project-input :as project-input])
-  (:import [java.io File]
+            [dripsharp.paths :as paths]
+            [dripsharp.project-input :as project-input]
+            [dripsharp.util :as util])
+  (:import [java.io File FileInputStream]
            [java.lang.reflect Constructor Field]
            [java.nio.file Path]
            [java.util Collections IdentityHashMap WeakHashMap]
@@ -15,6 +17,7 @@
            [java.util.concurrent.atomic AtomicLong]
            [java.util.function Function]
            [spoon Launcher]
+           [spoon.compiler SpoonFile]
            [spoon.processing FactoryAccessor]
            [spoon.reflect CtModel]
            [spoon.reflect.code CtInvocation CtThisAccess CtTypeAccess]
@@ -25,41 +28,43 @@
            [spoon.reflect.reference CtArrayTypeReference CtExecutableReference
             CtFieldReference CtIntersectionTypeReference CtTypeParameterReference
             CtTypeReference CtWildcardReference]
-           [spoon.reflect.visitor.filter TypeFilter]))
+           [spoon.reflect.visitor.filter TypeFilter]
+           [spoon.support.compiler VirtualFolder]))
 
 (defrecord JavaFrontendModel
-  [^Launcher launcher
-   ^CtModel model
-   compilation-units
-   project-types
-   source-files
-   totals])
+           [^Launcher launcher
+            ^CtModel model
+            compilation-units
+            project-types
+            source-files
+            totals])
 
 (defrecord ResolvedJavaModel
-  [^Launcher launcher
-   ^CtModel model
-   compilation-units
-   project-types
-   symbols
-   occurrences
-   totals])
+           [^Launcher launcher
+            ^CtModel model
+            compilation-units
+            project-types
+            symbols
+            occurrences
+            totals])
 
 (defrecord ResolvedJavaClosure
-  [^JavaFrontendModel frontend
-   seeds
-   declarations
-   source-inputs
-   public-api-declarations
-   symbols
-   occurrences
-   totals])
+           [^JavaFrontendModel frontend
+            seeds
+            declarations
+            source-inputs
+            public-api-declarations
+            symbols
+            occurrences
+            totals])
 
 (defrecord CanonicalSourceCache
-  [^ConcurrentHashMap paths
-   ^AtomicLong canonical-requests
-   ^AtomicLong canonical-computations
-   ^AtomicLong source-location-calls
-   ^AtomicLong frontend-renderings])
+           [^ConcurrentHashMap paths
+            ^ConcurrentHashMap aliases
+            ^AtomicLong canonical-requests
+            ^AtomicLong canonical-computations
+            ^AtomicLong source-location-calls
+            ^AtomicLong frontend-renderings])
 
 (def ^{:private true :tag java.util.Map} frontend-source-caches
   ;; A cache belongs to one Spoon factory/frontend lifecycle. Weak keys keep a
@@ -67,8 +72,18 @@
   (Collections/synchronizedMap (WeakHashMap.)))
 
 (defn- new-canonical-source-cache []
-  (->CanonicalSourceCache (ConcurrentHashMap.)
+  (->CanonicalSourceCache (ConcurrentHashMap.) (ConcurrentHashMap.)
                           (AtomicLong.) (AtomicLong.) (AtomicLong.) (AtomicLong.)))
+
+(defn- canonical-key
+  [^File file]
+  (-> file .getAbsoluteFile .toPath .normalize str))
+
+(defn- register-source-alias!
+  [^CanonicalSourceCache cache ^Path logical ^Path source]
+  (.put ^ConcurrentHashMap (:aliases cache)
+        (canonical-key (.toFile logical))
+        (.getCanonicalPath (.toFile source))))
 
 (defn- register-source-cache!
   [^Launcher launcher cache]
@@ -86,7 +101,7 @@
   (^String [^CanonicalSourceCache cache ^File file]
    (let [^AtomicLong requests (:canonical-requests cache)]
      (.incrementAndGet requests))
-   (let [key (-> file .getAbsoluteFile .toPath .normalize str)]
+   (let [key (canonical-key file)]
      (.computeIfAbsent
       ^ConcurrentHashMap (:paths cache)
       key
@@ -94,7 +109,8 @@
         (apply [_ _]
           (let [^AtomicLong computations (:canonical-computations cache)]
             (.incrementAndGet computations))
-          (.getCanonicalPath file)))))))
+          (or (.get ^ConcurrentHashMap (:aliases cache) key)
+              (.getCanonicalPath file))))))))
 
 (defn- effective-position
   ^SourcePosition [^CtElement element]
@@ -135,6 +151,7 @@
        :canonical-requests (.get canonical-requests)
        :canonical-computations (.get canonical-computations)
        :cached-source-identities (.size ^ConcurrentHashMap (:paths cache))
+       :source-aliases (.size ^ConcurrentHashMap (:aliases cache))
        :frontend-renderings (.get frontend-renderings)})))
 
 (defn frontend-identity
@@ -333,12 +350,12 @@
       :else
       (if-let [^CtType declaration
                (project-type-declaration project-types reference reference)]
-          (resolved :type (str "type:" (.getQualifiedName declaration)) :project
-                    reference declaration :source-declaration)
-          (let [actual-class (.getActualClass reference)]
-            (resolved :type (str "type:" (.getName actual-class))
-                      (class-origin actual-class) reference actual-class
-                      :runtime-class))))
+        (resolved :type (str "type:" (.getQualifiedName declaration)) :project
+                  reference declaration :source-declaration)
+        (let [actual-class (.getActualClass reference)]
+          (resolved :type (str "type:" (.getName actual-class))
+                    (class-origin actual-class) reference actual-class
+                    :runtime-class))))
     (catch Throwable error
       {:failure (throwable-diagnostic
                  :unresolved-type reference
@@ -488,7 +505,7 @@
           {:keys [line column]} (source-location declaration)]
       (str "initializer:" (.getQualifiedName owner)
            "#" (if (.hasModifier ^CtModifiable declaration ModifierKind/STATIC)
-                  "static" "instance")
+                 "static" "instance")
            "@" line ":" column))
 
     (and (instance? CtType declaration)
@@ -537,25 +554,25 @@
         :else
         (if-let [^CtType owner
                  (project-type-declaration project-types owner-reference reference)]
-            (if-let [declaration (or (record-component owner name)
-                                     (.getFieldDeclaration reference)
-                                     (inherited-field-declaration owner name))]
-              (let [declaring-owner (or (parent-of-type declaration CtType) owner)]
-                (resolved :field (field-key reference (.getQualifiedName ^CtType declaring-owner))
+          (if-let [declaration (or (record-component owner name)
+                                   (.getFieldDeclaration reference)
+                                   (inherited-field-declaration owner name))]
+            (let [declaring-owner (or (parent-of-type declaration CtType) owner)]
+              (resolved :field (field-key reference (.getQualifiedName ^CtType declaring-owner))
                         :project reference
                         declaration
                         (if (instance? CtRecordComponent declaration)
                           :record-component
                           :source-declaration)))
-              {:failure (diagnostic
-                         :unresolved-field reference
-                         (str "Cannot resolve project field "
-                              (field-key reference (.getQualifiedName owner))))})
-            (let [^Field field (.getActualField reference)
-                  ^Class declaring-class (.getDeclaringClass field)]
-              (resolved :field (field-key reference)
-                        (class-origin declaring-class) reference field
-                        :runtime-member)))))
+            {:failure (diagnostic
+                       :unresolved-field reference
+                       (str "Cannot resolve project field "
+                            (field-key reference (.getQualifiedName owner))))})
+          (let [^Field field (.getActualField reference)
+                ^Class declaring-class (.getDeclaringClass field)]
+            (resolved :field (field-key reference)
+                      (class-origin declaring-class) reference field
+                      :runtime-member)))))
     (catch Throwable error
       {:failure (throwable-diagnostic
                  :unresolved-field reference
@@ -615,8 +632,87 @@
        (keep #(some->> % .getFile (canonical-file cache)))
        set))
 
+(defn- containing-source-root
+  [input ^Path source]
+  (->> (:source-roots input)
+       (filter #(.startsWith source ^Path %))
+       (sort-by #(.getNameCount ^Path %))
+       last))
+
+(defn- module-info-source?
+  [^Path source]
+  (= "module-info.java" (str (.getFileName source))))
+
+(defn- declared-module-name
+  [^Path module-info]
+  (or (second
+       (re-find
+        #"(?m)^\s*(?:open\s+)?module\s+([A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*)\s*\{"
+        (slurp (str module-info))))
+      (throw
+       (ex-info "Java module descriptor has no recognizable declaration"
+                {:kind :unrecognized-java-module-declaration
+                 :path (str module-info)}))))
+
+(defn- modular-source-records
+  [workspace-root input]
+  (let [sources (project-input/production-source-files input)
+        module-infos (filterv module-info-source? sources)
+        module-root (when (= 1 (count module-infos))
+                      (containing-source-root input (first module-infos)))
+        split-module? (and module-root
+                           (some #(not (.startsWith ^Path % ^Path module-root))
+                                 sources))]
+    (if-not split-module?
+      (mapv (fn [source] {:source source}) sources)
+      (let [logical-root
+            (paths/absolute
+             (paths/resolve-path
+              workspace-root "target" "spoon-inputs"
+              (subs (util/sha256-text (:project-id input)) 0 16)
+              (declared-module-name (first module-infos))))
+            records
+            (mapv
+             (fn [^Path source]
+               (let [root (containing-source-root input source)]
+                 {:source source
+                  :logical (.resolve logical-root (.relativize root source))}))
+             sources)
+            collisions
+            (->> records
+                 (group-by (comp str :logical))
+                 (keep (fn [[logical matches]]
+                         (when (< 1 (count matches))
+                           {:logical logical
+                            :sources (mapv (comp str :source) matches)})))
+                 vec)]
+        (when (seq collisions)
+          (throw
+           (ex-info
+            "Modular Java source roots contain colliding relative paths"
+            {:kind :ambiguous-modular-source-paths
+             :project-id (:project-id input)
+             :collisions collisions})))
+        records))))
+
+(defn- source-backed-spoon-file
+  [^Path source ^Path logical]
+  (reify SpoonFile
+    (getContent [_] (FileInputStream. (.toFile source)))
+    (getName [_] (str (.getFileName logical)))
+    (getParent [_] (VirtualFolder.))
+    (getFileSystemParent [_] (.toFile (.getParent logical)))
+    (isFile [_] true)
+    (isJava [_] true)
+    (getPath [_] (str logical))
+    (isArchive [_] false)
+    (toFile [_] (.toFile source))
+    (isActualFile [_] true)
+    Object
+    (toString [_] (str logical))))
+
 (defn- build-launcher
-  [input]
+  [workspace-root input cache]
   (let [launcher (Launcher.)
         environment (.getEnvironment launcher)
         toolchain (:java-toolchain input)]
@@ -628,8 +724,14 @@
                          (into-array String
                                      (map str
                                           (project-input/compile-classpath input))))
-    (doseq [source (project-input/production-source-files input)]
-      (.addInputResource launcher (str source)))
+    (doseq [{:keys [source logical]}
+            (modular-source-records workspace-root input)]
+      (if logical
+        (do
+          (register-source-alias! cache logical source)
+          (.addInputResource launcher
+                             (source-backed-spoon-file source logical)))
+        (.addInputResource launcher (str source))))
     launcher))
 
 (defn- validate-compilation-units!
@@ -837,16 +939,16 @@
     (when (seq failures)
       (let [first-failure (first failures)]
         (throw (ex-info
-              (str "Spoon semantic resolution failed inside closure declaration "
-                   (declaration-key declaration) ": " (:message first-failure)
-                   (when-let [file (get-in first-failure [:location :file])]
-                     (str " at " file
-                          (when-let [line (get-in first-failure [:location :line])]
-                            (str ":" line)))))
-              {:kind :closure-semantic-resolution-failed
-               :declaration-key (declaration-key declaration)
-               :failure-count (count failures)
-               :failures failures}))))
+                (str "Spoon semantic resolution failed inside closure declaration "
+                     (declaration-key declaration) ": " (:message first-failure)
+                     (when-let [file (get-in first-failure [:location :file])]
+                       (str " at " file
+                            (when-let [line (get-in first-failure [:location :line])]
+                              (str ":" line)))))
+                {:kind :closure-semantic-resolution-failed
+                 :declaration-key (declaration-key declaration)
+                 :failure-count (count failures)
+                 :failures failures}))))
     (vec (remove :failure results))))
 
 (defn- owner-type-items
@@ -1061,7 +1163,7 @@
                   initializers (initializer-items declaration)
                   owners (owner-type-items declaration)
                   additions (->> (concat dependencies member-additions obligations
-                                          initializers owners)
+                                         initializers owners)
                                  (remove #(nil? (:key %)))
                                  (sort-by (juxt :key #(expansion-rank (:expand %))))
                                  vec)
@@ -1113,8 +1215,9 @@
   callers may validate either the whole project or an exact declaration closure."
   [_workspace-root input]
   (let [input (project-input/validate! input)
-        launcher (build-launcher input)
-        cache (register-source-cache! launcher (new-canonical-source-cache))
+        cache (new-canonical-source-cache)
+        launcher (build-launcher _workspace-root input cache)
+        cache (register-source-cache! launcher cache)
         source-files (set (map #(canonical-file cache (.toFile ^Path %))
                                (project-input/production-source-files input)))
         model (try
@@ -1151,15 +1254,15 @@
   (let [{:keys [launcher model compilation-units project-types source-files]}
         frontend
         occurrences (validate-references! model project-types source-files)
-          symbols (reduce (fn [index occurrence]
-                            (update index (:key occurrence) (fnil conj []) occurrence))
-                          (sorted-map)
-                          occurrences)
-          totals (merge
-                  {:compilation-units (count compilation-units)
-                   :project-types (count project-types)
-                   :symbols (count symbols)}
-                  (observed-occurrence-totals occurrences))]
+        symbols (reduce (fn [index occurrence]
+                          (update index (:key occurrence) (fnil conj []) occurrence))
+                        (sorted-map)
+                        occurrences)
+        totals (merge
+                {:compilation-units (count compilation-units)
+                 :project-types (count project-types)
+                 :symbols (count symbols)}
+                (observed-occurrence-totals occurrences))]
     (->ResolvedJavaModel launcher model compilation-units project-types
                          symbols occurrences totals)))
 
@@ -1196,10 +1299,10 @@
               jdk-occurrences dependency-occurrences intrinsic-occurrences
               type-parameter-occurrences)
       (format (str "%d units, %d project types, %d type uses, %d calls, "
-                 "%d constructors, %d fields, %d annotations, %d stable symbols; "
-                 "origins: project=%d jdk=%d dependency=%d intrinsic=%d type-parameter=%d")
-            compilation-units project-types type-references
-            executable-references constructor-references field-references
-            annotations symbols project-occurrences jdk-occurrences
-            dependency-occurrences intrinsic-occurrences
-            type-parameter-occurrences))))
+                   "%d constructors, %d fields, %d annotations, %d stable symbols; "
+                   "origins: project=%d jdk=%d dependency=%d intrinsic=%d type-parameter=%d")
+              compilation-units project-types type-references
+              executable-references constructor-references field-references
+              annotations symbols project-occurrences jdk-occurrences
+              dependency-occurrences intrinsic-occurrences
+              type-parameter-occurrences))))

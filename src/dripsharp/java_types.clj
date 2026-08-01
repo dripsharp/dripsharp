@@ -332,6 +332,13 @@
    "java.security.PrivilegedAction" ["global::System.Func"
                                      :dotnet.type/func]
 
+   "java.sql.Date" ["global::DripSharp.Runtime.JavaSqlDate"
+                    :dotnet.type/java-sql-date]
+   "java.sql.Time" ["global::DripSharp.Runtime.JavaSqlTime"
+                    :dotnet.type/java-sql-time]
+   "java.sql.Timestamp" ["global::DripSharp.Runtime.JavaSqlTimestamp"
+                         :dotnet.type/java-sql-timestamp]
+
    "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.Instant" ["global::System.DateTimeOffset" :dotnet.type/date-time-offset]
    "java.time.ZoneId" ["global::System.TimeSpan" :dotnet.type/time-span]

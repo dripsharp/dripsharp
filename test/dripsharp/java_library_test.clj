@@ -552,6 +552,55 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest java-sql-temporals-preserve-jdbc-parsing-and-rendering
+  (let [fixture
+        (model!
+         {"example/Temporal.java"
+          (str "package example; import java.sql.Date; import java.sql.Time; "
+               "import java.sql.Timestamp; public final class Temporal { "
+               "public static Date date(String value) { return Date.valueOf(value); } "
+               "public static Time time(String value) { return Time.valueOf(value); } "
+               "public static Timestamp timestamp(String value) { "
+               "return Timestamp.valueOf(value); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        project-root (:project-root emission)
+        temporal
+        (slurp (str (paths/resolve-path
+                     project-root "src/Example/Java/Library/Temporal.cs")))
+        consumer-root (temp-directory)
+        generated-project
+        (paths/resolve-path project-root (:project-file emission))
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>disable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "var date = global::Example.Java.Library.Temporal.date(\"2024-2-3\");\n"
+                 "var time = global::Example.Java.Library.Temporal.time(\"4:5:6\");\n"
+                 "var timestamp = global::Example.Java.Library.Temporal.timestamp("
+                 "\"2024-2-3 4:5:6.120000000\");\n"
+                 "return date.ToString() == \"2024-02-03\" "
+                 "&& time.ToString() == \"04:05:06\" "
+                 "&& timestamp.ToString() == \"2024-02-03 04:05:06.12\" ? 0 : 1;\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
+    (is (str/includes? temporal "global::DripSharp.Runtime.JavaSqlDate"))
+    (is (str/includes? temporal "global::DripSharp.Runtime.JavaSqlTime"))
+    (is (str/includes? temporal "global::DripSharp.Runtime.JavaSqlTimestamp"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit result)))))
+
 (deftest declaration-type-guard-preserves-kind-specific-covariant-lists
   (let [fixture
         (model! {"example/Variance.java"
@@ -1651,6 +1700,27 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest consumer-method-references-discard-mapped-jdk-results
+  (let [fixture
+        (model! {"example/AppendValues.java"
+                 (str "package example; import java.util.List; "
+                      "public final class AppendValues { public static String render("
+                      "List<Object> values) { StringBuilder builder = new StringBuilder(); "
+                      "values.forEach(builder::append); return builder.toString(); } }")})
+        result (emit! fixture 2 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/AppendValues.cs")))]
+    (is (str/includes?
+         source
+         "(value0) => { builder.Append(value0); }"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neutral-capacity-set-add-and-list-size-use-direct-dotnet-contracts
   (let [fixture
         (model! {"example/Visited.java"
@@ -1729,6 +1799,27 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest collections-add-all-preserves-varargs-mutation-and-result
+  (let [fixture
+        (model! {"example/Additions.java"
+                 (str "package example; import java.util.Collections; import java.util.List; "
+                      "public final class Additions { public static boolean add("
+                      "List<String> target, String... values) { "
+                      "return Collections.addAll(target, values); } }")})
+        result (emit! fixture 2 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Additions.cs")))]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.AddAll(target, values);"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -2748,7 +2839,9 @@
                       "public static Throwable cause(Throwable target, Throwable cause) { "
                       "target.initCause(cause); return target.getCause(); } "
                       "public static Standard create() throws Exception { "
-                      "return Standard.class.getDeclaredConstructor().newInstance(); } }")})
+                      "return Standard.class.getDeclaredConstructor().newInstance(); } "
+                      "public static Standard createPublic(Class<Standard> type) throws Exception { "
+                      "return type.getConstructor().newInstance(); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -2795,6 +2888,11 @@
               "global::Example.Java.Library.Standard>("
               "global::DripSharp.Runtime.JavaCompat.ClassGetDeclaredConstructor("
               "typeof(global::Example.Java.Library.Standard)));")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.ConstructorInvoke<"
+              "global::Example.Java.Library.Standard>("
+              "global::DripSharp.Runtime.JavaCompat.ClassGetConstructor(type));")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -3753,6 +3851,31 @@
                                         "src/Example/Java/Library/Child.cs")))]
     (is (str/includes? base-source "public abstract string path(string name);"))
     (is (str/includes? child-source "public override string path(string name)"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest wildcard-interface-implementations-match-by-java-erasure
+  (let [fixture
+        (model! {"example/Item.java"
+                 "package example; public final class Item<T extends Number> {}"
+                 "example/Visitor.java"
+                 (str "package example; public interface Visitor<T> { "
+                      "<S> T visit(Item<? extends Number> item, S context); "
+                      "T other(); }")
+                 "example/VisitorImpl.java"
+                 (str "package example; public final class VisitorImpl "
+                      "implements Visitor<String> { @Override public <S> String "
+                      "visit(Item<?> item, S context) { return \"ok\"; } "
+                      "@Override public String other() { return \"ok\"; } }")})
+        result (emit! fixture 2)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/VisitorImpl.cs")))]
+    (is (str/includes? source "class VisitorImpl"))
     (is (zero? (get-in result [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root result)
@@ -4844,7 +4967,12 @@
                "static String clear(AtomicReference<String> value) { "
                "return value.getAndSet(null); } "
                "static String first(List<String> values) { "
+               "return values.iterator().next(); } "
+               "static String firstProjectList(ProjectList values) { "
                "return values.iterator().next(); } }")
+          "example/ProjectList.java"
+          (str "package example; import java.util.ArrayList; "
+               "public final class ProjectList extends ArrayList<String> { }")
           "example/Base.java"
           (str "package example; public class Base<T> { "
                "public Eager<T> eager() { return Eager.from(this); } }")
@@ -4861,6 +4989,7 @@
     (is (str/includes? interop ".GetAndSet(default!)"))
     (is (not (str/includes? interop ".GetAndSet((object)default!)")))
     (is (str/includes? interop ".Next()!"))
+    (is (= 2 (count (re-seq #"JavaCompat\.Iterator" interop))))
     (is (str/includes? base ".from(this)"))
     (is (not (str/includes? base "<MethodT>")))
     (is (zero? (:exit
@@ -5413,15 +5542,28 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest instance-initializer-blocks-remain-fail-closed
+(deftest instance-initializer-blocks-merge-into-root-constructors
   (let [fixture
-        (model! {"example/Unsupported.java"
-                 (str "package example; public final class Unsupported { "
-                      "private int value; { value = 1; } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :unsupported-destination-rule (:kind (ex-data error))))
-    (is (str/includes? (ex-message error)
-                       "instance initializer lowering is not implemented"))))
+        (model! {"example/Initialized.java"
+                 (str "package example; public final class Initialized { "
+                      "private int value = 2; { value += 3; } "
+                      "public int value() { return value; } }")})
+        emission (emit! fixture 3)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Initialized.cs")))
+        field-index (str/index-of source "this.__field_value = 2;")
+        block-index (str/index-of source "this.__field_value += 3;")]
+    (is (str/includes? source "private int __field_value;"))
+    (is (str/includes? source "public Initialized()"))
+    (is (and field-index block-index (< field-index block-index)))
+    (is (= 1 (get-in emission [:summary :declaration-kinds :initializer])))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest ssl-context-socket-factory-uses-the-reusable-tls-client-factory
   (let [fixture

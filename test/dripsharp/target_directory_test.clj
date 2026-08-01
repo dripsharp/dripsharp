@@ -1422,6 +1422,40 @@
                            [:consumer-tests :project-file]))
               "tests/DripSharp.Acme.Tests/DripSharp.Acme.Tests.csproj")))))))
 
+(deftest target-execution-resolves-target-owned-maven-build-input-contracts
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (update-edn!
+      root "targets/acme/profiles/core.edn"
+      (fn [profile]
+        (-> profile
+            (dissoc :gradle-project :gradle-java-major)
+            (assoc :build-tool :maven
+                   :maven-project-id "example:acme:1.0.0"
+                   :maven-selected-projects [":acme"]
+                   :maven-build-input-contract "maven-build-inputs.edn"
+                   :maven-lifecycle-phase :generate-sources))))
+     (let [observed (atom nil)
+           result
+           (target-execution/generate!
+            {:workspace-root root
+             :target :acme
+             :profile "acme-core"
+             :generate-fn
+             (fn [{:keys [profile read-profile-fn read-destination-fn]}]
+               (let [profile-record (read-profile-fn root profile)
+                     destination
+                     (read-destination-fn
+                      root (:destination-config profile-record))]
+                 (reset! observed profile-record)
+                 {:stage :generate
+                  :emission
+                  (synthetic-project-emission! root destination)}))})]
+       (is (= :generate (:stage result)))
+       (is (= "targets/acme/maven-build-inputs.edn"
+              (:maven-build-input-contract @observed)))))))
+
 (deftest conforming-unregistered-target-drives-every-generic-stage
   (in-target-workspace
    (fn [root]

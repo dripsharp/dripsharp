@@ -33,6 +33,131 @@ namespace DripSharp.Runtime;
 
 // JDK compatibility area: Java.Time
 
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSqlDate
+{
+    private static readonly Regex Pattern =
+        new(@"^(\d{4})-(\d{1,2})-(\d{1,2})$", RegexOptions.CultureInvariant);
+    private readonly DateOnly value;
+
+    private JavaSqlDate(DateOnly value) => this.value = value;
+
+    public static JavaSqlDate ValueOf(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var match = Pattern.Match(text);
+        if (!match.Success)
+            throw new ArgumentException("Invalid JDBC date escape value.", nameof(text));
+        try
+        {
+            return new JavaSqlDate(
+                new DateOnly(
+                    int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+                    int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture),
+                    int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture)));
+        }
+        catch (ArgumentOutOfRangeException error)
+        {
+            throw new ArgumentException("Invalid JDBC date escape value.", nameof(text), error);
+        }
+    }
+
+    public override string ToString() =>
+        value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+}
+
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSqlTime
+{
+    private static readonly Regex Pattern =
+        new(@"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", RegexOptions.CultureInvariant);
+    private readonly TimeOnly value;
+
+    private JavaSqlTime(TimeOnly value) => this.value = value;
+
+    public static JavaSqlTime ValueOf(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var match = Pattern.Match(text);
+        if (!match.Success)
+            throw new ArgumentException("Invalid JDBC time escape value.", nameof(text));
+        try
+        {
+            return new JavaSqlTime(
+                new TimeOnly(
+                    int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+                    int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture),
+                    int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture)));
+        }
+        catch (ArgumentOutOfRangeException error)
+        {
+            throw new ArgumentException("Invalid JDBC time escape value.", nameof(text), error);
+        }
+    }
+
+    public override string ToString() =>
+        value.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+}
+
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSqlTimestamp
+{
+    private static readonly Regex Pattern = new(
+        @"^(\d{4})-(\d{1,2})-(\d{1,2}) (\d{1,2}):(\d{1,2}):(\d{1,2})(?:\.(\d{1,9}))?$",
+        RegexOptions.CultureInvariant);
+    private readonly DateTime value;
+    private readonly string fraction;
+
+    private JavaSqlTimestamp(DateTime value, string fraction)
+    {
+        this.value = value;
+        this.fraction = fraction;
+    }
+
+    public static JavaSqlTimestamp ValueOf(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var match = Pattern.Match(text);
+        if (!match.Success)
+            throw new ArgumentException("Invalid JDBC timestamp escape value.", nameof(text));
+        try
+        {
+            var value = new DateTime(
+                int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+                int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture),
+                int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture),
+                int.Parse(match.Groups[4].Value, CultureInfo.InvariantCulture),
+                int.Parse(match.Groups[5].Value, CultureInfo.InvariantCulture),
+                int.Parse(match.Groups[6].Value, CultureInfo.InvariantCulture),
+                DateTimeKind.Unspecified);
+            var fraction = match.Groups[7].Success
+                ? match.Groups[7].Value.TrimEnd('0')
+                : "0";
+            return new JavaSqlTimestamp(value, fraction.Length == 0 ? "0" : fraction);
+        }
+        catch (ArgumentOutOfRangeException error)
+        {
+            throw new ArgumentException(
+                "Invalid JDBC timestamp escape value.", nameof(text), error);
+        }
+    }
+
+    public override string ToString() =>
+        value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "." + fraction;
+}
+
 internal
 enum JavaTimeUnit { NANOSECONDS, MICROSECONDS, MILLISECONDS, SECONDS, MINUTES, HOURS, DAYS }
 internal static class JavaTimeUnits

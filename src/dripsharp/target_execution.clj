@@ -36,6 +36,13 @@
   [target value]
   (str "targets/" (name target) "/" value))
 
+(defn- execution-profile
+  [target configuration]
+  (cond-> configuration
+    (and (string? (:maven-build-input-contract configuration))
+         (not (str/includes? (:maven-build-input-contract configuration) "/")))
+    (update :maven-build-input-contract #(target-relative target %))))
+
 (defn- execution-destination
   [target destination]
   (update destination :runtime-sources
@@ -113,8 +120,10 @@
              (map
               (fn [[id record]]
                 [id
-                 (baseline/hydrate-profile
-                  root (:configuration record))]))
+                 (execution-profile
+                  target
+                  (baseline/hydrate-profile
+                   root (:configuration record)))]))
              profiles))
           prepared-destinations
           (binding [baseline/*target-records* records]
