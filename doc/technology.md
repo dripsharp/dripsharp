@@ -14,12 +14,13 @@ checked-in wrapper and init-script backend. Maven builds use checksum-pinned
 Maven `3.9.11` because an upstream reactor is not required to ship a wrapper.
 
 The Maven backend observes Maven's effective selected reactor through a small
-EventSpy after the compile lifecycle has materialized generated production
-sources and reactor output directories. It retains inherited production
-source/resource definitions, keeps test inputs separate, resolves compile and
-runtime reactor/external dependencies, and hashes every external classpath
-artifact. Callers select Maven projects, never individual source or classpath
-files.
+EventSpy after the test-compile lifecycle has materialized generated production
+and test sources plus reactor output directories. Both Maven and Gradle retain
+test source roots, every Java test/helper compilation unit, resource roots,
+fixtures, test-role dependencies, and effective compile/runtime test
+classpaths separately from production inputs. Every external classpath artifact
+is checksum-bound. Callers select build-tool projects, never individual source,
+test, resource, or classpath files.
 
 ## Java Frontend: Spoon
 

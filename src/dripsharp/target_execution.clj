@@ -168,7 +168,7 @@
           :target :validation :read-target-fn
           :generate-fn :verify-fn :pack-fn :package-fn
           :differential-fn :proof-fn :synchronize-fn :prepare-fn
-          :consumer-tests-fn :staging-cleanup-fn
+          :test-suites-fn :consumer-tests-fn :staging-cleanup-fn
           :release-fn :build-fn :framework-assemblies :inventory
           :branch :commit-message :pull-request-title :pull-request-body
           :authorized-tag :product-commit :platform-ids :output-root))
@@ -205,13 +205,14 @@
                  {:workspace-root (:workspace-root execution)
                   :target-contract (:contract execution)
                   :generation generation})
-                consumer-tests
+                test-suites
                 (consumer-tests/emit!
                  {:workspace-root (:workspace-root execution)
                   :target-contract (:contract execution)})]
             (assoc generation
                    :product-staging staging
-                   :consumer-tests consumer-tests))
+                   :test-suites test-suites
+                   :consumer-tests test-suites))
           generation)))))
 
 (defn generate!
@@ -439,8 +440,10 @@
   (let [execution (plan (assoc options :profile nil))
         _ (generated-publication! execution)
         proof (publication-proof! execution options)
-        consumer-test-verification
-        ((or (:consumer-tests-fn options) consumer-tests/verify!)
+        test-suite-verification
+        ((or (:test-suites-fn options)
+             (:consumer-tests-fn options)
+             consumer-tests/verify!)
          {:workspace-root (:workspace-root execution)
           :target-contract (:contract execution)
           :run-command! (:run-command! options)})
@@ -459,7 +462,8 @@
            (assoc :run-command! (:run-command! options))))]
     {:target (:target execution)
      :proof proof
-     :consumer-tests consumer-test-verification
+     :test-suites test-suite-verification
+     :consumer-tests test-suite-verification
      :staging-cleanup staging-cleanup
      :synchronization synchronization}))
 
@@ -470,8 +474,10 @@
   (let [execution (plan (assoc options :profile nil))
         _ (generated-publication! execution)
         proof (publication-proof! execution options)
-        consumer-test-verification
-        ((or (:consumer-tests-fn options) consumer-tests/verify!)
+        test-suite-verification
+        ((or (:test-suites-fn options)
+             (:consumer-tests-fn options)
+             consumer-tests/verify!)
          {:workspace-root (:workspace-root execution)
           :target-contract (:contract execution)
           :run-command! (:run-command! options)})
@@ -493,7 +499,8 @@
            (assoc :run-command! (:run-command! options))))]
     {:target (:target execution)
      :proof proof
-     :consumer-tests consumer-test-verification
+     :test-suites test-suite-verification
+     :consumer-tests test-suite-verification
      :staging-cleanup staging-cleanup
      :preparation preparation}))
 

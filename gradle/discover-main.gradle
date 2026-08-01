@@ -22,10 +22,13 @@ gradle.projectsEvaluated {
   if (selectedProject != null) {
     def compileJavaProvider = selectedProject.tasks.named("compileJava")
     def processResourcesProvider = selectedProject.tasks.named("processResources")
+    def compileTestJavaProvider = selectedProject.tasks.named("compileTestJava")
+    def processTestResourcesProvider = selectedProject.tasks.named("processTestResources")
     selectedProject.tasks.register("dripsharpDescribeMain") {
       group = "dripsharp"
-      description = "Reports resolved ${projectPath} production inputs to DripSharp"
-      dependsOn(compileJavaProvider, processResourcesProvider)
+      description = "Reports resolved ${projectPath} production and test inputs to DripSharp"
+      dependsOn(compileJavaProvider, processResourcesProvider,
+                compileTestJavaProvider, processTestResourcesProvider)
 
       doLast {
         def outputProperty = gradle.rootProject.providers.gradleProperty("dripsharp.output")
@@ -35,8 +38,11 @@ gradle.projectsEvaluated {
 
         def sourceSets = selectedProject.extensions.getByType(SourceSetContainer)
         def main = sourceSets.getByName("main")
+        def test = sourceSets.getByName("test")
         def compileJava = compileJavaProvider.get()
+        def compileTestJava = compileTestJavaProvider.get()
         def processResources = processResourcesProvider.get()
+        def processTestResources = processTestResourcesProvider.get()
         def javaHome = compileJava.javaCompiler.present
           ? compileJava.javaCompiler.get().metadata.installationPath.asFile
           : new File(System.getProperty("java.home"))
@@ -54,11 +60,16 @@ gradle.projectsEvaluated {
         def generatedSourceRoots = sourceRoots.findAll {
           it.toPath().startsWith(buildRoot.toPath())
         }.toSet()
+        def testSourceRoots = test.java.srcDirs
+          .findAll { it.isDirectory() }
+          .collect { it.canonicalFile }
+          .toSet()
 
         // Gradle may leave this output absent when a project has no resources.
         // The manifest still records a concrete resource root, so materialize
         // the empty directory before validating it on the consumer side.
         processResources.destinationDir.mkdirs()
+        processTestResources.destinationDir.mkdirs()
 
         records.add(["project-path", projectPath])
         records.add(["java-home", javaHome])
@@ -66,6 +77,8 @@ gradle.projectsEvaluated {
         records.add(["preview-features", previewFeatures])
         records.add(["resource-root", processResources.destinationDir])
         sourceRoots.each { records.add(["source-root", it]) }
+        records.add(["test-resource-root", processTestResources.destinationDir])
+        testSourceRoots.each { records.add(["test-source-root", it]) }
         // `allJava` includes configured generated-source directories. The
         // compiler task is included as well because plugins may add generated
         // inputs directly to compileJava without registering a source set.
@@ -90,13 +103,40 @@ gradle.projectsEvaluated {
             records.add([generated ? "generated-source" : "source", canonicalSource])
           }
         }
+        def testSources = (test.allJava.files + compileTestJava.source.files)
+        if (compileTestJava.options.generatedSourceOutputDirectory.present) {
+          def generatedTestRoot = compileTestJava.options.generatedSourceOutputDirectory
+            .get().asFile.canonicalFile
+          if (generatedTestRoot.isDirectory()) {
+            testSourceRoots.add(generatedTestRoot)
+            records.add(["test-source-root", generatedTestRoot])
+          }
+          testSources += compileTestJava.options.generatedSourceOutputDirectory
+            .get().asFileTree.matching { include("**/*.java") }.files
+        }
+        testSources.each { source ->
+          if (source.isFile() && source.name.endsWith(".java")) {
+            records.add(["test-source", source.canonicalFile])
+          }
+        }
         if (processResources.destinationDir.isDirectory()) {
           processResources.destinationDir.eachFileRecurse { resource ->
             if (resource.isFile()) records.add(["resource", resource])
           }
         }
+        if (processTestResources.destinationDir.isDirectory()) {
+          processTestResources.destinationDir.eachFileRecurse { resource ->
+            if (resource.isFile()) records.add(["test-resource", resource])
+          }
+        }
         main.compileClasspath.files.findAll { it.exists() }.each {
           records.add(["classpath", it])
+        }
+        [["compile", test.compileClasspath],
+         ["runtime", test.runtimeClasspath]].each { scoped ->
+          scoped[1].files.findAll { it.exists() }.each {
+            records.add(["test-classpath", scoped[0], it])
+          }
         }
         [["compile", selectedProject.configurations.getByName("compileClasspath")],
          ["runtime", selectedProject.configurations.getByName("runtimeClasspath")]].each { scoped ->
@@ -129,6 +169,37 @@ gradle.projectsEvaluated {
             }
           }
         }
+        [["compile", selectedProject.configurations.getByName("testCompileClasspath")],
+         ["runtime", selectedProject.configurations.getByName("testRuntimeClasspath")]].each { scoped ->
+          def scope = scoped[0]
+          def configuration = scoped[1]
+          def unresolved = configuration.incoming.resolutionResult.allDependencies.findAll {
+            it.metaClass.hasProperty(it, "failure") && it.failure != null
+          }
+          if (!unresolved.empty) {
+            throw new GradleException("Unresolved ${scope} test dependencies: ${unresolved}")
+          }
+          configuration.incoming.resolutionResult.allComponents.each { component ->
+            def id = component.id
+            if (id instanceof ProjectComponentIdentifier) {
+              if (id.projectPath != projectPath) {
+                records.add(["test-project-dependency", scope, id.projectPath])
+              }
+            } else if (id instanceof ModuleComponentIdentifier) {
+              records.add(["test-external-dependency", scope,
+                           "${id.group}:${id.module}:${id.version}"])
+            }
+          }
+          configuration.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+            if (artifact.file.isFile()) {
+              def component = artifact.moduleVersion.id
+              records.add(["test-external-artifact", scope,
+                           "${component.group}:${component.name}:${component.version}",
+                           artifact.file.canonicalFile,
+                           dripsharpSha256(artifact.file)])
+            }
+          }
+        }
 
         records = records.collect { record ->
           def rendered
@@ -151,14 +222,22 @@ gradle.projectsEvaluated {
             "java-release": 2,
             "preview-features": 3,
             "source-root": 4,
-            "resource-root": 5,
-            "source": 6,
-            "generated-source": 7,
-            "resource": 8,
-            "classpath": 9,
-            "project-dependency": 10,
-            "external-dependency": 11,
-            "external-artifact": 12,
+            "test-source-root": 5,
+            "resource-root": 6,
+            "test-resource-root": 7,
+            "source": 8,
+            "generated-source": 9,
+            "test-source": 10,
+            "resource": 11,
+            "test-resource": 12,
+            "classpath": 13,
+            "test-classpath": 14,
+            "project-dependency": 15,
+            "external-dependency": 16,
+            "external-artifact": 17,
+            "test-project-dependency": 18,
+            "test-external-dependency": 19,
+            "test-external-artifact": 20,
           ]
           (kindOrder[left[0]] <=> kindOrder[right[0]]) ?: (left.join("\t") <=> right.join("\t"))
         }
@@ -166,7 +245,7 @@ gradle.projectsEvaluated {
         def outputFile = file(outputProperty.get())
         outputFile.parentFile.mkdirs()
         outputFile.withWriter("UTF-8") { writer ->
-          writer.write("DRIPSHARP_GRADLE_INPUTS_V5\n")
+          writer.write("DRIPSHARP_GRADLE_INPUTS_V6\n")
           records.unique().each { record -> writer.write(record.join("\t") + "\n") }
         }
       }

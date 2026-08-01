@@ -209,7 +209,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 6
+  {:schema-version 7
    :target :acme
    :product-family :acme
    :contracts
@@ -261,7 +261,7 @@
     :profile-projects {"acme-core" "src/Acme.Core"}
     :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
     :excluded-paths []
-    :consumer-tests "consumer-tests.edn"
+    :test-suites "test-suites.edn"
     :publication-mode :pull-request}
    :proof
    {:role :product
@@ -277,21 +277,30 @@
 
 (defn- consumer-tests
   []
-  {:schema-version 1
-   :project
-   {:directory "tests/DripSharp.Acme.Tests"
-    :assembly-name "DripSharp.Acme.Tests"
-    :target-framework "net10.0"
-    :packages
-    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
-     {:id "xunit" :version "2.9.3"}
-     {:id "xunit.runner.visualstudio" :version "3.1.4"}]}
-   :assembly-tests
-   {"acme-core"
-    {:source "consumer-tests/ConsumerTests.cs"
-     :destination "ConsumerTests.cs"
-     :sha256 (util/sha256-text acme-consumer-source)}}
-   :fixtures []})
+  {:schema-version 2
+   :projects
+   [{:id "DripSharp.Acme.Tests"
+     :directory "tests/DripSharp.Acme.Tests"
+     :assembly-name "DripSharp.Acme.Tests"
+     :target-framework "net10.0"
+     :profile-references ["acme-core"]
+     :project-references []
+     :packages
+     [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
+      {:id "xunit" :version "2.9.3"}
+      {:id "xunit.runner.visualstudio" :version "3.1.4"}]}]
+   :strategies
+   [{:id :focused-consumer
+     :kind :focused-consumer
+     :policy :shipped
+     :project "DripSharp.Acme.Tests"
+     :handler 'dripsharp.consumer-tests/focused-consumer-strategy!
+     :profile-tests
+     {"acme-core"
+      {:source "consumer-tests/ConsumerTests.cs"
+       :destination "ConsumerTests.cs"
+       :sha256 (util/sha256-text acme-consumer-source)}}
+     :fixtures []}]})
 
 (defn- public-type-proof
   []
@@ -402,7 +411,7 @@
            ["targets/acme/third-party.edn" (third-party-authorship)]
            ["targets/acme/baseline.edn" (baseline-record)]
            ["targets/acme/legal/policy.edn" (legal-policy)]
-           ["targets/acme/consumer-tests.edn" (consumer-tests)]
+           ["targets/acme/test-suites.edn" (consumer-tests)]
            ["targets/acme/profiles/core.edn" (generation-profile)]
            ["targets/acme/destinations/core.edn" (destination)]
            ["targets/acme/mappings/core.edn" (mapping-overlay)]
@@ -524,8 +533,67 @@
                 (:path result)))))
      (testing "every published assembly requires a focused source"
        (create-target-workspace! root)
-       (update-edn! root "targets/acme/consumer-tests.edn"
-                    assoc :assembly-tests {})
+       (update-edn! root "targets/acme/test-suites.edn"
+                    assoc-in [:strategies 0 :profile-tests] {})
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme))))))
+     (testing "multiple exact projects and validation-only adapted strategies are explicit"
+       (create-target-workspace! root)
+       (let [base-project (first (:projects (consumer-tests)))
+             validation-project
+             (assoc base-project
+                    :id "DripSharp.Acme.Validation.Tests"
+                    :assembly-name "DripSharp.Acme.Validation.Tests"
+                    :directory "tests/validation/DripSharp.Acme.Validation.Tests")]
+         (update-edn! root "targets/acme/target.edn"
+                      assoc-in [:publication :excluded-paths]
+                      ["tests/validation"])
+         (update-edn! root "targets/acme/test-suites.edn"
+                      (fn [contract]
+                        (-> contract
+                            (update :projects conj validation-project)
+                            (update :strategies conj
+                                    {:id :adapted-upstream
+                                     :kind :adapted-upstream
+                                     :policy :validation-only
+                                     :project "DripSharp.Acme.Validation.Tests"
+                                     :handler
+                                     'dripsharp.consumer-tests/focused-consumer-strategy!}))))
+         (let [contract (target-directory/read-target root :acme)]
+           (is (= ["DripSharp.Acme.Tests"
+                   "DripSharp.Acme.Validation.Tests"]
+                  (mapv :id (get-in contract
+                                    [:publication :test-suites :projects]))))
+           (is (= #{:shipped :validation-only}
+                  (set (map :policy
+                            (get-in contract
+                                    [:publication :test-suites :strategies]))))))))
+     (testing "validation-only projects must be excluded from publication"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/test-suites.edn"
+                    assoc-in [:strategies 0 :policy] :validation-only)
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme))))))
+     (testing "project identities retain exact casing without collisions"
+       (create-target-workspace! root)
+       (let [duplicate (-> (first (:projects (consumer-tests)))
+                           (assoc :id "dripsharp.acme.tests"
+                                  :assembly-name "dripsharp.acme.tests"
+                                  :directory "tests/dripsharp.acme.tests"))]
+         (update-edn! root "targets/acme/test-suites.edn"
+                      update :projects conj duplicate)
+         (is (= :invalid-target-directory
+                (:kind
+                 (failure-data
+                  #(target-directory/read-target root :acme)))))))
+     (testing "strategy dispatch requires a qualified callable"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/test-suites.edn"
+                    assoc-in [:strategies 0 :handler] 'not-qualified)
        (is (= :invalid-target-directory
               (:kind
                (failure-data

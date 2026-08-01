@@ -18,13 +18,25 @@
     :production-sources
     :generated-production-sources
     :production-resources
+    :test-source-roots
+    :test-resource-roots
+    :test-sources
+    :test-resources
     :java-toolchain
     :project-dependencies
     :external-dependencies
-    :classpath-artifacts})
+    :classpath-artifacts
+    :test-project-dependencies
+    :test-external-dependencies
+    :test-classpath-artifacts})
 
 (def ^:private required-input-keys
-  (disj input-keys :project-root))
+  (apply disj input-keys
+         [:project-root
+          :test-source-roots :test-resource-roots
+          :test-sources :test-resources
+          :test-project-dependencies :test-external-dependencies
+          :test-classpath-artifacts]))
 
 (def ^:private scopes #{:compile :runtime})
 
@@ -107,30 +119,30 @@
     ordered))
 
 (defn- validate-classpath-artifacts!
-  [values]
+  [field values]
   (when-not (vector? values)
     (invalid! "Java project classpath artifacts must be a vector"
-              {:field :classpath-artifacts :value values}))
+              {:field field :value values}))
   (let [records
         (mapv
          (fn [value]
-           (exact-keys! :classpath-artifacts value #{:scope :path}
+           (exact-keys! field value #{:scope :path}
                         #{:scope :path :project-id :coordinate :sha256})
            (when (and (contains? value :project-id)
                       (contains? value :coordinate))
              (invalid! "Classpath artifact cannot have both project and external identities"
-                       {:field :classpath-artifacts :value value}))
+                       {:field field :value value}))
            (let [path (:path value)]
              (when-not (instance? Path path)
                (invalid! "Classpath artifact path is not a java.nio.file.Path"
-                         {:field :classpath-artifacts :value path}))
+                         {:field field :value path}))
              (let [path (paths/absolute path)
                    file? (Files/isRegularFile path paths/no-links)
                    directory? (Files/isDirectory path paths/no-links)
                    sha256 (:sha256 value)]
                (when-not (or file? directory?)
                  (invalid! "Classpath artifact is missing"
-                           {:field :classpath-artifacts :path (str path)}))
+                           {:field field :path (str path)}))
                (when (contains? value :project-id)
                  (nonblank-string! :project-id (:project-id value)))
                (when (contains? value :coordinate)
@@ -139,19 +151,19 @@
                           (not (and file?
                                     (re-matches #"[0-9a-f]{64}" sha256))))
                  (invalid! "Classpath artifact has an invalid SHA-256 hash"
-                           {:field :classpath-artifacts :path (str path)
+                           {:field field :path (str path)
                             :sha256 sha256}))
                (when sha256
                  (let [actual (file-sha256 path)]
                    (when-not (= sha256 actual)
                      (invalid! "Classpath artifact SHA-256 does not match its contents"
-                               {:field :classpath-artifacts :path (str path)
+                               {:field field :path (str path)
                                 :expected sha256 :actual actual}))))
                (when (and (contains? value :coordinate) (nil? sha256))
                  (invalid! "External classpath artifact is missing its SHA-256 hash"
-                           {:field :classpath-artifacts :path (str path)
+                           {:field field :path (str path)
                             :coordinate (:coordinate value)}))
-               (cond-> {:scope (scope! :classpath-artifacts (:scope value))
+               (cond-> {:scope (scope! field (:scope value))
                         :path path}
                  (:project-id value) (assoc :project-id (:project-id value))
                  (:coordinate value) (assoc :coordinate (:coordinate value))
@@ -164,7 +176,7 @@
                               records))]
     (when-not (= (count ordered) (count (distinct ordered)))
       (invalid! "Java project classpath contains duplicate artifacts"
-                {:field :classpath-artifacts :artifacts ordered}))
+                {:field field :artifacts ordered}))
     ordered))
 
 (defn- validate-toolchain!
@@ -203,11 +215,37 @@
                 {:field field :path (str input)
                  :roots (mapv str roots)}))))
 
+(defn- validate-production-test-separation!
+  [production-field production test-field tests]
+  (let [overlap (set/intersection (set production) (set tests))]
+    (when (seq overlap)
+      (invalid! "Java project production and test inputs overlap"
+                {:field test-field
+                 :production-field production-field
+                 :overlap (mapv str (sort-by str overlap))}))))
+
+(defn- validate-root-separation!
+  [production-field production-roots test-field test-roots]
+  (let [overlap
+        (for [^Path production-root production-roots
+              ^Path test-root test-roots
+              :when (or (.startsWith production-root test-root)
+                        (.startsWith test-root production-root))]
+          {:production-root (str production-root)
+           :test-root (str test-root)})]
+    (when (seq overlap)
+      (invalid! "Java project production and test roots overlap"
+                {:field test-field
+                 :production-field production-field
+                 :overlap (vec overlap)}))))
+
 (defn validate!
   "Validates and deterministically canonicalizes a neutral Java project input.
 
   The optional `:project-root` is backend execution context rather than project
-  identity. Source and resource root collections may both be empty."
+  identity. Test collections are optional for compatibility with authored
+  production-only inputs and canonicalize to empty vectors. `:test-sources`
+  contains every Java compilation unit in test roots, including helper types."
   [input]
   (exact-keys! :project-input input required-input-keys input-keys)
   (when-not (= 1 (:schema-version input))
@@ -224,6 +262,14 @@
               (invalid! "Java project root is missing"
                         {:field :project-root :path (str path)}))
             path))
+        test-input (merge {:test-source-roots []
+                           :test-resource-roots []
+                           :test-sources []
+                           :test-resources []
+                           :test-project-dependencies []
+                           :test-external-dependencies []
+                           :test-classpath-artifacts []}
+                          input)
         source-roots
         (path-vector! :source-roots (:source-roots input)
                       paths/directory? :source-root-missing)
@@ -240,6 +286,18 @@
         resources
         (path-vector! :production-resources (:production-resources input)
                       paths/regular-file? :production-resource-missing)
+        test-source-roots
+        (path-vector! :test-source-roots (:test-source-roots test-input)
+                      paths/directory? :test-source-root-missing)
+        test-resource-roots
+        (path-vector! :test-resource-roots (:test-resource-roots test-input)
+                      paths/directory? :test-resource-root-missing)
+        test-sources
+        (path-vector! :test-sources (:test-sources test-input)
+                      paths/regular-file? :test-source-missing)
+        test-resources
+        (path-vector! :test-resources (:test-resources test-input)
+                      paths/regular-file? :test-resource-missing)
         project-dependencies
         (validate-dependencies! :project-dependencies
                                 (:project-dependencies input) :project-id)
@@ -247,7 +305,19 @@
         (validate-dependencies! :external-dependencies
                                 (:external-dependencies input) :coordinate)
         classpath-artifacts
-        (validate-classpath-artifacts! (:classpath-artifacts input))]
+        (validate-classpath-artifacts! :classpath-artifacts
+                                       (:classpath-artifacts input))
+        test-project-dependencies
+        (validate-dependencies! :test-project-dependencies
+                                (:test-project-dependencies test-input)
+                                :project-id)
+        test-external-dependencies
+        (validate-dependencies! :test-external-dependencies
+                                (:test-external-dependencies test-input)
+                                :coordinate)
+        test-classpath-artifacts
+        (validate-classpath-artifacts! :test-classpath-artifacts
+                                       (:test-classpath-artifacts test-input))]
     (when (seq (set/intersection (set sources)
                                  (set generated-sources)))
       (invalid! "Generated production sources also appear as ordinary sources"
@@ -260,9 +330,23 @@
     (validate-root-membership!
      :production-sources source-roots (into sources generated-sources))
     (validate-root-membership! :production-resources resource-roots resources)
+    (validate-root-membership! :test-sources test-source-roots test-sources)
+    (validate-root-membership! :test-resources test-resource-roots test-resources)
+    (validate-root-separation!
+     :source-roots source-roots :test-source-roots test-source-roots)
+    (validate-root-separation!
+     :resource-roots resource-roots :test-resource-roots test-resource-roots)
+    (validate-production-test-separation!
+     :production-sources (into sources generated-sources)
+     :test-sources test-sources)
+    (validate-production-test-separation!
+     :production-resources resources :test-resources test-resources)
     (when (some #(= project-id (:project-id %)) project-dependencies)
       (invalid! "Java project input contains a self dependency"
                 {:field :project-dependencies :project-id project-id}))
+    (when (some #(= project-id (:project-id %)) test-project-dependencies)
+      (invalid! "Java project test input contains a self dependency"
+                {:field :test-project-dependencies :project-id project-id}))
     (cond-> {:schema-version 1
              :project-id project-id
              :source-roots source-roots
@@ -270,10 +354,17 @@
              :production-sources sources
              :generated-production-sources generated-sources
              :production-resources resources
+             :test-source-roots test-source-roots
+             :test-resource-roots test-resource-roots
+             :test-sources test-sources
+             :test-resources test-resources
              :java-toolchain (validate-toolchain! (:java-toolchain input))
              :project-dependencies project-dependencies
              :external-dependencies external-dependencies
-             :classpath-artifacts classpath-artifacts}
+             :classpath-artifacts classpath-artifacts
+             :test-project-dependencies test-project-dependencies
+             :test-external-dependencies test-external-dependencies
+             :test-classpath-artifacts test-classpath-artifacts}
       project-root (assoc :project-root project-root))))
 
 (defn production-source-files
@@ -290,6 +381,25 @@
   [project-input]
   (->> (:classpath-artifacts project-input)
        (filter #(= :compile (:scope %)))
+       (map :path)
+       distinct
+       (sort-by str)
+       vec))
+
+(defn test-source-files
+  "Returns every Java test or helper source in deterministic order."
+  [project-input]
+  (->> (:test-sources project-input)
+       distinct
+       (sort-by str)
+       vec))
+
+(defn test-classpath
+  "Returns the distinct effective test classpath for `scope`."
+  [project-input scope]
+  (scope! :test-classpath scope)
+  (->> (:test-classpath-artifacts project-input)
+       (filter #(= scope (:scope %)))
        (map :path)
        distinct
        (sort-by str)

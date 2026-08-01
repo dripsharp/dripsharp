@@ -68,6 +68,19 @@
                      (make-array OpenOption 0))
   path)
 
+(defn- append-readme-boundary!
+  [tests-root]
+  (let [readme (paths/resolve-path tests-root "README.md")
+        text (Files/readString readme StandardCharsets/UTF_8)]
+    (write-text!
+     readme
+     (str text
+          "\nThe upstream-derived Brine suite exposes independently named "
+          "xUnit rows from the pinned LanguageSnippet and Pkl.Core contracts. "
+          "See [`TEST-BOUNDARY.md`](TEST-BOUNDARY.md) for the mechanical/"
+          "authored/vendored boundary and `TEST-PROVENANCE.tsv` for exact "
+          "hashes.\n"))))
+
 (defn- copy-file!
   [source destination]
   (Files/createDirectories (.getParent (paths/path destination))
@@ -134,7 +147,9 @@
                (when-not (and (= actual-sha (:sha256 entry))
                               (= actual-lines (:lines entry))
                               (<= actual-lines (:line-budget entry))
-                              (= "beads:pkl-nk5q" (:review-evidence entry))
+                              (boolean
+                               (re-matches #"beads:pkl-[A-Za-z0-9.]+"
+                                           (:review-evidence entry)))
                               (keyword? (:role entry)))
                  (fail! "Brine authored test source drifted from its reviewed budget"
                         {:reason :test-authorship-drift
@@ -629,3 +644,20 @@
                             (:execution-owner %))
                         (:cases core)))
          :provenance proof}))))
+
+(defn strategy!
+  "Target-owned strategy entrypoint used by generic generated test suites."
+  [{:keys [phase workspace-root target-contract tests-root]}]
+  (case phase
+    :emit
+    (do
+      (append-readme-boundary! tests-root)
+      (emit! {:workspace-root workspace-root
+              :target-contract target-contract
+              :tests-root tests-root}))
+
+    :verify
+    (verify-provenance! tests-root)
+
+    (fail! "Brine xUnit strategy received an unsupported phase"
+           {:reason :unsupported-test-suite-phase :phase phase})))

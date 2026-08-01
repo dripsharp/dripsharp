@@ -21,7 +21,7 @@
 (def ^:private generated-publication-keys
   #{:kind :repository-slug :repository-url :default-branch
     :submodule-path :staging-path :profile-projects :managed-paths
-    :excluded-paths :consumer-tests :publication-mode})
+    :excluded-paths :test-suites :publication-mode})
 
 (defn- fail!
   [message data]
@@ -112,7 +112,7 @@
     (let [managed-paths (:managed-paths publication)
           excluded-paths (:excluded-paths publication)
           profile-projects (:profile-projects publication)
-          consumer-tests (:consumer-tests publication)]
+          test-suites (:test-suites publication)]
       (when-not (and (vector? managed-paths)
                      (seq managed-paths)
                      (= (count managed-paths)
@@ -158,11 +158,11 @@
                   :profile profile
                   :path project-path})))
       (when-not (and (some #{"tests"} managed-paths)
-                     (map? consumer-tests))
-        (fail! "Generated product publication has no managed consumer tests"
+                     (map? test-suites))
+        (fail! "Generated product publication has no managed test suites"
                {:reason :invalid-consumer-tests
                 :managed-paths managed-paths
-                :consumer-tests consumer-tests})))
+                :test-suites test-suites})))
     publication))
 
 (defn- command-result

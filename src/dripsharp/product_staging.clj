@@ -122,9 +122,17 @@
   (let [primary (first (sort-by (comp count :assembly-name) records))
         publication (:publication target-contract)
         upstream (get-in target-contract [:baseline :record :upstream])
-        tests (get-in publication [:consumer-tests :project])
-        test-project (str (:directory tests) "/" (:assembly-name tests)
-                          ".csproj")
+        test-suites (:test-suites publication)
+        shipped-project-ids
+        (->> (:strategies test-suites)
+             (filter #(= :shipped (:policy %)))
+             (map :project)
+             set)
+        shipped-projects
+        (->> (:projects test-suites)
+             (filter #(contains? shipped-project-ids (:id %)))
+             (sort-by :id)
+             vec)
         source-url "https://github.com/dripsharp/dripsharp"
         upstream-url (str/replace (:repository upstream) #"[.]git$" "")
         revision (:revision upstream)]
@@ -140,14 +148,20 @@
                          (sort-by :assembly-name records)))
          "\n## Build and test\n\n"
          "From a clean checkout:\n\n"
-         "```sh\n"
-         "dotnet restore " test-project "\n"
-         "dotnet build " test-project
-         " --configuration Release --no-restore\n"
-         "dotnet test " test-project
-         " --configuration Release --no-restore --no-build\n"
-         "```\n\n"
-         "The focused suite references only this checkout. See "
+         (apply
+          str
+          (for [{:keys [id directory assembly-name]} shipped-projects
+                :let [test-project
+                      (str directory "/" assembly-name ".csproj")]]
+            (str "### `" id "`\n\n"
+                 "```sh\n"
+                 "dotnet restore " test-project "\n"
+                 "dotnet build " test-project
+                 " --configuration Release --no-restore\n"
+                 "dotnet test " test-project
+                 " --configuration Release --no-restore --no-build\n"
+                 "```\n\n")))
+         "The shipped suites reference only this checkout. See "
          "[`tests/README.md`](tests/README.md) for its generated inventory "
          "and execution contract.\n\n"
          "## Upstream\n\n"

@@ -10,7 +10,8 @@
 (def ^:private manifest-versions
   {"DRIPSHARP_GRADLE_INPUTS_V3" 3
    "DRIPSHARP_GRADLE_INPUTS_V4" 4
-   "DRIPSHARP_GRADLE_INPUTS_V5" 5})
+   "DRIPSHARP_GRADLE_INPUTS_V5" 5
+   "DRIPSHARP_GRADLE_INPUTS_V6" 6})
 (def ^:private gradle-project-pattern
   #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$")
 
@@ -223,7 +224,11 @@
           allowed #{:project-path :java-home :java-release :preview-features
                     :source-root :resource-root :source :generated-source
                     :resource :classpath
-                    :project-dependency :external-dependency :external-artifact}
+                    :project-dependency :external-dependency :external-artifact
+                    :test-source-root :test-resource-root :test-source
+                    :test-resource :test-classpath
+                    :test-project-dependency :test-external-dependency
+                    :test-external-artifact}
           unknown (sort (remove allowed (keys grouped)))
           invalid-arities
           (->> records
@@ -231,10 +236,15 @@
                          (not= (count record)
                                (cond
                                  (contains? #{:project-dependency
-                                              :external-dependency}
+                                              :external-dependency
+                                              :test-project-dependency
+                                              :test-external-dependency}
                                             (first record)) 3
-                                 (= :external-artifact (first record))
-                                 (if (= 5 version) 5 4)
+                                 (contains? #{:external-artifact
+                                              :test-external-artifact}
+                                            (first record))
+                                 (if (<= 5 version) 5 4)
+                                 (= :test-classpath (first record)) 3
                                  :else 2))))
                vec)
           _ (when (or (seq unknown) (seq invalid-arities)
@@ -253,9 +263,9 @@
           (validate-gradle-project!
            (exactly-one grouped :project-path
                         "Gradle discovery must report exactly one project identity"))
-          source-roots (if (= 5 version) (path-values :source-root) [])
+          source-roots (if (<= 5 version) (path-values :source-root) [])
           resource-roots
-          (if (= 5 version)
+          (if (<= 5 version)
             (path-values :resource-root)
             [(paths/absolute
               (exactly-one grouped :resource-root
@@ -299,6 +309,16 @@
                (map (fn [[_ scope coordinate]]
                       {:scope (parse-scope scope) :coordinate coordinate}))
                distinct (sort-by (juxt :coordinate :scope)) vec)
+          test-project-dependencies
+          (->> (get grouped :test-project-dependency)
+               (map (fn [[_ scope dependency-id]]
+                      {:scope (parse-scope scope) :project-id dependency-id}))
+               distinct (sort-by (juxt :project-id :scope)) vec)
+          test-external-dependencies
+          (->> (get grouped :test-external-dependency)
+               (map (fn [[_ scope coordinate]]
+                      {:scope (parse-scope scope) :coordinate coordinate}))
+               distinct (sort-by (juxt :coordinate :scope)) vec)
           compile-paths (path-values :classpath)
           legacy-paths-by-hash
           (delay
@@ -306,11 +326,12 @@
                  (filter #(Files/isRegularFile ^Path % paths/no-links))
                  (map (juxt sha256 identity))
                  (into {})))
-          external-artifacts
-          (->> (get grouped :external-artifact)
+          parse-external-artifacts
+          (fn [kind]
+            (->> (get grouped kind)
                (map (fn [record]
                       (let [[_ scope coordinate path sha256]
-                            (if (= 5 version)
+                            (if (or (= 6 version) (= 5 version))
                               record
                               (let [[kind legacy-scope legacy-coordinate
                                      legacy-sha256] record
@@ -335,7 +356,10 @@
                          :sha256 sha256})))
                distinct
                (sort-by (juxt (comp str :path) :coordinate :scope :sha256))
-               vec)
+               vec))
+          external-artifacts (parse-external-artifacts :external-artifact)
+          test-external-artifacts
+          (parse-external-artifacts :test-external-artifact)
           external-by-path-scope
           (group-by (juxt :scope :path) external-artifacts)
           _ (when-let [[identity collisions]
@@ -363,9 +387,49 @@
                (sort-by (juxt (comp str :path) :scope
                               #(or (:coordinate %) "")))
                vec)
+          test-classpath-paths
+          (->> (get grouped :test-classpath)
+               (map (fn [[_ scope path]]
+                      {:scope (parse-scope scope)
+                       :path (paths/absolute path)}))
+               distinct
+               (sort-by (juxt (comp str :path) :scope))
+               vec)
+          test-external-by-path-scope
+          (group-by (juxt :scope :path) test-external-artifacts)
+          _ (when-let [[identity collisions]
+                       (first
+                        (sort-by (comp pr-str key)
+                                 (filter #(< 1 (count (val %)))
+                                         test-external-by-path-scope)))]
+              (throw
+               (ex-info
+                "Gradle test discovery assigns multiple external identities to one classpath artifact"
+                {:kind :invalid-discovery-manifest
+                 :artifact identity :records collisions})))
+          test-effective-artifacts
+          (mapv (fn [{:keys [scope path] :as artifact}]
+                  (or (first (get test-external-by-path-scope [scope path]))
+                      artifact))
+                test-classpath-paths)
+          test-effective-identities
+          (set (map (juxt :scope :path) test-effective-artifacts))
+          test-classpath-artifacts
+          (->> (concat test-effective-artifacts
+                       (remove #(contains? test-effective-identities
+                                           ((juxt :scope :path) %))
+                               test-external-artifacts))
+               distinct
+               (sort-by (juxt (comp str :path) :scope
+                              #(or (:coordinate %) "")))
+               vec)
           ordinary-sources (path-values :source)
           generated-sources (path-values :generated-source)
           resources (path-values :resource)
+          test-source-roots (path-values :test-source-root)
+          test-resource-roots (path-values :test-resource-root)
+          test-sources (path-values :test-source)
+          test-resources (path-values :test-resource)
           project-input
           {:schema-version 1
            :project-id project-id
@@ -374,25 +438,36 @@
            :production-sources ordinary-sources
            :generated-production-sources generated-sources
            :production-resources resources
+           :test-source-roots test-source-roots
+           :test-resource-roots test-resource-roots
+           :test-sources test-sources
+           :test-resources test-resources
            :java-toolchain {:home java-home
                             :release java-release
                             :preview-features? preview-features}
            :project-dependencies project-dependencies
            :external-dependencies external-dependencies
-           :classpath-artifacts classpath-artifacts}]
+           :classpath-artifacts classpath-artifacts
+           :test-project-dependencies test-project-dependencies
+           :test-external-dependencies test-external-dependencies
+           :test-classpath-artifacts test-classpath-artifacts}]
       (when-not (paths/directory? java-home)
         (throw (ex-info
                 (str "Gradle-reported Java toolchain is missing: " java-home)
                 {:kind :toolchain-missing :path (str java-home)})))
-      (doseq [^Path resource-root resource-roots]
+      (doseq [^Path resource-root (into resource-roots test-resource-roots)]
         (when-not (paths/directory? resource-root)
           (throw (ex-info
                   (str "Gradle-reported resource root is missing: " resource-root)
                   {:kind :resource-root-missing :path (str resource-root)}))))
       (doseq [[kind inputs] [[:source-root source-roots]
+                             [:source-root test-source-roots]
                              [:source (into ordinary-sources generated-sources)]
+                             [:source test-sources]
                              [:resource resources]
-                             [:classpath (mapv :path classpath-artifacts)]]
+                             [:resource test-resources]
+                             [:classpath (mapv :path classpath-artifacts)]
+                             [:classpath (mapv :path test-classpath-artifacts)]]
               ^Path input inputs]
         (when-not (case kind
                     :source-root (Files/isDirectory input paths/no-links)

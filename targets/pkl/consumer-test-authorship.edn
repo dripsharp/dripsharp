@@ -2,16 +2,16 @@
  :scope :pkl-generated-xunit
  :sources
  [{:path "src/dripsharp/consumer_tests.clj"
-   :sha256 "35cc66fe2e50ee10bf29e2d3e8f9ce09069aa2d60fcaf43bbe853bcde0162c0c"
-   :lines 381
-   :line-budget 381
-   :review-evidence "beads:pkl-nk5q"
+   :sha256 "d2fff9c35f9b2ddc405b86e553ea0fd5abe23e1ea4225797500fed2c2aad9f2a"
+   :lines 523
+   :line-budget 523
+   :review-evidence "beads:pkl-ktx7.1"
    :role :generic-test-emitter}
   {:path "src/dripsharp/pkl/brine_xunit.clj"
-   :sha256 "544dc0f1ea266d9e684367ff510a41eea15416d6355058831118207735541ed7"
-   :lines 631
-   :line-budget 631
-   :review-evidence "beads:pkl-nk5q"
+   :sha256 "79dd2ba0a66afcabd772fb8acfec6eced6e7bfc763cb3bf7641642dda19278b0"
+   :lines 663
+   :line-budget 663
+   :review-evidence "beads:pkl-ktx7.1"
    :role :brine-test-generator}
   {:path "targets/pkl/consumer-tests/CoreConsumerTests.cs"
    :sha256 "124ff154dcfdc0e852c7995802f4a249ba6e15325da13de4dee9f28df779d1af"

@@ -69,7 +69,7 @@
    :profile-projects {"pkl-core" "src/DripSharp.Brine"}
    :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
    :excluded-paths ["src/DripSharp.Brine/source-map.edn"]
-   :consumer-tests {:schema-version 1}
+   :test-suites {:schema-version 2}
    :publication-mode :pull-request})
 
 (defn- target-contract
@@ -164,10 +164,10 @@
             "src/DripSharp.Brine/source-map.edn"]
            (:excluded-paths brine)))
     (is (= "DripSharp.Brine.Tests"
-           (get-in brine [:consumer-tests :project :assembly-name])))
+           (get-in brine [:test-suites :projects 0 :assembly-name])))
     (is (= #{"pkl-parser" "pkl-core-value-model"}
-           (set (keys (get-in brine
-                              [:consumer-tests :assembly-tests])))))
+           (set (get-in brine
+                        [:test-suites :projects 0 :profile-references]))))
     (is (= "target/generated/pdfcarton" (:staging-path pdfcarton)))
     (is (= "products/pdfcarton" (:submodule-path pdfcarton)))
     (is (= #{"src/DripSharp.PdfCarton.IO/source-map.edn"
@@ -379,13 +379,13 @@
           (fn [options]
             (swap! calls conj [:proof options])
             :proved)
-          :consumer-tests-fn
+          :test-suites-fn
           (fn [options]
             (swap! calls conj
-                   [:consumer-tests
+                   [:test-suites
                     (get-in options
                             [:target-contract :publication
-                             :consumer-tests :project :assembly-name])])
+                             :test-suites :projects 0 :assembly-name])])
             :consumer-tests-passed)
           :staging-cleanup-fn
           (fn [options]
@@ -403,12 +403,13 @@
             :synchronized)})]
     (is (= [[:proof {:workspace-root (paths/workspace-root)
                      :target :pkl}]
-            [:consumer-tests "DripSharp.Brine.Tests"]
+            [:test-suites "DripSharp.Brine.Tests"]
             [:staging-cleanup "target/generated/brine"]
             [:sync "target/generated/brine"]]
            @calls))
     (is (= :proved (:proof result)))
     (is (= :consumer-tests-passed (:consumer-tests result)))
+    (is (= :consumer-tests-passed (:test-suites result)))
     (is (= :staging-cleaned (:staging-cleanup result)))
     (is (= :synchronized (:synchronization result))))
   (let [called? (atom false)

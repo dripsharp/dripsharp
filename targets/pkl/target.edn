@@ -1,4 +1,4 @@
-{:schema-version 6
+{:schema-version 7
  :target :pkl
  :product-family :brine
  :contracts
@@ -82,7 +82,7 @@
   :excluded-paths
   ["src/DripSharp.Brine.Parser/source-map.edn"
    "src/DripSharp.Brine/source-map.edn"]
-  :consumer-tests "consumer-tests.edn"
+  :test-suites "test-suites.edn"
   :publication-mode :pull-request}
  :proof
  {:role :product

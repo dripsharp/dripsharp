@@ -1,4 +1,4 @@
-{:schema-version 6
+{:schema-version 7
  :target :rawhttp
  :product-family :java-library
  :contracts

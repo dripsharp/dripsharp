@@ -4,5 +4,7 @@ import org.junit.jupiter.api.Test;
 
 final class AppValueTest {
     @Test
-    void testInputMustStayOutOfProductionDiscovery() {}
+    void testInputMustStayOutOfProductionDiscovery() {
+        TestValues.expected();
+    }
 }

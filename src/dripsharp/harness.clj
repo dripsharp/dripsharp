@@ -276,6 +276,10 @@
                :generated-production-sources
                (render-many (:generated-production-sources input))
                :production-resources (render-many (:production-resources input))
+               :test-source-roots (render-many (:test-source-roots input))
+               :test-resource-roots (render-many (:test-resource-roots input))
+               :test-sources (render-many (:test-sources input))
+               :test-resources (render-many (:test-resources input))
                :java-toolchain
                {:home (portable-path root (:home toolchain))
                 :release (:release toolchain)
@@ -283,7 +287,11 @@
                :project-dependencies (:project-dependencies input)
                :external-dependencies (:external-dependencies input)
                :classpath-artifacts
-               (mapv render-artifact (:classpath-artifacts input))}
+               (mapv render-artifact (:classpath-artifacts input))
+               :test-project-dependencies (:test-project-dependencies input)
+               :test-external-dependencies (:test-external-dependencies input)
+               :test-classpath-artifacts
+               (mapv render-artifact (:test-classpath-artifacts input))}
               :source-project rendered-source}
        (:submodule source-project)
        (assoc :submodule (:submodule source-project))

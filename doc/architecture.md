@@ -178,6 +178,21 @@ Target-owned destination files such as
 [`io.edn`](../targets/pdfcube/destinations/io.edn) select the bundle and output
 contract explicitly.
 
+### Generated Test-Suite Strategies
+
+Build-tool-neutral project inputs retain production and test roots, Java test
+and helper sources, resources and fixtures, dependency roles, and effective
+test classpaths as separate collections. Generated product targets declare one
+or more exact test project identities plus ordered strategies in
+`test-suites.edn`. Shared orchestration owns project containment, pinned package
+references, non-packability, deterministic staging and inventories, cleanup,
+and restore/build/test execution. A strategy handler owns either focused
+consumer copying or adapted-upstream generation and provenance validation.
+Handlers are qualified target-contract symbols, so Brine-specific behavior is
+not selected by target conditionals in the shared emitter. Each strategy is
+explicitly `:shipped` or `:validation-only`; validation-only projects must be
+below an excluded publication path.
+
 ### Recursive Translation Kernel
 
 The translation kernel has two dispatch mechanisms over the same live Spoon

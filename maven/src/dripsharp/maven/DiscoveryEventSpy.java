@@ -190,6 +190,14 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
                      resourcesFor(initialResources, id));
         addResources(records, "test-resource-root", "test-resource", id,
                      resourcesFor(initialTestResources, id));
+        for (String pathValue : project.getTestClasspathElements()) {
+            File path = new File(pathValue);
+            if (path.exists()) {
+                String canonicalPath = canonical(path);
+                record(records, "test-classpath", id, "compile", canonicalPath);
+                record(records, "test-classpath", id, "runtime", canonicalPath);
+            }
+        }
         addDependencies(records, reactor, project);
     }
 
@@ -258,9 +266,7 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
                 artifactCoordinate(left).compareTo(artifactCoordinate(right)));
         for (Artifact artifact : artifacts) {
             List<String> scopes = neutralScopes(artifact.getScope());
-            if (scopes.isEmpty()) {
-                continue;
-            }
+            List<String> testScopes = neutralTestScopes(artifact.getScope());
             String dependencyId = artifactProjectId(artifact);
             MavenProject reactorProject = reactor.get(dependencyId);
             if (reactorProject != null) {
@@ -281,6 +287,19 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
                                canonical(output));
                     }
                 }
+                for (String scope : testScopes) {
+                    record(records, "test-project-dependency",
+                           owner, scope, dependencyId);
+                    if (output.isDirectory()) {
+                        record(records, "test-classpath-artifact",
+                               owner, scope, "project", dependencyId,
+                               canonical(output));
+                    } else {
+                        record(records, "unresolved-test-artifact",
+                               owner, scope, "project", dependencyId,
+                               canonical(output));
+                    }
+                }
             } else {
                 String coordinate = artifactCoordinate(artifact);
                 File file = artifact.getFile();
@@ -293,6 +312,19 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
                                canonical(file));
                     } else {
                         record(records, "unresolved-artifact",
+                               owner, scope, "external", coordinate,
+                               file == null ? "<unresolved>" : canonical(file));
+                    }
+                }
+                for (String scope : testScopes) {
+                    record(records, "test-external-dependency",
+                           owner, scope, coordinate);
+                    if (file != null && file.isFile()) {
+                        record(records, "test-classpath-artifact",
+                               owner, scope, "external", coordinate,
+                               canonical(file));
+                    } else {
+                        record(records, "unresolved-test-artifact",
                                owner, scope, "external", coordinate,
                                file == null ? "<unresolved>" : canonical(file));
                     }
@@ -312,6 +344,18 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
         if (Artifact.SCOPE_PROVIDED.equals(mavenScope)
                 || Artifact.SCOPE_SYSTEM.equals(mavenScope)) {
             return Collections.singletonList("compile");
+        }
+        return Collections.emptyList();
+    }
+
+    private List<String> neutralTestScopes(String mavenScope) {
+        if (Artifact.SCOPE_COMPILE.equals(mavenScope)
+                || Artifact.SCOPE_RUNTIME.equals(mavenScope)
+                || Artifact.SCOPE_PROVIDED.equals(mavenScope)
+                || Artifact.SCOPE_SYSTEM.equals(mavenScope)
+                || Artifact.SCOPE_TEST.equals(mavenScope)
+                || mavenScope == null || mavenScope.isEmpty()) {
+            return Arrays.asList("compile", "runtime");
         }
         return Collections.emptyList();
     }

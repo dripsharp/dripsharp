@@ -362,8 +362,13 @@
    :test-resource 3
    :project-dependency 4
    :external-dependency 4
+   :test-project-dependency 4
+   :test-external-dependency 4
    :classpath-artifact 6
-   :unresolved-artifact 6})
+   :test-classpath 4
+   :test-classpath-artifact 6
+   :unresolved-artifact 6
+   :unresolved-test-artifact 6})
 
 (defn- exactly-one-record
   [records kind project-id]
@@ -460,13 +465,14 @@
               :overlap overlap}))))
 
 (defn- classpath-artifacts
-  [records project-id project-dependencies external-dependencies]
+  [records project-id record-kind project-dependencies external-dependencies
+   subject]
   (let [project-identities
         (set (map (juxt :scope :project-id) project-dependencies))
         external-identities
         (set (map (juxt :scope :coordinate) external-dependencies))
         artifacts
-        (->> (records-for records :classpath-artifact project-id)
+        (->> (records-for records record-kind project-id)
              (map
               (fn [[_ _ scope identity-kind identity path-value]]
                 (let [scope (parse-scope project-id scope)
@@ -477,7 +483,8 @@
                       (when-not (contains? project-identities
                                            [scope identity])
                         (fail!
-                         "Maven classpath artifact has no matching reactor dependency"
+                         (str "Maven " subject
+                              " classpath artifact has no matching reactor dependency")
                          {:kind :invalid-maven-discovery-manifest
                           :project-id project-id
                           :scope scope
@@ -490,7 +497,8 @@
                       (when-not (contains? external-identities
                                            [scope identity])
                         (fail!
-                         "Maven classpath artifact has no matching external dependency"
+                         (str "Maven " subject
+                              " classpath artifact has no matching external dependency")
                          {:kind :invalid-maven-discovery-manifest
                           :project-id project-id
                           :scope scope
@@ -498,7 +506,8 @@
                           :path (str path)}))
                       (when-not (paths/regular-file? path)
                         (fail!
-                         (str "Maven-resolved classpath artifact is missing: " path)
+                         (str "Maven-resolved " subject
+                              " classpath artifact is missing: " path)
                          {:kind :maven-classpath-artifact-missing
                           :project-id project-id
                           :scope scope
@@ -527,11 +536,46 @@
              (sort-by (comp pr-str key))
              vec)]
     (when (seq collisions)
-      (fail! "Maven discovery assigns multiple identities to one classpath artifact"
+      (fail! (str "Maven discovery assigns multiple identities to one "
+                  subject " classpath artifact")
              {:kind :invalid-maven-discovery-manifest
               :project-id project-id
               :collisions collisions}))
     artifacts))
+
+(defn- effective-test-classpath
+  [records project-id identified-artifacts]
+  (let [identified-by-scope-path
+        (group-by (juxt :scope :path) identified-artifacts)
+        effective
+        (->> (records-for records :test-classpath project-id)
+             (map (fn [[_ _ scope path-value]]
+                    (let [scope (parse-scope project-id scope)
+                          path (paths/absolute path-value)
+                          identities (get identified-by-scope-path [scope path])]
+                      (when (< 1 (count identities))
+                        (fail! "Maven test classpath path has multiple identities"
+                               {:kind :invalid-maven-discovery-manifest
+                                :project-id project-id
+                                :scope scope
+                                :path (str path)
+                                :records identities}))
+                      (or (first identities) {:scope scope :path path}))))
+             distinct
+             (sort-by (juxt (comp str :path) :scope
+                            #(or (:project-id %) "")
+                            #(or (:coordinate %) "")))
+             vec)
+        effective-identities (set (map (juxt :scope :path) effective))]
+    (->> (concat effective
+                 (remove #(contains? effective-identities
+                                     ((juxt :scope :path) %))
+                         identified-artifacts))
+         distinct
+         (sort-by (juxt (comp str :path) :scope
+                        #(or (:project-id %) "")
+                        #(or (:coordinate %) "")))
+         vec)))
 
 (defn- adapt-project
   [records project-id]
@@ -543,10 +587,12 @@
         (exactly-one-record records :java-release project-id)
         [_ _ preview]
         (exactly-one-record records :preview-features project-id)
-        unresolved (vec (records-for records :unresolved-artifact project-id))
+        unresolved
+        (vec (concat (records-for records :unresolved-artifact project-id)
+                     (records-for records :unresolved-test-artifact project-id)))
         _ (when (seq unresolved)
             (fail!
-             (str "Maven left unresolved compile/runtime dependencies for "
+             (str "Maven left unresolved production or test dependencies for "
                   project-id ": "
                   (str/join ", " (map #(nth % 4) unresolved)))
              {:kind :maven-unresolved-dependencies
@@ -565,6 +611,10 @@
         (dependency-records records :project-dependency project-id :project-id)
         external-dependencies
         (dependency-records records :external-dependency project-id :coordinate)
+        test-project-dependencies
+        (dependency-records records :test-project-dependency project-id :project-id)
+        test-external-dependencies
+        (dependency-records records :test-external-dependency project-id :coordinate)
         source-roots
         (->> (records-for records :source-root project-id)
              (map (fn [[_ _ source-kind path]]
@@ -580,6 +630,10 @@
              distinct
              (sort-by str)
              vec)
+        identified-test-classpath
+        (classpath-artifacts records project-id :test-classpath-artifact
+                             test-project-dependencies
+                             test-external-dependencies "test")
         input
         {:schema-version 1
          :project-id project-id
@@ -591,6 +645,12 @@
          (path-values records :generated-source project-id 2)
          :production-resources
          (path-values records :resource project-id 2)
+         :test-source-roots
+         (path-values records :test-source-root project-id 2)
+         :test-resource-roots
+         (path-values records :test-resource-root project-id 2)
+         :test-sources (path-values records :test-source project-id 2)
+         :test-resources (path-values records :test-resource project-id 2)
          :java-toolchain
          {:home (paths/absolute java-home)
           :release (parse-positive-int project-id java-release)
@@ -598,16 +658,21 @@
          :project-dependencies project-dependencies
          :external-dependencies external-dependencies
          :classpath-artifacts
-         (classpath-artifacts records project-id
-                              project-dependencies external-dependencies)}]
+         (classpath-artifacts records project-id :classpath-artifact
+                              project-dependencies external-dependencies
+                              "production")
+         :test-project-dependencies test-project-dependencies
+         :test-external-dependencies test-external-dependencies
+         :test-classpath-artifacts
+         (effective-test-classpath records project-id
+                                   identified-test-classpath)}]
     (project-input/validate! input)))
 
 (defn read-reactor-manifest
   "Validates a Maven backend manifest and returns canonical neutral inputs.
 
-  Test sources and resources are intentionally understood by this adapter so
-  they can be checked for separation, but they are never placed in the neutral
-  production model."
+  Production and test roots, Java compilation units, resources, dependency
+  roles, and effective classpaths remain separate first-class neutral inputs."
   [manifest]
   (let [manifest (paths/absolute manifest)]
     (when-not (paths/regular-file? manifest)
@@ -778,10 +843,10 @@
                  "-Dcheckstyle.skip=true"]
           offline? (conj "--offline")
           (seq selectors) (into ["-pl" (str/join "," selectors) "-am"])
-          true (into ["compile"
+          true (into ["test-compile"
                       (str "org.apache.maven.plugins:maven-dependency-plugin:"
                            dependency-plugin-version ":resolve")
-                      "-DincludeScope=runtime"]))
+                      "-DincludeScope=test"]))
         command (if (windows?)
                   (into ["cmd.exe" "/d" "/c"] base-command)
                   base-command)]

@@ -39,6 +39,17 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
+(def probe-calls (atom []))
+
+(defn probe-strategy!
+  [{:keys [phase project-root strategy]}]
+  (swap! probe-calls conj [phase (:id strategy)])
+  (when (= :emit phase)
+    (Files/writeString (.resolve ^Path project-root "Dispatched.cs")
+                       "namespace Dispatch.Probe;\n"
+                       (make-array OpenOption 0)))
+  {:phase phase})
+
 (deftest real-product-contracts-cover-every-published-assembly
   (doseq [[target expected-assembly expected-profiles]
           [[:pkl "DripSharp.Brine.Tests"
@@ -47,16 +58,20 @@
             #{"pdfcube-io" "pdfcube-fontbox" "pdfcube-xmpbox"
               "pdfcube-pdfbox" "pdfcube-preflight"}]]]
     (let [contract (target-directory/read-target target)
-          tests (get-in contract [:publication :consumer-tests])]
+          tests (get-in contract [:publication :test-suites])
+          project (first (:projects tests))
+          focused (first (filter #(= :focused-consumer (:kind %))
+                                 (:strategies tests)))]
       (is (= ["src" "tests" "LICENSE" "NOTICE" "README.md"]
              (get-in contract [:publication :managed-paths])))
       (is (= expected-assembly
-             (get-in tests [:project :assembly-name])))
+             (:assembly-name project)))
       (is (= expected-profiles
-             (set (keys (:assembly-tests tests)))))
+             (set (keys (:profile-tests focused)))))
+      (is (= :shipped (:policy focused)))
       (is (every? #(= 64 (count (:sha256 %)))
-                  (concat (vals (:assembly-tests tests))
-                          (:fixtures tests)))))))
+                  (concat (vals (:profile-tests focused))
+                          (:fixtures focused)))))))
 
 (deftest emission-is-repository-local-inventoried-and-deterministic
   (doseq [target [:pkl :pdfcube]]
@@ -75,7 +90,9 @@
               (count (re-seq #"<ProjectReference " project-first))]
           (is (= (+ (count (get-in contract
                                    [:publication :profile-projects]))
-                    (if (= :pkl target) 2 0))
+                    (count (get-in contract
+                                   [:publication :test-suites :projects 0
+                                    :project-references])))
                  project-reference-count))
           (is (str/includes? project-first "../../src/"))
           (is (not (str/includes? project-first
@@ -125,6 +142,56 @@
       (is (str/ends-with?
            (str (:project-file result))
            "tests/DripSharp.Brine.Tests/DripSharp.Brine.Tests.csproj"))
+      (is (= #{"DripSharp.Brine.Tests"}
+             (set (keys (:project-files result)))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest multiple-projects-dispatch-by-qualified-strategy-without-target-branches
+  (let [workspace (temp-directory)
+        contract (target-directory/read-target :pdfcube)
+        base-project (get-in contract [:publication :test-suites :projects 0])
+        probe-project
+        (assoc base-project
+               :id "DripSharp.PdfCarton.Validation.Tests"
+               :assembly-name "DripSharp.PdfCarton.Validation.Tests"
+               :directory "tests/validation/DripSharp.PdfCarton.Validation.Tests"
+               :profile-references ["pdfcube-io"])
+        probe-strategy
+        {:id :dispatch-probe
+         :kind :adapted-upstream
+         :policy :validation-only
+         :project "DripSharp.PdfCarton.Validation.Tests"
+         :handler 'dripsharp.consumer-tests-test/probe-strategy!}
+        contract
+        (-> contract
+            (update-in [:publication :test-suites :projects]
+                       conj probe-project)
+            (update-in [:publication :test-suites :strategies]
+                       conj probe-strategy))]
+    (try
+      (reset! probe-calls [])
+      (let [emitted (consumer-tests/emit!
+                     {:workspace-root workspace
+                      :target-contract contract})
+            calls (atom [])
+            verified
+            (consumer-tests/verify!
+             {:workspace-root workspace
+              :target-contract contract
+              :run-command! (fn [request]
+                              (swap! calls conj request)
+                              {:exit 0 :output ""})})]
+        (is (= [[:emit :dispatch-probe] [:verify :dispatch-probe]]
+               @probe-calls))
+        (is (= #{"DripSharp.PdfCarton.Tests"
+                 "DripSharp.PdfCarton.Validation.Tests"}
+               (set (keys (:project-files emitted)))
+               (set (keys (:project-files verified)))))
+        (is (= 6 (count @calls)))
+        (is (every? #(= (.resolve workspace "target/generated/pdfcarton")
+                        (:directory %))
+                    @calls)))
       (finally
         (delete-tree! workspace)))))
 

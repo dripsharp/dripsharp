@@ -1,5 +1,6 @@
 (ns dripsharp.project-test
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [dripsharp.paths :as paths]
             [dripsharp.project :as project]
@@ -399,17 +400,24 @@
         root (temp-directory)
         wrapper (paths/resolve-path workspace "research" "pkl" "gradlew")
         _ (write-file! root "settings.gradle"
-                       "rootProject.name = 'generic-fixture'\ninclude 'library', 'application'\n")
+                       "rootProject.name = 'generic-fixture'\ninclude 'library', 'testsupport', 'application'\n")
         _ (write-file! root "library/build.gradle"
                        (str "plugins { id 'java-library' }\n"
                             "java { sourceCompatibility = JavaVersion.VERSION_17 }\n"))
         _ (write-file! root "library/src/main/java/example/Dependency.java"
                        (str "package example;\n"
                             "public final class Dependency { public static String value() { return \"ok\"; } }\n"))
+        _ (write-file! root "testsupport/build.gradle"
+                       (str "plugins { id 'java-library' }\n"
+                            "java { sourceCompatibility = JavaVersion.VERSION_17 }\n"))
+        _ (write-file! root "testsupport/src/main/java/example/TestSupport.java"
+                       (str "package example;\n"
+                            "public final class TestSupport { public static String value() { return \"test\"; } }\n"))
         _ (write-file! root "application/build.gradle"
                        (str "plugins { id 'java' }\n"
                             "java { sourceCompatibility = JavaVersion.VERSION_17 }\n"
                             "def generated = layout.buildDirectory.dir('generated/sources/fixture/main')\n"
+                            "def generatedTest = layout.buildDirectory.dir('generated/sources/fixture/test')\n"
                             "tasks.register('generateFixtureJava') {\n"
                             "  outputs.dir(generated)\n"
                             "  doLast {\n"
@@ -418,13 +426,30 @@
                             "    file.text = 'package example; public final class Generated {}\\n'\n"
                             "  }\n"
                             "}\n"
+                            "tasks.register('generateFixtureTestJava') {\n"
+                            "  outputs.dir(generatedTest)\n"
+                            "  doLast {\n"
+                            "    def file = generatedTest.get().file('example/GeneratedTestHelper.java').asFile\n"
+                            "    file.parentFile.mkdirs()\n"
+                            "    file.text = 'package example; final class GeneratedTestHelper {}\\n'\n"
+                            "  }\n"
+                            "}\n"
                             "sourceSets.main.java.srcDir(generated)\n"
+                            "sourceSets.test.java.srcDir(generatedTest)\n"
                             "tasks.named('compileJava') { dependsOn('generateFixtureJava') }\n"
-                            "dependencies { implementation project(':library') }\n"))
+                            "tasks.named('compileTestJava') { dependsOn('generateFixtureTestJava') }\n"
+                            "dependencies { implementation project(':library'); testImplementation project(':testsupport') }\n"))
         _ (write-file! root "application/src/main/java/example/Application.java"
                        (str "package example;\n"
                             "public final class Application { String value() { return Dependency.value(); } }\n"))
         _ (write-file! root "application/src/main/resources/example/message.txt" "resource\n")
+        _ (write-file! root "application/src/test/java/example/ApplicationTest.java"
+                       (str "package example;\n"
+                            "final class ApplicationTest { TestSupport support; TestHelper helper; }\n"))
+        _ (write-file! root "application/src/test/java/example/TestHelper.java"
+                       "package example; final class TestHelper {}\n")
+        _ (write-file! root "application/src/test/resources/fixtures/case.txt"
+                       "test fixture\n")
         discovery (project/discover-main!
                    {:workspace-root workspace
                     :project-root root
@@ -441,12 +466,27 @@
     (is (some #(str/ends-with? (str %) "/Generated.java")
               (:generated-production-sources discovery)))
     (is (some #(str/ends-with? % "/example/message.txt") resources))
+    (is (= #{"ApplicationTest.java" "TestHelper.java" "GeneratedTestHelper.java"}
+           (set (map #(str (.getFileName ^Path %)) (:test-sources discovery)))))
+    (is (= ["case.txt"]
+           (mapv #(str (.getFileName ^Path %)) (:test-resources discovery))))
+    (is (empty? (set/intersection
+                 (set (project-input/production-source-files discovery))
+                 (set (:test-sources discovery)))))
     (is (some #(str/ends-with? % "/library/build/classes/java/main") classpath))
     (is (= #{{:scope :compile :project-id ":library"}
              {:scope :runtime :project-id ":library"}}
            (set (:project-dependencies discovery))))
     (is (empty? (:external-dependencies discovery)))
-    (is (empty? (filter :coordinate (:classpath-artifacts discovery))))))
+    (is (empty? (filter :coordinate (:classpath-artifacts discovery))))
+    (is (contains? (set (:test-project-dependencies discovery))
+                   {:scope :compile :project-id ":testsupport"}))
+    (is (contains? (set (:test-project-dependencies discovery))
+                   {:scope :runtime :project-id ":testsupport"}))
+    (is (some #(str/ends-with? (str %)
+                               "/testsupport/build/classes/java/main")
+              (project-input/test-classpath discovery :compile)))
+    (is (seq (project-input/test-classpath discovery :runtime)))))
 
 (deftest complete-independent-profile-discovers-resources-and-pinned-package-dependency
   (let [workspace (paths/workspace-root)

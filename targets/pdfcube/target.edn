@@ -1,4 +1,4 @@
-{:schema-version 6
+{:schema-version 7
  :target :pdfcube
  :product-family :pdfcarton
  :contracts
@@ -153,7 +153,7 @@
    "src/DripSharp.PdfCarton.Xmp/source-map.edn"
    "src/DripSharp.PdfCarton/source-map.edn"
    "src/DripSharp.PdfCarton.Preflight/source-map.edn"]
-  :consumer-tests "consumer-tests.edn"
+  :test-suites "test-suites.edn"
   :publication-mode :pull-request}
  :proof
  {:role :product

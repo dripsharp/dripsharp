@@ -1,5 +1,6 @@
 (ns dripsharp.maven-test
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.maven :as maven]
             [dripsharp.harness :as harness]
@@ -112,7 +113,17 @@
       (is (some #(str/starts-with? % "test-resource\t")
                 (str/split-lines manifest)))
       (is (not-any? #(str/includes? % "/src/test/") source-paths))
-      (is (not-any? #(str/includes? % "/src/test/") resources)))
+      (is (not-any? #(str/includes? % "/src/test/") resources))
+      (is (= #{"AppValueTest.java" "TestValues.java"}
+             (set (map #(str (.getFileName ^Path %)) (:test-sources app)))))
+      (is (= #{"test-only.txt" "case.txt"}
+             (set (map #(str (.getFileName ^Path %)) (:test-resources app)))))
+      (is (every? #(some (fn [root] (.startsWith ^Path % ^Path root))
+                         (:test-source-roots app))
+                  (:test-sources app)))
+      (is (empty? (set/intersection
+                   (set (project-input/production-source-files app))
+                   (set (:test-sources app))))))
 
     (testing "reactor and external scopes retain Maven classpath semantics"
       (is (= #{{:scope :compile :project-id core-id}
@@ -145,7 +156,19 @@
                   (map :path (filter :coordinate artifacts))))
       (is (some #(and (= core-id (:project-id %))
                       (paths/directory? (:path %)))
-                artifacts)))
+                artifacts))
+      (is (= #{{:scope :compile :project-id core-id}
+               {:scope :runtime :project-id core-id}}
+             (set (:test-project-dependencies app))))
+      (is (contains?
+           (set (:test-external-dependencies app))
+           {:scope :compile
+            :coordinate "org.junit.jupiter:junit-jupiter-api:jar:5.11.4"}))
+      (is (seq (project-input/test-classpath app :compile)))
+      (is (seq (project-input/test-classpath app :runtime)))
+      (is (every? #(or (paths/regular-file? %)
+                       (paths/directory? %))
+                  (project-input/test-classpath app :compile))))
 
     (testing "the neutral Maven output is accepted by Spoon"
       (let [resolved (spoon/build-resolved-model! (:project-root app) app)]

@@ -106,7 +106,7 @@
       :profile-projects profile-projects
       :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
       :excluded-paths []
-      :consumer-tests {:schema-version 1}
+      :test-suites {:schema-version 2}
       :publication-mode :pull-request}}))
 
 (defn- generated-files
