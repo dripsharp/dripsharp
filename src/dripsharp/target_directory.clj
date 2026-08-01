@@ -101,6 +101,9 @@
   #{:id :directory :assembly-name :target-framework :profile-references
     :project-references :packages})
 
+(def ^:private solution-test-suite-project-keys
+  (conj test-suite-project-keys :solution-inclusion))
+
 (def ^:private test-suite-package-keys
   #{:id :version})
 
@@ -1599,7 +1602,10 @@
               project
               project-path [:publication :test-suites :projects index]]
           (exact-keys! "Test-suite project" project-path
-                       test-suite-project-keys project)
+                       (if (contains? project :solution-inclusion)
+                         solution-test-suite-project-keys
+                         test-suite-project-keys)
+                       project)
           (validation/check! context (conj project-path :id) id
                              "the exact assembly identity"
                              #(and (non-blank-string? %)
@@ -1608,6 +1614,12 @@
           (validation/check! context (conj project-path :directory)
                              directory "a path below managed tests/"
                              #(starts-with-components? % ["tests"]))
+          (when (contains? project :solution-inclusion)
+            (validation/check! context
+                               (conj project-path :solution-inclusion)
+                               (:solution-inclusion project)
+                               "true for explicit generated-solution inclusion"
+                               true?))
           (validation/check! context (conj project-path :target-framework)
                              target-framework (first product-frameworks)
                              product-frameworks)

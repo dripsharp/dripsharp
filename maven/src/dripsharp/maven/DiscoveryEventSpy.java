@@ -28,6 +28,7 @@ import org.apache.maven.execution.ExecutionEvent;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.Resource;
+import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.DirectoryScanner;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
@@ -47,6 +48,8 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
             new HashMap<String, List<Resource>>();
     private final Map<String, List<Resource>> initialTestResources =
             new HashMap<String, List<Resource>>();
+    private final Map<String, Set<String>> generationBuildInputRecords =
+            new HashMap<String, Set<String>>();
 
     @Override
     public void onEvent(Object event) throws Exception {
@@ -56,6 +59,9 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
         ExecutionEvent execution = (ExecutionEvent) event;
         if (execution.getType() == ExecutionEvent.Type.SessionStarted) {
             snapshotInitialRoots(execution.getSession());
+        } else if (execution.getType() == ExecutionEvent.Type.MojoStarted
+                || execution.getType() == ExecutionEvent.Type.MojoSucceeded) {
+            snapshotGenerationBuildInputs(execution);
         } else if (execution.getType() == ExecutionEvent.Type.SessionEnded) {
             writeManifest(execution.getSession());
         }
@@ -65,6 +71,7 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
         initialCompileRoots.clear();
         initialResources.clear();
         initialTestResources.clear();
+        generationBuildInputRecords.clear();
         for (MavenProject project : session.getProjects()) {
             Set<String> roots = new LinkedHashSet<String>();
             for (String root : project.getCompileSourceRoots()) {
@@ -74,6 +81,45 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
             initialCompileRoots.put(id, roots);
             initialResources.put(id, copyResources(project.getResources()));
             initialTestResources.put(id, copyResources(project.getTestResources()));
+        }
+    }
+
+    private void snapshotGenerationBuildInputs(ExecutionEvent execution)
+            throws IOException {
+        MojoExecution mojo = execution.getMojoExecution();
+        MavenProject project = execution.getProject();
+        if (mojo == null || project == null
+                || !"generate-sources".equals(mojo.getLifecyclePhase())) {
+            return;
+        }
+        String id = projectId(project);
+        String owner = mojo.getGroupId() + ":" + mojo.getArtifactId()
+                + ":" + mojo.getVersion();
+        Set<String> records = generationBuildInputRecords.get(id);
+        if (records == null) {
+            records = new TreeSet<String>();
+            generationBuildInputRecords.put(id, records);
+        }
+        record(records, "generation-execution", id, owner, mojo.getGoal());
+        LinkedHashSet<Artifact> artifacts = new LinkedHashSet<Artifact>();
+        Artifact pluginArtifact = mojo.getMojoDescriptor()
+                .getPluginDescriptor().getPluginArtifact();
+        if (pluginArtifact != null) {
+            artifacts.add(pluginArtifact);
+        }
+        artifacts.addAll(mojo.getMojoDescriptor()
+                .getPluginDescriptor().getArtifacts());
+        artifacts.addAll(mojo.getMojoDescriptor()
+                .getPluginDescriptor().getIntroducedDependencyArtifacts());
+        for (Artifact artifact : artifacts) {
+            File file = artifact.getFile();
+            if (file == null || !file.isFile()) {
+                throw new IllegalStateException(
+                        "Generation plugin artifact is unresolved for " + owner
+                        + ": " + artifactCoordinate(artifact));
+            }
+            record(records, "build-input-artifact", id, owner,
+                   artifactCoordinate(artifact), canonical(file));
         }
     }
 
@@ -199,6 +245,10 @@ public final class DiscoveryEventSpy extends AbstractEventSpy {
             }
         }
         addDependencies(records, reactor, project);
+        Set<String> buildInputs = generationBuildInputRecords.get(id);
+        if (buildInputs != null) {
+            records.addAll(buildInputs);
+        }
     }
 
     private List<Resource> resourcesFor(

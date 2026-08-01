@@ -16,3 +16,6 @@
 [submodule "products/pdfcarton"]
 	path = products/pdfcarton
 	url = https://github.com/dripsharp/pdfcarton.git
+[submodule "research/jsqlparser"]
+	path = research/jsqlparser
+	url = https://github.com/JSQLParser/JSqlParser.git

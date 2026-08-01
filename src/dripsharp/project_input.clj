@@ -28,7 +28,9 @@
     :classpath-artifacts
     :test-project-dependencies
     :test-external-dependencies
-    :test-classpath-artifacts})
+    :test-classpath-artifacts
+    :generation-executions
+    :build-input-artifacts})
 
 (def ^:private required-input-keys
   (apply disj input-keys
@@ -36,7 +38,8 @@
           :test-source-roots :test-resource-roots
           :test-sources :test-resources
           :test-project-dependencies :test-external-dependencies
-          :test-classpath-artifacts]))
+          :test-classpath-artifacts :generation-executions
+          :build-input-artifacts]))
 
 (def ^:private scopes #{:compile :runtime})
 
@@ -202,6 +205,66 @@
                   {:field :java-toolchain :preview-features? preview?}))
       {:home home :release release :preview-features? preview?})))
 
+(defn- validate-generation-executions!
+  [values]
+  (when-not (vector? values)
+    (invalid! "Java project generation executions must be a vector"
+              {:field :generation-executions :value values}))
+  (let [records
+        (mapv
+         (fn [value]
+           (exact-keys! :generation-executions value #{:owner :goal}
+                        #{:owner :goal})
+           {:owner (nonblank-string! :owner (:owner value))
+            :goal (nonblank-string! :goal (:goal value))})
+         values)
+        ordered (vec (sort-by (juxt :owner :goal) records))]
+    (when-not (= (count ordered) (count (distinct ordered)))
+      (invalid! "Java project generation executions contain duplicates"
+                {:field :generation-executions :records ordered}))
+    ordered))
+
+(defn- validate-build-input-artifacts!
+  [values]
+  (when-not (vector? values)
+    (invalid! "Java project build-input artifacts must be a vector"
+              {:field :build-input-artifacts :value values}))
+  (let [records
+        (mapv
+         (fn [value]
+           (exact-keys! :build-input-artifacts value
+                        #{:owner :coordinate :path :sha256}
+                        #{:owner :coordinate :path :sha256})
+           (let [path (:path value)
+                 expected (:sha256 value)]
+             (when-not (instance? Path path)
+               (invalid! "Build-input artifact path is not a java.nio.file.Path"
+                         {:field :build-input-artifacts :value path}))
+             (let [path (paths/absolute path)]
+               (when-not (paths/regular-file? path)
+                 (invalid! "Build-input artifact is missing"
+                           {:field :build-input-artifacts :path (str path)}))
+               (when-not (and (string? expected)
+                              (re-matches #"[0-9a-f]{64}" expected))
+                 (invalid! "Build-input artifact has an invalid SHA-256 hash"
+                           {:field :build-input-artifacts :path (str path)
+                            :sha256 expected}))
+               (let [actual (file-sha256 path)]
+                 (when-not (= expected actual)
+                   (invalid! "Build-input artifact SHA-256 does not match its contents"
+                             {:field :build-input-artifacts :path (str path)
+                              :expected expected :actual actual})))
+               {:owner (nonblank-string! :owner (:owner value))
+                :coordinate (nonblank-string! :coordinate (:coordinate value))
+                :path path
+                :sha256 expected})))
+         values)
+        ordered (vec (sort-by (juxt :owner :coordinate (comp str :path)) records))]
+    (when-not (= (count ordered) (count (distinct ordered)))
+      (invalid! "Java project build-input artifacts contain duplicates"
+                {:field :build-input-artifacts :records ordered}))
+    ordered))
+
 (defn- inside-any-root?
   [roots ^Path input]
   (some #(.startsWith (.normalize input) (.normalize ^Path %)) roots))
@@ -268,7 +331,9 @@
                            :test-resources []
                            :test-project-dependencies []
                            :test-external-dependencies []
-                           :test-classpath-artifacts []}
+                           :test-classpath-artifacts []
+                           :generation-executions []
+                           :build-input-artifacts []}
                           input)
         source-roots
         (path-vector! :source-roots (:source-roots input)
@@ -317,7 +382,11 @@
                                 :coordinate)
         test-classpath-artifacts
         (validate-classpath-artifacts! :test-classpath-artifacts
-                                       (:test-classpath-artifacts test-input))]
+                                       (:test-classpath-artifacts test-input))
+        generation-executions
+        (validate-generation-executions! (:generation-executions test-input))
+        build-input-artifacts
+        (validate-build-input-artifacts! (:build-input-artifacts test-input))]
     (when (seq (set/intersection (set sources)
                                  (set generated-sources)))
       (invalid! "Generated production sources also appear as ordinary sources"
@@ -364,7 +433,9 @@
              :classpath-artifacts classpath-artifacts
              :test-project-dependencies test-project-dependencies
              :test-external-dependencies test-external-dependencies
-             :test-classpath-artifacts test-classpath-artifacts}
+             :test-classpath-artifacts test-classpath-artifacts
+             :generation-executions generation-executions
+             :build-input-artifacts build-input-artifacts}
       project-root (assoc :project-root project-root))))
 
 (defn production-source-files

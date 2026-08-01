@@ -41,7 +41,8 @@
   #{:profile :source-module :package-id :source-counts :public-contract-rows})
 (def ^:private profile-allowed-keys
   (into profile-required-keys
-        [:maven-selector :source-project-id :source-project-dependencies]))
+        [:maven-selector :source-project-id :source-project-dependencies
+         :public-contract-status]))
 (def ^:private source-count-required-keys #{:ordinary :generated})
 
 (defn target-key
@@ -240,7 +241,11 @@
                 (exact-keys? counts source-count-required-keys source-count-required-keys)
                 (= #{:ordinary :generated} (set (keys counts)))
                 (every? #(and (integer? %) (not (neg? %))) (vals counts))
-                (pos-int? (:public-contract-rows profile))
+                (or
+                 (and (nil? (:public-contract-status profile))
+                      (pos-int? (:public-contract-rows profile)))
+                 (and (= :pending (:public-contract-status profile))
+                      (nil? (:public-contract-rows profile))))
                 (or (nil? (:source-project-id profile))
                     (non-blank-string? (:source-project-id profile)))
                 (or (nil? (:source-project-dependencies profile))

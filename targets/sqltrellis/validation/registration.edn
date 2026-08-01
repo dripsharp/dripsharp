@@ -1,0 +1,9 @@
+{:schema-version 1
+ :id :sqltrellis-registration
+ :target :sqltrellis
+ :profile "sqltrellis"
+ :baseline-profile :core
+ :runner dripsharp.sqltrellis.registration/verify!
+ :oracle-sources ["validation/oracle/SqlTrellisRegistrationOracle.java"]
+ :probe-sources ["validation/probe/SqlTrellisRegistrationProbe.cs"]
+ :legal-sets [:upstream]}

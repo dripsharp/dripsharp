@@ -1,0 +1,59 @@
+{:schema-version 7
+ :target :sqltrellis
+ :product-family :sqltrellis
+ :contracts
+ {:product-goal "doc/targets/jsqlparser/product-goal.md"
+  :port-scope "doc/targets/jsqlparser/port-scope.md"
+  :dependencies []}
+ :baseline "baseline.edn"
+ :legal-policy "legal/policy.edn"
+ :java
+ {:source-language-version 11
+  :runtime-major 17
+  :preview-features? false}
+ :capabilities #{:java-compat :java-regex-unicode}
+ :authorship
+ {:compatibility "config/authored-compat.edn"
+  :destination "authorship.edn"
+  :third-party "third-party.edn"}
+ :profiles
+ [{:id "sqltrellis"
+   :path "profiles/core.edn"
+   :destination :core
+   :mapping-overlays []
+   :runtime-assets []
+   :validation-contracts [:sqltrellis-registration]
+   :authorship
+   {:sources []
+    :evidence [:sqltrellis-complete-product-proof]
+    :review "pkl-e2eu.1"
+    :budget {:authored-lines 12769 :total-lines 131030}}
+   :required-capabilities #{:java-compat :java-regex-unicode}}]
+ :destinations [{:id :core :path "destinations/core.edn"}]
+ :mapping-overlays []
+ :runtime-assets []
+ :validation-contracts
+ [{:id :sqltrellis-registration
+   :kind :custom
+   :path "validation/registration.edn"}]
+ :publication
+ {:kind :generated-repository
+  :repository-slug "dripsharp/sqltrellis"
+  :repository-url "https://github.com/dripsharp/sqltrellis.git"
+  :default-branch "master"
+  :submodule-path "products/sqltrellis"
+  :staging-path "target/generated/sqltrellis"
+  :profile-projects {"sqltrellis" "src/DripSharp.SqlTrellis"}
+  :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+  :excluded-paths []
+  :test-suites "test-suites.edn"
+  :publication-mode :pull-request}
+ :proof
+ {:role :product
+  :ladders
+  [{:id :sqltrellis-complete-product-proof
+    :kind :custom
+    :runner dripsharp.sqltrellis.registration/complete-product-proof!
+    :profiles ["sqltrellis"]
+    :validation-contracts [:sqltrellis-registration]
+    :resource-class :high-memory}]}}

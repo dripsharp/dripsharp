@@ -1,0 +1,66 @@
+{:schema-version 1
+ :target :sqltrellis
+ :upstream
+ {:name "JSqlParser"
+  :version "5.3"
+  :repository "https://github.com/JSQLParser/JSqlParser.git"
+  :revision "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa"
+  :license "Apache-2.0"
+  :java-language-version 11
+  :notice-reference nil}
+ :artifacts
+ {"com.h2database:h2:jar:2.4.240" "29b70e427cc1c40cdc376283adbb0cc62853073797bb5fe5761f81fe73d57ce0"
+  "commons-io:commons-io:jar:2.18.0" "f3ca0f8d63c40e23a56d54101c60d5edee136b42d84bfb85bc7963093109cf8b"
+  "junit:junit:jar:3.8.1" "b58e459509e190bed737f3592bc1950485322846cf10e78ded1d065153012d70"
+  "net.bytebuddy:byte-buddy-agent:jar:1.15.11" "316d2c0795c2a4d4c4756f2e6f9349837c7430ac34e0477ead874d05f5cc19e5"
+  "net.bytebuddy:byte-buddy:jar:1.15.11" "fa08998aae1e7bdae83bde0712c50e8444d71c0e0c196bb2247ade8d4ad0eb90"
+  "net.java.dev.javacc:javacc:jar:7.0.13" "a4ea46021ec567d89ca305763eedf738ba8a63601445e1aad08a329a6554502a"
+  "net.sf.jopt-simple:jopt-simple:jar:5.0.4" "df26cc58f235f477db07f753ba5a3ab243ebe5789d9f89ecf68dd62ea9a66c28"
+  "org.apache.commons:commons-lang3:jar:3.17.0" "6ee731df5c8e5a2976a1ca023b6bb320ea8d3539fbe64c8a1d5cb765127c33b4"
+  "org.apache.commons:commons-math3:jar:3.6.1" "1e56d7b058d28b65abd256b8458e3885b674c1d588fa43cd7d1cbb9c7ef2b308"
+  "org.apiguardian:apiguardian-api:jar:1.1.2" "b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38"
+  "org.assertj:assertj-core:jar:3.27.3" "5b8a26205f6d5ea60ad9ce65ce4a40a2afe4c48abeec61bd0740a088c24e89f5"
+  "org.hamcrest:hamcrest-all:jar:1.3" "4877670629ab96f34f5f90ab283125fcd9acb7e683e66319a68be6eb2cca60de"
+  "org.junit.jupiter:junit-jupiter-api:jar:5.11.4" "ab83ef9e51ac4597d59d26b4b58812129550e2f579a404c8af7d09f5ce5b4293"
+  "org.junit.jupiter:junit-jupiter-engine:jar:5.11.4" "cdf8ac59f3fad774ca738ad03890950eeb91833ef0e8908753177edd26f1581c"
+  "org.junit.jupiter:junit-jupiter-params:jar:5.11.4" "02a6e015de7ce94ac7f256e7fa05b8091dea861fe79a555a7993313d0f6c7d96"
+  "org.junit.jupiter:junit-jupiter:jar:5.11.4" "aa880e4afba87d447357e4c1fc098c5cb1d200cb9403496c00d3b35a5bd0e8db"
+  "org.junit.platform:junit-platform-commons:jar:1.11.4" "9edd969b0d0670c54105bc91ae79bd1c6f503e12115faba82073b84c86bbc334"
+  "org.junit.platform:junit-platform-engine:jar:1.11.4" "b1dd998f64f9acadc15966d9cd3d08074662677b3e390f0a38fcbf0bb4c72330"
+  "org.mockito:mockito-core:jar:5.15.2" "bf48b7372d9491d5ec8aebb4cdd187d15663931599c0fbe7410166ce0e1e58ff"
+  "org.mockito:mockito-junit-jupiter:jar:5.15.2" "4e82b710a47a0034a1a64190021078a3aaa982dd29b2a0bd69cbf72c8d9d239a"
+  "org.objenesis:objenesis:jar:3.3" "02dfd0b0439a5591e35b708ed2f5474eb0948f53abf74637e959b8e4ef69bfeb"
+  "org.openjdk.jmh:jmh-core:jar:1.37" "dc0eaf2bbf0036a70b60798c785d6e03a9daf06b68b8edb0f1ba9eb3421baeb3"
+  "org.openjdk.jmh:jmh-generator-annprocess:jar:1.37" "6a5604b5b804e0daca1145df1077609321687734a8b49387e49f10557c186c77"
+  "org.opentest4j:opentest4j:jar:1.3.0" "48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b"}
+ :legal-sets
+ {:upstream
+  [{:kind :license
+    :source "research/jsqlparser/LICENSE_APACHEV2"
+    :destination "Legal/LICENSE.txt"
+    :package-path "LICENSE.txt"
+    :source-sha256 "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+    :sha256 "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"}]}
+ :packages
+ {"DripSharp.SqlTrellis" {:version "5.3.0-dripsharp.0"}}
+ :profiles
+ {:core
+  {:profile "sqltrellis"
+   :source-module "jsqlparser"
+   :maven-selector ":jsqlparser"
+   :source-project-id "com.github.jsqlparser:jsqlparser:5.3"
+   :source-project-dependencies []
+   :package-id "DripSharp.SqlTrellis"
+   :source-counts {:ordinary 444 :generated 15}
+   :public-contract-rows nil
+   :public-contract-status :pending}}
+ :contracts
+ {:discovery
+  {:production-resources 1
+   :test-sources 218
+   :test-resources 295}
+  :benchmark-exclusions
+  ["src/test/java/net/sf/jsqlparser/benchmark/DynamicParserRunner.java"
+   "src/test/java/net/sf/jsqlparser/benchmark/JSQLParserBenchmark.java"
+   "src/test/java/net/sf/jsqlparser/benchmark/LatestClasspathRunner.java"
+   "src/test/java/net/sf/jsqlparser/benchmark/SqlParserRunner.java"]}}

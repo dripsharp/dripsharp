@@ -1,0 +1,31 @@
+{:schema-version 1
+ :project-id "com.github.jsqlparser:jsqlparser:5.3"
+ :maven-version "3.9.11"
+ :maven-distribution-sha512 "03e2d65d4483a3396980629f260e25cac0d8b6f7f2791e4dc20bc83f9514db8d0f05b0479e699a5f34679250c49c8e52e961262ded468a20de0be254d8207076"
+ :lifecycle-phase "generate-sources"
+ :properties
+ {"license.skipUpdateLicense" "true"
+  "pmd.skip" "true"
+  "skipCheckSources" "true"}
+ :source-inputs
+ [{:path "pom.xml"
+   :sha256 "e35d5992ae4317c74d03395f0e7bc9b6d0cc5a68c14de9b58b4e8f40922d54fb"}
+  {:path "src/main/jjtree/net/sf/jsqlparser/parser/JSqlParserCC.jjt"
+   :sha256 "679077cd37f2644e63d19cc5a77fed2bb74a326972ece8bfd4a1044b4a00b645"}]
+ :generation-executions
+ [{:owner "org.codehaus.mojo:build-helper-maven-plugin:3.6.0"
+   :goal "add-source"}
+  {:owner "org.javacc.plugin:javacc-maven-plugin:3.0.3"
+   :goal "jjtree-javacc"}]
+ :artifact-count 88
+ :artifacts-sha256 "b0a69fec97977508db743a247a783fde08d0882edc9702436674fada69f189a2"
+ :required-artifacts
+ [{:owner "org.codehaus.mojo:build-helper-maven-plugin:3.6.0"
+   :coordinate "org.codehaus.mojo:build-helper-maven-plugin:maven-plugin:3.6.0"
+   :sha256 "35922fb87521601144fe0b24b812d76a906df65aaa53d6f95962369fd39f4e74"}
+  {:owner "org.javacc.plugin:javacc-maven-plugin:3.0.3"
+   :coordinate "net.java.dev.javacc:javacc:jar:7.0.13"
+   :sha256 "a4ea46021ec567d89ca305763eedf738ba8a63601445e1aad08a329a6554502a"}
+  {:owner "org.javacc.plugin:javacc-maven-plugin:3.0.3"
+   :coordinate "org.javacc.plugin:javacc-maven-plugin:maven-plugin:3.0.3"
+   :sha256 "0f86f60a5023deae8674f9405d3b46ebe916bbbaa284f6418c482337b344d306"}]}

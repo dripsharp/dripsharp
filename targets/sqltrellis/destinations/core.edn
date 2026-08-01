@@ -1,0 +1,61 @@
+{:schema-version 1
+ :product-family :sqltrellis
+ :baseline-target :sqltrellis
+ :baseline-profile :core
+ :baseline-legal-sets [:upstream]
+ :destination-bundle dripsharp.sqltrellis.java-project/rule-bundle
+ :project
+ {:assembly-name "DripSharp.SqlTrellis"
+  :root-namespace "DripSharp.SqlTrellis"
+  :target-framework "net10.0"
+  :nullable "enable"
+  :implicit-usings false
+  :warnings-as-errors true}
+ :package
+ {:id "DripSharp.SqlTrellis"
+  :title "SqlTrellis — JSqlParser for .NET"
+  :description "JSqlParser for .NET, mechanically translated by DripSharp as an independent project not affiliated with or endorsed by the JSqlParser project."
+  :authors "JSqlParser contributors,Vibeformer translation"
+  :tags "sql parser jsqlparser dotnet sqltrellis dripsharp"
+  :project-url "https://github.com/JSQLParser/JSqlParser"
+  :repository-url "https://github.com/JSQLParser/JSqlParser.git"
+  :repository-type "git"
+  :repository-commit "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa"}
+ :output
+ {:project-directory "generated/sqltrellis/src/DripSharp.SqlTrellis"
+  :source-directory "src"
+  :resource-directory "resources"
+  :project-file "DripSharp.SqlTrellis.csproj"
+  :source-map-file "source-map.edn"
+  :diagnostics-file "diagnostics.edn"
+  :manifest-file "generation-manifest.edn"
+  :public-metadata-file "public-metadata.edn"
+  :annotation-decisions-file "annotation-decisions.edn"}
+ :namespaces {}
+ :namespace-prefixes {"net.sf.jsqlparser" "DripSharp.SqlTrellis"}
+ :destination-capabilities #{:java-compat :java-regex-unicode}
+ :resources
+ {"rr/xhtml2rst.xsl"
+  {:strategy :embedded-resource
+   :destination "rr/xhtml2rst.xsl"
+   :logical-name "rr/xhtml2rst.xsl"}}
+ :resource-policy {:strategy :embedded-resource-preserve-path}
+ :project-dependencies []
+ :external-dependencies
+ {"net.sf.jopt-simple:jopt-simple:jar:5.0.4"
+  {:source-scope :compile-runtime
+   :runtime-package false
+   :destination-semantics :benchmark-build-input}
+  "org.apache.commons:commons-math3:jar:3.6.1"
+  {:source-scope :compile-runtime
+   :runtime-package false
+   :destination-semantics :benchmark-build-input}
+  "org.openjdk.jmh:jmh-core:jar:1.37"
+  {:source-scope :compile-runtime
+   :runtime-package false
+   :destination-semantics :benchmark-build-input}
+  "org.openjdk.jmh:jmh-generator-annprocess:jar:1.37"
+  {:source-scope :compile-only
+   :runtime-package false
+   :destination-semantics :benchmark-build-input}}
+ :public-surface {:strategy dripsharp.sqltrellis.java-project/public-surface-strategy}}

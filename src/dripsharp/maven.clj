@@ -37,6 +37,13 @@
 
 (def ^:private dependency-plugin-version "3.8.1")
 (def ^:private manifest-header "DRIPSHARP_MAVEN_REACTOR_V1")
+(def ^:private build-input-contract-keys
+  #{:schema-version :project-id :maven-version :maven-distribution-sha512
+    :lifecycle-phase :properties :source-inputs :generation-executions
+    :artifact-count :artifacts-sha256 :required-artifacts})
+(def ^:private source-input-keys #{:path :sha256})
+(def ^:private generation-execution-keys #{:owner :goal})
+(def ^:private build-artifact-pin-keys #{:owner :coordinate :sha256})
 (def ^:private extension-source
   (paths/path "maven/src/dripsharp/maven/DiscoveryEventSpy.java"))
 (def ^:private extension-components
@@ -367,6 +374,8 @@
    :classpath-artifact 6
    :test-classpath 4
    :test-classpath-artifact 6
+   :generation-execution 4
+   :build-input-artifact 5
    :unresolved-artifact 6
    :unresolved-test-artifact 6})
 
@@ -577,6 +586,31 @@
                         #(or (:coordinate %) "")))
          vec)))
 
+(defn- generation-executions
+  [records project-id]
+  (->> (records-for records :generation-execution project-id)
+       (map (fn [[_ _ owner goal]] {:owner owner :goal goal}))
+       distinct
+       (sort-by (juxt :owner :goal))
+       vec))
+
+(defn- build-input-artifacts
+  [records project-id]
+  (->> (records-for records :build-input-artifact project-id)
+       (map
+        (fn [[_ _ owner coordinate path-value]]
+          (let [path (paths/absolute path-value)]
+            (when-not (paths/regular-file? path)
+              (fail! "Maven generation build-input artifact is missing"
+                     {:kind :maven-build-input-artifact-missing
+                      :project-id project-id :owner owner
+                      :coordinate coordinate :path (str path)}))
+            {:owner owner :coordinate coordinate :path path
+             :sha256 (sha256 path)})))
+       distinct
+       (sort-by (juxt :owner :coordinate (comp str :path)))
+       vec))
+
 (defn- adapt-project
   [records project-id]
   (let [[_ _ project-root _packaging]
@@ -665,7 +699,9 @@
          :test-external-dependencies test-external-dependencies
          :test-classpath-artifacts
          (effective-test-classpath records project-id
-                                   identified-test-classpath)}]
+                                   identified-test-classpath)
+         :generation-executions (generation-executions records project-id)
+         :build-input-artifacts (build-input-artifacts records project-id)}]
     (project-input/validate! input)))
 
 (defn read-reactor-manifest
@@ -761,6 +797,216 @@
               :selector selector})))
   selectors)
 
+(defn- validate-properties!
+  [properties]
+  (let [properties (or properties {})
+        reserved
+        #{"maven.ext.class.path" "dripsharp.discovery.manifest"
+          "maven.repo.local"}]
+    (when-not (map? properties)
+      (fail! "Maven discovery properties must be a map"
+             {:kind :invalid-maven-discovery-properties
+              :properties properties}))
+    (doseq [[key value] properties]
+      (when-not (and (string? key)
+                     (re-matches #"[A-Za-z][A-Za-z0-9_.-]*" key)
+                     (not (contains? reserved key))
+                     (string? value)
+                     (not (str/blank? value))
+                     (not (re-find #"[\u0000\r\n]" value)))
+        (fail! "Maven discovery property is invalid or reserved"
+               {:kind :invalid-maven-discovery-properties
+                :property key :value value})))
+    (into (sorted-map) properties)))
+
+(defn- exact-contract-keys!
+  [subject expected value]
+  (let [actual (if (map? value) (set (keys value)) #{})]
+    (when-not (= expected actual)
+      (fail! (str subject " has missing or unknown fields")
+             {:kind :invalid-maven-build-input-contract
+              :subject subject
+              :missing (vec (sort (remove actual expected)))
+              :unknown (vec (sort (remove expected actual)))})))
+  value)
+
+(defn- sha256-value?
+  [value]
+  (and (string? value) (boolean (re-matches #"[0-9a-f]{64}" value))))
+
+(defn generation-artifacts-sha256
+  "Hashes the exact sorted generation artifact identities and content hashes."
+  [artifacts]
+  (util/sha256-text
+   (apply str
+          (map (fn [{:keys [owner coordinate sha256]}]
+                 (str owner "\t" coordinate "\t" sha256 "\n"))
+               (sort-by (juxt :owner :coordinate :sha256) artifacts)))))
+
+(defn- contained-source-input!
+  [^Path project-root relative]
+  (when-not (and (string? relative) (not (str/blank? relative)))
+    (fail! "Maven build-input source path is blank"
+           {:kind :invalid-maven-build-input-contract :path relative}))
+  (let [configured (paths/path relative)]
+    (when (or (.isAbsolute configured)
+              (some #(= ".." (str %))
+                    (iterator-seq (.iterator configured))))
+      (fail! "Maven build-input source path escapes the project root"
+             {:kind :invalid-maven-build-input-contract :path relative}))
+    (let [source (paths/absolute (paths/resolve-path project-root configured))]
+      (when-not (.startsWith source project-root)
+        (fail! "Maven build-input source path escapes the project root"
+               {:kind :invalid-maven-build-input-contract :path relative}))
+      (when-not (paths/regular-file? source)
+        (fail! "Maven build-input source is missing"
+               {:kind :maven-build-input-source-missing
+                :path relative :resolved (str source)}))
+      source)))
+
+(defn read-build-input-contract!
+  "Reads and validates exact Maven generation pins without resolving artifacts."
+  [workspace-root project-root contract-path lifecycle-phase properties]
+  (let [configured (paths/path contract-path)
+        file (paths/absolute
+              (if (.isAbsolute configured)
+                configured
+                (paths/resolve-path workspace-root configured)))]
+    (when-not (paths/regular-file? file)
+      (fail! "Maven build-input contract is missing"
+             {:kind :maven-build-input-contract-missing
+              :path (str file)}))
+    (let [contract
+          (try
+            (util/read-single-edn-string! (slurp (str file)))
+            (catch RuntimeException error
+              (throw
+               (ex-info "Maven build-input contract is not exactly one EDN value"
+                        {:kind :invalid-maven-build-input-contract
+                         :path (str file)}
+                        error))))]
+      (exact-contract-keys! "Maven build-input contract"
+                            build-input-contract-keys contract)
+      (when-not (= 1 (:schema-version contract))
+        (fail! "Maven build-input contract has an unsupported schema"
+               {:kind :invalid-maven-build-input-contract
+                :actual (:schema-version contract) :expected 1}))
+      (when-not (and (string? (:project-id contract))
+                     (not (str/blank? (:project-id contract))))
+        (fail! "Maven build-input contract has an invalid project identity"
+               {:kind :invalid-maven-build-input-contract
+                :project-id (:project-id contract)}))
+      (when-not (= maven-version (:maven-version contract))
+        (fail! "Maven build-input contract pins a different runner version"
+               {:kind :maven-build-input-runner-drift
+                :expected (:maven-version contract) :actual maven-version}))
+      (when-not (= maven-distribution-sha512
+                   (:maven-distribution-sha512 contract))
+        (fail! "Maven build-input contract pins a different runner archive"
+               {:kind :maven-build-input-runner-drift
+                :expected (:maven-distribution-sha512 contract)
+                :actual maven-distribution-sha512}))
+      (when-not (= lifecycle-phase (:lifecycle-phase contract))
+        (fail! "Maven lifecycle phase differs from the build-input contract"
+               {:kind :maven-build-input-lifecycle-drift
+                :expected (:lifecycle-phase contract)
+                :actual lifecycle-phase}))
+      (let [expected-properties (validate-properties! (:properties contract))]
+        (when-not (= expected-properties properties)
+          (fail! "Maven discovery properties differ from the build-input contract"
+                 {:kind :maven-build-input-property-drift
+                  :expected expected-properties :actual properties})))
+      (doseq [field [:source-inputs :generation-executions
+                     :required-artifacts]]
+        (when-not (and (vector? (get contract field))
+                       (= (count (get contract field))
+                          (count (distinct (get contract field)))))
+          (fail! "Maven build-input contract collection is not a distinct vector"
+                 {:kind :invalid-maven-build-input-contract
+                  :field field :value (get contract field)})))
+      (doseq [{:keys [path] expected-sha256 :sha256 :as source}
+              (:source-inputs contract)]
+        (exact-contract-keys! "Maven generation source input"
+                              source-input-keys source)
+        (when-not (sha256-value? expected-sha256)
+          (fail! "Maven generation source input has an invalid SHA-256"
+                 {:kind :invalid-maven-build-input-contract
+                  :path path :sha256 expected-sha256}))
+        (let [file (contained-source-input! project-root path)
+              actual (sha256 file)]
+          (when-not (= expected-sha256 actual)
+            (fail! "Maven generation source input differs from its pin"
+                   {:kind :maven-build-input-source-drift
+                    :path path :expected expected-sha256 :actual actual}))))
+      (doseq [{:keys [owner goal] :as execution}
+              (:generation-executions contract)]
+        (exact-contract-keys! "Maven generation execution"
+                              generation-execution-keys execution)
+        (when-not (every? #(and (string? %) (not (str/blank? %)))
+                          [owner goal])
+          (fail! "Maven generation execution has a blank identity"
+                 {:kind :invalid-maven-build-input-contract
+                  :execution execution})))
+      (when-not (and (pos-int? (:artifact-count contract))
+                     (sha256-value? (:artifacts-sha256 contract)))
+        (fail! "Maven generation artifact-set pin is invalid"
+               {:kind :invalid-maven-build-input-contract
+                :artifact-count (:artifact-count contract)
+                :artifacts-sha256 (:artifacts-sha256 contract)}))
+      (doseq [{:keys [owner coordinate sha256] :as artifact}
+              (:required-artifacts contract)]
+        (exact-contract-keys! "Maven generation artifact"
+                              build-artifact-pin-keys artifact)
+        (when-not (and (every? #(and (string? %) (not (str/blank? %)))
+                               [owner coordinate])
+                       (sha256-value? sha256))
+          (fail! "Maven generation artifact has an invalid identity or digest"
+                 {:kind :invalid-maven-build-input-contract
+                  :artifact artifact})))
+      {:path file :contract contract})))
+
+(defn verify-build-input-contract!
+  "Fails when resolved generation executions or artifact bytes drift from pins."
+  [reactor {:keys [path contract]}]
+  (let [matches (filter #(= (:project-id contract) (:project-id %)) reactor)
+        _ (when-not (= 1 (count matches))
+            (fail! "Maven build-input contract project is missing or ambiguous"
+                   {:kind :maven-project-selection-mismatch
+                    :project-id (:project-id contract)
+                    :discovered-projects (mapv :project-id reactor)}))
+        input (first matches)
+        actual-executions (:generation-executions input)
+        expected-executions
+        (vec (sort-by (juxt :owner :goal) (:generation-executions contract)))
+        actual-artifacts
+        (->> (:build-input-artifacts input)
+             (map #(select-keys % [:owner :coordinate :sha256]))
+             (sort-by (juxt :owner :coordinate :sha256))
+             vec)
+        required-artifacts
+        (set (:required-artifacts contract))
+        actual-set (set actual-artifacts)
+        actual-digest (generation-artifacts-sha256 actual-artifacts)]
+    (when-not (= expected-executions actual-executions)
+      (fail! "Maven generation executions differ from their pins"
+             {:kind :maven-generation-execution-drift
+              :contract (str path)
+              :expected expected-executions :actual actual-executions}))
+    (when-not (and (= (:artifact-count contract) (count actual-artifacts))
+                   (= (:artifacts-sha256 contract) actual-digest)
+                   (set/subset? required-artifacts actual-set))
+      (fail! "Maven generation artifacts differ from their pins"
+             {:kind :maven-build-input-artifact-drift
+              :contract (str path)
+              :expected-count (:artifact-count contract)
+              :actual-count (count actual-artifacts)
+              :expected-sha256 (:artifacts-sha256 contract)
+              :actual-sha256 actual-digest
+              :missing-required
+              (vec (sort-by (juxt :owner :coordinate :sha256)
+                            (set/difference required-artifacts actual-set)))}))
+    input))
+
 (defn- diagnostic-tail
   [output]
   (let [lines (vec (remove str/blank?
@@ -783,7 +1029,8 @@
   dependencies through `-am`. No source, resource, or classpath inventory is
   accepted from the caller."
   [{:keys [workspace-root project-root pom-file selected-projects manifest
-           runner-cache local-repository offline? timeout-ms run-command!]
+           runner-cache local-repository offline? timeout-ms run-command!
+           properties build-input-contract lifecycle-phase]
     :or {workspace-root (paths/workspace-root)
          pom-file "pom.xml"
          selected-projects []
@@ -792,7 +1039,14 @@
   (when-not project-root
     (fail! "Maven discovery requires an explicit project root"
            {:kind :maven-project-root-missing}))
-  (let [workspace-root (paths/absolute workspace-root)
+  (let [properties (validate-properties! properties)
+        lifecycle-phase (or lifecycle-phase "test-compile")
+        _ (when-not (contains? #{"generate-sources" "test-compile"}
+                               lifecycle-phase)
+            (fail! "Maven discovery lifecycle phase is unsupported"
+                   {:kind :invalid-maven-discovery-lifecycle
+                    :lifecycle-phase lifecycle-phase}))
+        workspace-root (paths/absolute workspace-root)
         project-root (resolve-project-root workspace-root project-root)
         _ (when-not (paths/directory? project-root)
             (fail! (str "Configured Maven project root is missing: "
@@ -808,6 +1062,11 @@
             (fail! (str "Configured Maven reactor POM is missing: " pom)
                    {:kind :maven-pom-missing
                     :path (str pom)}))
+        build-input-contract
+        (when build-input-contract
+          (read-build-input-contract! workspace-root project-root
+                                      build-input-contract lifecycle-phase
+                                      properties))
         selectors (validate-selectors! selected-projects)
         runner (ensure-pinned-runner! {:runner-cache runner-cache})
         runner-root (paths/absolute (or runner-cache (cache-root)))
@@ -841,9 +1100,12 @@
                  (str "-Dmaven.repo.local=" repository)
                  "-DskipTests=true"
                  "-Dcheckstyle.skip=true"]
+          (seq properties)
+          (into (mapv (fn [[key value]] (str "-D" key "=" value))
+                      properties))
           offline? (conj "--offline")
           (seq selectors) (into ["-pl" (str/join "," selectors) "-am"])
-          true (into ["test-compile"
+          true (into [lifecycle-phase
                       (str "org.apache.maven.plugins:maven-dependency-plugin:"
                            dependency-plugin-version ":resolve")
                       "-DincludeScope=test"]))
@@ -876,7 +1138,10 @@
                      :selected-projects selectors}
                     (select-keys data
                                  [:command :exit :output :timeout-ms]))))))
-      (read-reactor-manifest manifest)
+      (let [reactor (read-reactor-manifest manifest)]
+        (when build-input-contract
+          (verify-build-input-contract! reactor build-input-contract))
+        reactor)
       (finally
         (when temporary-manifest?
           (Files/deleteIfExists manifest))))))

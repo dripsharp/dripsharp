@@ -1,0 +1,19 @@
+{:schema-version 2
+ :projects
+ [{:id "DripSharp.SqlTrellis.Tests"
+   :directory "tests/DripSharp.SqlTrellis.Tests"
+   :assembly-name "DripSharp.SqlTrellis.Tests"
+   :target-framework "net10.0"
+   :solution-inclusion true
+   :profile-references ["sqltrellis"]
+   :project-references []
+   :packages
+   [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
+    {:id "xunit" :version "2.9.3"}
+    {:id "xunit.runner.visualstudio" :version "3.1.4"}]}]
+ :strategies
+ [{:id :sqltrellis-adapted-upstream
+   :kind :adapted-upstream
+   :policy :shipped
+   :project "DripSharp.SqlTrellis.Tests"
+   :handler dripsharp.sqltrellis.test-suite/strategy!}]}

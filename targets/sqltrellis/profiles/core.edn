@@ -1,0 +1,18 @@
+{:schema-version 1
+ :profile "sqltrellis"
+ :product-family :sqltrellis
+ :baseline-target :sqltrellis
+ :baseline-profile :core
+ :project-root "research/jsqlparser"
+ :build-tool :maven
+ :maven-selected-projects [":jsqlparser"]
+ :maven-properties
+ {"license.skipUpdateLicense" "true"
+  "pmd.skip" "true"
+  "skipCheckSources" "true"}
+ :maven-build-input-contract "maven-build-inputs.edn"
+ :maven-lifecycle-phase :generate-sources
+ :require-clean-source true
+ :destination-bundle dripsharp.sqltrellis.java-project/rule-bundle
+ :destination-config "destinations/core.edn"
+ :dependency-profiles []}

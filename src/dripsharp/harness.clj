@@ -28,7 +28,8 @@
   #{:gradle-project :gradle-wrapper :gradle-java-major})
 
 (def ^:private maven-profile-keys
-  #{:maven-project-id :maven-selected-projects :maven-pom-file})
+  #{:maven-project-id :maven-selected-projects :maven-pom-file
+    :maven-properties :maven-build-input-contract :maven-lifecycle-phase})
 
 (defn- profile-context
   [profile-name]
@@ -69,7 +70,7 @@
    context [:maven-project-id] (:maven-project-id profile)
    "a Maven project id in group:artifact:version form"
    #(and (non-blank-string? %)
-         (boolean (re-matches #"[^:\\s]+:[^:\\s]+:[^:\\s]+" %))))
+         (boolean (re-matches #"[^:\s]+:[^:\s]+:[^:\s]+" %))))
   (let [selected (:maven-selected-projects profile)]
     (validation/check!
      context [:maven-selected-projects] selected
@@ -85,6 +86,22 @@
   (when (contains? profile :maven-pom-file)
     (validation/check! context [:maven-pom-file] (:maven-pom-file profile)
                        "a non-blank string" non-blank-string?))
+  (when (contains? profile :maven-build-input-contract)
+    (validation/check! context [:maven-build-input-contract]
+                       (:maven-build-input-contract profile)
+                       "a non-blank string" non-blank-string?))
+  (when (contains? profile :maven-lifecycle-phase)
+    (validation/check! context [:maven-lifecycle-phase]
+                       (:maven-lifecycle-phase profile)
+                       ":generate-sources or :test-compile"
+                       #{:generate-sources :test-compile}))
+  (when (contains? profile :maven-properties)
+    (let [properties (:maven-properties profile)]
+      (validation/check! context [:maven-properties] properties
+                         "a map of non-blank string keys and values"
+                         #(and (map? %)
+                               (every? non-blank-string? (keys %))
+                               (every? non-blank-string? (vals %))))))
   (doseq [field gradle-profile-keys
           :when (contains? profile field)]
     (validation/fail! context [field] (get profile field)
@@ -178,11 +195,14 @@
   (if-let [[_ target-root]
            (re-matches #"^(targets/[^/]+)/profiles/[^/]+\.edn$"
                        profile-name)]
-    (update profile :destination-config
-            #(if (and (string? %)
-                      (str/starts-with? % "destinations/"))
-               (str target-root "/" %)
-               %))
+    (cond-> (update profile :destination-config
+                    #(if (and (string? %)
+                              (str/starts-with? % "destinations/"))
+                       (str target-root "/" %)
+                       %))
+      (and (string? (:maven-build-input-contract profile))
+           (not (str/includes? (:maven-build-input-contract profile) "/")))
+      (update :maven-build-input-contract #(str target-root "/" %)))
     profile))
 
 (defn read-profile
@@ -291,7 +311,10 @@
                :test-project-dependencies (:test-project-dependencies input)
                :test-external-dependencies (:test-external-dependencies input)
                :test-classpath-artifacts
-               (mapv render-artifact (:test-classpath-artifacts input))}
+               (mapv render-artifact (:test-classpath-artifacts input))
+               :generation-executions (:generation-executions input)
+               :build-input-artifacts
+               (mapv render-artifact (:build-input-artifacts input))}
               :source-project rendered-source}
        (:submodule source-project)
        (assoc :submodule (:submodule source-project))
@@ -311,7 +334,13 @@
              :maven-project-id (:maven-project-id profile)
              :selected-projects (:maven-selected-projects profile)}
       (:maven-pom-file profile)
-      (assoc :pom-file (:maven-pom-file profile)))))
+      (assoc :pom-file (:maven-pom-file profile))
+      (:maven-properties profile)
+      (assoc :properties (:maven-properties profile))
+      (:maven-build-input-contract profile)
+      (assoc :build-input-contract (:maven-build-input-contract profile))
+      (:maven-lifecycle-phase profile)
+      (assoc :lifecycle-phase (name (:maven-lifecycle-phase profile))))))
 
 (defn discover-project!
   "Dispatches a validated generation profile to its build-tool backend and
@@ -338,7 +367,10 @@
   [profile source-project]
   [(str (:path source-project))
    (or (:maven-pom-file profile) "pom.xml")
-   (:revision source-project)])
+   (:revision source-project)
+   (:maven-lifecycle-phase profile)
+   (:maven-properties profile)
+   (:maven-build-input-contract profile)])
 
 (defn- discover-project-inputs!
   [{:keys [root target graph source-projects discover-reactor-fn]}]
@@ -378,7 +410,15 @@
                            :selected-projects selected-projects
                            :manifest manifest}
                     (:maven-pom-file profile)
-                    (assoc :pom-file (:maven-pom-file profile))))
+                    (assoc :pom-file (:maven-pom-file profile))
+                    (:maven-properties profile)
+                    (assoc :properties (:maven-properties profile))
+                    (:maven-build-input-contract profile)
+                    (assoc :build-input-contract
+                           (:maven-build-input-contract profile))
+                    (:maven-lifecycle-phase profile)
+                    (assoc :lifecycle-phase
+                           (name (:maven-lifecycle-phase profile)))))
                  inputs
                  (into {}
                        (map (fn [profile-name project-id]
@@ -387,11 +427,19 @@
                             profile-names project-ids))]
              {:inputs inputs
               :invocation
-              {:build-tool :maven
-               :profiles profile-names
-               :project-ids project-ids
-               :selected-projects selected-projects
-               :manifest (portable-path root manifest)}}))
+              (cond->
+               {:build-tool :maven
+                :profiles profile-names
+                :project-ids project-ids
+                :selected-projects selected-projects
+                :manifest (portable-path root manifest)}
+                (:maven-lifecycle-phase profile)
+                (assoc :lifecycle-phase (:maven-lifecycle-phase profile))
+                (:maven-properties profile)
+                (assoc :properties (:maven-properties profile))
+                (:maven-build-input-contract profile)
+                (assoc :build-input-contract
+                       (:maven-build-input-contract profile)))}))
          (range)
          maven-groups)
         results maven-results]

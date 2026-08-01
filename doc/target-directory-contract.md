@@ -181,6 +181,11 @@ must remain below `tests/`. Each strategy is either `:focused-consumer` or
 agree on policy. Validation-only project directories must be below an excluded
 publication path; shipped projects must not be excluded.
 
+A project may declare `:solution-inclusion true` when its target contract
+requires explicit inclusion in the generated product solution. The target
+directory rejects any other value; solution materialization remains part of
+the target's later generated-repository emission milestone.
+
 Focused test sources and fixtures remain target-owned, checksum-pinned inputs.
 Every project uses the product family's exact target framework and includes the
 three required pinned test packages; additional test packages must also use

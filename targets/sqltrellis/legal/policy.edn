@@ -1,0 +1,13 @@
+{:schema-version 4
+ :target :sqltrellis
+ :upstream-license "Apache-2.0"
+ :allowed-upstream-licenses #{"Apache-2.0"}
+ :legal-sets #{:upstream}
+ :notice-appendix-sha256 nil
+ :profile-legal-sets {"sqltrellis" [:upstream]}
+ :resource-notice-legal-sets {"sqltrellis" []}
+ :package-metadata
+ {"sqltrellis"
+  {:required-description-fragments
+   ["independent" "not affiliated with or endorsed by the JSqlParser project"]
+   :forbidden-identity-marks []}}}
