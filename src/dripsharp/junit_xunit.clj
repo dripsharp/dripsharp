@@ -9,6 +9,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [dripsharp.java-library :as java-library]
+            [dripsharp.java-test-adapters :as test-adapters]
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
@@ -850,12 +851,14 @@
               (map :symbol)
               frequencies
               (into (sorted-map)))]
-     {:schema-version schema-version
-      :source-model-totals (:totals resolved-model)
-      :root-classes (mapv class-name types)
-      :annotation-inventory annotation-inventory
-      :classes records-by-name
-      :cases cases})))
+     (test-adapters/augment-plan
+      resolved-model
+      {:schema-version schema-version
+       :source-model-totals (:totals resolved-model)
+       :root-classes (mapv class-name types)
+       :annotation-inventory annotation-inventory
+       :classes records-by-name
+       :cases cases}))))
 
 (defn serializable-plan
   "Removes live Spoon handles while retaining complete case and row accounting."
@@ -865,8 +868,8 @@
               (instance? CtElement value) nil
               (map? value) (into (empty value)
                                  (keep (fn [[key child]]
-                                         (when-not (contains? #{:element :method-element
-                                                                :type-element}
+                                         (when-not (contains? #{:element :field-element
+                                                                :method-element :type-element}
                                                               key)
                                            [key (strip-live child)])))
                                  value)
@@ -919,6 +922,12 @@
            [:lifecycle #(into (sorted-map)
                               (map (fn [[name class]] [name (:lifecycle class)]))
                               (:classes %))]
+           [:mockito-fixtures
+            #(into (sorted-map)
+                   (keep (fn [[name class]]
+                           (when-let [fixture (:mockito-fixture class)]
+                             [name fixture])))
+                   (:classes %))]
            [:disabled #(into (sorted-map)
                              (keep (fn [case]
                                      (when-let [disabled (:disabled case)]
@@ -963,7 +972,11 @@
       (fail! "JUnit test method has no Java body"
              {:reason :missing-junit-test-body :case (:id case)
               :source (:source case)}))
-    (let [holder (atom destination-context)
+    (test-adapters/validate-test-body!
+     resolved-model (.getBody ^CtMethod method) destination-context)
+    (let [destination-context
+          (test-adapters/compose-destination-context destination-context)
+          holder (atom destination-context)
           context (java-library/create-body-context resolved-model holder)]
       (java-library/translate-body context (.getBody ^CtMethod method)))))
 
@@ -1088,6 +1101,7 @@
      {:policy :new-instance-per-test-case-row
       :enclosing-instance-chain
       (get-in case [:lifecycle :enclosing-class-chain])
+      :field-initializers (get-in case [:mockito-fixture :fields])
       :constructor-calls (get-in case [:lifecycle :before-each])
       :dispose-finally-calls (get-in case [:lifecycle :after-each])}
      :class-fixture

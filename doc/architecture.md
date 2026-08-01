@@ -193,6 +193,31 @@ not selected by target conditionals in the shared emitter. Each strategy is
 explicitly `:shipped` or `:validation-only`; validation-only projects must be
 below an excluded publication path.
 
+#### Java Test Framework Adapters
+
+Adapted Java suites reuse the normal resolved Java body translator and install
+`dripsharp.java-test-adapters` ahead of any target invocation adapter. The
+shared layer owns the used JUnit 4/Jupiter assertion calls, AssertJ fluent
+assertions, Hamcrest matchers, and Mockito stubbing and verification operations.
+Its contract exposes one authored `JavaTestSupport.cs` for generated xUnit
+projects, pins xUnit and Castle.Core, and remains test-only and non-packable. A
+preflight walks live invocation and constructor references so
+an unsupported operation stops generation with its exact resolved identity and
+source location before translation diagnostics are aggregated.
+
+H2, WireMock, Jimfs, and comparable database, server, or filesystem fixtures
+cross an explicit `:target-test-facility-strategy` boundary. Shared code passes
+the facility classification, resolved occurrence, live Spoon element, and
+translated children; declining or omitting the hook is a generation error.
+The target pairs the hook with destination type mappings for its substitutes;
+explicit target mappings take precedence over shared framework mappings.
+Kotest and other Kotlin-only evidence is inventoried separately and never
+enters the Java frontend. Add a generic adapter only when more than one governed
+target needs the same framework semantics. Otherwise extend the target strategy
+and its focused executable evidence. The pinned source-language and reuse
+classification lives in
+`validation/java-test-frameworks/assertion-mocking-inventory.edn`.
+
 ### Recursive Translation Kernel
 
 The translation kernel has two dispatch mechanisms over the same live Spoon

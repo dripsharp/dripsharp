@@ -1,0 +1,69 @@
+{:schema-version 1
+ :frameworks
+ [{:framework :junit4
+   :targets #{:rawhttp}
+   :source-languages #{:java}
+   :java-adaptation :shared-resolved-xunit-adapter
+   :used-operations
+   #{"assertEquals" "assertFalse" "assertNotNull" "assertNull"
+     "assertTrue" "fail"}}
+  {:framework :jupiter
+   :targets #{:pkl :pdfcarton :rawhttp :sqltrellis}
+   :source-languages #{:java :kotlin}
+   :java-adaptation :shared-resolved-xunit-adapter
+   :kotlin-policy :evidence-only-no-kotlin-frontend
+   :used-operations
+   #{"assertArrayEquals" "assertDoesNotThrow" "assertEquals" "assertFalse"
+     "assertInstanceOf" "assertNotEquals" "assertNotNull" "assertNotSame"
+     "assertNull" "assertSame" "assertThrows" "assertThrowsExactly"
+     "assertTrue" "fail"}}
+  {:framework :assertj
+   :targets #{:pkl :sqltrellis}
+   :source-languages #{:java :kotlin}
+   :java-adaptation :shared-resolved-xunit-adapter
+   :kotlin-policy :evidence-only-no-kotlin-frontend
+   :used-operations
+   #{"allSatisfy" "as" "asString" "assertThat"
+     "assertThatExceptionOfType" "assertThatThrownBy" "catchThrowable"
+     "contains" "containsAllEntriesOf" "containsEntry" "containsExactly"
+     "containsExactlyInAnyOrder" "containsOnly" "describedAs"
+     "doesNotContain" "entry" "extracting" "hasCauseInstanceOf"
+     "hasFieldOrPropertyWithValue" "hasMessage" "hasMessageContaining"
+     "hasMessageStartingWith" "hasRootCauseInstanceOf" "hasSize" "isEmpty"
+     "isEqualTo" "isFalse" "isInstanceOf" "isNotEqualTo" "isNotNull"
+     "isNull" "isSameAs" "isThrownBy" "isTrue" "rootCause" "startsWith"}}
+  {:framework :hamcrest
+   :targets #{:sqltrellis}
+   :source-languages #{:java}
+   :java-adaptation :shared-resolved-xunit-adapter
+   :used-operations #{"assertThat" "instanceOf" "startsWith"}}
+  {:framework :mockito
+   :targets #{:pdfcarton :sqltrellis}
+   :source-languages #{:java}
+   :java-adaptation :shared-resolved-xunit-adapter
+   :used-operations
+   #{"given" "mock" "should" "spy" "then" "will" "willReturn"}}]
+ :target-facilities
+ [{:facility :h2
+   :targets #{:sqltrellis}
+   :source-languages #{:java}
+   :reuse-boundary :target-strategy
+   :semantics :database-test-fixture}
+  {:facility :wiremock
+   :targets #{:pkl}
+   :source-languages #{:kotlin}
+   :reuse-boundary :target-strategy
+   :kotlin-policy :evidence-only-no-kotlin-frontend
+   :semantics :http-server-fixture}
+  {:facility :jimfs
+   :targets #{:pkl}
+   :source-languages #{:kotlin}
+   :reuse-boundary :target-strategy
+   :kotlin-policy :evidence-only-no-kotlin-frontend
+   :semantics :filesystem-fixture}
+  {:facility :kotest
+   :targets #{:rawhttp}
+   :source-languages #{:kotlin}
+   :reuse-boundary :evidence-only-no-kotlin-frontend
+   :kotlin-policy :evidence-only-no-kotlin-frontend
+   :semantics :kotlin-test-framework}]}

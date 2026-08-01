@@ -14,7 +14,12 @@
   :test
   {:jvm-opts ["-Xmx8g"]
    :extra-deps
-   {junit/junit {:mvn/version "4.13.2"}
+   {com.h2database/h2 {:mvn/version "2.3.232"}
+    org.assertj/assertj-core {:mvn/version "3.27.7"}
+    org.hamcrest/hamcrest {:mvn/version "3.0"}
+    org.mockito/mockito-core {:mvn/version "4.11.0"}
+    org.mockito/mockito-junit-jupiter {:mvn/version "4.11.0"}
+    junit/junit {:mvn/version "4.13.2"}
     org.junit.jupiter/junit-jupiter-api {:mvn/version "5.13.4"}
     org.junit.jupiter/junit-jupiter-params {:mvn/version "5.13.4"}}
    :extra-paths ["test"]
