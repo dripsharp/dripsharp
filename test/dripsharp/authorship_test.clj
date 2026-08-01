@@ -150,6 +150,25 @@
                  (:repository-notice verification))))
         (Files/writeString
          destination
+         (str "// SPDX-FileCopyrightText: 2026 Fixture Owner\n"
+              "// SPDX-License-Identifier: LicenseRef-Fixture\n"
+              "// Descriptive comment without the required blank line.\n"
+              "internal static class Destination { }\n")
+         (make-array OpenOption 0))
+        (let [missing-header-terminator
+              (caught
+               #(authorship/verify-authored-spdx-headers!
+                 root groups policy))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data missing-header-terminator))))
+          (is (= "runtime/Destination.cs"
+                 (:path (ex-data missing-header-terminator))))
+          (is (= {:file-copyright-text 1
+                  :license-identifier 1}
+                 (:spdx-marker-counts
+                  (ex-data missing-header-terminator)))))
+        (Files/writeString
+         destination
          (str "// SPDX-FileCopyrightText: 2026 Different Owner\n"
               "// SPDX-License-Identifier: LicenseRef-Fixture\n\n"
               "internal static class Destination { }\n")
