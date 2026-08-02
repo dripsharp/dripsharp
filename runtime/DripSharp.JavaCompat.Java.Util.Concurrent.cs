@@ -75,6 +75,7 @@ internal sealed class JavaFuture<T>
 {
     private readonly TaskCompletionSource<T>? completion;
     private readonly Task<T> task;
+    private readonly CancellationTokenSource? cancellation;
 
     internal JavaFuture()
     {
@@ -82,20 +83,38 @@ internal sealed class JavaFuture<T>
         task = completion.Task;
     }
 
-    private JavaFuture(Task<T> task) => this.task = task;
+    private JavaFuture(Task<T> task, CancellationTokenSource cancellation)
+    {
+        this.task = task;
+        this.cancellation = cancellation;
+    }
     internal Task CompletionTask => task;
 
-    internal static JavaFuture<T> Run(Func<T> callable, CancellationToken cancellation) =>
-        new(Task.Run(callable, cancellation));
+    internal static JavaFuture<T> Run(Func<T> callable, CancellationToken cancellation)
+    {
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        return new JavaFuture<T>(Task.Run(() => Invoke(callable, source), source.Token), source);
+    }
 
     internal static JavaFuture<T> Run(Func<T> callable, CancellationToken cancellation,
-        TaskScheduler scheduler) =>
-        new(Task.Factory.StartNew(callable, cancellation,
-            TaskCreationOptions.DenyChildAttach, scheduler));
+        TaskScheduler scheduler)
+    {
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        return new JavaFuture<T>(Task.Factory.StartNew(
+            () => Invoke(callable, source), source.Token,
+            TaskCreationOptions.DenyChildAttach, scheduler), source);
+    }
 
     internal bool Complete(T value) => completion?.TrySetResult(value) ?? false;
     internal bool CompleteExceptionally(Exception error) =>
         completion?.TrySetException(error) ?? false;
+
+    internal bool Cancel(bool _)
+    {
+        if (task.IsCompleted || cancellation is null) return false;
+        cancellation.Cancel();
+        return true;
+    }
 
     internal T Get()
     {
@@ -136,6 +155,13 @@ internal sealed class JavaFuture<T>
         {
             throw new AggregateException(error);
         }
+    }
+
+    private static T Invoke(Func<T> callable, CancellationTokenSource source)
+    {
+        JavaCancellation.Push(source, source.Token);
+        try { return callable(); }
+        finally { JavaCancellation.Pop(source); }
     }
 }
 

@@ -114,12 +114,12 @@
     (is (= "targets/sqltrellis/maven-build-inputs.edn"
            (:maven-build-input-contract profile)))))
 
-(deftest neutral-model-retains-the-pinned-production-and-test-graph
+(deftest neutral-model-retains-the-complete-pinned-production-and-test-graph
   (let [input @live-input
         project-root (paths/resolve-path workspace "research/jsqlparser")
         profile (harness/read-profile workspace profile-file)
-        model-statement-seeds
-        (sqltrellis/model-statement-seeds project-root input)
+        production-graph
+        (sqltrellis/production-source-graph project-root input)
         benchmarks
         (->> (:test-sources input)
              (map #(relative-path project-root %))
@@ -139,20 +139,15 @@
     (is (= 48 (count (:test-external-dependencies input))))
     (is (= 7 (count (:classpath-artifacts input))))
     (is (= 48 (count (:test-classpath-artifacts input))))
-    (is (= 310 (count model-statement-seeds)))
-    (is (= model-statement-seeds (:seeds profile)))
-    (is (= {:expression 131 :schema 8 :statement 171}
-           (frequencies
-            (map (fn [{:keys [key]}]
-                   (cond
-                     (str/starts-with? key
-                                       "type:net.sf.jsqlparser.expression.")
-                     :expression
-                     (str/starts-with? key
-                                       "type:net.sf.jsqlparser.schema.")
-                     :schema
-                     :else :statement))
-                 model-statement-seeds))))
+    (is (not (contains? profile :seeds)))
+    (is (= {:generated 15 :ordinary 444 :resources 1}
+           (update-vals production-graph count)))
+    (is (= 460
+           (count (distinct (mapcat val production-graph)))))
+    (is (= "target/generated-sources/javacc/net/sf/jsqlparser/parser/CCJSqlParser.java"
+           (first (:generated production-graph))))
+    (is (= "target/generated-sources/jjtree/net/sf/jsqlparser/parser/SimpleNode.java"
+           (last (:generated production-graph))))
     (is (empty?
          (set/intersection
           (set (concat (:production-sources input)

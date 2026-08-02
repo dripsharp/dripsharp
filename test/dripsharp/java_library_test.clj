@@ -168,6 +168,34 @@
              set)]
     (is (= #{"CreateContext" "GetTransparency"} adaptations))))
 
+(deftest derived-surface-includes-concrete-inherited-default-contracts
+  (let [fixture
+        (model!
+         {"example/Capability.java"
+          (str "package example; public interface Capability { "
+               "String message(); }")
+          "example/DefaultCapability.java"
+          (str "package example; public interface DefaultCapability "
+               "extends Capability { default String message() { "
+               "return \"ok\"; } }")
+          "example/Configured.java"
+          (str "package example; public final class Configured "
+               "implements DefaultCapability {}")})
+        strategy (java-library/public-surface-strategy)
+        surface ((:read! strategy) (paths/workspace-root) {})
+        selected ((:validate-selected! strategy)
+                  (paths/workspace-root) surface (:model fixture))
+        contracts
+        (->> (:selection-evidence selected)
+             (filter #(= :java-inherited-default-interface-contract
+                         (:systematic-adaptation %)))
+             (map #(select-keys (:row %) [:owner :name :parameter-count]))
+             set)]
+    (is (= #{{:owner "example.Configured"
+              :name "message"
+              :parameter-count 0}}
+           contracts))))
+
 (defn- configuration
   ([] (configuration #{}))
   ([capabilities]
@@ -358,6 +386,10 @@
                "extends java.io.Serializable { "
                "<T, S> T accept(Visitor<T> visitor, S context); "
                "default void accept(Visitor<?> visitor) { accept(visitor, null); } }")
+          "example/Parenthesed.java"
+          (str "package example; public interface Parenthesed extends Statement { "
+               "<T, S> T accept(Visitor<T> visitor, S context); "
+               "default void accept(Visitor<?> visitor) { accept(visitor, null); } }")
           "example/Box.java"
           (str "package example; public class Box<T> implements Statement { "
                "public <K, S> K accept(Visitor<K> visitor, S context) { "
@@ -367,11 +399,18 @@
         statement
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Statement.cs")))
+        parenthesed
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Parenthesed.cs")))
         box
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Box.cs")))]
     (is (not (str/includes? statement ": object")))
     (is (not (str/includes? statement "FunctionalAdapter")))
+    (is (str/includes?
+         parenthesed
+         (str "void global::Example.Java.Library.Statement.accept<TWildcard0_0>("
+              "global::Example.Java.Library.Visitor<TWildcard0_0> visitor)")))
     (is (str/includes?
          statement
          "this.accept<TWildcard0_0, object>(visitor, (object)default!);"))
@@ -889,6 +928,8 @@
                "public boolean update(Collection<E> values, Collection<?> other) { "
                "return values.containsAll(other) || values.removeAll(other) "
                "|| values.retainAll(other); } "
+               "public boolean retain(Set<E> values, Collection<?> other) { "
+               "return values.retainAll(other); } "
                "private void accept(Collection<?> values) {} "
                "public void pass(Collection<E> values) { accept(values); } "
                "private void acceptMap(Map<?, ?> values) {} "
@@ -912,6 +953,7 @@
     (is (str/includes? source "JavaCompat.CollectionToArray(values, target)"))
     (is (str/includes? source "JavaCompat.CastReference<string>(value)"))
     (is (str/includes? source "JavaCompat.CastObjects(other)"))
+    (is (= 2 (count (re-seq #"JavaCompat\.RetainAll\(values," source))))
     (is (str/includes?
          source
          "JavaCompat.CastDictionary<object, object>(values)"))
@@ -1754,6 +1796,7 @@
                  (str "package example; import java.util.HashMap; "
                       "import java.util.Map; import java.util.function.BiConsumer; "
                       "import java.util.function.BiFunction; "
+                      "import java.util.function.BiPredicate; "
                       "public final class Indexes { public static void emit("
                       "String key, BiConsumer<String, Integer> consumer) { "
                       "Map<String, Integer> indexes = new HashMap<>(); "
@@ -1761,7 +1804,10 @@
                       "consumer.accept(key, value); } "
                       "public static int apply(String key, int value, "
                       "BiFunction<String, Integer, Integer> function) { "
-                      "return function.apply(key, value); } }")})
+                      "return function.apply(key, value); } "
+                      "public static boolean test(String key, int value, "
+                      "BiPredicate<String, Integer> predicate) { "
+                      "return predicate.test(key, value); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -1781,6 +1827,7 @@
     (is (str/includes?
          first-source
          "return global::DripSharp.Runtime.JavaCompat.UnboxObject<int>(function(key, value));"))
+    (is (str/includes? first-source "return predicate(key, value);"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -1972,7 +2019,7 @@
         (model! {"example/Visited.java"
                  (str "package example; import java.util.Collections; import java.util.Comparator; "
                       "import java.util.HashSet; import java.util.LinkedHashSet; "
-                      "import java.util.List; import java.util.Set; "
+                      "import java.util.List; import java.util.Set; import java.util.TreeSet; "
                       "public final class Visited { public static boolean addFirst("
                       "List<String> names, String name) { "
                       "Set<String> visited = new HashSet<>(names.size()); "
@@ -1980,6 +2027,10 @@
                       "public static boolean addConcrete(String name) { "
                       "HashSet<String> visited = new HashSet<>(); "
                       "visited.add(name); return visited.contains(name); } "
+                      "public static boolean addAllConcrete(HashSet<String> visited, "
+                      "Set<String> names) { return visited.addAll(names); } "
+                      "public static boolean removeConcrete(TreeSet<String> visited, "
+                      "String name) { return visited.remove(name); } "
                       "public static Set<String> ordered(int capacity) { "
                       "return new LinkedHashSet<>(capacity); } "
                       "public static String[] copy(List<String> names) { "
@@ -2016,6 +2067,13 @@
               "new global::System.Collections.Generic.HashSet<string>();\n"
               "visited.Add(name);\n"
               "return visited.Contains(name);")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.AddAll("
+              "visited, names);")))
+    (is (str/includes?
+         first-source
+         "return visited.Remove(name);"))
     (is (str/includes?
          first-source
          (str "return new global::System.Collections.Generic.HashSet<string>("
@@ -2228,6 +2286,7 @@
         (model! {"example/Queues.java"
                  (str "package example; import java.util.ArrayDeque; "
                       "import java.util.Deque; import java.util.List; "
+                      "import java.util.Queue; "
                       "public final class Queues { "
                       "public static String drain(List<String> values) { "
                       "Deque<String> queue = new ArrayDeque<>(); "
@@ -2236,7 +2295,11 @@
                       "return queue.removeFirst(); } "
                       "queue.push(\"fallback\"); return queue.pop(); } "
                       "static String peek(Deque<String> queue) { "
-                      "return queue.peek(); } }")})
+                      "return queue.peek(); } "
+                      "static void addLast(Deque<String> queue, String value) { "
+                      "queue.addLast(value); } "
+                      "static boolean offer(Queue<String> queue, String value) { "
+                      "return queue.offer(value); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         emission (emit! fixture 1 capabilities)
         source
@@ -2258,6 +2321,8 @@
     (is (str/includes?
          source
          "return global::DripSharp.Runtime.JavaCompat.DequePeek(queue);"))
+    (is (str/includes? source "queue.AddLast(value);"))
+    (is (str/includes? source "return queue.Offer(value);"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
@@ -2893,6 +2958,8 @@
                       "static String await(ExecutorService executor, Callable<String> callable) "
                       "throws Exception { Future<String> future = executor.submit(callable); "
                       "return future.get(5, TimeUnit.SECONDS); } "
+                      "static boolean cancel(ExecutorService executor, Callable<String> callable) { "
+                      "Future<String> future = executor.submit(callable); return future.cancel(true); } "
                       "static RuntimeException failure(String message, Throwable cause) { "
                       "cause.printStackTrace(); "
                       "if (cause == null) { return new RuntimeException(message); } "
@@ -2935,6 +3002,10 @@
               "executor.Submit(callable);\n"
               "return future.Get((long)(5), "
               "global::DripSharp.Runtime.JavaTimeUnit.SECONDS);")))
+    (is (str/includes?
+         first-source
+         (str "global::DripSharp.Runtime.JavaFuture<string> future = "
+              "executor.Submit(callable);\nreturn future.Cancel(true);")))
     (is (str/includes?
          first-source
          (str "global::DripSharp.Runtime.JavaCompat.PrintStackTrace(cause);\n"
@@ -3981,8 +4052,40 @@
     (is (= :unsupported-destination-rule (:kind (ex-data error))))
     (is (str/includes?
          (.getMessage error)
-         (str "requires exact Iterator, X509TrustManager, FilterOutputStream, "
+         (str "requires exact Callable, Iterator, X509TrustManager, FilterOutputStream, "
               "LinkedHashMap, or project-class semantics")))))
+
+(deftest anonymous-callables-lower-to-capturing-func-lambdas
+  (let [fixture
+        (model! {"example/Tasks.java"
+                 (str "package example; import java.util.concurrent.Callable; "
+                      "import java.util.concurrent.ExecutorService; "
+                      "import java.util.concurrent.Future; import java.util.concurrent.TimeUnit; "
+                      "public final class Tasks { static String run(ExecutorService executor, "
+                      "String value) throws Exception { Future<String> future = "
+                      "executor.submit(new Callable<String>() { public String call() { "
+                      "return value + \"!\"; } }); return future.get(5, TimeUnit.SECONDS); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Tasks.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Tasks.cs")))]
+    (is (str/includes?
+         first-source
+         (str "executor.Submit(() => {\nreturn global::DripSharp.Runtime."
+              "JavaCompat.Concat(value, \"!\");\n})")))
+    (is (not (str/includes? first-source "Anonymous_")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest capturing-anonymous-project-subclasses-preserve-virtual-dispatch-and-super
   (let [fixture
@@ -4534,6 +4637,160 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest string-method-references-preserve-java-case-conversion
+  (let [fixture
+        (model! {"example/References.java"
+                 (str "package example; import java.util.function.Function; "
+                      "public final class References { "
+                      "public static String upper(String value) { "
+                      "Function<String, String> operation = String::toUpperCase; "
+                      "return operation.apply(value); } "
+                      "public static String lower(String value) { "
+                      "Function<String, String> operation = String::toLowerCase; "
+                      "return operation.apply(value); } "
+                      "public static String trim(String value) { "
+                      "Function<String, String> operation = String::trim; "
+                      "return operation.apply(value); } }")})
+        first (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        second (emit! fixture 3 #{:java-compat :java-regex-unicode})
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/References.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/References.cs")))]
+    (is (str/includes? first-source
+                       "(value0) => value0.ToUpper()"))
+    (is (str/includes? first-source
+                       "(value0) => value0.ToLowerInvariant()"))
+    (is (str/includes?
+         first-source
+         "(value0) => global::DripSharp.Runtime.JavaCompat.StringTrim(value0)"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest unary-operator-identity-preserves-its-input
+  (let [fixture
+        (model! {"example/Identity.java"
+                 (str "package example; import java.util.function.UnaryOperator; "
+                      "public final class Identity { "
+                      "public static String apply(String value) { "
+                      "UnaryOperator<String> operation = UnaryOperator.identity(); "
+                      "return operation.apply(value); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Identity.cs")))]
+    (is (str/includes? source "operation = value => value;"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest string-get-chars-preserves-java-source-and-destination-ranges
+  (let [fixture
+        (model! {"example/Characters.java"
+                 (str "package example; public final class Characters { "
+                      "public static char[] copy(String value, int start, int end) { "
+                      "char[] result = new char[end - start]; "
+                      "value.getChars(start, end, result, 0); return result; } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Characters.cs")))]
+    (is (str/includes?
+         source
+         "value.CopyTo(start, result, 0, end - start);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest charset-encoder-reports-unmappable-input-without-replacement
+  (let [fixture
+        (model! {"example/Characters.java"
+                 (str "package example; import java.nio.charset.Charset; "
+                      "import java.nio.charset.CharsetEncoder; "
+                      "import java.nio.charset.StandardCharsets; "
+                      "public final class Characters { "
+                      "public static boolean ascii(String value) { "
+                      "CharsetEncoder encoder = StandardCharsets.US_ASCII.newEncoder(); "
+                      "return encoder.canEncode(value); } "
+                      "public static Charset defaultEncoding() { "
+                      "return Charset.defaultCharset(); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Characters.cs")))]
+    (is (str/includes?
+         source
+         (str "global::System.Text.Encoding encoder = "
+              "global::DripSharp.Runtime.JavaStandardCharsets.USASCII;")))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.CharsetCanEncode(encoder, value);"))
+    (is (str/includes?
+         source
+         "return global::System.Text.Encoding.Default;"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest file-not-found-message-constructor-preserves-the-message
+  (let [fixture
+        (model! {"example/Missing.java"
+                 (str "package example; import java.io.FileNotFoundException; "
+                      "public final class Missing { "
+                      "public static void fail(String message) "
+                      "throws FileNotFoundException { "
+                      "throw new FileNotFoundException(message); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Missing.cs")))]
+    (is (str/includes?
+         source
+         "throw new global::System.IO.FileNotFoundException(message);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest files-write-preserves-signed-byte-data-and-returns-the-path
+  (let [fixture
+        (model! {"example/FileIo.java"
+                 (str "package example; import java.io.IOException; "
+                      "import java.nio.file.Files; import java.nio.file.Path; "
+                      "public final class FileIo { public static Path write(Path path, byte[] bytes) "
+                      "throws IOException { return java.nio.file.Files.write(path, bytes); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/FileIo.cs")))]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.WriteAllBytes(path, bytes);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest external-consumer-method-references-use-exact-target-semantics
   (let [fixture
         (model! {"example/Consumers.java"
@@ -4574,6 +4831,32 @@
                       "import java.util.function.Consumer; "
                       "public final class Unsupported { static Consumer<String> remove("
                       "List<String> values) { return values::remove; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Unsupported.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         first-source
+         "return (value0) => { values.Remove(value0); };"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest set-remove-method-reference-discards-java-boolean-result
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.Set; "
+                      "import java.util.function.Consumer; "
+                      "public final class Unsupported { static Consumer<String> remove("
+                      "Set<String> values) { return values::remove; } }")})
         first (emit! fixture 1)
         second (emit! fixture 3)
         first-source
@@ -4745,6 +5028,10 @@
                       "public static void fine(String message, Exception error) { "
                       "Logger logger = Logger.getLogger(Logging.class.getName()); "
                       "logger.log(Level.FINE, message); logger.log(Level.FINE, message, error); "
+                      "if (logger.isLoggable(Level.WARNING)) logger.warning(message); "
+                      "logger.fine(message); "
+                      "logger.info(message); "
+                      "logger.setLevel(Level.OFF); "
                       "} }")})
         emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
@@ -4755,6 +5042,90 @@
          "global::DripSharp.Runtime.JavaLogger.GetLogger("))
     (is (= 2 (count (re-seq #"logger\.Log\(global::DripSharp.Runtime.JavaLogLevel\.Fine"
                              source))))
+    (is (str/includes?
+         source
+         (str "if (logger.IsLoggable(global::DripSharp.Runtime.JavaLogLevel.Warning)) {\n"
+              "logger.Warning(message);\n}")))
+    (is (str/includes?
+         source
+         "logger.SetLevel(global::DripSharp.Runtime.JavaLogLevel.Off);"))
+    (is (str/includes? source "logger.Info(message);"))
+    (is (str/includes? source "logger.Fine(message);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest jdbc-metadata-contracts-use-system-data-common-adapters
+  (let [fixture
+        (model! {"example/JdbcMetadata.java"
+                 (str "package example; import java.sql.Connection; "
+                      "import java.sql.DatabaseMetaData; import java.sql.PreparedStatement; "
+                      "import java.sql.ResultSet; import java.sql.ResultSetMetaData; "
+                      "public final class JdbcMetadata { "
+                      "public static int columns(Connection connection, String sql) "
+                      "throws Exception { PreparedStatement statement = "
+                      "connection.prepareStatement(sql); ResultSetMetaData metadata = "
+                      "statement.getMetaData(); int count = metadata.getColumnCount(); "
+                      "if (count > 0) metadata.getColumnLabel(1); statement.close(); "
+                      "return count; } "
+                      "public static String firstTable(Connection connection) "
+                      "throws Exception { DatabaseMetaData metadata = connection.getMetaData(); "
+                      "ResultSet tables = metadata.getTables(null, null, null, "
+                      "new String[] { \"TABLE\" }); String name = tables.next() "
+                      "? tables.getString(\"TABLE_NAME\") : \"\"; tables.close(); "
+                      "return name; } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/JdbcMetadata.cs")))]
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.PrepareStatement(connection, sql)"))
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.PreparedStatementGetMetaData(statement)"))
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.GetDatabaseMetaData(connection)"))
+    (is (str/includes?
+         source
+         ".GetTables((string)default!, (string)default!, (string)default!, new string[] { \"TABLE\" })"))
+    (is (str/includes? source "metadata.ColumnCount"))
+    (is (str/includes? source "tables.GetString(\"TABLE_NAME\")"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest input-stream-reader-constructors-preserve-default-and-named-charsets
+  (let [fixture
+        (model! {"example/Readers.java"
+                 (str "package example; import java.io.BufferedReader; "
+                      "import java.io.InputStream; import java.io.InputStreamReader; "
+                      "import java.io.Reader; public final class Readers { "
+                      "public static Reader defaultReader(InputStream stream) { "
+                      "return new BufferedReader(new InputStreamReader(stream)); } "
+                      "public static Reader namedReader(InputStream stream, String charset) "
+                      "throws Exception { return new BufferedReader("
+                      "new InputStreamReader(stream, charset)); } "
+                      "public static void close(Reader reader) throws Exception { "
+                      "reader.close(); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Readers.cs")))]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.NewInputStreamReader(stream);"))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.NewInputStreamReader(stream, charset);"))
+    (is (str/includes? source "reader.Dispose();"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
@@ -5669,11 +6040,15 @@
   (let [fixture
         (model! {"example/Joining.java"
                  (str "package example; import java.util.List; import java.util.OptionalLong; "
+                      "import java.util.stream.Collectors; "
                       "public final class Joining { static String render("
                       "OptionalLong length, List<String> values) { "
                       "StringBuilder result = new StringBuilder(); "
                       "length.ifPresent(value -> result.append(Long.toString(value))); "
-                      "return result.append(String.join(\",\", values)).toString(); } }")})
+                      "return result.append(String.join(\",\", values))"
+                      ".append(String.join(\".\", \"a\", \"b\"))"
+                      ".append(values.stream().collect(Collectors.joining(\",\", \"[\", \"]\")))"
+                      ".toString(); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -5690,7 +6065,10 @@
     (is (str/includes?
          first-source
          (str "return result.Append(global::DripSharp.Runtime.JavaCompat.StringJoin("
-              "\",\", values)).ToString();")))
+              "\",\", values)).Append(global::DripSharp.Runtime.JavaCompat.StringJoin("
+              "\".\", \"a\", \"b\")).Append(global::DripSharp.Runtime.JavaCompat.Collect("
+              "global::DripSharp.Runtime.JavaCompat.Stream(values), "
+              "global::DripSharp.Runtime.JavaCompat.Joining(\",\", \"[\", \"]\"))).ToString();")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -6491,6 +6869,163 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest derived-default-interface-methods-satisfy-base-interface-contracts
+  (let [fixture
+        (model! {"example/Capability.java"
+                 (str "package example; import java.util.function.Consumer; "
+                      "public interface Capability { void validate(Consumer<String> errors); }")
+                 "example/DefaultCapability.java"
+                 (str "package example; import java.util.function.Consumer; "
+                      "public interface DefaultCapability extends Capability { "
+                      "default String message() { return \"ok\"; } "
+                      "default void validate(Consumer<String> errors) { "
+                      "errors.accept(message()); } "
+                      "boolean exists(String value); }")
+                 "example/Version.java"
+                 (str "package example; public interface Version extends DefaultCapability { "
+                      "default boolean exists(String value) { return true; } }")
+                 "example/Configured.java"
+                 (str "package example; public final class Configured "
+                      "implements DefaultCapability, Version { }")
+                 "example/Factories.java"
+                 (str "package example; public final class Factories { "
+                      "static DefaultCapability capability() { return value -> true; } }")})
+        emission (emit! fixture 1)
+        default-capability
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/DefaultCapability.cs")))
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Configured.cs")))]
+    (is (str/includes?
+         default-capability
+         (str "void global::Example.Java.Library.Capability.validate("
+              "global::System.Action<string> errors) => "
+              "this.validate(errors);")))
+    (is (str/includes? default-capability
+                       "public sealed class __DefaultCapabilityFunctionalAdapter"))
+    (is (str/includes?
+         source
+         (str "public void validate(global::System.Action<string> errors) {\n"
+              "errors(((global::Example.Java.Library.DefaultCapability)(this)).message());\n")))
+    (is (= 1
+           (count
+            (re-seq
+             #"public void validate"
+             source))))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest concrete-receivers-dispatch-inherited-interface-defaults
+  (let [fixture
+        (model! {"example/Copyable.java"
+                 (str "package example; public interface Copyable { "
+                      "default String copy() { return \"copy\"; } }")
+                 "example/Value.java"
+                 (str "package example; public final class Value implements Copyable { "
+                      "public String run() { return this.copy(); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Value.cs")))]
+    (is (str/includes?
+         source
+         (str "return ((global::Example.Java.Library.Copyable)(this)).copy();")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest nested-constructor-parameter-types-use-constructed-owner-arguments
+  (let [fixture
+        (model! {"example/Box.java"
+                 (str "package example; import java.util.List; "
+                      "public final class Box<T> { public Box(List<T> values) {} }")
+                 "example/Use.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "public final class Use { public Box<String> create() { "
+                      "return new Box<>(new ArrayList<String>()); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Use.cs")))]
+    (is (str/includes?
+         source
+         (str "new global::Example.Java.Library.Box<string>("
+              "new global::System.Collections.Generic.List<string>())")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest generic-visitor-inference-uses-the-implementor-result-type
+  (let [fixture
+        (model! {"example/Visitor.java"
+                 (str "package example; public interface Visitor<R> { "
+                      "<S> R visit(Value value, S context); }")
+                 "example/Value.java"
+                 (str "package example; public final class Value { "
+                      "public <R,S> R accept(Visitor<R> visitor, S context) { "
+                      "return visitor.visit(this, context); } }")
+                 "example/Finder.java"
+                 (str "package example; public final class Finder<Result> "
+                      "implements Visitor<Result> { "
+                      "public <S> Result visit(Value value, S context) { return null; } "
+                      "public void inspect(Value value) { value.accept(this, null); } "
+                      "public void inspectWildcard(Value value) { "
+                      "value.accept((Visitor<?>) this, null); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Finder.cs")))]
+    (is (str/includes?
+         source
+         "value.accept<Result, object>(this, (object)default!)"))
+    (is (str/includes?
+         source
+         "value.accept<Result, object>(this, (object)default!)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest raw-generic-visitor-inference-uses-java-erasure
+  (let [fixture
+        (model! {"example/Visitor.java"
+                 (str "package example; public interface Visitor<R> { "
+                      "<S> R visit(Value value, S context); }")
+                 "example/Value.java"
+                 (str "package example; public final class Value { "
+                      "public <R,S> R accept(Visitor<R> visitor, S context) { "
+                      "return visitor.visit(this, context); } }")
+                 "example/Finder.java"
+                 (str "package example; public final class Finder<Void> "
+                      "implements Visitor<Void> { "
+                      "public <S> Void visit(Value value, S context) { return null; } }")
+                 "example/Use.java"
+                 (str "package example; public final class Use { "
+                      "public void inspect(Value value, Finder finder) { "
+                      "value.accept(finder, null); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Use.cs")))]
+    (is (str/includes?
+         source
+         "value.accept<object, object>(finder, (object)default!)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neighboring-unmodifiable-list-collector-remains-fail-closed
   (let [fixture
         (model! {"example/Unsupported.java"
@@ -7057,6 +7592,11 @@
                       "return java.nio.file.Files.newOutputStream(file.toPath()); "
                       "} static Writer writer(File file) throws Exception { "
                       "return new FileWriter(file, StandardCharsets.UTF_8); "
+                      "} static Writer defaultWriter(File file) throws Exception { "
+                      "return new FileWriter(file); "
+                      "} static Writer append(FileWriter writer, CharSequence value) "
+                      "throws Exception { return writer.append(value); "
+                      "} static void flush(FileWriter writer) throws Exception { writer.flush(); "
                       "} }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
@@ -7087,6 +7627,15 @@
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.NewFileWriter("
               "file, global::DripSharp.Runtime.JavaStandardCharsets.UTF8);")))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.NewFileWriter(file);"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.WriterAppend(writer, value);"))
+    (is (str/includes?
+         first-source
+         "writer.Flush();"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -7099,7 +7648,9 @@
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.io.File; public final class Unsupported { "
-                      "static boolean delete(File file) { return file.delete(); } }")})
+                      "static boolean delete(File file) { return file.delete(); } "
+                      "static boolean create(File file) throws java.io.IOException { "
+                      "return file.createNewFile(); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -7112,6 +7663,9 @@
     (is (str/includes?
          first-source
          "return global::DripSharp.Runtime.JavaCompat.FileDelete(file);"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.FileCreateNewFile(file);"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -7284,6 +7838,51 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest clr-collision-and-external-override-adaptations-compile-structurally
+  (let [fixture
+        (model!
+         {"example/Provider.java"
+          (str "package example; public interface Provider { "
+               "int read(char[] buffer); void close(); }")
+          "example/Options.java"
+          (str "package example; import java.util.function.UnaryOperator; "
+               "public enum Options implements UnaryOperator<String> { "
+               "values(value -> value); private UnaryOperator<String> operation; "
+               "Options(UnaryOperator<String> operation) { this.operation = operation; } "
+               "public String apply(String value) { return operation.apply(value); } }")
+          "example/QuietFailure.java"
+          (str "package example; public final class QuietFailure extends RuntimeException { "
+               "@Override public Throwable fillInStackTrace() { return this; } }")
+          "example/BaseFailure.java"
+          (str "package example; public class BaseFailure extends RuntimeException { "
+               "private static final long serialVersionUID = 1L; }")
+          "example/ChildFailure.java"
+          (str "package example; public final class ChildFailure extends BaseFailure { "
+               "private static final long serialVersionUID = 2L; }")})
+        emission (emit! fixture 2 #{:java-compat :java-regex-unicode})
+        root (:project-root emission)
+        provider (slurp (str (paths/resolve-path root
+                                                 "src/Example/Java/Library/Provider.cs")))
+        options (slurp (str (paths/resolve-path root
+                                                "src/Example/Java/Library/Options.cs")))
+        quiet (slurp (str (paths/resolve-path root
+                                              "src/Example/Java/Library/QuietFailure.cs")))
+        child (slurp (str (paths/resolve-path root
+                                              "src/Example/Java/Library/ChildFailure.cs")))]
+    (is (str/includes? provider "public void Dispose();"))
+    (is (not (str/includes? provider "public new void Dispose();")))
+    (is (str/includes? options "public static readonly global::Example.Java.Library.Options __field_values"))
+    (is (not (str/includes? options " : global::System.Func")))
+    (is (str/includes? options "public static implicit operator global::System.Func<string, string>"))
+    (is (str/includes? quiet "public global::System.Exception fillInStackTrace()"))
+    (is (not (str/includes? quiet "override global::System.Exception fillInStackTrace()")))
+    (is (str/includes? child "internal new const long serialVersionUID = 2L;"))
+    (is (zero? (:exit
+                (process/run! {:directory root
+                               :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 

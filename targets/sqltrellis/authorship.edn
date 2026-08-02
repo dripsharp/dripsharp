@@ -1,4 +1,19 @@
 {:schema-version 1
  :scope :sqltrellis
  :class :authored-destination-runtime
- :sources []}
+ :sources
+ [{:id :sqltrellis/generic-compatibility
+   :kind :file
+   :provenance "targets/sqltrellis/runtime/DripSharp.SqlTrellis.Compatibility.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 47
+   :max-emitted-lines 47
+   :source-inventory-sha256
+   "4926e436545fbfe1da46a21dc5a628f80fd0d254fce2558937a77652eb945388"
+   :public-types
+   {:count 2
+    :sha256
+    "9a75b3bc6f7c884ec03626ec3681a86ae9905cd291f7142c88b8d698c1d914a2"}}]}

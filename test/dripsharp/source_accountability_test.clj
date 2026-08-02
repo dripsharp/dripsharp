@@ -22,6 +22,7 @@
          (make-array FileAttribute 0))
         ordinary (.resolve root "Example.java")
         package-info (.resolve root "package-info.java")
+        module-info (.resolve root "module-info.java")
         ordinary-file (canonical ordinary)
         declarations
         [{:kind :type
@@ -37,11 +38,15 @@
           :source {:location {:file ordinary-file}}}]
         summaries
         (accountability/summarize
-         root diagnostics declarations [package-info ordinary])]
+         root diagnostics declarations [module-info package-info ordinary])]
     (is (= [{:source "Example.java"
              :strategy :generated-csharp
              :top-level-declarations ["Example"]
              :hard-failures 1}
+            {:source "module-info.java"
+             :strategy :module-descriptor-assembly-contract
+             :top-level-declarations []
+             :hard-failures 0}
             {:source "package-info.java"
              :strategy :package-nullability-metadata
              :top-level-declarations []

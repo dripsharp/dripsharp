@@ -23,6 +23,7 @@
    "DripSharp.JavaCompat.Java.Math.cs"
    "DripSharp.JavaCompat.Java.Net.cs"
    "DripSharp.JavaCompat.Java.Nio.cs"
+   "DripSharp.JavaCompat.Java.Sql.cs"
    "DripSharp.JavaCompat.Java.Security.cs"
    "DripSharp.JavaCompat.Java.Text.cs"
    "DripSharp.JavaCompat.Java.Time.cs"

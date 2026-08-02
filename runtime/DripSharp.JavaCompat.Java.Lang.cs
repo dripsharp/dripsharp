@@ -732,6 +732,9 @@ internal static partial class JavaCompat
     internal static string StringValueOf(long value) => value.ToString(CultureInfo.InvariantCulture);
     internal static string StringJoin(string delimiter, IEnumerable<string> values) =>
         string.Join(delimiter, values);
+
+    internal static string StringJoin(string delimiter, params string[] values) =>
+        string.Join(delimiter, values);
     internal static string StringValueOf(float value) => JavaFloatingString(value);
     internal static string StringValueOf(double value) => JavaFloatingString(value);
     internal static string ObjectsToString(object? value, string? nullDefault) =>

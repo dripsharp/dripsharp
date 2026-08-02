@@ -1458,7 +1458,7 @@
           counts (frequencies (map :kind (:declarations ctx)))
           body-results (:body-translations ctx)
           body-coverage (reduce (fn [totals result]
-                                  (merge-with + totals (java/coverage-totals result)))
+                                  (merge-with + totals result))
                                 {:visited 0 :covered 0 :blocked 0 :structural 0
                                  :semantic 0 :unsupported-elements 0
                                  :missing-mappings 0 :missing-occurrences 0 :fallback 0}

@@ -255,6 +255,8 @@
                                       :dotnet.type/timeout-exception]
 
    "java.nio.charset.Charset" ["global::System.Text.Encoding" :dotnet.type/encoding]
+   "java.nio.charset.CharsetEncoder" ["global::System.Text.Encoding"
+                                       :dotnet.type/encoding]
    "java.nio.charset.CharsetDecoder" ["global::DripSharp.Runtime.JavaCharsetDecoder"
                                       :dotnet.type/charset-decoder]
    "java.nio.charset.CodingErrorAction" ["global::DripSharp.Runtime.JavaCodingErrorAction"
@@ -334,6 +336,20 @@
 
    "java.sql.Date" ["global::DripSharp.Runtime.JavaSqlDate"
                     :dotnet.type/java-sql-date]
+   "java.sql.Connection" ["global::System.Data.Common.DbConnection"
+                           :dotnet.type/db-connection]
+   "java.sql.DatabaseMetaData" ["global::DripSharp.Runtime.JavaDatabaseMetaData"
+                                 :dotnet.type/java-database-metadata]
+   "java.sql.PreparedStatement" ["global::System.Data.Common.DbCommand"
+                                  :dotnet.type/db-command]
+   "java.sql.ResultSet" ["global::DripSharp.Runtime.JavaResultSet"
+                         :dotnet.type/java-result-set]
+   "java.sql.ResultSetMetaData" ["global::DripSharp.Runtime.JavaResultSetMetaData"
+                                 :dotnet.type/java-result-set-metadata]
+   "java.sql.SQLException" ["global::System.Data.Common.DbException"
+                            :dotnet.type/db-exception]
+   "java.sql.Statement" ["global::System.Data.Common.DbCommand"
+                          :dotnet.type/db-command]
    "java.sql.Time" ["global::DripSharp.Runtime.JavaSqlTime"
                     :dotnet.type/java-sql-time]
    "java.sql.Timestamp" ["global::DripSharp.Runtime.JavaSqlTimestamp"
@@ -542,6 +558,8 @@
                                                   :dotnet.type/atomic-reference]
    "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.BiPredicate" ["global::DripSharp.Runtime.JavaBiPredicate"
+                                     :dotnet.type/bi-predicate]
    "java.util.function.BinaryOperator" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.Function" ["global::System.Func" :dotnet.type/func]

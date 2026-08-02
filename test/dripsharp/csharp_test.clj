@@ -1,5 +1,6 @@
 (ns dripsharp.csharp-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.csharp :as csharp]))
 
 (deftest structured-writer-preserves-precedence-and-nesting
@@ -88,6 +89,29 @@
             (csharp/render
              (csharp/declaration
               (csharp/raw "public abstract void Run"))))))))
+
+(deftest large-generated-sequences-render-in-one-pass-with-exact-ranges
+  (let [item-count 20000
+        fragments (mapv #(str "statement" % ";") (range item-count))
+        rendered
+        (csharp/render
+         (csharp/sequence-node
+          (mapv (fn [index fragment]
+                  (csharp/with-source
+                    (csharp/raw fragment)
+                    {:identity index}))
+                (range item-count)
+                fragments)
+          "\n"))
+        mappings (:mappings rendered)
+        last-fragment (peek fragments)
+        last-start (.lastIndexOf ^String (:text rendered) last-fragment)]
+    (is (= (str/join "\n" fragments) (:text rendered)))
+    (is (= item-count (count mappings)))
+    (is (= {:start 0 :end (count (first fragments))}
+           (:destination (first mappings))))
+    (is (= {:start last-start :end (+ last-start (count last-fragment))}
+           (:destination (peek mappings))))))
 
 (deftest namespace-transforms-run-before-render-without-offset-constraints
   (let [source {:identity :compatibility-reference}

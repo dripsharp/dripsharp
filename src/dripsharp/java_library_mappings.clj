@@ -120,7 +120,27 @@
    (rename
     :java.util.logging.logger/log-with-error
     "executable:java.util.logging.Logger#log(java.util.logging.Level,java.lang.String,java.lang.Throwable)"
-    "Log")])
+    "Log")
+   (rename
+    :java.util.logging.logger/is-loggable
+    "executable:java.util.logging.Logger#isLoggable(java.util.logging.Level)"
+    "IsLoggable")
+   (rename
+    :java.util.logging.logger/set-level
+    "executable:java.util.logging.Logger#setLevel(java.util.logging.Level)"
+    "SetLevel")
+   (rename
+    :java.util.logging.logger/info
+    "executable:java.util.logging.Logger#info(java.lang.String)"
+    "Info")
+   (rename
+    :java.util.logging.logger/warning
+    "executable:java.util.logging.Logger#warning(java.lang.String)"
+    "Warning")
+   (rename
+    :java.util.logging.logger/fine
+    "executable:java.util.logging.Logger#fine(java.lang.String)"
+    "Fine")])
 
 (def sql-entries
   [(static-call
@@ -146,7 +166,35 @@
    (rename
     :java.sql.timestamp/to-string
     "executable:java.sql.Timestamp#toString()"
-    "ToString")])
+    "ToString")
+   (rename
+    :java.sql.database-metadata/get-tables
+    "executable:java.sql.DatabaseMetaData#getTables(java.lang.String,java.lang.String,java.lang.String,java.lang.String[])"
+    "GetTables")
+   (rename
+    :java.sql.result-set/next
+    "executable:java.sql.ResultSet#next()"
+    "Next")
+   (rename
+    :java.sql.result-set/get-string
+    "executable:java.sql.ResultSet#getString(java.lang.String)"
+    "GetString")
+   (rename
+    :java.sql.result-set/close
+    "executable:java.sql.ResultSet#close()"
+    "Dispose")
+   (rename
+    :java.sql.statement/close
+    "executable:java.sql.Statement#close()"
+    "Dispose")
+   (property
+    :java.sql.result-set-metadata/column-count
+    "executable:java.sql.ResultSetMetaData#getColumnCount()"
+    "ColumnCount")
+   (rename
+    :java.sql.result-set-metadata/column-label
+    "executable:java.sql.ResultSetMetaData#getColumnLabel(int)"
+    "GetColumnLabel")])
 
 (def io-entries
   [(property
@@ -174,8 +222,16 @@
     "executable:java.io.Writer#flush()"
     "Flush")
    (rename
+    :java.io.output-stream-writer/flush
+    "executable:java.io.OutputStreamWriter#flush()"
+    "Flush")
+   (rename
     :java.io.writer/close
     "executable:java.io.Writer#close()"
+    "Dispose")
+   (rename
+    :java.io.reader/close
+    "executable:java.io.Reader#close()"
     "Dispose")
    (rename
     :java.io.print-writer/println-string
@@ -421,6 +477,8 @@
    [:java-library.mapping.executable/handler-0040 ["executable:java.io.Writer#write(char[])"]]
    [:java-library.mapping.executable/handler-0041
     ["executable:java.io.Writer#append(java.lang.CharSequence)"
+     "executable:java.io.FileWriter#append(java.lang.CharSequence)"
+     "executable:java.io.OutputStreamWriter#append(java.lang.CharSequence)"
      "executable:java.io.Writer#append(char)"]]
    [:java-library.mapping.executable/handler-0050
     ["executable:java.lang.Process#isAlive()"
@@ -778,7 +836,9 @@
     ["executable:java.util.Collection#retainAll(java.util.Collection)"
      "executable:java.util.AbstractCollection#retainAll(java.util.Collection)"
      "executable:java.util.List#retainAll(java.util.Collection)"
-     "executable:java.util.ArrayList#retainAll(java.util.Collection)"]]
+     "executable:java.util.ArrayList#retainAll(java.util.Collection)"
+     "executable:java.util.Set#retainAll(java.util.Collection)"
+     "executable:java.util.AbstractSet#retainAll(java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0231
     ["executable:java.util.Collections#sort(java.util.List)"
      "executable:java.util.Collections#sort(java.util.List,java.util.Comparator)"]]
@@ -847,7 +907,9 @@
      "executable:java.util.TreeMap#isEmpty()"
      "executable:java.util.HashMap#isEmpty()"]]
    [:java-library.mapping.executable/handler-0264
-    ["executable:java.util.Set#addAll(java.util.Collection)"]]
+    ["executable:java.util.Set#addAll(java.util.Collection)"
+     "executable:java.util.AbstractCollection#addAll(java.util.Collection)"
+     "executable:java.util.HashSet#addAll(java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0265 ["executable:java.util.Set#isEmpty()"]]
    [:java-library.mapping.executable/handler-0266 ["executable:java.util.Set#iterator()"]]
    [:java-library.mapping.executable/handler-0267 ["executable:java.util.Set#size()"]]
@@ -1049,7 +1111,8 @@
      "executable:java.lang.String#getBytes(java.lang.String)"]]
    [:java-library.mapping.executable/handler-0389 ["executable:java.lang.String#getBytes()"]]
    [:java-library.mapping.executable/handler-0390
-    ["executable:java.lang.String#join(java.lang.CharSequence,java.lang.Iterable)"]]
+    ["executable:java.lang.String#join(java.lang.CharSequence,java.lang.Iterable)"
+     "executable:java.lang.String#join(java.lang.CharSequence,java.lang.CharSequence[])"]]
    [:java-library.mapping.executable/handler-0391 ["executable:java.lang.Integer#toString()"]]
    [:java-library.mapping.executable/handler-0392
     ["executable:java.lang.Integer#toString(int,int)"]]
@@ -1508,7 +1571,8 @@
    [:java-library.mapping.executable/handler-0621
     ["executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0622
-    ["executable:java.util.function.BiFunction#apply(java.lang.Object,java.lang.Object)"]]
+    ["executable:java.util.function.BiFunction#apply(java.lang.Object,java.lang.Object)"
+     "executable:java.util.function.BiPredicate#test(java.lang.Object,java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0623
     ["executable:java.util.function.Consumer#accept(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0624 ["executable:java.util.function.Supplier#get()"]]
@@ -1536,7 +1600,8 @@
      "executable:java.util.AbstractSet#removeAll(java.util.Collection)"]]
    [:java-library.mapping.executable/handler-0633
     ["executable:java.util.Set#remove(java.lang.Object)"
-     "executable:java.util.HashSet#remove(java.lang.Object)"]]
+     "executable:java.util.HashSet#remove(java.lang.Object)"
+     "executable:java.util.TreeSet#remove(java.lang.Object)"]]
    [:java-library.mapping.executable/handler-0634
     ["executable:java.util.regex.Pattern#compile(java.lang.String)"]]
    [:java-library.mapping.executable/handler-0635
@@ -1594,6 +1659,35 @@
    [:java-library.mapping.executable/handler-0671 ["executable:java.lang.Thread#currentThread()"]]
    [:java-library.mapping.executable/handler-0672 ["executable:java.lang.Thread#interrupt()"]]
    [:java-library.mapping.executable/handler-0673 ["executable:java.lang.Thread#sleep(long)"]]
+   [:java-library.mapping.executable/handler-0674
+    ["executable:java.util.function.UnaryOperator#identity()"]]
+   [:java-library.mapping.executable/handler-0675
+    ["executable:java.lang.String#getChars(int,int,char[],int)"]]
+   [:java-library.mapping.executable/handler-0676
+    ["executable:java.nio.charset.Charset#newEncoder()"]]
+   [:java-library.mapping.executable/handler-0677
+    ["executable:java.nio.charset.CharsetEncoder#canEncode(java.lang.CharSequence)"]]
+   [:java-library.mapping.executable/handler-0678
+    ["executable:java.io.File#createNewFile()"]]
+   [:java-library.mapping.executable/handler-0679
+    ["executable:java.nio.charset.Charset#defaultCharset()"]]
+   [:java-library.mapping.executable/handler-0680
+    ["executable:java.nio.file.Files#write(java.nio.file.Path,byte[],java.nio.file.OpenOption[])"]]
+   [:java-library.mapping.executable/handler-0681
+    ["executable:java.util.concurrent.Future#cancel(boolean)"]]
+   [:java-library.mapping.executable/handler-0682
+    ["executable:java.util.Queue#offer(java.lang.Object)"]]
+   [:java-library.mapping.executable/handler-0683
+    ["executable:java.sql.Connection#prepareStatement(java.lang.String)"]]
+   [:java-library.mapping.executable/handler-0684
+    ["executable:java.sql.Connection#getMetaData()"]]
+   [:java-library.mapping.executable/handler-0685
+    ["executable:java.sql.PreparedStatement#getMetaData()"]]
+   [:java-library.mapping.executable/handler-0686
+    ["executable:java.util.stream.Collectors#joining(java.lang.CharSequence,java.lang.CharSequence,java.lang.CharSequence)"]]
+   [:java-library.mapping.executable/handler-0687
+    ["executable:java.util.Deque#addLast(java.lang.Object)"
+     "executable:java.util.ArrayDeque#addLast(java.lang.Object)"]]
    [:java-library.mapping/executable-default
     ["executable:java.io.DataOutputStream#flush()"
      "executable:java.io.DataOutputStream#write(byte[],int,int)"
@@ -2080,7 +2174,8 @@
    [:java-library.mapping.constructor/handler-0005
     ["executable:java.io.IOException#<init>(java.lang.Throwable)"]]
    [:java-library.mapping.constructor/handler-0006
-    ["executable:java.io.FileNotFoundException#<init>()"]]
+    ["executable:java.io.FileNotFoundException#<init>()"
+     "executable:java.io.FileNotFoundException#<init>(java.lang.String)"]]
    [:java-library.mapping.constructor/handler-0007
     ["executable:java.awt.print.PrinterIOException#<init>(java.io.IOException)"]]
    [:java-library.mapping.constructor/handler-0008
@@ -2114,7 +2209,8 @@
     ["executable:java.io.FileOutputStream#<init>(java.io.File)"
      "executable:java.io.FileOutputStream#<init>(java.lang.String)"]]
    [:java-library.mapping.constructor/handler-0022
-    ["executable:java.io.FileWriter#<init>(java.io.File,java.nio.charset.Charset)"]]
+    ["executable:java.io.FileWriter#<init>(java.io.File)"
+     "executable:java.io.FileWriter#<init>(java.io.File,java.nio.charset.Charset)"]]
    [:java-library.mapping.constructor/handler-0023
     ["executable:java.io.BufferedReader#<init>(java.io.Reader)"
      "executable:java.io.BufferedWriter#<init>(java.io.Writer)"
@@ -2125,6 +2221,9 @@
     ["executable:java.math.BigInteger#<init>(int,byte[])"]]
    [:java-library.mapping.constructor/handler-0046
     ["executable:java.math.BigInteger#<init>(java.lang.String)"]]
+   [:java-library.mapping.constructor/handler-0047
+    ["executable:java.io.InputStreamReader#<init>(java.io.InputStream)"
+     "executable:java.io.InputStreamReader#<init>(java.io.InputStream,java.lang.String)"]]
    [:java-library.mapping.constructor/handler-0026 ["executable:java.math.BigDecimal#<init>(int)"]]
    [:java-library.mapping.constructor/handler-0027
     ["executable:java.math.BigDecimal#<init>(java.lang.String)"]]
@@ -2474,6 +2573,10 @@
    "global::System.Globalization.CultureInfo.GetCultureInfo(\"en-US\")"
    "field:java.util.logging.Level#FINE"
    "global::DripSharp.Runtime.JavaLogLevel.Fine"
+   "field:java.util.logging.Level#OFF"
+   "global::DripSharp.Runtime.JavaLogLevel.Off"
+   "field:java.util.logging.Level#WARNING"
+   "global::DripSharp.Runtime.JavaLogLevel.Warning"
    "field:java.util.regex.Pattern#CANON_EQ" "128"
    "field:java.util.regex.Pattern#CASE_INSENSITIVE" "2"
    "field:java.util.regex.Pattern#COMMENTS" "4"

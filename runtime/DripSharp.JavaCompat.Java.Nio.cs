@@ -646,6 +646,22 @@ internal static partial class JavaCompat
         ArgumentNullException.ThrowIfNull(encoding);
         return encoding.WebName;
     }
+    internal static bool CharsetCanEncode(Encoding encoding, string value)
+    {
+        ArgumentNullException.ThrowIfNull(encoding);
+        ArgumentNullException.ThrowIfNull(value);
+        var strict = (Encoding)encoding.Clone();
+        strict.EncoderFallback = EncoderFallback.ExceptionFallback;
+        try
+        {
+            _ = strict.GetByteCount(value);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+    }
     internal static string CharBufferWrap(char[] value, int start, int length) =>
         new(value, start, length);
 
@@ -664,6 +680,23 @@ internal static partial class JavaCompat
             return false;
         }
         catch (IOException)
+        {
+            return false;
+        }
+    }
+    internal static bool FileCreateNewFile(FileInfo file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        try
+        {
+            using var stream = new FileStream(
+                file.FullName,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None);
+            return true;
+        }
+        catch (IOException) when (File.Exists(file.FullName))
         {
             return false;
         }
@@ -849,6 +882,11 @@ internal static partial class JavaCompat
         File.WriteAllText(path, StringValueOf(value));
         return path;
     }
+    internal static string WriteAllBytes(string path, sbyte[] bytes, params object?[] _)
+    {
+        File.WriteAllBytes(path, bytes.Select(value => unchecked((byte)value)).ToArray());
+        return path;
+    }
     internal static string Move(string source, string destination, params object?[] _)
     {
         File.Move(source, destination, true);
@@ -873,6 +911,7 @@ internal static partial class JavaCompat
     }
     internal static FileStream NewOutputStream(string path, params object?[] _) => File.Create(path);
     internal static StreamWriter NewFileWriter(string path, Encoding encoding) => new(path, false, encoding);
+    internal static StreamWriter NewFileWriter(FileInfo file) => new(file.FullName, false);
     internal static StreamWriter NewFileWriter(FileInfo file, Encoding encoding) =>
         NewFileWriter(file.FullName, encoding);
     internal static JavaStream<string> Walk(string path, params object?[] _) =>

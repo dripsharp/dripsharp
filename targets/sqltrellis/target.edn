@@ -11,7 +11,8 @@
  {:source-language-version 11
   :runtime-major 17
   :preview-features? false}
- :capabilities #{:java-compat :java-regex-unicode}
+ :capabilities
+ #{:java-compat :java-regex-unicode :sqltrellis-generic-compatibility}
  :authorship
  {:compatibility "config/authored-compat.edn"
   :destination "authorship.edn"
@@ -21,17 +22,21 @@
    :path "profiles/core.edn"
    :destination :core
    :mapping-overlays []
-   :runtime-assets []
+   :runtime-assets [:sqltrellis/generic-compatibility]
    :validation-contracts [:sqltrellis-registration]
    :authorship
-   {:sources []
+   {:sources [:sqltrellis/generic-compatibility]
     :evidence [:sqltrellis-complete-product-proof]
-    :review "pkl-e2eu.2"
-    :budget {:authored-lines 12986 :total-lines 41393}}
-   :required-capabilities #{:java-compat :java-regex-unicode}}]
+    :review "pkl-e2eu.3"
+    :budget {:authored-lines 13292 :total-lines 134335}}
+   :required-capabilities
+   #{:java-compat :java-regex-unicode :sqltrellis-generic-compatibility}}]
  :destinations [{:id :core :path "destinations/core.edn"}]
  :mapping-overlays []
- :runtime-assets []
+ :runtime-assets
+ [{:id :sqltrellis/generic-compatibility
+   :path "runtime/DripSharp.SqlTrellis.Compatibility.cs"
+   :capabilities #{:sqltrellis-generic-compatibility}}]
  :validation-contracts
  [{:id :sqltrellis-registration
    :kind :custom

@@ -10,7 +10,8 @@
   :target-framework "net10.0"
   :nullable "disable"
   :implicit-usings false
-  :warnings-as-errors true}
+  :warnings-as-errors true
+  :no-warn ["CS0108" "CS0162" "CS0168" "CS0219"]}
  :package
  {:id "DripSharp.SqlTrellis"
   :title "SqlTrellis — JSqlParser for .NET"
@@ -33,7 +34,13 @@
   :annotation-decisions-file "annotation-decisions.edn"}
  :namespaces {}
  :namespace-prefixes {"net.sf.jsqlparser" "DripSharp.SqlTrellis"}
+ :generic-erasure-mappings
+ {"net.sf.jsqlparser.util.validation.Validator"
+  "global::DripSharp.SqlTrellis.Util.Validation.IValidator"
+  "net.sf.jsqlparser.util.validation.validator.AbstractValidator"
+  "global::DripSharp.SqlTrellis.Util.Validation.IAbstractValidator"}
  :destination-capabilities #{:java-compat :java-regex-unicode}
+ :runtime-sources ["runtime/DripSharp.SqlTrellis.Compatibility.cs"]
  :resources
  {"rr/xhtml2rst.xsl"
   {:strategy :embedded-resource
@@ -67,4 +74,4 @@
   :project-file "SqlTrellis.PackageConsumer.csproj"
   :source-path
   "targets/sqltrellis/validation/probe/SqlTrellisModelApiProgram.cs"
-  :success-message "Independent SqlTrellis model API behavior passed."}}
+  :success-message "Independent SqlTrellis parser API behavior passed."}}

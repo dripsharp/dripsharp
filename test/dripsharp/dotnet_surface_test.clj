@@ -252,6 +252,34 @@
             "java-compatibility-member" 1}
            (:translation-rules result)))))
 
+(deftest registered-compatibility-delegate-has-exact-source-provenance
+  (let [workspace (paths/workspace-root)
+        root (temp-directory)
+        source (paths/resolve-path root "Compatibility.cs")
+        _ (Files/writeString
+           source
+           (str "namespace DripSharp.Runtime;\n"
+                "public delegate bool JavaBiPredicate<in TLeft, in TRight>("
+                "TLeft left, TRight right);\n")
+           (make-array OpenOption 0))
+        reflected
+        [(row {:assembly "Correct.Library"
+               :owner "DripSharp.Runtime.JavaBiPredicate`2"
+               :kind "type"
+               :name "JavaBiPredicate"
+               :parameter-count "0"
+               :signature "delegate JavaBiPredicate<TLeft,TRight>"
+               :nullability "type=oblivious"})]
+        result
+        (surface/verify-generated-rows!
+         workspace reflected
+         {:required-rows 0
+          :rows []
+          :compatibility-sources [(str source)]})]
+    (is (= 1 (:rows result)))
+    (is (= {"java-compatibility-type" 1}
+           (:translation-rules result)))))
+
 (deftest internal-namespace-policy-rejects-exported-types-and-signatures
   (let [workspace (paths/workspace-root)
         metadata

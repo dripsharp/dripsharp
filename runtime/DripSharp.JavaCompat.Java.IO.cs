@@ -713,6 +713,19 @@ internal static partial class JavaCompat
         return new StreamReader(file.FullName);
     }
 
+    internal static StreamReader NewInputStreamReader(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        return new StreamReader(stream);
+    }
+
+    internal static StreamReader NewInputStreamReader(Stream stream, string charsetName)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(charsetName);
+        return new StreamReader(stream, CharsetForName(charsetName));
+    }
+
     internal static Stream OpenFileOutput(FileInfo file)
     {
         ArgumentNullException.ThrowIfNull(file);

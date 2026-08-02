@@ -172,7 +172,12 @@ internal sealed class JavaMapBackedSet<T> : ISet<T> where T : notnull
 internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal delegate long JavaToLongFunction<in TValue>(TValue value);
-internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
 internal
@@ -228,6 +233,10 @@ sealed class JavaLogger
     }
 
     internal void SetLevel(JavaLogLevel? value) => level = value;
+
+    internal void Fine(string message) => Log(JavaLogLevel.Fine, message);
+    internal void Info(string message) => Log(JavaLogLevel.Info, message);
+    internal void Warning(string message) => Log(JavaLogLevel.Warning, message);
 
     internal void Log(JavaLogLevel candidate, string message) =>
         Log(candidate, message, null);
@@ -1706,6 +1715,12 @@ sealed class JavaDeque<T> : ICollection<T>
         return value;
     }
     internal void Push(T value) => values.AddFirst(value);
+    internal void AddLast(T value) => values.AddLast(value);
+    internal bool Offer(T value)
+    {
+        values.AddLast(value);
+        return true;
+    }
     internal void AddFirst(T value) => values.AddFirst(value);
     internal bool IsEmpty() => values.Count == 0;
     internal JavaIterator<T> DescendingIterator() =>
@@ -2653,6 +2668,12 @@ internal static partial class JavaCompat
     internal static IList<T> CastList<T>(object? values) => values is null
         ? null!
         : ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList();
+    internal static ICollection<T> CastCollection<T>(object? values)
+    {
+        if (values is null) return null!;
+        if (values is ICollection<T> typed) return typed;
+        return ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList();
+    }
     internal static IDictionary<TKey, TValue> CastDictionary<TKey, TValue>(object? values)
         where TKey : notnull
     {
@@ -3114,6 +3135,9 @@ internal static partial class JavaCompat
     internal static JavaCollector Joining(string delimiter) =>
         new(values => string.Join(delimiter, values.Select(JavaString)));
 
+    internal static JavaCollector Joining(string delimiter, string prefix, string suffix) =>
+        new(values => prefix + string.Join(delimiter, values.Select(JavaString)) + suffix);
+
     internal static bool All(IEnumerable<int> values, Predicate<int> predicate) => values.All(value => predicate(value));
 
     internal static IEnumerable<T> Skip<T>(IEnumerable<T> values, long count) => values.Skip(checked((int)count));
@@ -3203,7 +3227,7 @@ internal static partial class JavaCompat
         IEnumerable<TSource> values, Func<int, TTarget[]> generator) =>
         CollectionToArray(values, generator(0));
     internal static ICollection<object> CastObjects(System.Collections.IEnumerable values) =>
-        values.Cast<object>().ToList();
+        values is null ? null! : values.Cast<object>().ToList();
     internal static T CastReference<T>(object? value) => (T)value!;
     internal static IComparer<object> EraseComparer<T>(IComparer<T> comparer) =>
         Comparer<object>.Create(

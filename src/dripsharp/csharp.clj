@@ -177,14 +177,21 @@
 
 (defn- join-rendered
   [rendered separator]
-  (reduce-kv (fn [combined index next-rendered]
-               (append-rendered
-                (if (zero? index)
-                  combined
-                  (append-rendered combined {:text separator :mappings []}))
-                next-rendered))
-             {:text "" :mappings []}
-             (vec rendered)))
+  (let [builder (StringBuilder.)
+        mappings (transient [])]
+    (doseq [[index next-rendered] (map-indexed vector rendered)]
+      (when (pos? index) (.append builder separator))
+      (let [text (:text next-rendered)
+            offset (.length builder)
+            next-mappings (:mappings next-rendered)]
+        (.append builder ^String text)
+        (doseq [mapping next-mappings]
+          (conj! mappings
+                 (-> mapping
+                     (update-in [:destination :start] + offset)
+                     (update-in [:destination :end] + offset))))))
+    {:text (.toString builder)
+     :mappings (persistent! mappings)}))
 
 (defn- wrap-rendered
   [rendered prefix suffix]

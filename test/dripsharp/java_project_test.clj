@@ -32,7 +32,7 @@
          (into (sorted-map)))))
 
 (def ^:private java-compat-areas
-  ["Java.IO" "Java.Lang" "Java.Math" "Java.Net" "Java.Nio"
+  ["Java.IO" "Java.Lang" "Java.Math" "Java.Net" "Java.Nio" "Java.Sql"
    "Java.Security" "Java.Text" "Java.Time" "Java.Util"
    "Java.Util.Concurrent" "Java.Util.Regex" "Java.Xml"])
 

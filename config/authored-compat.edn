@@ -8,15 +8,15 @@
    :include-pattern "DripSharp\\.JavaCompat\\..*\\.cs"
    :charset nil
    :capability :java-compat
-   :source-files 12
-   :max-source-lines 12903
-   :max-emitted-lines 12903
+   :source-files 13
+   :max-source-lines 13162
+   :max-emitted-lines 13162
    :source-inventory-sha256
-   "4b92c9593976f941edb72b3425c87ea37d5def1072fc9e094548e05f5af6bae6"
+   "4eab3b1263b3af7c924cf7ea9f77bd52ee4b68f1857bac8312963184fe3d198e"
    :public-types
-   {:count 62
+   {:count 66
     :sha256
-    "0ce7c1515408b3e6eaa3c27dcb1970127da0970a95cade008f11852e068885fe"}}
+    "dfeeee086023faaf6ecca996c8a2a0af6438f74c90555dd7f0e6065c16d76110"}}
   {:id :shared/java-regex-unicode
    :kind :file
    :provenance "runtime/DripSharp.JavaRegexUnicodeData.cs"

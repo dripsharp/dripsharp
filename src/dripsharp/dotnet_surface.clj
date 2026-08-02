@@ -323,7 +323,8 @@
          pattern
          (re-pattern
           (str "^(?:(?:public|internal|protected|private|sealed|abstract|static|"
-               "readonly|partial)\\s+)*(?:class|interface|struct|enum|record)\\s+"
+               "readonly|partial)\\s+)*(?:(?:class|interface|struct|enum|record)\\s+|"
+               "delegate\\s+\\S+\\s+)"
                (java.util.regex.Pattern/quote name)
                "(?:<|[\\s:{;]|$)"))
          raw-matches

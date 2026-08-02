@@ -20,7 +20,7 @@
 
 (deftest context-free-type-table-is-a-validated-declarative-registry
   (is (mapping-registry/compiled-registry? java-types/registry))
-    (is (= 395 (count java-types/entries)))
+  (is (= 404 (count java-types/entries)))
   (is (= (count java-types/entries)
          (count (set (map :id java-types/entries)))))
   (is (= ["global::System.Net.Sockets.Socket" :dotnet.type/socket]
@@ -84,10 +84,10 @@
          registry
          "field:java.io.ByteArrayOutputStream#buf")]
     (is (mapping-registry/compiled-registry? registry))
-    (is (= 1703 (count library-mappings/entries)))
-    (is (= 1362 (count library-mappings/executable-keys)))
-    (is (= 186 (count library-mappings/constructor-keys)))
-    (is (= 155 (count library-mappings/field-entries)))
+    (is (= 1747 (count library-mappings/entries)))
+    (is (= 1400 (count library-mappings/executable-keys)))
+    (is (= 190 (count library-mappings/constructor-keys)))
+    (is (= 157 (count library-mappings/field-entries)))
     (is (= :compat-call (:strategy list-size)))
     (is (= :custom-handler (:strategy stream-collect)))
     (is (= :java-library.mapping/stream-collect (:handler stream-collect)))

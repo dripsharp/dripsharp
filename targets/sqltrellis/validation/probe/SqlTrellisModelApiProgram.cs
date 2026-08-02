@@ -1,13 +1,19 @@
 using System;
+using System.Collections.Generic;
+using DripSharp.SqlTrellis;
 using DripSharp.SqlTrellis.Expression;
 using DripSharp.SqlTrellis.Expression.Operators.Relational;
+using DripSharp.SqlTrellis.Parser;
 using DripSharp.SqlTrellis.Schema;
 using DripSharp.SqlTrellis.Statement;
+using DripSharp.SqlTrellis.Statement.Select;
+using DripSharp.SqlTrellis.Util;
+using DripSharp.SqlTrellis.Util.Validation;
 
 internal static class Program
 {
     private const string SuccessMessage =
-        "Independent SqlTrellis model API behavior passed.";
+        "Independent SqlTrellis parser API behavior passed.";
 
     private static void Main()
     {
@@ -55,8 +61,42 @@ internal static class Program
         Equal("stmt:EXPLAIN", explain.accept(new ExplainVisitor(), "stmt"),
             "generic statement visitor");
 
+        const string sql =
+            "SELECT u.id, COUNT(o.id) AS total FROM users u " +
+            "LEFT JOIN orders o ON o.user_id = u.id " +
+            "WHERE u.active = TRUE GROUP BY u.id ORDER BY total DESC";
+        var parsed = CCJSqlParserUtil.parse(sql);
+        var rendered = parsed.ToString();
+        Equal(rendered, CCJSqlParserUtil.parse(rendered).ToString(),
+            "parser/deparser round trip");
+        Equal($"select:{rendered}",
+            parsed.accept(new SelectStatementVisitor(), "select"),
+            "parsed statement visitor dispatch");
+
+        var tables = TablesNamesFinder<object>.findTables(rendered);
+        True(tables.Contains("users") && tables.Contains("orders"),
+            "AST table traversal");
+
+        var ast = CCJSqlParserUtil.parseAST(rendered);
+        True(ast != null && ast.jjtGetNumChildren() > 0,
+            "generated JJTree AST");
+
+        var bracketed = CCJSqlParserUtil.parse(
+            "SELECT [u].[id] FROM [users] [u]",
+            parser => parser.withSquareBracketQuotation(true));
+        True(bracketed.ToString()!.Contains("[users]"),
+            "parser feature configuration");
+
+        var validation = new Validation(
+            new List<ValidationCapability>(), rendered);
+        Equal(0, validation.validate().Count,
+            "validation parser capability");
+
         Throws<ArgumentException>(() => _ = new LongValue(""),
             "constructor validation");
+        Throws<JSQLParserException>(
+            () => _ = CCJSqlParserUtil.parse("SELECT FROM"),
+            "parser error behavior");
         Console.WriteLine(SuccessMessage);
     }
 
@@ -70,6 +110,12 @@ internal static class Program
     {
         public override string visit<S>(ExplainStatement statement, S context) =>
             $"{context}:{statement.getKeyword()}";
+    }
+
+    private sealed class SelectStatementVisitor : StatementVisitorAdapter<string>
+    {
+        public override string visit<S>(Select statement, S context) =>
+            $"{context}:{statement}";
     }
 
     private static void Equal<T>(T expected, T actual, string label)
