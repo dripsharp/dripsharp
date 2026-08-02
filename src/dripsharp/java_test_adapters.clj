@@ -54,14 +54,15 @@
     #{"assertArrayEquals" "assertDoesNotThrow" "assertEquals" "assertFalse"
       "assertInstanceOf" "assertNotEquals" "assertNotNull" "assertNotSame"
       "assertNull" "assertSame" "assertThrows" "assertThrowsExactly"
-      "assertTrue" "fail"}
-    :owners #{"org.junit.jupiter.api.Assertions"}
+      "assertTrue" "assumeTrue" "fail"}
+    :owners #{"org.junit.jupiter.api.Assertions"
+              "org.junit.jupiter.api.Assumptions"}
     :operations
     #{"assertAll" "assertArrayEquals" "assertDoesNotThrow" "assertEquals"
       "assertFalse" "assertInstanceOf" "assertIterableEquals"
       "assertNotEquals" "assertNotNull" "assertNotSame"
       "assertNull" "assertSame" "assertThrows" "assertThrowsExactly"
-      "assertTrue" "fail"}}
+      "assertTrue" "assumeTrue" "fail"}}
    :assertj
    {:targets #{:pkl :sqltrellis}
     :source-languages #{:java :kotlin}
@@ -403,8 +404,8 @@
             (csharp/generic-name
              (raw "global::System.Func")
              [(java-library/type-node destination-context input) (raw "object")]))]
-      (csharp/sequence-node
-       [(raw "((") delegate (raw ")") argument (raw ")")]))
+    (csharp/sequence-node
+       [(raw "((") delegate (raw ")(") argument (raw "))")]))
     (unsupported! event :assertj
                   (executable-identity (get-in event [:occurrence :key])))))
 
@@ -489,6 +490,7 @@
                     [(nth arguments 0) (nth arguments 1) message])))
 
           "assertTrue" (call "True" [(first arguments) message])
+          "assumeTrue" (call "AssumeTrue" [(first arguments) message])
           "assertFalse" (call "False" [(first arguments) message])
           "assertNull" (call "Null" [(first arguments) message])
           "assertNotNull" (call "NotNull" [(first arguments) message])
@@ -754,6 +756,7 @@
   (case qualified
     "org.junit.jupiter.api.function.Executable" "global::System.Action"
     "org.junit.jupiter.api.function.ThrowingSupplier" "global::System.Delegate"
+    "org.assertj.core.api.ThrowableAssert$ThrowingCallable" "global::System.Action"
     "org.mockito.verification.VerificationMode"
     "global::DripSharp.Testing.JavaVerificationMode"
     "org.mockito.stubbing.Answer" "global::DripSharp.Testing.JavaAnswer"
@@ -864,6 +867,12 @@
                  (:destination-type-mappings destination-context))]
       (assoc destination-context
              :java-test-adapters-composed? true
+             :destination-anonymous-delegate-methods
+             (merge
+              {"org.junit.jupiter.api.function.Executable" "execute"
+               "org.assertj.core.api.ThrowableAssert$ThrowingCallable" "call"
+               "org.mockito.stubbing.Answer" "answer"}
+              (:destination-anonymous-delegate-methods destination-context))
              :destination-type-mappings type-mappings
              :destination-resolved-name
              (fn [context occurrence reference]

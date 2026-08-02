@@ -1663,6 +1663,14 @@
                    {:target target :project id
                     :required (vec (sort required-test-suite-package-ids))
                     :actual (vec (sort (map :id packages)))}))))
+      (when (some :solution-inclusion projects)
+        (validation/check!
+         context [:publication :managed-paths] managed-paths
+         "exactly one managed top-level .slnx file for solution-included tests"
+         #(= 1 (count (filter (fn [path]
+                                (boolean
+                                 (re-matches #"(?i)[^/]+[.]slnx" path)))
+                              %)))))
       (let [ids (mapv :id projects)
             directories (mapv :directory projects)]
         (when-not (= (count ids)

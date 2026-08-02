@@ -196,10 +196,20 @@
         project (first (:projects suites))
         strategy (first (:strategies suites))
         rendered (#'consumer-tests/render-project target project)
+        solution (#'consumer-tests/render-solution target)
         references (#'consumer-tests/project-reference-paths target project)]
     (is (= "DripSharp.SqlTrellis.Tests" (:id project)))
     (is (= "tests/DripSharp.SqlTrellis.Tests" (:directory project)))
     (is (true? (:solution-inclusion project)))
+    (is (= "DripSharp.SqlTrellis.slnx"
+           (#'consumer-tests/solution-relative-path! target)))
+    (is (str/includes?
+         solution
+         "Path=\"src/DripSharp.SqlTrellis/DripSharp.SqlTrellis.csproj\""))
+    (is (str/includes?
+         solution
+         "Path=\"tests/DripSharp.SqlTrellis.Tests/DripSharp.SqlTrellis.Tests.csproj\""))
+    (is (not (str/includes? solution (str workspace))))
     (is (= ["sqltrellis"] (:profile-references project)))
     (is (= :adapted-upstream (:kind strategy)))
     (is (= :shipped (:policy strategy)))
@@ -207,12 +217,17 @@
            references))
     (is (str/includes? rendered "<IsTestProject>true</IsTestProject>"))
     (is (str/includes? rendered "<IsPackable>false</IsPackable>"))
-    (is (= :sqltrellis-adapted-upstream-suite-pending
-           (:kind
-            (ex-data
-             (failure
-              #(test-suite/strategy!
-                {:phase :emit :strategy strategy :project project}))))))
+    (is (= [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
+            {:id "xunit" :version "2.9.3"}
+            {:id "xunit.runner.visualstudio" :version "3.1.4"}
+            {:id "Castle.Core" :version "5.1.1"}]
+           (:packages project)))
+    (is (= 'dripsharp.sqltrellis.test-suite/strategy! (:handler strategy)))
+    (let [error (failure #(test-suite/strategy! {:phase :unknown}))]
+      (is (= :sqltrellis-test-suite-generation-failed
+             (:kind (ex-data error))))
+      (is (= :unsupported-sqltrellis-test-suite-phase
+             (:reason (ex-data error)))))
     (is (= :sqltrellis-complete-product-proof-pending
            (:kind (ex-data (failure registration/complete-product-proof!)))))))
 

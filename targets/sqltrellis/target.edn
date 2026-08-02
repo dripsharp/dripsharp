@@ -49,7 +49,8 @@
   :submodule-path "products/sqltrellis"
   :staging-path "target/generated/sqltrellis"
   :profile-projects {"sqltrellis" "src/DripSharp.SqlTrellis"}
-  :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+  :managed-paths ["src" "tests" "DripSharp.SqlTrellis.slnx"
+                  "LICENSE" "NOTICE" "README.md"]
   :excluded-paths []
   :test-suites "test-suites.edn"
   :publication-mode :pull-request}

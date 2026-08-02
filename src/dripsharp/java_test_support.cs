@@ -15,6 +15,7 @@ using System.Runtime.ExceptionServices;
 using System.Threading;
 using Castle.DynamicProxy;
 using Xunit;
+using Xunit.Sdk;
 
 namespace DripSharp.Testing;
 
@@ -22,6 +23,12 @@ public delegate T JavaAnswer<out T>(object? invocation);
 
 public static class JavaAssertions
 {
+    public static void AssumeTrue(bool condition, object? message)
+    {
+        if (!condition)
+            throw SkipException.ForSkip(Message(message, "JUnit assumption failed"));
+    }
+
     internal static string Message(object? message, string fallback)
     {
         if (message is null) return fallback;
@@ -806,6 +813,26 @@ internal static class JavaUninitializedProxyFactory
         return RuntimeHelpers.GetUninitializedObject(proxyType);
     }
 
+    private static Type SubstituteGenericType(
+        Type type, IReadOnlyDictionary<Type, Type> substitutions)
+    {
+        if (substitutions.TryGetValue(type, out Type? replacement)) return replacement;
+        if (type.IsByRef) return SubstituteGenericType(type.GetElementType()!, substitutions).MakeByRefType();
+        if (type.IsPointer) return SubstituteGenericType(type.GetElementType()!, substitutions).MakePointerType();
+        if (type.IsArray)
+        {
+            Type element = SubstituteGenericType(type.GetElementType()!, substitutions);
+            return type.GetArrayRank() == 1 ? element.MakeArrayType() : element.MakeArrayType(type.GetArrayRank());
+        }
+        if (type.IsGenericType)
+        {
+            return type.GetGenericTypeDefinition().MakeGenericType(
+                type.GetGenericArguments()
+                    .Select(argument => SubstituteGenericType(argument, substitutions)).ToArray());
+        }
+        return type;
+    }
+
     private static Type Build(Type baseType)
     {
         string name = $"JavaMockitoProxy_{Interlocked.Increment(ref nextType)}_{baseType.Name}";
@@ -837,34 +864,91 @@ internal static class JavaUninitializedProxyFactory
         }
         constructorIl.Emit(OpCodes.Call, baseConstructor);
         constructorIl.Emit(OpCodes.Ret);
-        foreach (MethodInfo method in baseType.GetMethods(
-                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        MethodInfo[] methods = baseType.GetMethods(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        foreach (MethodInfo method in methods)
         {
             if (!method.IsVirtual || method.IsFinal || method.IsStatic ||
-                method.ContainsGenericParameters ||
                 method.ReturnType.IsByRef ||
                 method.GetParameters().Any(parameter => parameter.ParameterType.IsByRef) ||
                 !(method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly)) continue;
+
+            Type[] sourceParameterTypes = method.GetParameters()
+                .Select(parameter => parameter.ParameterType).ToArray();
+            if (methods.Any(candidate => candidate != method &&
+                    candidate.Name == method.Name &&
+                    method.DeclaringType!.IsAssignableFrom(candidate.DeclaringType!) &&
+                    candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                        .SequenceEqual(sourceParameterTypes))) continue;
 
             MethodAttributes visibility = method.IsPublic ? MethodAttributes.Public :
                 (method.IsFamily ? MethodAttributes.Family : MethodAttributes.FamORAssem);
             MethodAttributes attributes = visibility | MethodAttributes.Virtual |
                 MethodAttributes.HideBySig;
             if (method.IsSpecialName) attributes |= MethodAttributes.SpecialName;
-            Type[] parameterTypes = method.GetParameters()
-                .Select(parameter => parameter.ParameterType).ToArray();
-            MethodBuilder emitted = builder.DefineMethod(method.Name, attributes,
-                method.CallingConvention, method.ReturnType, parameterTypes);
             ParameterInfo[] parameters = method.GetParameters();
+            MethodBuilder emitted = builder.DefineMethod(
+                method.Name, attributes, method.CallingConvention);
+            var substitutions = new Dictionary<Type, Type>();
+            GenericTypeParameterBuilder[] emittedArguments = Array.Empty<GenericTypeParameterBuilder>();
+            if (method.IsGenericMethodDefinition)
+            {
+                Type[] genericArguments = method.GetGenericArguments();
+                emittedArguments = emitted.DefineGenericParameters(
+                    genericArguments.Select(argument => argument.Name).ToArray());
+                for (int index = 0; index < genericArguments.Length; index++)
+                    substitutions[genericArguments[index]] = emittedArguments[index];
+                for (int index = 0; index < genericArguments.Length; index++)
+                {
+                    Type argument = genericArguments[index];
+                    GenericTypeParameterBuilder emittedArgument = emittedArguments[index];
+                    emittedArgument.SetGenericParameterAttributes(argument.GenericParameterAttributes);
+                    Type[] constraints = argument.GetGenericParameterConstraints()
+                        .Select(constraint => SubstituteGenericType(constraint, substitutions)).ToArray();
+                    Type? baseConstraint = constraints.FirstOrDefault(constraint => !constraint.IsInterface);
+                    if (baseConstraint is not null) emittedArgument.SetBaseTypeConstraint(baseConstraint);
+                    Type[] interfaces = constraints.Where(constraint => constraint.IsInterface).ToArray();
+                    if (interfaces.Length > 0) emittedArgument.SetInterfaceConstraints(interfaces);
+                }
+            }
+            Type returnType = SubstituteGenericType(method.ReturnType, substitutions);
+            Type[] parameterTypes = sourceParameterTypes
+                .Select(type => SubstituteGenericType(type, substitutions)).ToArray();
+            emitted.SetSignature(
+                returnType,
+                method.ReturnParameter.GetRequiredCustomModifiers(),
+                method.ReturnParameter.GetOptionalCustomModifiers(),
+                parameterTypes,
+                parameters.Select(parameter => parameter.GetRequiredCustomModifiers()).ToArray(),
+                parameters.Select(parameter => parameter.GetOptionalCustomModifiers()).ToArray());
             for (int index = 0; index < parameters.Length; index++)
                 emitted.DefineParameter(index + 1, parameters[index].Attributes, parameters[index].Name);
 
             ILGenerator il = emitted.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldtoken, method);
+            il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
             il.Emit(OpCodes.Call, typeof(MethodBase).GetMethod(
-                nameof(MethodBase.GetMethodFromHandle), new[] { typeof(RuntimeMethodHandle) })!);
+                nameof(MethodBase.GetMethodFromHandle),
+                new[] { typeof(RuntimeMethodHandle), typeof(RuntimeTypeHandle) })!);
             il.Emit(OpCodes.Castclass, typeof(MethodInfo));
+            if (emittedArguments.Length > 0)
+            {
+                il.Emit(OpCodes.Callvirt, typeof(MethodInfo).GetMethod(
+                    nameof(MethodInfo.GetGenericMethodDefinition), Type.EmptyTypes)!);
+                il.Emit(OpCodes.Ldc_I4, emittedArguments.Length);
+                il.Emit(OpCodes.Newarr, typeof(Type));
+                for (int index = 0; index < emittedArguments.Length; index++)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldc_I4, index);
+                    il.Emit(OpCodes.Ldtoken, emittedArguments[index]);
+                    il.Emit(OpCodes.Call, typeof(Type).GetMethod(nameof(Type.GetTypeFromHandle))!);
+                    il.Emit(OpCodes.Stelem_Ref);
+                }
+                il.Emit(OpCodes.Callvirt, typeof(MethodInfo).GetMethod(
+                    nameof(MethodInfo.MakeGenericMethod), new[] { typeof(Type[]) })!);
+            }
             il.Emit(OpCodes.Ldc_I4, parameterTypes.Length);
             il.Emit(OpCodes.Newarr, typeof(object));
             for (int index = 0; index < parameterTypes.Length; index++)
@@ -872,14 +956,16 @@ internal static class JavaUninitializedProxyFactory
                 il.Emit(OpCodes.Dup);
                 il.Emit(OpCodes.Ldc_I4, index);
                 il.Emit(OpCodes.Ldarg, index + 1);
-                if (parameterTypes[index].IsValueType) il.Emit(OpCodes.Box, parameterTypes[index]);
+                if (parameterTypes[index].IsValueType || parameterTypes[index].IsGenericParameter)
+                    il.Emit(OpCodes.Box, parameterTypes[index]);
                 il.Emit(OpCodes.Stelem_Ref);
             }
             il.Emit(OpCodes.Call, typeof(JavaMockito).GetMethod(
                 nameof(JavaMockito.Dispatch), BindingFlags.Public | BindingFlags.Static)!);
-            if (method.ReturnType == typeof(void)) il.Emit(OpCodes.Pop);
-            else if (method.ReturnType.IsValueType) il.Emit(OpCodes.Unbox_Any, method.ReturnType);
-            else il.Emit(OpCodes.Castclass, method.ReturnType);
+            if (returnType == typeof(void)) il.Emit(OpCodes.Pop);
+            else if (returnType.IsValueType || returnType.IsGenericParameter)
+                il.Emit(OpCodes.Unbox_Any, returnType);
+            else il.Emit(OpCodes.Castclass, returnType);
             il.Emit(OpCodes.Ret);
             builder.DefineMethodOverride(emitted, method);
         }

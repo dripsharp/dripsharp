@@ -10,7 +10,8 @@
    :packages
    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
     {:id "xunit" :version "2.9.3"}
-    {:id "xunit.runner.visualstudio" :version "3.1.4"}]}]
+    {:id "xunit.runner.visualstudio" :version "3.1.4"}
+    {:id "Castle.Core" :version "5.1.1"}]}]
  :strategies
  [{:id :sqltrellis-adapted-upstream
    :kind :adapted-upstream

@@ -43,7 +43,7 @@
            (:compiled-contract-file metadata)))
     (is (= :resolved-spoon-model (:derivation compiled-only)))
     (is (= (paths/resolve-path workspace
-                              "test/dripsharp/java_library_test.clj")
+                               "test/dripsharp/java_library_test.clj")
            (:compiled-contract-file compiled-only)))))
 
 (defn- write-sources! [source-root sources]
@@ -880,6 +880,7 @@
                       "public void fromInitializer() { List values = "
                       "Optional.ofNullable(typed).orElseGet(ArrayList::new); "
                       "set(values); } public void empty() { set(new ArrayList()); } "
+                      "public void copy() { set(new ArrayList<String>(typed)); } "
                       "public void erase() { raw(typed); } "
                       "public void eraseLocal() { List values = "
                       "Optional.ofNullable(typed).orElseGet(ArrayList::new); "
@@ -899,6 +900,9 @@
     (is (str/includes?
          source
          "this.set(new global::System.Collections.Generic.List<string>())"))
+    (is (str/includes?
+         source
+         "this.set(new global::System.Collections.Generic.List<string>(this.typed))"))
     (is (= 2
            (count
             (re-seq
@@ -3856,13 +3860,42 @@
                    "global::System.IO.IOException)) {\n")
               (str "throw (global::System.IO.IOException)("
                    "global::DripSharp.Runtime.JavaCompat.GetCause(caught)!);\n}\n")
-              "throw caught;\n}")))
+              (str "global::System.Runtime.ExceptionServices.ExceptionDispatchInfo."
+                   "Throw(caught);\n")
+              "throw new global::System.InvalidOperationException(\"unreachable\");\n}")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest java-exception-catch-excludes-later-mapped-java-error-types
+  (let [fixture
+        (model! {"example/CatchOrder.java"
+                 (str "package example; public final class CatchOrder { "
+                      "static void invoke() throws Exception {} "
+                      "static int run() { try { invoke(); return 0; } "
+                      "catch (Exception failure) { return 1; } "
+                      "catch (AssertionError failure) { return 2; } } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/CatchOrder.cs")))]
+    (is (str/includes?
+         source
+         (str "catch (global::System.Exception failure) when ("
+              "failure is not global::System.TypeInitializationException && "
+              "failure is not global::DripSharp.Runtime.JavaAssertionError)")))
+    (is (str/includes?
+         source
+         "catch (global::DripSharp.Runtime.JavaAssertionError)"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -5041,7 +5074,7 @@
          source
          "global::DripSharp.Runtime.JavaLogger.GetLogger("))
     (is (= 2 (count (re-seq #"logger\.Log\(global::DripSharp.Runtime.JavaLogLevel\.Fine"
-                             source))))
+                            source))))
     (is (str/includes?
          source
          (str "if (logger.IsLoggable(global::DripSharp.Runtime.JavaLogLevel.Warning)) {\n"

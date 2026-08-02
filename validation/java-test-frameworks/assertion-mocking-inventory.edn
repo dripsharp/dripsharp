@@ -16,7 +16,7 @@
    #{"assertArrayEquals" "assertDoesNotThrow" "assertEquals" "assertFalse"
      "assertInstanceOf" "assertNotEquals" "assertNotNull" "assertNotSame"
      "assertNull" "assertSame" "assertThrows" "assertThrowsExactly"
-     "assertTrue" "fail"}}
+     "assertTrue" "assumeTrue" "fail"}}
   {:framework :assertj
    :targets #{:pkl :sqltrellis}
    :source-languages #{:java :kotlin}

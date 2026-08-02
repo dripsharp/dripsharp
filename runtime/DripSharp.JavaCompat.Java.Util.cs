@@ -3234,7 +3234,7 @@ internal static partial class JavaCompat
             (left, right) => comparer.Compare((T)left, (T)right));
     internal static T[] ToArrayLoose<T>(System.Collections.IEnumerable values) =>
         values.Cast<object?>().Select(value => (T)value!).ToArray();
-    internal static IList<T> ToListValues<T>(IEnumerable<T> values) => values.ToList();
+    internal static IList<T> ToListValues<T>(IEnumerable<T> values) => values is null ? null! : values.ToList();
     internal static IReadOnlyList<T> ToReadOnlyList<T>(IEnumerable<T> values) =>
         values as IReadOnlyList<T> ?? values.ToList();
     internal static IReadOnlyCollection<T> ToReadOnlyCollection<T>(IEnumerable<T> values) =>

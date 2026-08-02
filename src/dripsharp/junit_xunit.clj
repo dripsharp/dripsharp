@@ -16,7 +16,8 @@
             [dripsharp.util :as util])
   (:import [java.nio.file Files Path]
            [java.util IdentityHashMap]
-           [spoon.reflect.code CtFieldRead CtLiteral CtNewArray CtTypeAccess]
+           [spoon.reflect.code CtBinaryOperator CtFieldRead CtLiteral CtNewArray
+            CtTypeAccess]
            [spoon.reflect.declaration CtAnnotation CtClass CtConstructor
             CtElement CtField CtMethod CtModifiable CtParameter CtType
             ModifierKind]))
@@ -259,6 +260,31 @@
 
     (instance? CtTypeAccess expression)
     {:class (some-> ^CtTypeAccess expression .getAccessedType .getQualifiedName)}
+
+    (instance? CtBinaryOperator expression)
+    (let [operator ^CtBinaryOperator expression
+          kind (str (.getKind operator))
+          left (expression-value index (.getLeftHandOperand operator))
+          right (expression-value index (.getRightHandOperand operator))]
+      (case kind
+        "PLUS"
+        (cond
+          (or (string? left) (string? right)) (str left right)
+          (and (number? left) (number? right)) (+ left right)
+          :else
+          (fail! "JUnit annotation addition has non-constant operands"
+                 (merge {:reason :unsupported-junit-annotation-value
+                         :operator kind
+                         :left left
+                         :right right}
+                        (source-data expression))))
+
+        (fail! "JUnit annotation binary expression has no explicit semantic lowering"
+               (merge {:reason :unsupported-junit-annotation-value
+                       :operator kind
+                       :left left
+                       :right right}
+                      (source-data expression)))))
 
     :else
     (fail! "JUnit annotation value has no explicit semantic lowering"

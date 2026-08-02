@@ -211,14 +211,14 @@ sealed class JavaExecutorService
         scheduler?.Complete();
         return new List<Action>();
     }
-
     internal bool AwaitTermination(long timeout, JavaTimeUnit unit)
     {
         Task[] pending;
         lock (sync) pending = tasks.ToArray();
         var duration = JavaTimeUnits.ToTimeSpan(timeout, unit);
         var started = Stopwatch.StartNew();
-        if (!Task.WhenAll(pending).Wait(duration)) return false;
+        var completion = Task.WhenAll(pending);
+        if (!ReferenceEquals(Task.WhenAny(completion, Task.Delay(duration)).GetAwaiter().GetResult(), completion)) return false;
         return scheduler?.AwaitTermination(duration - started.Elapsed) ?? true;
     }
 

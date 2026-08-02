@@ -673,8 +673,8 @@ internal static partial class JavaCompat
         StreamMarks = new();
     internal static int ReaderRead(TextReader reader, char[] buffer, int index, int count)
     {
-        var read = reader.Read(buffer, index, count);
-        return read == 0 && count != 0 ? -1 : read;
+        try { var read = reader.Read(buffer, index, count); return read == 0 && count != 0 ? -1 : read; }
+        catch (ObjectDisposedException error) { throw new IOException(error.Message, error); }
     }
     internal static bool ReaderReady(TextReader reader)
     {

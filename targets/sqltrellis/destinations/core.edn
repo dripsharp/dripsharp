@@ -48,6 +48,7 @@
    :logical-name "rr/xhtml2rst.xsl"}}
  :resource-policy {:strategy :embedded-resource-preserve-path}
  :project-dependencies []
+ :friend-assemblies #{"DripSharp.SqlTrellis.Tests"}
  :external-dependencies
  {"net.sf.jopt-simple:jopt-simple:jar:5.0.4"
   {:source-scope :compile-runtime

@@ -190,6 +190,61 @@
   [{:keys [directory assembly-name]}]
   (str directory "/" assembly-name ".csproj"))
 
+(defn- solution-relative-path!
+  [target-contract]
+  (when (some :solution-inclusion (projects target-contract))
+    (let [candidates
+          (->> (get-in target-contract [:publication :managed-paths])
+               (filter #(re-matches #"(?i)[^/]+[.]slnx" %))
+               vec)]
+      (when-not (= 1 (count candidates))
+        (fail! "Solution-included test projects require one managed .slnx file"
+               {:reason :invalid-generated-solution-paths
+                :paths candidates}))
+      (first candidates))))
+
+(defn- solution-project-paths
+  [target-contract]
+  (let [profile-paths
+        (for [[profile-id directory]
+              (sort-by key (get-in target-contract
+                                   [:publication :profile-projects]))]
+          (str directory "/"
+               (get-in target-contract
+                       [:profiles profile-id :destination :configuration
+                        :output :project-file])))
+        test-paths
+        (->> (projects target-contract)
+             (filter :solution-inclusion)
+             (map project-relative-path*))]
+    (->> (concat profile-paths test-paths)
+         distinct
+         sort
+         vec)))
+
+(defn- render-solution
+  [target-contract]
+  (project-xml/render
+   (project-xml/element
+    "Solution"
+    (mapv (fn [path]
+            (project-xml/element "Project" [["Path" path]] []))
+          (solution-project-paths target-contract)))))
+
+(defn- verify-solution!
+  [staging target-contract]
+  (when-let [relative (solution-relative-path! target-contract)]
+    (let [file (paths/resolve-path staging relative)
+          expected (render-solution target-contract)
+          actual (when (paths/regular-file? file) (slurp (str file)))]
+      (when-not (= expected actual)
+        (fail! "Generated solution is missing or changed"
+               {:reason :generated-solution-drift
+                :path relative
+                :expected expected
+                :actual actual}))
+      file)))
+
 (defn- command-line
   [arguments]
   (str/join " " arguments))
@@ -452,18 +507,23 @@
                     :tests-root tests-root
                     :project-root project-root})}))
              (strategies target-contract))]
-      (let [inventory-file (paths/resolve-path tests-root "SHA256SUMS")]
-        (write-text! inventory-file
-                     (render-inventory tests-root inventory-file)))
-      (verify-inventory! tests-root)
-      {:tests-root tests-root
-       :project-files
-       (into (sorted-map) (map (juxt :id :project-file)) project-records)
-       :project-file (when (= 1 (count project-records))
-                       (:project-file (first project-records)))
-       :inventory-file (paths/resolve-path tests-root "SHA256SUMS")
-       :strategies strategy-results
-       :commands (commands target-contract)}))))
+        (let [inventory-file (paths/resolve-path tests-root "SHA256SUMS")]
+          (write-text! inventory-file
+                       (render-inventory tests-root inventory-file)))
+        (verify-inventory! tests-root)
+        (let [solution-file
+              (when-let [relative (solution-relative-path! target-contract)]
+                (write-text! (paths/resolve-path staging relative)
+                             (render-solution target-contract)))]
+          {:tests-root tests-root
+           :project-files
+           (into (sorted-map) (map (juxt :id :project-file)) project-records)
+           :project-file (when (= 1 (count project-records))
+                           (:project-file (first project-records)))
+           :solution-file solution-file
+           :inventory-file (paths/resolve-path tests-root "SHA256SUMS")
+           :strategies strategy-results
+           :commands (commands target-contract)})))))
 
 (defn verify!
   "Restores, builds, and runs every staged generated test project."
@@ -493,6 +553,7 @@
          (projects target-contract))
         projects-by-id (into {} (map (juxt :id identity)) project-records)
         commands (commands target-contract)]
+    (verify-solution! staging target-contract)
     (verify-inventory! (paths/resolve-path staging "tests"))
     (doseq [{:keys [id project] :as strategy} (strategies target-contract)]
       (let [{:keys [project-root]}
@@ -516,6 +577,7 @@
       (finally
         (delete-build-artifacts! (paths/resolve-path staging "tests"))))
     (verify-inventory! (paths/resolve-path staging "tests"))
+    (verify-solution! staging target-contract)
     {:project-files
      (into (sorted-map) (map (juxt :id :project-file)) project-records)
      :project-file (when (= 1 (count project-records))

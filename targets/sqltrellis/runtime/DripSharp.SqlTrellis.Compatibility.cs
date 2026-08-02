@@ -34,8 +34,8 @@ namespace DripSharp.SqlTrellis
             IEnumerable values)
             where T : global::DripSharp.SqlTrellis.Expression.Expression
         {
+            if (values is null) return null!;
             if (values is ExpressionList<T> typed) return typed;
-
             var converted = values.Cast<T>().ToList();
             return values.GetType().IsGenericType
                 && values.GetType().GetGenericTypeDefinition()

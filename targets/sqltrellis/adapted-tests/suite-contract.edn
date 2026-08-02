@@ -1,0 +1,13 @@
+{:schema-version 1
+ :target :sqltrellis
+ :revision "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa"
+ :source-count 214
+ :fixture-count 295
+ :case-count 2111
+ :digests
+ {:fixtures "09b72083d6ccbc5b79cf9f5fd1eff49ca332d18763238d9c6bcf1285fd40932e"
+  :framework-calls "c03290035dae72e86a2543ad876c87e0a3233b5aebd8efde153a5a18fd26c46d"
+  :helpers "24739cf8060a085085170c3c4786335b301e7e883f63583c345b712e524c3576"
+  :plan "03de508d6ec4ce3eb08fbd6f3f283b835a71eca0604736df54c5cc74d124e564"
+  :sources "0c7ccdc5579cad907425596a57579d0fcbd7c4a8e463b8311f50507dafb1dc59"
+  :support-fixtures "4c30792e161b0a660f27736b64bad5b1345c3189f0b68927229f62e86658a163"}}
