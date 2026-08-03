@@ -1,0 +1,36 @@
+DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1
+ast	jjtree-root	statement|true
+ast	table-discovery	orders,users
+ast	expression-tree	price * quantity + tax
+deparse	statement-visitor	SELECT id, name FROM users WHERE active = true ORDER BY name
+deparse	expression-visitor	price * quantity + tax
+dialects	mysql	SELECT SQL_CALC_FOUND_ROWS `id` FROM `users` LIMIT 5
+dialects	oracle	SELECT /*+ INDEX(t idx_t) */ t.id FROM t WHERE ROWNUM <= 10
+dialects	postgresql	SELECT payload->>'name' FROM events WHERE id = $1
+dialects	sqlite	INSERT OR REPLACE INTO users (id, name) VALUES (1, 'Ada')
+dialects	sqlserver	SELECT TOP 5 [u].[id] FROM [users] [u] ORDER BY [u].[id]
+errors	invalid-long	argument
+errors	invalid-sql	parse
+errors	unsupported-disabled	parse
+features	square-bracket-quotation	SELECT [u].[id] FROM [users] [u]
+features	unsupported-statements	this is an unsupported statement
+features	error-recovery	3|this is an unsupported statement
+mutation	long-value	true|7|7
+mutation	schema-column	true|public.orders o|public.orders.order_id|o.order_id
+mutation	expression-list	true|3|7, o.order_id, 9
+mutation	programmatic-ast	true|2 + 5|select 7, o.order_id from public.orders o
+parsing	select	SELECT a, count(*) AS n FROM t WHERE a > 1 GROUP BY a
+parsing	expression	a + b * 3
+parsing	condition	a BETWEEN 1 AND 3 OR b IS NULL
+parsing	statement-list	2|update t set value = 1 where id = 2;\ndelete from t where id = 3;\n
+resources	xhtml2rst	b127d6dcac19cf4cfd118b806d902d9d738ed62db8c329d32f65d56292329083
+roundtrip	select	true|select u.id, count(o.id) as total from users u left join orders o on o.user_id = u.id group by u.id order by total desc
+roundtrip	insert	true|insert into audit_log (id, message) values (7, 'created')
+roundtrip	ddl	true|create table sample ( id bigint primary key , name varchar ( 80 ) not null )
+validation	parse-only	0
+validation	database-feature	1
+validation	allowed-features	1
+visitors	expression-dispatch	long:7
+visitors	statement-dispatch	stmt:EXPLAIN
+visitors	select-dispatch	select:2
+visitors	expression-traversal	a,b,c

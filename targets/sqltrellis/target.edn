@@ -23,7 +23,8 @@
    :destination :core
    :mapping-overlays []
    :runtime-assets [:sqltrellis/generic-compatibility]
-   :validation-contracts [:sqltrellis-registration]
+   :validation-contracts
+   [:sqltrellis-registration :sqltrellis-behavior]
    :authorship
    {:sources [:sqltrellis/generic-compatibility]
     :evidence [:sqltrellis-complete-product-proof]
@@ -40,7 +41,10 @@
  :validation-contracts
  [{:id :sqltrellis-registration
    :kind :custom
-   :path "validation/registration.edn"}]
+   :path "validation/registration.edn"}
+  {:id :sqltrellis-behavior
+   :kind :differential
+   :path "validation/behavior.edn"}]
  :publication
  {:kind :generated-repository
   :repository-slug "dripsharp/sqltrellis"
@@ -61,5 +65,6 @@
     :kind :custom
     :runner dripsharp.sqltrellis.registration/complete-product-proof!
     :profiles ["sqltrellis"]
-    :validation-contracts [:sqltrellis-registration]
+    :validation-contracts
+    [:sqltrellis-registration :sqltrellis-behavior]
     :resource-class :high-memory}]}}

@@ -169,12 +169,21 @@
                 :required-files (:required-files runner)})))
     (exact-keys!
      contract "Expected package contract"
-     #{:target-framework :assembly-name :assembly-dependencies
-       :dependencies :legal-sets :resource-count :clean-builds}
+     (cond->
+      #{:target-framework :assembly-name :assembly-dependencies
+        :dependencies :legal-sets :resource-count :clean-builds}
+       (contains? package-contract :assembly-version)
+       (conj :assembly-version)
+       (contains? package-contract :public-contract-rows)
+       (conj :public-contract-rows)
+       (contains? package-contract :compiled-contract-members)
+       (conj :compiled-contract-members))
      package-contract)
     (when-not
      (and (every? #(non-blank-string? (get package-contract %))
                   [:target-framework :assembly-name])
+          (or (not (contains? package-contract :assembly-version))
+              (non-blank-string? (:assembly-version package-contract)))
           (vector? (:assembly-dependencies package-contract))
           (every? non-blank-string? (:assembly-dependencies package-contract))
           (vector? (:dependencies package-contract))
@@ -194,6 +203,10 @@
            (:dependencies package-contract))
           (vector? (:legal-sets package-contract))
           (every? keyword? (:legal-sets package-contract))
+          (or (not (contains? package-contract :public-contract-rows))
+              (pos-int? (:public-contract-rows package-contract)))
+          (or (not (contains? package-contract :compiled-contract-members))
+              (pos-int? (:compiled-contract-members package-contract)))
           (and (integer? (:resource-count package-contract))
                (not (neg? (:resource-count package-contract))))
           (pos-int? (:clean-builds package-contract)))
@@ -516,7 +529,8 @@
      :target-framework (:target-framework expected)
      :assembly
      {:name (:assembly-name expected)
-      :version (:assembly-version package-record)
+      :version (or (:assembly-version expected)
+                   (:assembly-version package-record))
       :dependency-assemblies (:assembly-dependencies expected)}
      :dependencies
      (mapv
@@ -531,8 +545,12 @@
       (baseline/legal-files workspace-root target (:legal-sets expected)))
      :public-contract
      {:strategy :complete-accessible-java-library
-      :required-rows (:public-contract-rows profile)
-      :compiled-contract-members (:public-contract-rows profile)
+      :required-rows
+      (or (:public-contract-rows expected)
+          (:public-contract-rows profile))
+      :compiled-contract-members
+      (or (:compiled-contract-members expected)
+          (:public-contract-rows profile))
       :public-stubs 0}}))
 
 (defn- actual-package-contract [contract package-proof]

@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [dripsharp.consumer-tests :as consumer-tests]
+            [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
             [dripsharp.maven :as maven]
             [dripsharp.paths :as paths]
@@ -18,6 +19,8 @@
 (def ^:private workspace (paths/workspace-root))
 (def ^:private profile-file "targets/sqltrellis/profiles/core.edn")
 (def ^:private build-input-file "targets/sqltrellis/maven-build-inputs.edn")
+(def ^:private behavior-contract-file
+  "targets/sqltrellis/validation/behavior.edn")
 (def ^:private revision "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa")
 
 (defn- input-options [project-root local-repository]
@@ -230,6 +233,32 @@
              (:reason (ex-data error)))))
     (is (= :sqltrellis-complete-product-proof-pending
            (:kind (ex-data (failure registration/complete-product-proof!)))))))
+
+(deftest behavior-differential-is-pinned-and-covers-the-required-families
+  (let [contract (differential/read-contract workspace behavior-contract-file)
+        canonical
+        (paths/resolve-path
+         workspace "targets/sqltrellis/validation/behavior-canonical.tsv")
+        trace (differential/trace-summary contract canonical)]
+    (is (= :sqltrellis-behavior (:id contract)))
+    (is (= :sqltrellis (:target contract)))
+    (is (= :core (:baseline-profile contract)))
+    (is (= "sqltrellis" (get-in contract [:runner :profile])))
+    (is (= 35 (get-in contract [:observation :expected-count])))
+    (is (= ["ast" "deparse" "dialects" "errors" "features" "mutation"
+            "parsing" "resources" "roundtrip" "validation" "visitors"]
+           (:families trace)))
+    (is (= 35 (:observations trace)))
+    (is (= {:version "5.3" :revision revision}
+           (select-keys
+            (get-in (target-directory/read-target workspace :sqltrellis)
+                    [:baseline :record :upstream])
+            [:version :revision])))
+    (doseq [relative
+            ["targets/sqltrellis/validation/behavior-canonical.tsv"
+             "targets/sqltrellis/validation/oracle/SqlTrellisBehaviorOracle.java"
+             "targets/sqltrellis/validation/probe/SqlTrellisBehaviorPackageProbe.cs"]]
+      (is (paths/regular-file? (paths/resolve-path workspace relative)) relative))))
 
 (deftest clean-isolated-maven-generation-is-cache-independent
   (let [temporary (Files/createTempDirectory

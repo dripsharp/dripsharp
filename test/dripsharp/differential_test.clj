@@ -171,6 +171,43 @@
             :generated (:generated-production-sources actual)}))
     (is (= rows (get-in actual
                         [:public-contract :compiled-contract-members])))
+    (let [assembly-version "99.0.0.0"
+          required-rows (inc rows)
+          compiled-members (+ 2 rows)
+          pinned-contract
+          (-> contract
+              (assoc-in [:package-contract :assembly-version]
+                        assembly-version)
+              (assoc-in [:package-contract :public-contract-rows]
+                        required-rows)
+              (assoc-in [:package-contract :compiled-contract-members]
+                        compiled-members))
+          pinned-proof
+          (-> package-proof
+              (assoc-in [:packages 0 :resource-proof :assembly-identity
+                         :version]
+                        assembly-version)
+              (assoc-in [:verification :generation :emission
+                         :public-metadata :required-rows]
+                        required-rows)
+              (assoc-in [:verification :public-surface :assemblies 0
+                         :contract-members]
+                        compiled-members))]
+      (is (= assembly-version
+             (get-in
+              (differential/validate-package-contract!
+               pinned-contract root pinned-proof)
+              [:assembly :version])))
+      (is (= required-rows
+             (get-in
+              (differential/validate-package-contract!
+               pinned-contract root pinned-proof)
+              [:public-contract :required-rows])))
+      (is (= compiled-members
+             (get-in
+              (differential/validate-package-contract!
+               pinned-contract root pinned-proof)
+              [:public-contract :compiled-contract-members]))))
     (let [error
           (try
             (differential/validate-package-contract!

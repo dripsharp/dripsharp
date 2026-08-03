@@ -1,0 +1,57 @@
+{:schema-version 1
+ :id :sqltrellis-behavior
+ :target :sqltrellis
+ :baseline-profile :core
+ :failure-kind :sqltrellis-behavior-differential-failed
+ :observation
+ {:schema-version 1
+  :header "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"
+  :columns [:family :id :value]
+  :required-families
+  ["ast" "deparse" "dialects" "errors" "features" "mutation" "parsing"
+   "resources" "roundtrip" "validation" "visitors"]
+  :expected-count 35}
+ :runner
+ {:profile "sqltrellis"
+  :output-directory "sqltrellis-behavior-differential"
+  :context
+  {:canonical "validation/behavior-canonical.tsv"}
+  :required-files [:canonical]
+  :required-directories []
+  :canonical :canonical
+  :oracle
+  {:source "validation/oracle/SqlTrellisBehaviorOracle.java"
+   :main-class "SqlTrellisBehaviorOracle"
+   :arguments [:oracle]
+   :include-resource-roots? true
+   :compile-timeout-ms 600000
+   :run-timeout-ms 120000}
+  :probe
+  {:source "validation/probe/SqlTrellisBehaviorPackageProbe.cs"
+   :arguments [:packaged :canonical]
+   :build-timeout-ms 300000
+   :run-timeout-ms 120000}
+  :supported-hosts
+  [{:os "windows" :architecture "x64" :runner "windows-2025"}
+   {:os "windows" :architecture "arm64" :runner "windows-11-arm"}
+   {:os "linux" :architecture "x64" :runner "ubuntu-24.04"}
+   {:os "linux" :architecture "arm64" :runner "ubuntu-24.04-arm"}
+   {:os "macos" :architecture "x64" :runner "macos-15-intel"}
+   {:os "macos" :architecture "arm64" :runner "macos-15"}]}
+ :package-contract
+ {:target-framework "net10.0"
+  :assembly-name "DripSharp.SqlTrellis"
+  :assembly-version "5.3.0.0"
+  :assembly-dependencies []
+  :dependencies []
+  :legal-sets [:upstream]
+  :public-contract-rows 8261
+  :compiled-contract-members 8261
+  :resource-count 1
+  :clean-builds 2}
+ :summary
+ {:upstream "JSqlParser 5.3"
+  :coverage
+  ["parsing" "AST construction and mutation" "visitors" "deparsing"
+   "round trips" "validation and features" "SQL dialects" "resources"
+   "expected errors"]}}
