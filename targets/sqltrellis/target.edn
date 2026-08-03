@@ -55,15 +55,14 @@
   :profile-projects {"sqltrellis" "src/DripSharp.SqlTrellis"}
   :managed-paths ["src" "tests" "DripSharp.SqlTrellis.slnx"
                   "LICENSE" "NOTICE" "README.md"]
-  :excluded-paths []
+  :excluded-paths ["src/DripSharp.SqlTrellis/source-map.edn"]
   :test-suites "test-suites.edn"
   :publication-mode :pull-request}
  :proof
  {:role :product
   :ladders
   [{:id :sqltrellis-complete-product-proof
-    :kind :custom
-    :runner dripsharp.sqltrellis.registration/complete-product-proof!
+    :kind :target-validations
     :profiles ["sqltrellis"]
     :validation-contracts
     [:sqltrellis-registration :sqltrellis-behavior]

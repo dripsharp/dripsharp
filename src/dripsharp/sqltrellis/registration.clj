@@ -1,5 +1,5 @@
 (ns dripsharp.sqltrellis.registration
-  "Executable registration evidence for the bounded SqlTrellis setup slice."
+  "Executable registration evidence for the pinned SqlTrellis target."
   (:require [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
             [dripsharp.maven :as maven]
@@ -39,11 +39,3 @@
       :generation-artifacts (count (:build-input-artifacts input))
       :generation-artifacts-sha256
       (maven/generation-artifacts-sha256 (:build-input-artifacts input))})))
-
-(defn complete-product-proof!
-  "Fails closed until later authorized milestones supply the product proof."
-  [& _]
-  (throw
-   (ex-info
-    "SqlTrellis product proof is pending production/test translation, clean build, package consumption, and behavioral validation"
-    {:kind :sqltrellis-complete-product-proof-pending})))

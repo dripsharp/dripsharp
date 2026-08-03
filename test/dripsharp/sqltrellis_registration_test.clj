@@ -9,7 +9,6 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.sqltrellis.java-project :as sqltrellis]
-            [dripsharp.sqltrellis.registration :as registration]
             [dripsharp.sqltrellis.test-suite :as test-suite]
             [dripsharp.target-directory :as target-directory]
             [dripsharp.util :as util])
@@ -105,6 +104,8 @@
            (get-in target [:publication :submodule-path])))
     (is (= {"sqltrellis" "src/DripSharp.SqlTrellis"}
            (get-in target [:publication :profile-projects])))
+    (is (= ["src/DripSharp.SqlTrellis/source-map.edn"]
+           (get-in target [:publication :excluded-paths])))
     (is (= "disable"
            (get-in target
                    [:profiles "sqltrellis" :destination
@@ -226,13 +227,17 @@
             {:id "Castle.Core" :version "5.1.1"}]
            (:packages project)))
     (is (= 'dripsharp.sqltrellis.test-suite/strategy! (:handler strategy)))
-    (let [error (failure #(test-suite/strategy! {:phase :unknown}))]
+    (let [error (failure #(test-suite/strategy! {:phase :unknown}))
+          ladder (get-in target [:proof :ladders 0])]
       (is (= :sqltrellis-test-suite-generation-failed
              (:kind (ex-data error))))
       (is (= :unsupported-sqltrellis-test-suite-phase
-             (:reason (ex-data error)))))
-    (is (= :sqltrellis-complete-product-proof-pending
-           (:kind (ex-data (failure registration/complete-product-proof!)))))))
+             (:reason (ex-data error))))
+      (is (= :sqltrellis-complete-product-proof (:id ladder)))
+      (is (= :target-validations (:kind ladder)))
+      (is (= [:sqltrellis-registration :sqltrellis-behavior]
+             (:validation-contracts ladder)))
+      (is (nil? (:runner ladder))))))
 
 (deftest behavior-differential-is-pinned-and-covers-the-required-families
   (let [contract (differential/read-contract workspace behavior-contract-file)

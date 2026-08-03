@@ -19,3 +19,6 @@
 [submodule "research/jsqlparser"]
 	path = research/jsqlparser
 	url = https://github.com/JSQLParser/JSqlParser.git
+[submodule "products/sqltrellis"]
+	path = products/sqltrellis
+	url = https://github.com/dripsharp/sqltrellis.git
