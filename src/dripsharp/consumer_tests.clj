@@ -533,9 +533,13 @@
 (defn verify!
   "Restores, builds, and runs every staged generated test project."
   [{:keys [workspace-root target-contract run-command! timeout-ms]
-    :or {run-command! process/run! timeout-ms 300000}}]
+    :or {run-command! process/run!}}]
   (let [root (paths/absolute workspace-root)
         run-command! (or run-command! process/run!)
+        timeout-ms (or timeout-ms
+                       (get-in target-contract
+                               [:publication :test-suites :timeout-ms])
+                       300000)
         staging (paths/resolve-path
                  root (get-in target-contract
                               [:publication :staging-path]))

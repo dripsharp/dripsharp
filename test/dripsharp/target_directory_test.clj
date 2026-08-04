@@ -539,6 +539,25 @@
               (:kind
                (failure-data
                 #(target-directory/read-target root :acme))))))
+     (testing "test projects select exactly one supported xUnit framework"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/test-suites.edn"
+                    update-in [:projects 0 :packages]
+                    (fn [packages]
+                      (mapv #(if (= "xunit" (:id %))
+                               (assoc % :id "xunit.v3" :version "3.2.2")
+                               %)
+                            packages)))
+       (is (= "xunit.v3"
+              (get-in (target-directory/read-target root :acme)
+                      [:publication :test-suites :projects 0 :packages 1 :id])))
+       (update-edn! root "targets/acme/test-suites.edn"
+                    update-in [:projects 0 :packages]
+                    conj {:id "xunit" :version "2.9.3"})
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme))))))
      (testing "multiple exact projects and validation-only adapted strategies are explicit"
        (create-target-workspace! root)
        (let [base-project (first (:projects (consumer-tests)))

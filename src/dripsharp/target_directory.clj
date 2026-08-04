@@ -95,7 +95,7 @@
   #{:kind})
 
 (def ^:private test-suite-keys
-  #{:schema-version :projects :strategies})
+  #{:schema-version :timeout-ms :projects :strategies})
 
 (def ^:private test-suite-project-keys
   #{:id :directory :assembly-name :target-framework :profile-references
@@ -126,7 +126,10 @@
   (into test-suite-source-keys #{:license :attribution}))
 
 (def ^:private required-test-suite-package-ids
-  #{"Microsoft.NET.Test.Sdk" "xunit" "xunit.runner.visualstudio"})
+  #{"Microsoft.NET.Test.Sdk" "xunit.runner.visualstudio"})
+
+(def ^:private supported-xunit-framework-package-ids
+  #{"xunit" "xunit.v3"})
 
 (def ^:private test-suite-strategy-kinds
   #{:focused-consumer :adapted-upstream})
@@ -1575,10 +1578,19 @@
         contract (read-edn! "Test-suite contract" file)
         context (validation-context "Test-suite contract"
                                     {:target target})]
-    (exact-keys! "Test-suite contract" [:publication :test-suites]
-                 test-suite-keys contract)
+    (validation/exact-keys!
+     (validation-context "Test-suite contract")
+     [:publication :test-suites]
+     contract
+     (disj test-suite-keys :timeout-ms)
+     test-suite-keys)
     (validation/check! context [:publication :test-suites :schema-version]
                        (:schema-version contract) "the integer 2" #{2})
+    (when (contains? contract :timeout-ms)
+      (validation/check! context [:publication :test-suites :timeout-ms]
+                         (:timeout-ms contract)
+                         "a positive timeout in milliseconds"
+                         pos-int?))
     (let [projects (:projects contract)
           profile-ids (set (keys profiles))
           product-frameworks
@@ -1657,12 +1669,22 @@
              (:version package) "a pinned numeric stable package version"
              #(and (non-blank-string? %)
                    (boolean (re-matches #"[0-9]+(?:\.[0-9]+){2}" %)))))
-          (when-not (set/subset? required-test-suite-package-ids
-                                 (set (map :id packages)))
-            (fail! "Test-suite project omits required test packages"
-                   {:target target :project id
-                    :required (vec (sort required-test-suite-package-ids))
-                    :actual (vec (sort (map :id packages)))}))))
+          (let [package-ids (set (map :id packages))]
+            (when-not
+             (and
+              (set/subset? required-test-suite-package-ids package-ids)
+              (= 1
+                 (count
+                  (set/intersection supported-xunit-framework-package-ids
+                                    package-ids))))
+              (fail! "Test-suite project omits required test packages"
+                     {:target target
+                      :project id
+                      :required
+                      {:packages (vec (sort required-test-suite-package-ids))
+                       :xunit-framework-one-of
+                       (vec (sort supported-xunit-framework-package-ids))}
+                      :actual (vec (sort package-ids))})))))
       (when (some :solution-inclusion projects)
         (validation/check!
          context [:publication :managed-paths] managed-paths

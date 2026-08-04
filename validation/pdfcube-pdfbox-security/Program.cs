@@ -225,7 +225,9 @@ internal static class Program
                 signature.GetReason(),
                 signature.GetLocation(),
                 signature.GetContactInfo(),
-                signature.GetSignDate().ToUnixTimeMilliseconds(),
+                (signature.GetSignDate()
+                    ?? throw new InvalidDataException("Signature date is missing."))
+                .ToUnixTimeMilliseconds(),
                 string.Join(",", signature.GetByteRange()),
                 signature.GetContents().Length));
 

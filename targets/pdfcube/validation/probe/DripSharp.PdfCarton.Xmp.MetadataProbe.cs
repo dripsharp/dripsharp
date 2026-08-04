@@ -288,12 +288,16 @@ internal static class Program
     private static void ObserveDates()
     {
         DateTimeOffset offset =
-            DateConverter.ToCalendar("2015-02-02T16:37:19.192+05:30");
-        DateTimeOffset partial = DateConverter.ToCalendar("2015-05");
+            DateConverter.ToCalendar("2015-02-02T16:37:19.192+05:30")
+            ?? throw new InvalidDataException("Offset timestamp did not parse.");
+        DateTimeOffset partial = DateConverter.ToCalendar("2015-05")
+            ?? throw new InvalidDataException("Partial timestamp did not parse.");
         DateTimeOffset missingSeconds =
-            DateConverter.ToCalendar("2015-12-08T12:07-05:00");
+            DateConverter.ToCalendar("2015-12-08T12:07-05:00")
+            ?? throw new InvalidDataException("Minute timestamp did not parse.");
         DateTimeOffset legacy =
-            DateConverter.ToCalendar("D:20150203101112+0530");
+            DateConverter.ToCalendar("D:20150203101112+0530")
+            ?? throw new InvalidDataException("Legacy timestamp did not parse.");
         Observe(
             "date",
             "offset-and-format",

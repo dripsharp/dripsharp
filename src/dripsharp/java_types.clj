@@ -425,8 +425,8 @@
                         :dotnet.type/set-interface]
    "java.util.Enumeration" ["global::DripSharp.Runtime.JavaIterator"
                             :dotnet.type/java-enumeration]
-   "java.util.HashMap" ["global::System.Collections.Generic.Dictionary"
-                        :dotnet.type/dictionary]
+   "java.util.HashMap" ["global::DripSharp.Runtime.JavaLinkedHashMap"
+                        :dotnet.type/linked-dictionary]
    "java.util.HashSet" ["global::System.Collections.Generic.HashSet"
                         :dotnet.type/hash-set]
    "java.util.Hashtable" ["global::DripSharp.Runtime.JavaHashtable"

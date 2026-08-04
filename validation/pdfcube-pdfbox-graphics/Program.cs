@@ -20,7 +20,7 @@ using DripSharp.PdfCarton.Pdmodel.Graphics.Image;
 using DripSharp.PdfCarton.Pdmodel.Graphics.Pattern;
 using DripSharp.PdfCarton.Pdmodel.Graphics.Shading;
 using DripSharp.PdfCarton.Pdmodel.Graphics.State;
-using PdfOperator = DripSharp.PdfCarton.Contentstream.@operator.Operator;
+using PdfOperator = DripSharp.PdfCarton.Contentstream.@Operator.Operator;
 
 internal static class Program
 {

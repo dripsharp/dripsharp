@@ -299,8 +299,10 @@ internal
 #else
 public
 #endif
-class JavaByteArrayOutputStream : MemoryStream
+class JavaByteArrayOutputStream : MemoryStream, IDisposable
 {
+    private bool disposeDispatching;
+
     public JavaByteArrayOutputStream()
     {
     }
@@ -310,10 +312,31 @@ class JavaByteArrayOutputStream : MemoryStream
     {
     }
 
+    public new virtual void Dispose()
+    {
+        // java.io.ByteArrayOutputStream.close() has no effect. Keep the
+        // public virtual surface so translated close() overrides dispatch.
+    }
+
+    void IDisposable.Dispose() => Dispose();
+
     protected override void Dispose(bool disposing)
     {
-        // java.io.ByteArrayOutputStream.close() has no effect. Its content,
-        // size, reset, and write operations remain available after close.
+        if (disposing && !disposeDispatching)
+        {
+            disposeDispatching = true;
+            try
+            {
+                Dispose();
+            }
+            finally
+            {
+                disposeDispatching = false;
+            }
+        }
+
+        // Its content, size, reset, and write operations remain available
+        // after close, so intentionally do not call MemoryStream.Dispose.
     }
 }
 

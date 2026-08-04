@@ -367,7 +367,9 @@ internal static class Program
                     font.GetNaming().GetFontFamily(),
                     font.GetNaming().GetFontSubFamily(),
                     font.GetNaming().GetNameRecords().Count,
-                    font.GetHeader().GetCreated().UtcDateTime.ToString(
+                    (font.GetHeader().GetCreated()
+                        ?? throw new InvalidDataException("TrueType header has no creation date."))
+                    .UtcDateTime.ToString(
                         "yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
                     font.GetHeader().GetUnitsPerEm(),
                     font.GetMaximumProfile().GetNumGlyphs(),

@@ -4,6 +4,14 @@
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.test-suite :as test-suite]))
 
+(deftest generated-pdfbox-tests-preserve-deterministic-junit-method-order
+  (let [source (slurp "src/dripsharp/pdfcube/test_suite.clj")
+        support (slurp "targets/pdfcube/adapted-tests/PdfCartonTestSupport.cs")]
+    (is (str/includes? source "java-string-hash-code"))
+    (is (str/includes? source "Xunit.TestCaseOrderer"))
+    (is (str/includes? support "UpstreamTestCaseOrderer"))
+    (is (str/includes? support "TestMethod?.MethodName"))))
+
 (deftest complete-pinned-pdfbox-test-tree-is-losslessly-inventoried
   (let [inventory (test-suite/inventory!)
         contract (test-suite/read-contract! (paths/absolute "targets/pdfcube"))
@@ -15,11 +23,16 @@
     (is (= #{:io :fontbox :xmpbox :pdfbox :preflight}
            (set (map :module (:sources accounting)))))
     (is (= 233 (count (:sources accounting))))
-    (is (= 371 (count (:fixtures accounting))))
-    (is (= 371 (count (distinct (map :destination
+    (is (= 681 (count (:fixtures accounting))))
+    (is (= 681 (count (distinct (map :destination
                                      (:fixtures accounting))))))
-    (is (every? #(and (= "Apache-2.0" (:license %))
-                      (= :mechanically-upstream-derived (:authorship %))
+    (is (= {:mechanically-upstream-derived 372
+            :third-party-test-fixture 306
+            :target-adapted-test-fixture 1
+            :third-party-test-fixture-license 1
+            :third-party-test-fixture-notice 1}
+           (frequencies (map :authorship (:fixtures accounting)))))
+    (is (every? #(and (not (str/blank? (:license %)))
                       (not (str/blank? (:attribution %))))
                 (:fixtures accounting)))
     (is (= 1281 (count (:cases accounting))))

@@ -559,9 +559,29 @@ sealed class JavaCipherInputStream : Stream
     }
 
     public override void Flush() => stream.Flush();
-    public override int Read(byte[] buffer, int offset, int count) =>
-        stream.Read(buffer, offset, count);
-    public override int Read(Span<byte> buffer) => stream.Read(buffer);
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        try
+        {
+            return stream.Read(buffer, offset, count);
+        }
+        catch (CryptographicException exception)
+        {
+            throw new IOException(null, exception);
+        }
+    }
+
+    public override int Read(Span<byte> buffer)
+    {
+        try
+        {
+            return stream.Read(buffer);
+        }
+        catch (CryptographicException exception)
+        {
+            throw new IOException(null, exception);
+        }
+    }
     public override long Seek(long offset, SeekOrigin origin) =>
         throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -572,8 +592,18 @@ sealed class JavaCipherInputStream : Stream
     {
         if (disposing)
         {
-            stream.Dispose();
-            cipher.Dispose();
+            try
+            {
+                stream.Dispose();
+            }
+            catch (CryptographicException exception)
+            {
+                throw new IOException(null, exception);
+            }
+            finally
+            {
+                cipher.Dispose();
+            }
         }
         base.Dispose(disposing);
     }

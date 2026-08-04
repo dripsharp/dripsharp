@@ -749,6 +749,11 @@ internal static partial class JavaCompat
         uri.IsFile ? Uri.UnescapeDataString(uri.AbsolutePath) : uri.OriginalString;
     internal static bool PathIsAbsolute(string path) => Path.IsPathRooted(path);
     internal static string? PathRoot(string path) => Path.GetPathRoot(path);
+    internal static JavaPath? PathParent(string path)
+    {
+        var parent = Path.GetDirectoryName(path);
+        return parent is null ? null : new JavaPath(parent);
+    }
     internal static string PathRelativize(string basis, string path) => Path.GetRelativePath(basis, path);
     internal static string PathResolve(string basis, string value) => Path.Combine(basis, value);
     internal static string PathResolveSibling(string basis, string value) =>
@@ -858,8 +863,13 @@ internal static partial class JavaCompat
         }
         return bytes.Take(offset).Select(value => unchecked((sbyte)value)).ToArray();
     }
-    internal static MemoryStream NewMemoryStream(sbyte[] bytes) =>
-        new(bytes.Select(value => unchecked((byte)value)).ToArray());
+    internal static MemoryStream NewMemoryStream(sbyte[] bytes)
+    {
+        var stream = new MemoryStream(
+            bytes.Select(value => unchecked((byte)value)).ToArray());
+        InputStreamMark(stream, int.MaxValue);
+        return stream;
+    }
     internal static StringBuilder StringBuilderAppendInvariant(
         StringBuilder builder,
         object value)
@@ -872,8 +882,10 @@ internal static partial class JavaCompat
         ArgumentNullException.ThrowIfNull(bytes);
         if (offset < 0 || length < 0 || offset > bytes.Length - length)
             throw new IndexOutOfRangeException();
-        return new MemoryStream(
+        var stream = new MemoryStream(
             bytes.Skip(offset).Take(length).Select(value => unchecked((byte)value)).ToArray());
+        InputStreamMark(stream, int.MaxValue);
+        return stream;
     }
     internal static sbyte[] ToSignedBytes(MemoryStream stream) =>
         stream.ToArray().Select(value => unchecked((sbyte)value)).ToArray();

@@ -31,10 +31,18 @@ internal static class PdfCartonImageIO
         source switch
         {
             Stream stream => new JavaImageInputStream(stream),
+            FileInfo file => OpenImageInputStream(file),
             _ => throw new ArgumentException(
-                "Image input must be a readable stream.",
+                "Image input must be a readable stream or file.",
                 nameof(source))
         };
+
+    private static JavaImageInputStream OpenImageInputStream(FileInfo file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        using var stream = file.OpenRead();
+        return new JavaImageInputStream(stream);
+    }
 
     internal static JavaImageOutputStream CreateImageOutputStream(object destination) =>
         destination switch
@@ -1107,6 +1115,9 @@ public sealed class JavaImageMetadata
         }
     }
 
+    internal int ComponentCount => componentCount;
+    internal int? AdobeTransform => adobeTransform;
+
     private static (int Components, int? AdobeTransform) ReadJpegMetadata(
         byte[] encoded)
     {
@@ -1180,21 +1191,21 @@ public sealed class JavaImageReader : IDisposable
     public int GetWidth(int imageIndex)
     {
         RequireImageIndex(imageIndex);
-        using var bitmap = Decode();
+        using var bitmap = Decode(imageIndex);
         return bitmap.Width;
     }
 
     public int GetHeight(int imageIndex)
     {
         RequireImageIndex(imageIndex);
-        using var bitmap = Decode();
+        using var bitmap = Decode(imageIndex);
         return bitmap.Height;
     }
 
     public SKBitmap Read(int imageIndex, JavaImageReadParam? parameters)
     {
         RequireImageIndex(imageIndex);
-        var bitmap = Decode();
+        var bitmap = Decode(imageIndex);
         return ApplyReadParameters(bitmap, parameters);
     }
 
@@ -1203,7 +1214,61 @@ public sealed class JavaImageReader : IDisposable
         JavaImageReadParam? parameters)
     {
         using var image = Read(imageIndex, parameters);
-        return PdfCartonFontCompat.GetImageData(image);
+        var raster = PdfCartonFontCompat.GetImageData(image);
+        if (!formatName.Equals("JPEG", StringComparison.OrdinalIgnoreCase))
+            return raster;
+        var metadata = new JavaImageMetadata(RequireInput().Bytes);
+        return metadata.ComponentCount == 4 && raster.NumberOfBands == 3
+            ? CreateFourChannelJpegRaster(raster, metadata.AdobeTransform)
+            : raster;
+    }
+
+    private static JavaRaster CreateFourChannelJpegRaster(
+        JavaRaster rgb,
+        int? adobeTransform)
+    {
+        var result = new JavaRaster(
+            PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE,
+            rgb.Width,
+            rgb.Height,
+            4);
+        var source = new int[3];
+        var destination = new int[4];
+        for (var y = 0; y < rgb.Height; y++)
+        {
+            for (var x = 0; x < rgb.Width; x++)
+            {
+                rgb.GetPixel(x, y, source);
+                var red = source[0];
+                var green = source[1];
+                var blue = source[2];
+                if (adobeTransform is 1 or 2)
+                {
+                    destination[0] = Math.Clamp(
+                        (int)Math.Round(0.299 * red + 0.587 * green + 0.114 * blue),
+                        0,
+                        255);
+                    destination[1] = Math.Clamp(
+                        (int)Math.Round(128 - 0.168736 * red - 0.331264 * green + 0.5 * blue),
+                        0,
+                        255);
+                    destination[2] = Math.Clamp(
+                        (int)Math.Round(128 + 0.5 * red - 0.418688 * green - 0.081312 * blue),
+                        0,
+                        255);
+                    destination[3] = 0;
+                }
+                else
+                {
+                    destination[0] = 255 - red;
+                    destination[1] = 255 - green;
+                    destination[2] = 255 - blue;
+                    destination[3] = 0;
+                }
+                result.SetPixel(x, y, destination);
+            }
+        }
+        return result;
     }
 
     public JavaImageMetadata GetImageMetadata(int imageIndex)
@@ -1211,7 +1276,7 @@ public sealed class JavaImageReader : IDisposable
         RequireImageIndex(imageIndex);
         if (formatName.Equals("JPEG", StringComparison.OrdinalIgnoreCase))
             return new JavaImageMetadata(RequireInput().Bytes);
-        using var bitmap = Decode();
+        using var bitmap = Decode(imageIndex);
         return new JavaImageMetadata(
             PdfCartonFontCompat.GetColorModel(bitmap).NumberOfComponents);
     }
@@ -1221,8 +1286,18 @@ public sealed class JavaImageReader : IDisposable
         input = null;
     }
 
-    private SKBitmap Decode()
+    private SKBitmap Decode(int imageIndex)
     {
+        if (formatName.Equals("TIFF", StringComparison.OrdinalIgnoreCase) ||
+            formatName.Equals("TIF", StringComparison.OrdinalIgnoreCase))
+        {
+            return PdfCartonFontCompat.DecodeImage(
+                RequireInput().Bytes,
+                imageIndex);
+        }
+        if (imageIndex != 0)
+            throw new IndexOutOfRangeException(
+                "This image reader exposes a single image.");
         if (PdfCartonImageCodecs.Supports(formatName))
             return PdfCartonImageCodecs.Decode(formatName, RequireInput().Bytes);
         using var stream = new MemoryStream(
@@ -1246,9 +1321,9 @@ public sealed class JavaImageReader : IDisposable
 
     private static void RequireImageIndex(int imageIndex)
     {
-        if (imageIndex != 0)
+        if (imageIndex < 0)
             throw new IndexOutOfRangeException(
-                "This image reader exposes a single image.");
+                "Image index must not be negative.");
     }
 
     private static SKBitmap ApplyReadParameters(
@@ -1606,6 +1681,9 @@ public sealed class JavaRaster
             PdfCartonFontCompat.TYPE_INT_RGB or
             PdfCartonFontCompat.TYPE_INT_ARGB or
             PdfCartonFontCompat.TYPE_INT_BGR => PdfCartonFontCompat.DATA_BUFFER_TYPE_INT,
+            PdfCartonFontCompat.TYPE_CUSTOM when
+                bitmap.ColorType == SKColorType.Bgra8888 =>
+                PdfCartonFontCompat.DATA_BUFFER_TYPE_INT,
             _ => PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE
         };
         pixelStride = numberOfBands;
@@ -1857,7 +1935,8 @@ public sealed class JavaRaster
                     var color = bitmap.GetPixel(column, row);
                     values[offset++] = imageType == PdfCartonFontCompat.TYPE_INT_BGR
                         ? color.Red | color.Green << 8 | color.Blue << 16
-                        : unchecked((int)((imageType == PdfCartonFontCompat.TYPE_INT_ARGB
+                        : unchecked((int)(((imageType == PdfCartonFontCompat.TYPE_INT_ARGB ||
+                                            bitmap.AlphaType != SKAlphaType.Opaque)
                                                ? (uint)color.Alpha << 24
                                                : 0) |
                                           (uint)color.Red << 16 |
@@ -2231,10 +2310,47 @@ public sealed class PdfCartonAffineTransformOp
 
 public sealed class JavaColorConvertOp
 {
-    public SKBitmap Filter(SKBitmap source, SKBitmap destination)
+    private readonly JavaColorSpace? destinationColorSpace;
+
+    public JavaColorConvertOp()
+    {
+    }
+
+    public JavaColorConvertOp(
+        JavaColorSpace sourceColorSpace,
+        JavaColorSpace destinationColorSpace)
+    {
+        ArgumentNullException.ThrowIfNull(sourceColorSpace);
+        this.destinationColorSpace = destinationColorSpace ??
+            throw new ArgumentNullException(nameof(destinationColorSpace));
+    }
+
+    public JavaColorConvertOp(JavaColorSpace destinationColorSpace)
+    {
+        this.destinationColorSpace = destinationColorSpace ??
+            throw new ArgumentNullException(nameof(destinationColorSpace));
+    }
+
+    public SKBitmap Filter(SKBitmap source, SKBitmap? destination)
     {
         ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(destination);
+        if (destination is null)
+        {
+            var colorSpace = destinationColorSpace ??
+                PdfCartonFontCompat.GetColorModel(source).ColorSpace;
+            var colorModel = new JavaColorModel(
+                colorSpace,
+                false,
+                PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+            var raster = colorModel.CreateCompatibleWritableRaster(
+                source.Width,
+                source.Height);
+            destination = PdfCartonFontCompat.CreateImage(
+                colorModel,
+                raster,
+                false,
+                null);
+        }
         if (source.Width != destination.Width ||
             source.Height != destination.Height)
         {
@@ -2896,25 +3012,30 @@ public class JavaColorModel
     private readonly int imageType;
     private readonly JavaColorSpace? explicitColorSpace;
     private readonly bool? explicitAlpha;
+    private readonly int? explicitTransparency;
     private readonly int explicitDataType;
     private readonly int? explicitPixelSize;
     private readonly int[]? explicitComponentBits;
+    private readonly int[]? explicitMasks;
 
-    internal JavaColorModel(int imageType)
+    internal JavaColorModel(int imageType, int? transparency = null)
     {
         this.imageType = imageType;
-        ColorSpace = imageType is PdfCartonFontCompat.TYPE_BYTE_GRAY or PdfCartonFontCompat.TYPE_BYTE_BINARY
+        explicitTransparency = transparency;
+        ColorSpace = imageType == PdfCartonFontCompat.TYPE_BYTE_GRAY
             ? new JavaColorSpace(JavaColorSpace.CS_GRAY)
             : new JavaIccColorSpace(
                 JavaColorSpace.CS_sRGB,
                 PdfCartonFontCompat.GetIccProfile(JavaColorSpace.CS_sRGB));
+        if (imageType == PdfCartonFontCompat.TYPE_BYTE_BINARY)
+            Palette = [SKColors.Black, SKColors.White];
     }
 
     internal JavaColorModel(
         JavaColorSpace colorSpace,
         bool hasAlpha,
         int dataType)
-        : this(colorSpace, hasAlpha, dataType, null)
+        : this(colorSpace, hasAlpha, dataType, null, null)
     {
     }
 
@@ -2923,11 +3044,22 @@ public class JavaColorModel
         bool hasAlpha,
         int dataType,
         int[]? componentBits)
+        : this(colorSpace, hasAlpha, dataType, componentBits, null)
+    {
+    }
+
+    internal JavaColorModel(
+        JavaColorSpace colorSpace,
+        bool hasAlpha,
+        int dataType,
+        int[]? componentBits,
+        int? transparency)
     {
         imageType = PdfCartonFontCompat.TYPE_CUSTOM;
         explicitColorSpace = colorSpace ??
             throw new ArgumentNullException(nameof(colorSpace));
         explicitAlpha = hasAlpha;
+        explicitTransparency = transparency;
         explicitDataType = dataType;
         if (componentBits is not null)
         {
@@ -2942,6 +3074,25 @@ public class JavaColorModel
             explicitComponentBits = (int[])componentBits.Clone();
         }
         ColorSpace = colorSpace;
+    }
+
+    internal JavaColorModel(
+        JavaColorSpace colorSpace,
+        bool hasAlpha,
+        int dataType,
+        int[] masks,
+        bool packed)
+        : this(colorSpace, hasAlpha, dataType, null, null)
+    {
+        ArgumentNullException.ThrowIfNull(masks);
+        if (!packed || masks.Length != NumberOfComponents ||
+            masks.Any(mask => mask == 0))
+        {
+            throw new ArgumentException(
+                "Packed masks must describe every color and alpha component.",
+                nameof(masks));
+        }
+        explicitMasks = (int[])masks.Clone();
     }
 
     internal JavaColorModel(
@@ -2981,6 +3132,10 @@ public class JavaColorModel
     }
 
     internal SKColor[]? Palette { get; }
+    internal int RasterBandCount =>
+        Palette is not null || explicitMasks is not null
+            ? 1
+            : NumberOfComponents;
 
     public int PixelSize => imageType switch
     {
@@ -2999,16 +3154,23 @@ public class JavaColorModel
 
     public bool HasAlpha =>
         explicitAlpha ??
+        explicitTransparency is PdfCartonTransparency.BITMASK or
+            PdfCartonTransparency.TRANSLUCENT ||
         imageType is PdfCartonFontCompat.TYPE_INT_ARGB or PdfCartonFontCompat.TYPE_4BYTE_ABGR;
+    public int Transparency => explicitTransparency ??
+        (HasAlpha
+            ? PdfCartonTransparency.TRANSLUCENT
+            : PdfCartonTransparency.OPAQUE);
     public int NumberOfComponents => NumberOfColorComponents + (HasAlpha ? 1 : 0);
     public int NumberOfColorComponents =>
         explicitColorSpace?.NumberOfComponents ??
-        (imageType is PdfCartonFontCompat.TYPE_BYTE_GRAY or
-            PdfCartonFontCompat.TYPE_BYTE_BINARY ? 1 : 3);
+        (imageType == PdfCartonFontCompat.TYPE_BYTE_GRAY ? 1 : 3);
     public JavaColorSpace ColorSpace { get; }
 
     public JavaRaster CreateCompatibleWritableRaster(int width, int height)
     {
+        if (imageType == PdfCartonFontCompat.TYPE_BYTE_BINARY)
+            return JavaRaster.Packed(width, height, 1);
         if (Palette is not null)
         {
             if (explicitPixelSize is 1 or 2 or 4)
@@ -3059,6 +3221,24 @@ public class JavaColorModel
             components[offset] = color.Red / 255f;
             components[offset + 1] = color.Green / 255f;
             components[offset + 2] = color.Blue / 255f;
+            if (HasAlpha)
+                components[offset + NumberOfColorComponents] = color.Alpha / 255f;
+            return components;
+        }
+
+
+        if (explicitMasks is not null &&
+            pixel is int[] masked && masked.Length > 0)
+        {
+            var packedValue = unchecked((uint)masked[0]);
+            for (var component = 0; component < explicitMasks.Length; component++)
+            {
+                var mask = unchecked((uint)explicitMasks[component]);
+                var shift = BitOperations.TrailingZeroCount(mask);
+                var maximum = mask >> shift;
+                components[offset + component] =
+                    ((packedValue & mask) >> shift) / (float)maximum;
+            }
             return components;
         }
 
@@ -3088,7 +3268,9 @@ public class JavaColorModel
 
         for (var component = 0; component < NumberOfComponents; component++)
         {
-            var maximum = explicitComponentBits is null
+            var maximum = imageType == PdfCartonFontCompat.TYPE_BYTE_BINARY
+                ? 1d
+                : explicitComponentBits is null
                 ? explicitDataType == PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT
                     ? 65535d
                     : 255d
@@ -3142,6 +3324,25 @@ public class JavaColorModel
             if (indexed.Length == 0) throw new IndexOutOfRangeException();
             indexed[0] = unchecked((sbyte)closestIndex);
             return indexed;
+        }
+
+
+        if (explicitMasks is not null)
+        {
+            uint packedValue = 0;
+            for (var component = 0; component < explicitMasks.Length; component++)
+            {
+                var mask = unchecked((uint)explicitMasks[component]);
+                var shift = BitOperations.TrailingZeroCount(mask);
+                var maximum = mask >> shift;
+                var value = (uint)MathF.Round(
+                    Math.Clamp(components[offset + component], 0f, 1f) * maximum);
+                packedValue |= value << shift & mask;
+            }
+            var masked = pixel as int[] ?? new int[1];
+            if (masked.Length == 0) throw new IndexOutOfRangeException();
+            masked[0] = unchecked((int)packedValue);
+            return masked;
         }
 
         if (imageType is PdfCartonFontCompat.TYPE_INT_RGB or
@@ -3205,7 +3406,9 @@ public class JavaColorModel
         if (bytes.Length < NumberOfComponents) throw new IndexOutOfRangeException();
         for (var component = 0; component < NumberOfComponents; component++)
         {
-            var maximum = explicitComponentBits is null
+            var maximum = imageType == PdfCartonFontCompat.TYPE_BYTE_BINARY
+                ? 1f
+                : explicitComponentBits is null
                 ? 255f
                 : (float)(Math.Pow(2d, explicitComponentBits[component]) - 1d);
             bytes[component] = unchecked((sbyte)(int)MathF.Round(
@@ -3405,7 +3608,10 @@ public sealed class JavaIccColorSpace : JavaColorSpace
 
     public JavaIccColorSpace(JavaIccProfile profile)
         : base(
-            0,
+            profile is not null &&
+                PdfCartonFontCompat.IsStandardSrgbProfile(profile)
+                ? CS_sRGB
+                : 0,
             (profile ?? throw new ArgumentNullException(nameof(profile)))
                 .GetColorSpaceType(),
             profile.NumberOfComponents)
@@ -3415,9 +3621,11 @@ public sealed class JavaIccColorSpace : JavaColorSpace
 
     public JavaIccProfile Profile { get; }
 
-    public override float[] ToRgb(float[] components) => Profile.ToRgb(components);
+    public override float[] ToRgb(float[] components) =>
+        IsSrgb ? base.ToRgb(components) : Profile.ToRgb(components);
 
-    public override float[] FromRgb(float[] rgb) => Profile.FromRgb(rgb);
+    public override float[] FromRgb(float[] rgb) =>
+        IsSrgb ? base.FromRgb(rgb) : Profile.FromRgb(rgb);
 
     public override float GetMinValue(int component)
     {
@@ -4573,6 +4781,7 @@ public class PdfCartonGraphics2D : IDisposable
                 : CreateDrawingPaint(stroked);
             ApplyFallbackComposite(directPaint);
             draw(RequireCanvas(), directPaint);
+            QuantizeBinaryDestination();
             return;
         }
         if (bitmap is null)
@@ -4758,6 +4967,26 @@ public class PdfCartonGraphics2D : IDisposable
         {
             throw new InvalidOperationException(
                 "Custom Java composites require a bitmap-backed CPU canvas.");
+        }
+    }
+
+    private void QuantizeBinaryDestination()
+    {
+        if (bitmap is null ||
+            PdfCartonFontCompat.GetImageType(bitmap) !=
+                PdfCartonFontCompat.TYPE_BYTE_BINARY)
+        {
+            return;
+        }
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var value = bitmap.GetPixel(x, y).Red < 128
+                    ? byte.MinValue
+                    : byte.MaxValue;
+                bitmap.SetPixel(x, y, new SKColor(value, value, value));
+            }
         }
     }
 
@@ -5076,6 +5305,16 @@ public sealed class JavaArea
 
     public JavaPathIterator GetPathIterator(object? transform) =>
         new(path, transform);
+
+    public override bool Equals(object? value)
+    {
+        if (ReferenceEquals(this, value)) return true;
+        if (value is not JavaArea other) return false;
+        using var difference = new SKPath();
+        return path.Op(other.path, SKPathOp.Xor, difference) && difference.IsEmpty;
+    }
+
+    public override int GetHashCode() => Bounds.GetHashCode();
 }
 
 internal static class PdfCartonFontCompat
@@ -5107,18 +5346,21 @@ internal static class PdfCartonFontCompat
             int type,
             JavaColorModel? colorModel = null,
             JavaRaster? raster = null,
-            JavaSampleModel? sampleModel = null)
+            JavaSampleModel? sampleModel = null,
+            int? transparency = null)
         {
             Type = type;
             ColorModel = colorModel;
             Raster = raster;
             SampleModel = sampleModel;
+            Transparency = transparency;
         }
 
         internal int Type { get; }
         internal JavaColorModel? ColorModel { get; }
         internal JavaRaster? Raster { get; }
         internal JavaSampleModel? SampleModel { get; }
+        internal int? Transparency { get; }
     }
 
     private static readonly ConditionalWeakTable<SKBitmap, ImageMetadata> ImageMetadataByBitmap = new();
@@ -5133,19 +5375,570 @@ internal static class PdfCartonFontCompat
     internal static SKBitmap ReadImage(FileInfo file)
     {
         ArgumentNullException.ThrowIfNull(file);
-        var bitmap = SKBitmap.Decode(file.FullName)
-            ?? throw new IOException($"Unsupported or invalid image: {file.FullName}");
-        RegisterImageType(bitmap, InferImageType(bitmap));
-        return bitmap;
+        try
+        {
+            return DecodeImage(File.ReadAllBytes(file.FullName));
+        }
+        catch (IOException error)
+        {
+            throw new IOException($"Unsupported or invalid image: {file.FullName}", error);
+        }
     }
 
     internal static SKBitmap ReadImage(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        var bitmap = SKBitmap.Decode(stream)
-            ?? throw new IOException("Unsupported or invalid image stream.");
-        RegisterImageType(bitmap, InferImageType(bitmap));
+        using var encoded = new MemoryStream();
+        stream.CopyTo(encoded);
+        return DecodeImage(encoded.ToArray());
+    }
+
+    internal static SKBitmap DecodeImage(byte[] encoded, int imageIndex = 0)
+    {
+        if (imageIndex < 0)
+            throw new IndexOutOfRangeException(
+                "Image index must not be negative.");
+        var sixteenBitPng = DecodeSixteenBitPng(encoded);
+        if (sixteenBitPng is not null)
+        {
+            if (imageIndex == 0) return sixteenBitPng;
+            sixteenBitPng.Dispose();
+            throw new IndexOutOfRangeException(
+                "This image stream exposes a single image.");
+        }
+        SKBitmap? bitmap;
+        if (IsTiff(encoded))
+        {
+            bitmap = DecodeTiff(encoded, imageIndex);
+        }
+        else
+        {
+            if (imageIndex != 0)
+                throw new IndexOutOfRangeException(
+                    "This image stream exposes a single image.");
+            try
+            {
+                bitmap = DecodeSkia(encoded);
+            }
+            catch (ArgumentNullException)
+            {
+                bitmap = null;
+            }
+        }
+        if (bitmap is null) throw new IOException("Unsupported or invalid image stream.");
+        if (!IsTiff(encoded))
+        {
+            RegisterImageType(
+                bitmap,
+                IsGif(encoded)
+                    ? InferGifImageType(encoded)
+                    : InferImageType(bitmap));
+        }
         return bitmap;
+    }
+
+    private static SKBitmap? DecodeSixteenBitPng(byte[] encoded)
+    {
+        ReadOnlySpan<byte> signature =
+            [137, 80, 78, 71, 13, 10, 26, 10];
+        if (encoded.Length < 33 ||
+            !encoded.AsSpan(0, signature.Length).SequenceEqual(signature))
+        {
+            return null;
+        }
+
+        static int ReadInt32(byte[] bytes, int offset) => checked((int)(
+            (uint)bytes[offset] << 24 |
+            (uint)bytes[offset + 1] << 16 |
+            (uint)bytes[offset + 2] << 8 |
+            bytes[offset + 3]));
+
+        var width = 0;
+        var height = 0;
+        var componentCount = 0;
+        using var compressed = new MemoryStream();
+        for (var offset = 8; offset + 12 <= encoded.Length;)
+        {
+            var length = ReadInt32(encoded, offset);
+            var dataOffset = checked(offset + 8);
+            var nextOffset = checked(dataOffset + length + 4);
+            if (length < 0 || nextOffset > encoded.Length)
+                throw new IOException("Invalid PNG chunk length.");
+            var chunkType = encoded.AsSpan(offset + 4, 4);
+            if (chunkType.SequenceEqual("IHDR"u8))
+            {
+                if (length != 13)
+                    throw new IOException("Invalid PNG image header.");
+                width = ReadInt32(encoded, dataOffset);
+                height = ReadInt32(encoded, dataOffset + 4);
+                if (encoded[dataOffset + 8] != 16)
+                    return null;
+                componentCount = encoded[dataOffset + 9] switch
+                {
+                    2 => 3,
+                    6 => 4,
+                    _ => 0
+                };
+                if (componentCount == 0)
+                    return null;
+                if (encoded[dataOffset + 10] != 0 ||
+                    encoded[dataOffset + 11] != 0 ||
+                    encoded[dataOffset + 12] != 0)
+                {
+                    return null;
+                }
+            }
+            else if (chunkType.SequenceEqual("IDAT"u8))
+            {
+                compressed.Write(encoded, dataOffset, length);
+            }
+            else if (chunkType.SequenceEqual("IEND"u8))
+            {
+                break;
+            }
+            offset = nextOffset;
+        }
+        if (width <= 0 || height <= 0 ||
+            componentCount == 0 || compressed.Length == 0)
+        {
+            throw new IOException("Incomplete 16-bit PNG image.");
+        }
+
+        compressed.Position = 0;
+        using var inflated = new MemoryStream();
+        using (var zlib = new ZLibStream(
+                   compressed,
+                   CompressionMode.Decompress,
+                   leaveOpen: true))
+        {
+            zlib.CopyTo(inflated);
+        }
+        var filtered = inflated.ToArray();
+        var bytesPerPixel = checked(componentCount * 2);
+        var rowLength = checked(width * bytesPerPixel);
+        if (filtered.Length != checked((rowLength + 1) * height))
+            throw new IOException("Unexpected 16-bit PNG scanline length.");
+
+        var raster = new JavaRaster(
+            DATA_BUFFER_TYPE_USHORT,
+            width,
+            height,
+            componentCount);
+        var previous = new byte[rowLength];
+        var current = new byte[rowLength];
+        var sourceOffset = 0;
+        var pixel = new short[componentCount];
+        for (var y = 0; y < height; y++)
+        {
+            var filter = filtered[sourceOffset++];
+            Array.Copy(filtered, sourceOffset, current, 0, rowLength);
+            sourceOffset += rowLength;
+            UnfilterPngRow(current, previous, bytesPerPixel, filter);
+            for (var x = 0; x < width; x++)
+            {
+                var pixelOffset = x * bytesPerPixel;
+                for (var component = 0; component < componentCount; component++)
+                {
+                    var componentOffset = pixelOffset + component * 2;
+                    pixel[component] = unchecked((short)(ushort)(
+                        current[componentOffset] << 8 |
+                        current[componentOffset + 1]));
+                }
+                raster.SetDataElements(x, y, pixel);
+            }
+            (previous, current) = (current, previous);
+        }
+
+        var hasAlpha = componentCount == 4;
+        var colorModel = new JavaColorModel(
+            GetColorSpace(JavaColorSpace.CS_sRGB),
+            hasAlpha,
+            DATA_BUFFER_TYPE_USHORT,
+            Enumerable.Repeat(16, componentCount).ToArray(),
+            hasAlpha
+                ? PdfCartonTransparency.TRANSLUCENT
+                : PdfCartonTransparency.OPAQUE);
+        return CreateImage(colorModel, raster, false, null);
+    }
+
+    private static void UnfilterPngRow(
+        byte[] current,
+        byte[] previous,
+        int bytesPerPixel,
+        byte filter)
+    {
+        for (var index = 0; index < current.Length; index++)
+        {
+            var left = index >= bytesPerPixel
+                ? current[index - bytesPerPixel]
+                : 0;
+            var above = previous[index];
+            var upperLeft = index >= bytesPerPixel
+                ? previous[index - bytesPerPixel]
+                : 0;
+            var predictor = filter switch
+            {
+                0 => 0,
+                1 => left,
+                2 => above,
+                3 => (left + above) / 2,
+                4 => PngPaeth(left, above, upperLeft),
+                _ => throw new IOException("Unsupported PNG scanline filter.")
+            };
+            current[index] = unchecked((byte)(current[index] + predictor));
+        }
+    }
+
+    private static int PngPaeth(int left, int above, int upperLeft)
+    {
+        var estimate = left + above - upperLeft;
+        var leftDistance = Math.Abs(estimate - left);
+        var aboveDistance = Math.Abs(estimate - above);
+        var upperLeftDistance = Math.Abs(estimate - upperLeft);
+        return leftDistance <= aboveDistance && leftDistance <= upperLeftDistance
+            ? left
+            : aboveDistance <= upperLeftDistance ? above : upperLeft;
+    }
+
+    private static bool IsGif(byte[] encoded) =>
+        encoded.Length >= 13 &&
+        encoded[0] == (byte)'G' &&
+        encoded[1] == (byte)'I' &&
+        encoded[2] == (byte)'F' &&
+        encoded[3] == (byte)'8' &&
+        encoded[5] == (byte)'a';
+
+    private static int InferGifImageType(byte[] encoded)
+    {
+        var packedFields = encoded[10];
+        var hasGlobalColorTable = (packedFields & 0x80) != 0;
+        var paletteSize = hasGlobalColorTable
+            ? 1 << ((packedFields & 0x07) + 1)
+            : 0;
+        return paletteSize == 2 ? TYPE_BYTE_BINARY : TYPE_CUSTOM;
+    }
+
+    private static SKBitmap? DecodeSkia(byte[] encoded)
+    {
+        using var data = SKData.CreateCopy(encoded);
+        using var codec = SKCodec.Create(data);
+        if (codec is null) return null;
+        var source = codec.Info;
+        var info = new SKImageInfo(
+            source.Width,
+            source.Height,
+            source.ColorType == SKColorType.Gray8
+                ? SKColorType.Gray8
+                : SKColorType.Bgra8888,
+            source.AlphaType == SKAlphaType.Opaque
+                ? SKAlphaType.Opaque
+                : SKAlphaType.Unpremul,
+            source.ColorSpace);
+        var bitmap = new SKBitmap(info);
+        var result = codec.GetPixels(info, bitmap.GetPixels());
+        if (result == SKCodecResult.Success || result == SKCodecResult.IncompleteInput)
+            return bitmap;
+        bitmap.Dispose();
+        return null;
+    }
+
+    private static bool IsTiff(byte[] encoded) =>
+        encoded.Length >= 4 &&
+        ((encoded[0] == (byte)'I' && encoded[1] == (byte)'I' &&
+          encoded[2] == 42 && encoded[3] == 0) ||
+         (encoded[0] == (byte)'M' && encoded[1] == (byte)'M' &&
+          encoded[2] == 0 && encoded[3] == 42));
+
+    private static SKBitmap DecodeTiff(byte[] encoded, int imageIndex)
+    {
+        var littleEndian = encoded[0] == (byte)'I';
+        ushort U16(int offset)
+        {
+            if ((uint)offset > encoded.Length - 2) throw new IOException("Truncated TIFF field.");
+            return littleEndian
+                ? (ushort)(encoded[offset] | encoded[offset + 1] << 8)
+                : (ushort)(encoded[offset] << 8 | encoded[offset + 1]);
+        }
+        uint U32(int offset)
+        {
+            if ((uint)offset > encoded.Length - 4) throw new IOException("Truncated TIFF field.");
+            return littleEndian
+                ? (uint)(encoded[offset] | encoded[offset + 1] << 8 |
+                         encoded[offset + 2] << 16 | encoded[offset + 3] << 24)
+                : (uint)(encoded[offset] << 24 | encoded[offset + 1] << 16 |
+                         encoded[offset + 2] << 8 | encoded[offset + 3]);
+        }
+
+        var ifdOffset = checked((int)U32(4));
+        for (var currentIndex = 0; currentIndex < imageIndex; currentIndex++)
+        {
+            var currentEntryCount = U16(ifdOffset);
+            var nextOffsetLocation = checked(ifdOffset + 2 + currentEntryCount * 12);
+            var nextIfdOffset = U32(nextOffsetLocation);
+            if (nextIfdOffset == 0)
+                throw new IndexOutOfRangeException(
+                    $"TIFF image index {imageIndex} does not exist.");
+            ifdOffset = checked((int)nextIfdOffset);
+        }
+        var entryCount = U16(ifdOffset);
+        var tags = new Dictionary<ushort, uint[]>();
+        for (var index = 0; index < entryCount; index++)
+        {
+            var entry = checked(ifdOffset + 2 + index * 12);
+            var tag = U16(entry);
+            var type = U16(entry + 2);
+            var count = checked((int)U32(entry + 4));
+            var elementSize = type switch { 1 => 1, 3 => 2, 4 => 4, _ => 0 };
+            if (elementSize == 0) continue;
+            var byteCount = checked(count * elementSize);
+            var valueOffset = byteCount <= 4 ? entry + 8 : checked((int)U32(entry + 8));
+            var values = new uint[count];
+            for (var valueIndex = 0; valueIndex < count; valueIndex++)
+            {
+                var offset = checked(valueOffset + valueIndex * elementSize);
+                values[valueIndex] = type switch
+                {
+                    1 => offset < encoded.Length
+                        ? encoded[offset]
+                        : throw new IOException("Truncated TIFF byte field."),
+                    3 => U16(offset),
+                    _ => U32(offset)
+                };
+            }
+            tags[tag] = values;
+        }
+
+        uint Required(ushort tag) =>
+            tags.TryGetValue(tag, out var values) && values.Length != 0
+                ? values[0]
+                : throw new IOException($"Required TIFF tag {tag} is missing.");
+        uint Optional(ushort tag, uint fallback) =>
+            tags.TryGetValue(tag, out var values) && values.Length != 0
+                ? values[0]
+                : fallback;
+
+        var width = checked((int)Required(256));
+        var height = checked((int)Required(257));
+        var bits = tags.TryGetValue(258, out var bitValues) ? bitValues : new uint[] { 1 };
+        var compression = Optional(259, 1);
+        var photometric = Optional(262, 1);
+        var fillOrder = Optional(266, 1);
+        var samples = checked((int)Optional(277, 1));
+        var rowsPerStrip = checked((int)Optional(278, (uint)height));
+        var planar = Optional(284, 1);
+        var predictor = Optional(317, 1);
+        var t4Options = Optional(292, 0);
+        var t6Options = Optional(293, 0);
+        if (width <= 0 || height <= 0 || rowsPerStrip <= 0 ||
+            planar != 1 || bits.Length != samples ||
+            bits.Any(value => value != bits[0]) ||
+            bits[0] is not 1 and not 8 ||
+            samples is not 1 and not 3 and not 4 ||
+            compression is not 1 and not 2 and not 3 and not 4 and not 5 ||
+            fillOrder is not 1 and not 2 ||
+            (compression is 2 or 3 or 4 && (bits[0] != 1 || samples != 1)))
+        {
+            throw new IOException("Unsupported TIFF pixel layout.");
+        }
+        if (!tags.TryGetValue(273, out var stripOffsets) ||
+            !tags.TryGetValue(279, out var stripByteCounts) ||
+            stripOffsets.Length != stripByteCounts.Length)
+        {
+            throw new IOException("Invalid TIFF strip table.");
+        }
+
+        var rowBytes = checked((width * samples * (int)bits[0] + 7) / 8);
+        var pixels = new byte[checked(rowBytes * height)];
+        var destinationOffset = 0;
+        for (var strip = 0; strip < stripOffsets.Length; strip++)
+        {
+            var offset = checked((int)stripOffsets[strip]);
+            var count = checked((int)stripByteCounts[strip]);
+            if (offset < 0 || count < 0 || offset > encoded.Length - count)
+                throw new IOException("Truncated TIFF strip.");
+            var packed = encoded.AsSpan(offset, count).ToArray();
+            var rows = Math.Min(rowsPerStrip, height - strip * rowsPerStrip);
+            var required = checked(rows * rowBytes);
+            if (fillOrder == 2)
+            {
+                for (var byteIndex = 0; byteIndex < packed.Length; byteIndex++)
+                    packed[byteIndex] = ReverseBits(packed[byteIndex]);
+            }
+            var unpacked = compression switch
+            {
+                2 or 3 or 4 => DecodeTiffCcitt(
+                    packed,
+                    width,
+                    rows,
+                    checked((int)compression),
+                    compression == 3 ? t4Options : t6Options),
+                5 => DecodeTiffLzw(packed),
+                _ => packed
+            };
+            if (unpacked.Length < required) throw new IOException("Truncated TIFF pixel strip.");
+            Buffer.BlockCopy(unpacked, 0, pixels, destinationOffset, required);
+            destinationOffset += required;
+        }
+        if (destinationOffset < pixels.Length) throw new IOException("Incomplete TIFF image.");
+
+        if (predictor == 2 && bits[0] == 8)
+        {
+            for (var y = 0; y < height; y++)
+            {
+                var row = y * rowBytes;
+                for (var x = samples; x < rowBytes; x++)
+                    pixels[row + x] = unchecked((byte)(pixels[row + x] + pixels[row + x - samples]));
+            }
+        }
+        else if (predictor != 1)
+        {
+            throw new IOException("Unsupported TIFF predictor.");
+        }
+
+        var imageType = bits[0] == 1
+            ? TYPE_BYTE_BINARY
+            : samples == 1 ? TYPE_BYTE_GRAY : samples == 4 ? TYPE_4BYTE_ABGR : TYPE_3BYTE_BGR;
+        var result = CreateBitmap(width, height, imageType);
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                byte red;
+                byte green;
+                byte blue;
+                byte alpha = 255;
+                if (bits[0] == 1)
+                {
+                    var set = (pixels[y * rowBytes + x / 8] & (1 << (7 - x % 8))) != 0;
+                    var value = (byte)((set ^ (photometric == 0)) ? 255 : 0);
+                    red = green = blue = value;
+                }
+                else
+                {
+                    var pixel = y * rowBytes + x * samples;
+                    if (samples == 1)
+                    {
+                        var value = pixels[pixel];
+                        if (photometric == 0) value = (byte)(255 - value);
+                        red = green = blue = value;
+                    }
+                    else
+                    {
+                        red = pixels[pixel];
+                        green = pixels[pixel + 1];
+                        blue = pixels[pixel + 2];
+                        if (samples == 4) alpha = pixels[pixel + 3];
+                    }
+                }
+                result.SetPixel(x, y, new SKColor(red, green, blue, alpha));
+            }
+        }
+        return result;
+    }
+
+    private static byte ReverseBits(byte value)
+    {
+        value = (byte)((value >> 4) | (value << 4));
+        value = (byte)(((value & 0xcc) >> 2) | ((value & 0x33) << 2));
+        return (byte)(((value & 0xaa) >> 1) | ((value & 0x55) << 1));
+    }
+
+    private static byte[] DecodeTiffCcitt(
+        byte[] encoded,
+        int width,
+        int rows,
+        int compression,
+        uint options)
+    {
+#if DRIPSHARP_PDFBOX_CRYPTO
+        var rowBytes = checked((width + 7) / 8);
+        var result = new byte[checked(rowBytes * rows)];
+        using var source = new MemoryStream(encoded, writable: false);
+        using var decoder =
+            new DripSharp.PdfCarton.Filter.CCITTFaxDecoderStream(
+                source,
+                width,
+                compression,
+                options,
+                byteAligned: false);
+        var offset = 0;
+        while (offset < result.Length)
+        {
+            var read = decoder.Read(result, offset, result.Length - offset);
+            if (read <= 0)
+                throw new IOException("Truncated TIFF CCITT strip.");
+            offset += read;
+        }
+        return result;
+#else
+        _ = encoded;
+        _ = width;
+        _ = rows;
+        _ = compression;
+        _ = options;
+        throw new IOException(
+            "CCITT-compressed TIFF images require the PdfCarton PDF assembly.");
+#endif
+    }
+
+    private static byte[] DecodeTiffLzw(byte[] encoded)
+    {
+        var dictionary = new byte[4096][];
+        var nextCode = 258;
+        var codeWidth = 9;
+        void Reset()
+        {
+            Array.Clear(dictionary);
+            for (var value = 0; value < 256; value++) dictionary[value] = [(byte)value];
+            nextCode = 258;
+            codeWidth = 9;
+        }
+        var bitOffset = 0;
+        int ReadCode()
+        {
+            if (bitOffset + codeWidth > encoded.Length * 8) return -1;
+            var code = 0;
+            for (var bit = 0; bit < codeWidth; bit++, bitOffset++)
+                code = code << 1 | (encoded[bitOffset / 8] >> (7 - bitOffset % 8) & 1);
+            return code;
+        }
+        static byte[] Extend(byte[] prefix, byte value)
+        {
+            var result = new byte[prefix.Length + 1];
+            Buffer.BlockCopy(prefix, 0, result, 0, prefix.Length);
+            result[^1] = value;
+            return result;
+        }
+
+        Reset();
+        using var output = new MemoryStream();
+        byte[]? previous = null;
+        while (true)
+        {
+            var code = ReadCode();
+            if (code < 0 || code == 257) break;
+            if (code == 256)
+            {
+                Reset();
+                previous = null;
+                continue;
+            }
+            byte[] entry;
+            if (code < nextCode && dictionary[code] is not null)
+                entry = dictionary[code];
+            else if (code == nextCode && previous is not null)
+                entry = Extend(previous, previous[0]);
+            else
+                throw new IOException("Invalid TIFF LZW code.");
+            output.Write(entry);
+            if (previous is not null && nextCode < dictionary.Length)
+            {
+                dictionary[nextCode++] = Extend(previous, entry[0]);
+                if (codeWidth < 12 && nextCode == (1 << codeWidth) - 1) codeWidth++;
+            }
+            previous = entry;
+        }
+        return output.ToArray();
     }
 
     internal static SKBitmap ScaleImage(
@@ -5224,10 +6017,30 @@ internal static class PdfCartonFontCompat
     internal static JavaRaster GetRaster(SKBitmap bitmap)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
-        return ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
-               metadata.Raster is not null
-            ? metadata.Raster
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Raster is not null)
+        {
+            return metadata.Raster;
+        }
+        var imageType = metadata?.Type ?? InferImageType(bitmap);
+        var raster = imageType == TYPE_BYTE_BINARY
+            ? JavaRaster.BinarySnapshot(bitmap)
             : new JavaRaster(bitmap);
+        if (imageType is TYPE_BYTE_BINARY or TYPE_CUSTOM)
+            return raster;
+        var colorModel = metadata?.ColorModel ?? new JavaColorModel(
+            imageType,
+            metadata?.Transparency ?? GetTransparency(bitmap));
+        ImageMetadataByBitmap.Remove(bitmap);
+        ImageMetadataByBitmap.Add(
+            bitmap,
+            new ImageMetadata(
+                imageType,
+                colorModel,
+                raster,
+                metadata?.SampleModel,
+                metadata?.Transparency));
+        return raster;
     }
 
     internal static bool HasManagedImageData(SKBitmap bitmap)
@@ -5248,15 +6061,26 @@ internal static class PdfCartonFontCompat
         }
         return GetImageType(bitmap) == TYPE_BYTE_BINARY
             ? JavaRaster.BinarySnapshot(bitmap)
-            : new JavaRaster(
-                bitmap.Copy() ??
-                throw new InvalidOperationException("Unable to copy image raster data."));
+            : new JavaRaster(bitmap).DeepCopy();
     }
 
-    internal static int GetTransparency(SKBitmap bitmap) =>
-        bitmap.AlphaType == SKAlphaType.Opaque
-            ? PdfCartonTransparency.OPAQUE
-            : PdfCartonTransparency.TRANSLUCENT;
+    internal static int GetTransparency(SKBitmap bitmap)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Transparency.HasValue)
+        {
+            return metadata.Transparency.Value;
+        }
+        if (bitmap.AlphaType == SKAlphaType.Opaque)
+            return PdfCartonTransparency.OPAQUE;
+        foreach (var pixel in bitmap.Pixels)
+        {
+            if (pixel.Alpha is not 0 and not byte.MaxValue)
+                return PdfCartonTransparency.TRANSLUCENT;
+        }
+        return PdfCartonTransparency.BITMASK;
+    }
 
     internal static JavaColorModel GetColorModel(SKBitmap bitmap)
     {
@@ -5264,7 +6088,9 @@ internal static class PdfCartonFontCompat
         return ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
                metadata.ColorModel is not null
             ? metadata.ColorModel
-            : new JavaColorModel(GetImageType(bitmap));
+            : new JavaColorModel(
+                GetImageType(bitmap),
+                metadata?.Transparency ?? GetTransparency(bitmap));
     }
 
     internal static JavaSampleModel GetSampleModel(SKBitmap bitmap)
@@ -5280,9 +6106,10 @@ internal static class PdfCartonFontCompat
             : new JavaSampleModel();
     }
 
-    internal static JavaRaster GetAlphaRaster(SKBitmap bitmap)
+    internal static JavaRaster? GetAlphaRaster(SKBitmap bitmap)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
+        if (!GetColorModel(bitmap).HasAlpha) return null;
         var raster = new JavaRaster(
             DATA_BUFFER_TYPE_BYTE,
             bitmap.Width,
@@ -5369,9 +6196,7 @@ internal static class PdfCartonFontCompat
     {
         ArgumentNullException.ThrowIfNull(colorModel);
         ArgumentNullException.ThrowIfNull(raster);
-        var expectedBands = colorModel.Palette is null
-            ? colorModel.NumberOfComponents
-            : 1;
+        var expectedBands = colorModel.RasterBandCount;
         if (raster.NumberOfBands != expectedBands)
             throw new ArgumentException(
                 "Raster band count does not match the color model.",
@@ -5466,7 +6291,54 @@ internal static class PdfCartonFontCompat
             RenderRaster(bitmap, metadata.ColorModel, metadata.Raster);
             return;
         }
-        bitmap.SetPixel(x, y, FromArgb(argb));
+        var color = FromArgb(argb);
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var imageMetadata) &&
+            imageMetadata.Transparency == PdfCartonTransparency.BITMASK)
+        {
+            color = color.WithAlpha(
+                color.Alpha < 128 ? byte.MinValue : byte.MaxValue);
+        }
+        bitmap.SetPixel(x, y, color);
+    }
+
+    internal static SKBitmap CreateCompatibleImage(
+        int width,
+        int height,
+        int transparency)
+    {
+        if (transparency is not PdfCartonTransparency.OPAQUE and
+            not PdfCartonTransparency.BITMASK and
+            not PdfCartonTransparency.TRANSLUCENT)
+        {
+            throw new ArgumentException(
+                "Invalid transparency constant.",
+                nameof(transparency));
+        }
+        var bitmap = new SKBitmap(
+            width,
+            height,
+            SKColorType.Bgra8888,
+            transparency == PdfCartonTransparency.OPAQUE
+                ? SKAlphaType.Opaque
+                : SKAlphaType.Unpremul);
+        ImageMetadataByBitmap.Add(
+            bitmap,
+            new ImageMetadata(
+                transparency == PdfCartonTransparency.BITMASK
+                    ? TYPE_CUSTOM
+                    : transparency == PdfCartonTransparency.OPAQUE
+                        ? TYPE_INT_RGB
+                        : TYPE_INT_ARGB,
+                colorModel: transparency == PdfCartonTransparency.BITMASK
+                    ? new JavaColorModel(
+                        GetColorSpace(JavaColorSpace.CS_sRGB),
+                        true,
+                        DATA_BUFFER_TYPE_BYTE,
+                        null,
+                        transparency)
+                    : null,
+                transparency: transparency));
+        return bitmap;
     }
 
     private static int ToArgb(SKColor color) =>
@@ -5532,6 +6404,13 @@ internal static class PdfCartonFontCompat
         return StandardSrgbProfile.Value;
     }
 
+    internal static bool IsStandardSrgbProfile(JavaIccProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        return profile.GetData().AsSpan().SequenceEqual(
+            StandardSrgbProfile.Value.GetData());
+    }
+
     private static JavaIccProfile CreateSrgbProfile()
     {
         using var compressed = new MemoryStream(
@@ -5576,7 +6455,12 @@ internal static class PdfCartonFontCompat
             not PdfCartonTransparency.BITMASK and
             not PdfCartonTransparency.TRANSLUCENT)
             throw new ArgumentException("Invalid transparency constant.");
-        return new JavaColorModel(colorSpace, hasAlpha, dataType);
+        return new JavaColorModel(
+            colorSpace,
+            hasAlpha,
+            dataType,
+            null,
+            transparency);
     }
 
     internal static JavaColorModel IndexColorModel(

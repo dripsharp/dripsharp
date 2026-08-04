@@ -447,6 +447,28 @@ internal static class JavaStrictMath
 
 internal static partial class JavaCompat
 {
+    internal readonly struct JavaBigDecimal : IComparable<JavaBigDecimal>, IEquatable<JavaBigDecimal>
+    {
+        internal JavaBigDecimal(BigInteger unscaledValue, int scale)
+        {
+            UnscaledValue = unscaledValue;
+            Scale = scale;
+        }
+
+        internal BigInteger UnscaledValue { get; }
+        internal int Scale { get; }
+
+        public int CompareTo(JavaBigDecimal other) => JavaBigDecimalCompare(this, other);
+        public bool Equals(JavaBigDecimal other) => CompareTo(other) == 0;
+        public override bool Equals(object? obj) => obj is JavaBigDecimal other && Equals(other);
+        public override int GetHashCode()
+        {
+            var normalized = JavaBigDecimalStripTrailingZeros(this);
+            return System.HashCode.Combine(normalized.UnscaledValue, normalized.Scale);
+        }
+        public override string ToString() => JavaBigDecimalToString(this);
+    }
+
     // Port of java.lang.FdLibm.Pow from OpenJDK 21. StrictMath.pow is defined
     // in terms of this fdlibm implementation, and System.Math.Pow can differ
     // by one ulp for ordinary translated Java expressions.
@@ -1140,84 +1162,236 @@ internal static partial class JavaCompat
     internal static int BigIntegerIntValue(BigInteger value) =>
         unchecked((int)(uint)(value & uint.MaxValue));
 
-    internal static decimal BigDecimalParse(string value) =>
-        decimal.Parse(
+    internal static JavaBigDecimal JavaBigDecimalParse(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var match = Regex.Match(
             value,
-            NumberStyles.Number | NumberStyles.AllowExponent,
+            @"^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$",
+            RegexOptions.CultureInvariant);
+        if (!match.Success) throw new FormatException($"Invalid BigDecimal value: {value}");
+
+        var integral = match.Groups[2].Value;
+        var fraction = match.Groups[3].Success
+            ? match.Groups[3].Value
+            : match.Groups[4].Value;
+        var digits = integral + fraction;
+        var unscaled = BigInteger.Parse(
+            match.Groups[1].Value + digits,
+            NumberStyles.Integer,
             CultureInfo.InvariantCulture);
+        var exponent = match.Groups[5].Success
+            ? int.Parse(match.Groups[5].Value, NumberStyles.Integer, CultureInfo.InvariantCulture)
+            : 0;
+        return new JavaBigDecimal(unscaled, checked(fraction.Length - exponent));
+    }
 
-    internal static decimal BigDecimalValueOf(double value) =>
-        BigDecimalParse(value.ToString("R", CultureInfo.InvariantCulture));
+    internal static JavaBigDecimal JavaBigDecimalValueOf(int value) =>
+        new(value, 0);
 
-    internal static decimal BigDecimalMultiply(decimal left, decimal right) =>
-        checked(left * right);
+    internal static JavaBigDecimal JavaBigDecimalValueOf(double value)
+    {
+        if (!double.IsFinite(value)) throw new FormatException("BigDecimal requires a finite value.");
+        return JavaBigDecimalParse(value.ToString("R", CultureInfo.InvariantCulture));
+    }
 
-    internal static decimal BigDecimalDivide(
-        decimal left,
-        decimal right,
-        int scale,
-        JavaRoundingMode roundingMode) =>
-        BigDecimalRound(left / right, scale, roundingMode);
+    internal static JavaBigDecimal JavaBigDecimalFromDouble(double value)
+    {
+        if (!double.IsFinite(value)) throw new FormatException("BigDecimal requires a finite value.");
+        if (value == 0) return new JavaBigDecimal(BigInteger.Zero, 0);
 
-    internal static decimal BigDecimalSetScale(
-        decimal value,
-        int scale,
-        JavaRoundingMode roundingMode) =>
-        BigDecimalRound(value, scale, roundingMode);
+        var bits = BitConverter.DoubleToUInt64Bits(value);
+        var negative = (bits >> 63) != 0;
+        var exponentBits = (int)((bits >> 52) & 0x7ff);
+        var significand = new BigInteger(bits & 0x000f_ffff_ffff_ffffUL);
+        var binaryExponent = exponentBits == 0 ? -1074 : exponentBits - 1023 - 52;
+        if (exponentBits != 0) significand += BigInteger.One << 52;
+        if (negative) significand = -significand;
 
-    private static decimal BigDecimalRound(
-        decimal value,
+        JavaBigDecimal exact;
+        if (binaryExponent >= 0)
+        {
+            exact = new JavaBigDecimal(significand << binaryExponent, 0);
+        }
+        else
+        {
+            var scale = -binaryExponent;
+            exact = new JavaBigDecimal(significand * BigInteger.Pow(5, scale), scale);
+        }
+        return JavaBigDecimalStripTrailingZeros(exact);
+    }
+
+    internal static JavaBigDecimal JavaBigDecimalZero() =>
+        new(BigInteger.Zero, 0);
+
+    internal static JavaBigDecimal JavaBigDecimalMultiply(
+        JavaBigDecimal left,
+        JavaBigDecimal right) =>
+        new(left.UnscaledValue * right.UnscaledValue, checked(left.Scale + right.Scale));
+
+    internal static JavaBigDecimal JavaBigDecimalAdd(
+        JavaBigDecimal left,
+        JavaBigDecimal right)
+    {
+        var scale = Math.Max(left.Scale, right.Scale);
+        var leftValue = ScaleUnscaled(left, scale);
+        var rightValue = ScaleUnscaled(right, scale);
+        return new JavaBigDecimal(leftValue + rightValue, scale);
+    }
+
+    internal static JavaBigDecimal JavaBigDecimalSubtract(
+        JavaBigDecimal left,
+        JavaBigDecimal right)
+    {
+        var scale = Math.Max(left.Scale, right.Scale);
+        var leftValue = ScaleUnscaled(left, scale);
+        var rightValue = ScaleUnscaled(right, scale);
+        return new JavaBigDecimal(leftValue - rightValue, scale);
+    }
+
+    internal static JavaBigDecimal JavaBigDecimalAbs(JavaBigDecimal value) =>
+        new(BigInteger.Abs(value.UnscaledValue), value.Scale);
+
+    internal static int JavaBigDecimalCompare(JavaBigDecimal left, JavaBigDecimal right)
+    {
+        var scale = Math.Max(left.Scale, right.Scale);
+        return ScaleUnscaled(left, scale).CompareTo(ScaleUnscaled(right, scale));
+    }
+
+    internal static JavaBigDecimal JavaBigDecimalDivide(
+        JavaBigDecimal left,
+        JavaBigDecimal right,
         int scale,
         JavaRoundingMode roundingMode)
     {
-        if (scale is < 0 or > 28) throw new ArithmeticException("Scale is outside System.Decimal range.");
-        return roundingMode switch
+        if (right.UnscaledValue.IsZero) throw new DivideByZeroException();
+        var power = checked(right.Scale + scale - left.Scale);
+        var dividend = left.UnscaledValue;
+        var divisor = right.UnscaledValue;
+        if (power >= 0) dividend *= BigInteger.Pow(10, power);
+        else divisor *= BigInteger.Pow(10, -power);
+        return new JavaBigDecimal(
+            DivideAndRound(dividend, divisor, roundingMode),
+            scale);
+    }
+
+    internal static JavaBigDecimal JavaBigDecimalSetScale(
+        JavaBigDecimal value,
+        int scale,
+        JavaRoundingMode roundingMode)
+    {
+        if (scale >= value.Scale)
+            return new JavaBigDecimal(ScaleUnscaled(value, scale), scale);
+        var divisor = BigInteger.Pow(10, checked(value.Scale - scale));
+        return new JavaBigDecimal(
+            DivideAndRound(value.UnscaledValue, divisor, roundingMode),
+            scale);
+    }
+
+    internal static JavaBigDecimal JavaBigDecimalPow(JavaBigDecimal value, int exponent)
+    {
+        if (exponent >= 0)
+            return new JavaBigDecimal(
+                BigInteger.Pow(value.UnscaledValue, exponent),
+                checked(value.Scale * exponent));
+
+        var positive = JavaBigDecimalPow(value, checked(-exponent));
+        var stripped = JavaBigDecimalStripTrailingZeros(positive);
+        var absolute = BigInteger.Abs(stripped.UnscaledValue);
+        if (absolute != BigInteger.One)
+            throw new ArithmeticException("Negative BigDecimal powers require a terminating decimal result.");
+        var sign = stripped.UnscaledValue.Sign;
+        return new JavaBigDecimal(new BigInteger(sign), checked(-stripped.Scale));
+    }
+
+    internal static float JavaBigDecimalFloatValue(JavaBigDecimal value) =>
+        float.Parse(JavaBigDecimalToString(value), NumberStyles.Float, CultureInfo.InvariantCulture);
+
+    internal static int JavaBigDecimalIntValue(JavaBigDecimal value)
+    {
+        var integer = value.Scale switch
         {
-            JavaRoundingMode.Down => decimal.Round(
-                value,
-                scale,
-                MidpointRounding.ToZero),
-            JavaRoundingMode.Ceiling => decimal.Round(
-                value,
-                scale,
-                MidpointRounding.ToPositiveInfinity),
-            JavaRoundingMode.Floor => decimal.Round(
-                value,
-                scale,
-                MidpointRounding.ToNegativeInfinity),
-            JavaRoundingMode.HalfUp => decimal.Round(
-                value,
-                scale,
-                MidpointRounding.AwayFromZero),
-            JavaRoundingMode.HalfEven => decimal.Round(
-                value,
-                scale,
-                MidpointRounding.ToEven),
-            JavaRoundingMode.Unnecessary when value == decimal.Round(
-                value,
-                scale,
-                MidpointRounding.ToZero) => value,
+            > 0 => value.UnscaledValue / BigInteger.Pow(10, value.Scale),
+            < 0 => value.UnscaledValue * BigInteger.Pow(10, checked(-value.Scale)),
+            _ => value.UnscaledValue
+        };
+        return unchecked((int)(uint)(integer & uint.MaxValue));
+    }
+
+    internal static JavaBigDecimal JavaBigDecimalStripTrailingZeros(JavaBigDecimal value)
+    {
+        if (value.UnscaledValue.IsZero) return JavaBigDecimalZero();
+        var unscaled = value.UnscaledValue;
+        var scale = value.Scale;
+        while ((unscaled % 10).IsZero)
+        {
+            unscaled /= 10;
+            scale = checked(scale - 1);
+        }
+        return new JavaBigDecimal(unscaled, scale);
+    }
+
+    internal static string JavaBigDecimalToPlainString(JavaBigDecimal value)
+    {
+        var negative = value.UnscaledValue.Sign < 0;
+        var digits = BigInteger.Abs(value.UnscaledValue).ToString(CultureInfo.InvariantCulture);
+        string body;
+        if (value.Scale <= 0)
+        {
+            body = digits + new string('0', checked(-value.Scale));
+        }
+        else if (digits.Length > value.Scale)
+        {
+            var point = digits.Length - value.Scale;
+            body = digits[..point] + "." + digits[point..];
+        }
+        else
+        {
+            body = "0." + new string('0', value.Scale - digits.Length) + digits;
+        }
+        return negative ? "-" + body : body;
+    }
+
+    internal static string JavaBigDecimalToString(JavaBigDecimal value)
+    {
+        var digits = BigInteger.Abs(value.UnscaledValue).ToString(CultureInfo.InvariantCulture);
+        var adjustedExponent = checked(-value.Scale + digits.Length - 1);
+        if (value.Scale >= 0 && adjustedExponent >= -6)
+            return JavaBigDecimalToPlainString(value);
+
+        var coefficient = digits.Length == 1 ? digits : digits[0] + "." + digits[1..];
+        var exponent = adjustedExponent >= 0 ? "+" + adjustedExponent : adjustedExponent.ToString(CultureInfo.InvariantCulture);
+        return (value.UnscaledValue.Sign < 0 ? "-" : "") + coefficient + "E" + exponent;
+    }
+
+    private static BigInteger ScaleUnscaled(JavaBigDecimal value, int scale) =>
+        value.UnscaledValue * BigInteger.Pow(10, checked(scale - value.Scale));
+
+    private static BigInteger DivideAndRound(
+        BigInteger dividend,
+        BigInteger divisor,
+        JavaRoundingMode roundingMode)
+    {
+        var quotient = BigInteger.DivRem(dividend, divisor, out var remainder);
+        if (remainder.IsZero) return quotient;
+        if (roundingMode == JavaRoundingMode.Unnecessary)
+            throw new ArithmeticException("Rounding was necessary.");
+
+        var sign = dividend.Sign * divisor.Sign;
+        var comparison = (BigInteger.Abs(remainder) * 2).CompareTo(BigInteger.Abs(divisor));
+        var increment = roundingMode switch
+        {
+            JavaRoundingMode.Up => true,
+            JavaRoundingMode.Down => false,
+            JavaRoundingMode.Ceiling => sign > 0,
+            JavaRoundingMode.Floor => sign < 0,
+            JavaRoundingMode.HalfUp => comparison >= 0,
+            JavaRoundingMode.HalfDown => comparison > 0,
+            JavaRoundingMode.HalfEven => comparison > 0 || comparison == 0 && !quotient.IsEven,
             _ => throw new ArgumentOutOfRangeException(nameof(roundingMode))
         };
+        return increment ? quotient + sign : quotient;
     }
-
-    internal static int BigDecimalIntValue(decimal value) =>
-        decimal.ToInt32(decimal.Truncate(value));
-
-    internal static decimal BigDecimalStripTrailingZeros(decimal value)
-    {
-        if (value == 0) return decimal.Zero;
-        return decimal.Parse(
-            value.ToString("G29", CultureInfo.InvariantCulture),
-            NumberStyles.Number,
-            CultureInfo.InvariantCulture);
-    }
-
-    internal static string BigDecimalToPlainString(decimal value) =>
-        value.ToString(CultureInfo.InvariantCulture);
-
-    internal static string BigDecimalToString(decimal value) =>
-        value.ToString(CultureInfo.InvariantCulture);
 
     internal static decimal DecimalDivide(decimal left, decimal right, int scale, object rounding)
     {

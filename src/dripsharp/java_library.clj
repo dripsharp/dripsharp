@@ -768,6 +768,8 @@
      (let [initializer (.getDefaultExpression ^CtLocalVariable element)]
        (or (and (instance? CtLiteral initializer)
                 (nil? (.getValue ^CtLiteral initializer)))
+           (and (instance? CtConditional initializer)
+                (boxed-primitive-reference? (.getType initializer)))
            (and (instance? CtInvocation initializer)
                 (let [occurrence
                       (occurrence! ctx (.getExecutable ^CtInvocation initializer)
@@ -843,6 +845,34 @@
        (= 2 (count (.getActualTypeArguments reference)))
        (some unbounded-wildcard-reference?
              (.getActualTypeArguments reference))))
+
+(defn- upper-bounded-wildcard-map-value
+  [^CtTypeReference reference]
+  (when (and (= "java.util.Map" (some-> reference .getQualifiedName))
+             (= 2 (count (.getActualTypeArguments reference))))
+    (let [value (second (.getActualTypeArguments reference))]
+      (when (and (instance? CtWildcardReference value)
+                 (.isUpper ^CtWildcardReference value))
+        (.getBoundingType ^CtWildcardReference value)))))
+
+(defn- concrete-map-type-arguments
+  [^CtTypeReference reference]
+  (let [arguments (some-> reference .getActualTypeArguments vec)]
+    (when (and (= "java.util.Map" (some-> reference .getQualifiedName))
+               (= 2 (count arguments))
+               (not-any? #(instance? CtWildcardReference %) arguments))
+      arguments)))
+
+(defn- resolved-wildcard-map-component
+  [^CtTypeReference expected ^CtTypeReference argument]
+  (let [candidate
+        (if (and (instance? CtWildcardReference expected)
+                 (.isUpper ^CtWildcardReference expected))
+          (.getBoundingType ^CtWildcardReference expected)
+          expected)]
+    (if (instance? CtTypeParameterReference candidate)
+      (or argument candidate)
+      candidate)))
 
 (defn- boxed-primitive-collection-element
   [^CtTypeReference reference]
@@ -967,9 +997,15 @@
                (.getActualTypeArguments reference)))))
 
 (defn- declaration-type-node [ctx ^CtElement element ^CtTypeReference reference]
-  (let [initializer-reference
+  (let [initializer
         (when (instance? CtLocalVariable element)
-          (some-> ^CtLocalVariable element .getDefaultExpression .getType))
+          (.getDefaultExpression ^CtLocalVariable element))
+        initializer-reference
+        (when (instance? CtLocalVariable element)
+          (some-> initializer .getType))
+        null-initializer?
+        (and (instance? CtLiteral initializer)
+             (nil? (.getValue ^CtLiteral initializer)))
         inferred-raw-local-reference
         (when (and initializer-reference
                    (empty? (.getActualTypeArguments reference))
@@ -981,7 +1017,7 @@
         inferred-wildcard-local?
         (and (instance? CtLocalVariable element)
              (project-wildcard-reference? reference)
-             (or initializer-reference
+             (or (and initializer-reference (not null-initializer?))
                  (and (.isParentInitialized element)
                       (instance? CtForEach (.getParent element)))))
         base (or (when inferred-wildcard-local? (raw "var"))
@@ -1027,6 +1063,16 @@
 (defn- member-constructor? [declaration]
   (and (instance? CtConstructor declaration)
        (non-static-member-class? (.getDeclaringType ^CtConstructor declaration))))
+
+(defn- non-static-member-superclass? [^CtType type]
+  (when (instance? CtClass type)
+    (let [superclass (.getSuperclass ^CtClass type)
+          declaration (some-> superclass .getTypeDeclaration)]
+      (and (instance? CtType declaration)
+           (non-static-member-class? declaration)
+           (= (some-> type .getDeclaringType .getQualifiedName)
+              (some-> ^CtType declaration .getDeclaringType
+                      .getQualifiedName))))))
 
 (defn- anonymous-class? [^CtType type]
   (and (instance? CtClass type)
@@ -1142,17 +1188,23 @@
   (= "java.io.FilterOutputStream"
      (some-> call .getType .getQualifiedName)))
 
+(defn- anonymous-byte-array-output-stream? [^CtConstructorCall call]
+  (= "java.io.ByteArrayOutputStream"
+     (some-> call .getType .getQualifiedName)))
+
 (defn- anonymous-linked-hash-map? [^CtConstructorCall call]
   (= "java.util.LinkedHashMap"
      (some-> call .getType .getQualifiedName)))
 
-(defn- anonymous-project-type? [^CtConstructorCall call]
-  (let [declaration (some-> call .getType .getTypeDeclaration)]
-    (and (or (instance? CtEnum declaration)
-             (instance? CtClass declaration)
-             (and (interface-type? declaration)
-                  (not (.isShadow ^CtType declaration))))
-         (not (.isShadow ^CtType declaration)))))
+(defn- anonymous-project-type? [ctx ^CtConstructorCall call]
+  (let [reference (.getType call)
+        declaration (some-> reference .getTypeDeclaration)]
+    (or (and (or (instance? CtEnum declaration)
+                 (instance? CtClass declaration)
+                 (and (interface-type? declaration)
+                      (not (.isShadow ^CtType declaration))))
+             (not (.isShadow ^CtType declaration)))
+        (some? (translated-external-type-base ctx reference)))))
 
 (defn- capture-name [ctx ^CtElement declaration]
   (or (when-let [^IdentityHashMap names (:capture-names ctx)]
@@ -1297,12 +1349,15 @@
 
 (defn- literal-node [^CtLiteral literal]
   (let [value (.getValue literal)
+        literal-type (some-> literal .getType .getQualifiedName)
         byte-literal?
-        (and (= "byte" (some-> literal .getType .getQualifiedName))
+        (and (= "byte" literal-type)
              (instance? Number value))]
     (raw
      (if byte-literal?
        (str "unchecked((sbyte)" value ")")
+       (if (and (= "short" literal-type) (instance? Number value))
+         (str "unchecked((short)" value ")")
        (cond
          (nil? value) "default!"
          (string? value) (escape-string value)
@@ -1317,7 +1372,7 @@
            (= Double/POSITIVE_INFINITY value) "double.PositiveInfinity"
            (= Double/NEGATIVE_INFINITY value) "double.NegativeInfinity"
            :else (str value "D"))
-         :else (str value))))))
+         :else (str value)))))))
 
 (declare method-name)
 
@@ -1653,6 +1708,11 @@
                  [(raw "(") (type-node ctx cast)
                   (raw "?)(") inner (raw ")")])
 
+                (contains? #{"byte" "short" "char"} qualified-name)
+                (sequence-node
+                 [(raw "unchecked((") (type-node ctx cast)
+                  (raw ")(") inner (raw "))")])
+
                 (and (not (.isPrimitive cast))
                      (or (instance? CtTypeParameterReference cast)
                          (instance?
@@ -1667,7 +1727,7 @@
                                 (raw ")(") inner
                                 (raw (if (.isPrimitive cast) ")" "!)"))]))))
           node
-          (.getTypeCasts expression)))
+          (reverse (.getTypeCasts expression))))
 
 (declare maybe-unbox-node compat-call)
 
@@ -1702,7 +1762,10 @@
           (or (some-> ^CtVariableAccess assigned .getVariable .getDeclaration)
               assigned)
           assigned)
-        assigned-reference (some-> assigned .getType)
+        assigned-reference
+        (if (instance? CtArrayWrite assigned)
+          (some-> ^CtArrayWrite assigned .getTarget .getType .getComponentType)
+          (some-> assigned .getType))
         assigned-type (some-> assigned-reference .getQualifiedName)
         assignment-type (some-> assignment .getType .getQualifiedName)
         node
@@ -1762,8 +1825,13 @@
          (type-node ctx (first (.getActualTypeArguments assigned-reference)))
          (raw ">(") node (raw ")")])
 
-       (and (= "byte" assigned-type) (not= "byte" assignment-type))
+       (and (= "byte" assigned-type)
+            (or (instance? CtArrayWrite assigned)
+                (not= "byte" assignment-type)))
        (sequence-node [(raw "unchecked((sbyte)(") node (raw "))")])
+
+       (and (= "short" assigned-type) (not= "short" assignment-type))
+       (sequence-node [(raw "unchecked((short)(") node (raw "))")])
 
        (and (= "char" assigned-type) (not= "char" assignment-type))
        (sequence-node [(raw "unchecked((char)(") node (raw "))")])
@@ -2226,6 +2294,19 @@
 
      :else false)))
 
+(defn- unbox-nullable-boxed-invocation-arguments
+  [ctx ^CtInvocation invocation arguments indexes]
+  (let [sources (vec (.getArguments invocation))]
+    (mapv
+     (fn [index node]
+       (let [source (nth sources index)]
+         (if (and (contains? indexes index)
+                  (nullable-boxed-expression? ctx source))
+           (maybe-unbox-node ctx source node)
+           node)))
+     (range (count arguments))
+     arguments)))
+
 (defn- covariant-boxed-invocation?
   [ctx ^CtExpression expression]
   (when (instance? CtInvocation expression)
@@ -2359,6 +2440,20 @@
           [(raw "global::DripSharp.Runtime.JavaCompat.CastDictionary<")
            (type-node ctx key-reference) (raw ", object>(") node (raw ")")]))
 
+       (upper-bounded-wildcard-map-value expected)
+       (let [[argument-key argument-value]
+             (concrete-map-type-arguments emitted-argument-reference)
+             key-reference
+             (resolved-wildcard-map-component
+              (first (.getActualTypeArguments expected)) argument-key)
+             value-reference
+             (resolved-wildcard-map-component
+              (second (.getActualTypeArguments expected)) argument-value)]
+         (sequence-node
+          [(raw "global::DripSharp.Runtime.JavaCompat.CastDictionary<")
+           (type-node ctx key-reference) (raw ", ")
+           (type-node ctx value-reference) (raw ">(") node (raw ")")]))
+
        (and (contains? #{"java.util.Collection" "java.util.List"}
                        expected-name)
             (= "java.util.List" argument-name)
@@ -2445,17 +2540,18 @@
             (contains? #{"double" "float" "long" "int" "short"}
                        expected-name)
             (not= expected-name argument-name))
-       (sequence-node
-        [(raw (str "("
-                   (get {"double" "double"
-                         "float" "float"
-                         "long" "long"
-                         "int" "int"
-                         "short" "short"}
-                        expected-name)
-                   ")("))
-         value-node
-         (raw ")")])
+       (if (= "short" expected-name)
+         (sequence-node [(raw "unchecked((short)(") value-node (raw "))")])
+         (sequence-node
+          [(raw (str "("
+                     (get {"double" "double"
+                           "float" "float"
+                           "long" "long"
+                           "int" "int"}
+                          expected-name)
+                     ")("))
+           value-node
+           (raw ")")]))
 
        (and expected
             (instance? CtTypeParameterReference expected)
@@ -2748,7 +2844,7 @@
 
 (defn- supplemental-neutral-invocation-node
   [ctx ^CtInvocation element key target-node arguments]
-  (cond (or (and (str/starts-with? key "executable:java.util.function.") (or (str/includes? key "#accept(") (str/includes? key "#apply(") (str/includes? key "#get()"))) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (= key "executable:java.lang.invoke.MethodHandles#lookup()")) (cond (str/starts-with? key "executable:java.util.function.") (csharp/invocation target-node arguments) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (csharp/invocation (csharp/member target-node "Compare") arguments) :else (raw "global::DripSharp.Runtime.JavaMethodHandles.lookup()")) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (csharp/invocation target-node arguments) (str/starts-with? key "executable:java.util.Set#of(") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) (str/starts-with? key "executable:java.util.Map#of(") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.MapOf") (mapv (fn* [p1__477#] (type-node ctx p1__477#)) (.getActualTypeArguments (.getType element)))) (raw "(") (sequence-node arguments ", ") (raw ")")]) (and (str/starts-with? key "executable:java.util.Arrays#copyOf(") (str/ends-with? key ",int)")) (let [component (some-> (first (.getArguments element)) .getType .getComponentType)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.CopyOf") [(type-node ctx component)]) (raw "(") (sequence-node arguments ", ") (raw ")")])) (and (str/starts-with? key "executable:java.util.Arrays#copyOfRange(") (str/ends-with? key ",int,int)")) (let [component (some-> (first (.getArguments element)) .getType .getComponentType)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.CopyOfRange") [(type-node ctx component)]) (raw "(") (sequence-node arguments ", ") (raw ")")])) :else (case key ("executable:java.lang.Character#isLetterOrDigit(int)" "executable:java.lang.Character#isUnicodeIdentifierPart(int)" "executable:java.lang.Character#isUnicodeIdentifierStart(int)") (compat-call (case key "executable:java.lang.Character#isLetterOrDigit(int)" "IsLetterOrDigit" "executable:java.lang.Character#isUnicodeIdentifierPart(int)" "IsUnicodeIdentifierPart" "IsUnicodeIdentifierStart") arguments) "executable:java.lang.Character#isHighSurrogate(char)" (sequence-node [(raw "char.IsHighSurrogate(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Character#isLowSurrogate(char)" (sequence-node [(raw "char.IsLowSurrogate(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Character#toString(int)" (compat-call "CodePointToString" arguments) "executable:java.lang.Character#toTitleCase(int)" (compat-call "ToTitleCase" arguments) "executable:java.lang.Character#isTitleCase(int)" (compat-call "IsTitleCase" arguments) ("executable:java.lang.Character#isUpperCase(char)" "executable:java.lang.Character#isUpperCase(int)") (compat-call "IsUpperCase" arguments) "executable:java.lang.Character#toUpperCase(int)" (compat-call "ToUpperCase" arguments) "executable:java.lang.CharSequence#isEmpty()" (csharp/binary "==" 40 (sequence-node [target-node (raw ".Length")]) (raw "0")) "executable:java.lang.String#formatted(java.lang.Object[])" (compat-call "Formatted" (into [target-node] arguments)) "executable:java.lang.String#isBlank()" (sequence-node [(raw "global::System.String.IsNullOrWhiteSpace(") target-node (raw ")")]) "executable:java.lang.String#repeat(int)" (compat-call "Repeat" (into [target-node] arguments)) "executable:java.lang.String#regionMatches(boolean,int,java.lang.String,int,int)" (compat-call "RegionMatches" (into [target-node] arguments)) "executable:java.lang.String#regionMatches(int,java.lang.String,int,int)" (compat-call "RegionMatches" (into [target-node (raw "false")] arguments)) "executable:java.lang.String#lastIndexOf(int,int)" (compat-call "StringLastIndexOf" (into [target-node] arguments)) "executable:java.lang.String#lastIndexOf(java.lang.String)" (sequence-node [target-node (raw ".LastIndexOf(") (first arguments) (raw ", global::System.StringComparison.Ordinal)")]) "executable:java.util.Deque#getFirst()" (compat-call "DequeGetFirst" [target-node]) "executable:java.util.Deque#descendingIterator()" (csharp/invocation (csharp/member target-node "DescendingIterator") []) ("executable:java.util.List#of()" "executable:java.util.List#of(java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object[])") (let [element-node (collection-element-type-node ctx element)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.ListOf") [element-node]) (raw "(") (sequence-node (collection-factory-argument-nodes ctx element arguments element-node) ", ") (raw ")")])) "executable:java.util.List#copyOf(java.util.Collection)" (compat-call "ListCopyOf" arguments) ("executable:java.util.List#addAll(java.util.Collection)" "executable:java.util.ArrayList#addAll(java.util.Collection)") (compat-call "AddAll" (into [target-node] arguments)) "executable:java.util.Locale#getDefault()" (raw "global::System.Globalization.CultureInfo.CurrentCulture") "executable:java.util.Collections#singleton(java.lang.Object)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.SetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Objects#deepEquals(java.lang.Object,java.lang.Object)" (compat-call "DeepEquals" arguments) "executable:java.util.Map#equals(java.lang.Object)" (compat-call "Equals" (into [target-node] arguments)) ("executable:java.util.function.Function#apply(java.lang.Object)" "executable:java.util.function.LongFunction#apply(long)" "executable:java.lang.Runnable#run()") (csharp/invocation target-node arguments) "executable:java.util.function.Function#identity()" (raw "value => value") "executable:java.util.function.Function#andThen(java.util.function.Function)" (compat-call "AndThen" (into [target-node] arguments)) "executable:java.util.ResourceBundle#getBundle(java.lang.String,java.util.Locale)" (compat-call "GetResourceBundle" arguments) "executable:java.util.ResourceBundle#getString(java.lang.String)" (compat-call "GetResourceString" (into [target-node] arguments)) "executable:java.util.stream.IntStream#allMatch(java.util.function.IntPredicate)" (compat-call "All" (into [target-node] arguments)) "executable:java.util.stream.IntStream#skip(long)" (compat-call "Skip" (into [target-node] arguments)) "executable:java.lang.Iterable#iterator()" (compat-call "Iterator" [target-node]) ("executable:java.util.stream.IntStream#iterator()" "executable:java.util.stream.LongStream#iterator()") (compat-call "Iterator" [target-node]) "executable:java.util.stream.Collectors#joining(java.lang.CharSequence)" (compat-call "Joining" arguments) "executable:java.util.stream.Collectors#toMap(java.util.function.Function,java.util.function.Function)" (let [key-selector-type (.getType (first (.getArguments element))) value-selector-type (.getType (second (.getArguments element))) input-type (first (.getActualTypeArguments key-selector-type)) key-type (second (.getActualTypeArguments key-selector-type)) value-type (second (.getActualTypeArguments value-selector-type))] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.ToMap") (mapv (fn* [p1__479#] (type-node ctx p1__479#)) [input-type key-type value-type])) (raw "(") (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#end()" (sequence-node [target-node (raw ".End()")]) "executable:java.util.regex.Matcher#find()" (sequence-node [target-node (raw ".Find()")]) "executable:java.util.regex.Matcher#find(int)" (sequence-node [target-node (raw ".Find(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.regex.Matcher#group()" (sequence-node [target-node (raw ".Group()")]) "executable:java.util.regex.Matcher#group(int)" (sequence-node [target-node (raw ".Group(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.regex.Matcher#group(java.lang.String)" "executable:java.util.regex.Matcher#groupCount()" "executable:java.util.regex.Matcher#lookingAt()" "executable:java.util.regex.Matcher#region(int,int)" "executable:java.util.regex.Matcher#replaceFirst(java.lang.String)" "executable:java.util.regex.Matcher#start(int)" "executable:java.util.regex.Matcher#end(int)" "executable:java.util.regex.Matcher#toMatchResult()" "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuffer,java.lang.String)" "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuilder,java.lang.String)" "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuffer)" "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuilder)") (let [name (get {"executable:java.util.regex.Matcher#groupCount()" "GroupCount", "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuilder)" "AppendTail", "executable:java.util.regex.Matcher#replaceFirst(java.lang.String)" "ReplaceFirst", "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuffer,java.lang.String)" "AppendReplacement", "executable:java.util.regex.Matcher#group(java.lang.String)" "Group", "executable:java.util.regex.Matcher#start(int)" "Start", "executable:java.util.regex.Matcher#end(int)" "End", "executable:java.util.regex.Matcher#toMatchResult()" "ToMatchResult", "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuilder,java.lang.String)" "AppendReplacement", "executable:java.util.regex.Matcher#lookingAt()" "LookingAt", "executable:java.util.regex.Matcher#region(int,int)" "Region", "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuffer)" "AppendTail"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#quoteReplacement(java.lang.String)" (compat-call "QuoteReplacement" arguments) ("executable:java.util.regex.MatchResult#end()" "executable:java.util.regex.MatchResult#end(int)" "executable:java.util.regex.MatchResult#group()" "executable:java.util.regex.MatchResult#group(int)" "executable:java.util.regex.MatchResult#groupCount()" "executable:java.util.regex.MatchResult#start()" "executable:java.util.regex.MatchResult#start(int)") (let [name (get {"executable:java.util.regex.MatchResult#end()" "End", "executable:java.util.regex.MatchResult#end(int)" "End", "executable:java.util.regex.MatchResult#group()" "Group", "executable:java.util.regex.MatchResult#group(int)" "Group", "executable:java.util.regex.MatchResult#groupCount()" "GroupCount", "executable:java.util.regex.MatchResult#start()" "Start", "executable:java.util.regex.MatchResult#start(int)" "Start"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#replaceAll(java.lang.String)" (sequence-node [target-node (raw ".ReplaceAll(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.regex.Matcher#start()" (sequence-node [target-node (raw ".Start()")]) "executable:java.util.regex.Pattern#matches(java.lang.String,java.lang.CharSequence)" (compat-call "StringMatches" [(second arguments) (first arguments)]) "executable:java.util.regex.Pattern#compile(java.lang.String,int)" (compat-call "CompileRegex" arguments) ("executable:java.util.regex.Pattern#pattern()" "executable:java.util.regex.Pattern#toString()") (compat-call "RegexPattern" [target-node]) "executable:java.util.regex.Pattern#flags()" (compat-call "RegexFlags" [target-node]) "executable:java.util.regex.Pattern#quote(java.lang.String)" (compat-call "QuoteRegex" arguments) "executable:java.util.regex.Pattern#split(java.lang.CharSequence,int)" (compat-call "RegexSplit" (into [target-node] arguments)) "executable:java.util.stream.Stream#anyMatch(java.util.function.Predicate)" (compat-call "Any" (into [target-node] arguments)) "executable:java.util.stream.Stream#allMatch(java.util.function.Predicate)" (compat-call "AllValues" (into [target-node] arguments)) "executable:java.util.stream.Stream#noneMatch(java.util.function.Predicate)" (compat-call "NoValues" (into [target-node] arguments)) "executable:java.util.stream.Stream#distinct()" (sequence-node [(raw "global::System.Linq.Enumerable.Distinct(") target-node (raw ")")]) "executable:java.util.stream.Stream#count()" (sequence-node [(raw "global::System.Linq.Enumerable.LongCount(") target-node (raw ")")]) "executable:java.util.stream.Stream#reduce(java.util.function.BinaryOperator)" (compat-call "ReduceOptional" (into [target-node] arguments)) "executable:java.util.stream.Stream#findFirst()" (compat-call "FindFirstOptional" [target-node]) "executable:java.util.stream.StreamSupport#stream(java.util.Spliterator,boolean)" (first arguments) ("executable:java.lang.Iterable#spliterator()" "executable:java.util.Collection#spliterator()" "executable:java.util.ServiceLoader#spliterator()" "executable:java.util.stream.Stream#spliterator()") target-node "executable:java.util.stream.Stream#toList()" (compat-call "ToListValues" [target-node]) "executable:java.util.stream.IntStream#toArray()" (sequence-node [(raw "global::System.Linq.Enumerable.ToArray(") target-node (raw ")")]) "executable:java.util.stream.IntStream#max()" (compat-call "MaxOptionalInt" [target-node]) "executable:java.util.stream.IntStream#forEach(java.util.function.IntConsumer)" (compat-call "ForEach" (into [target-node] arguments)) "executable:java.util.Optional#empty()" (sequence-node [(type-node ctx (.getType element)) (raw ".Empty()")]) "executable:java.util.Optional#of(java.lang.Object)" (sequence-node [(type-node ctx (.getType element)) (raw ".Of(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ofNullable(java.lang.Object)" (sequence-node [(type-node ctx (.getType element)) (raw ".OfNullable(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#get()" (sequence-node [target-node (raw ".Get()")]) "executable:java.util.Optional#isPresent()" (sequence-node [target-node (raw ".IsPresent()")]) "executable:java.util.Optional#isEmpty()" (sequence-node [target-node (raw ".IsEmpty()")]) "executable:java.util.Optional#equals(java.lang.Object)" (compat-call "Equals" (into [target-node] arguments)) "executable:java.util.Optional#map(java.util.function.Function)" (sequence-node [target-node (raw ".Map(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#orElse(java.lang.Object)" (sequence-node [target-node (raw ".OrElse(") (if (and (= 1 (count (.getArguments element))) (instance? CtLiteral (first (.getArguments element))) (nil? (.getValue (first (.getArguments element))))) (raw "default!") (sequence-node arguments ", ")) (raw ")")]) "executable:java.util.Optional#orElseGet(java.util.function.Supplier)" (sequence-node [target-node (raw ".OrElseGet(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ifPresent(java.util.function.Consumer)" (sequence-node [target-node (raw ".IfPresent(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ifPresentOrElse(java.util.function.Consumer,java.lang.Runnable)" (sequence-node [target-node (raw ".IfPresentOrElse(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.Optional#orElseThrow()" "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)") (sequence-node [target-node (raw ".OrElseThrow(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.OptionalInt#isPresent()" (sequence-node [target-node (raw ".HasValue")]) "executable:java.util.OptionalInt#getAsInt()" (sequence-node [target-node (raw ".Value")]) "executable:java.util.OptionalInt#empty()" (raw "(int?)null") "executable:java.util.OptionalInt#of(int)" (first arguments) "executable:java.util.OptionalInt#orElse(int)" (sequence-node [target-node (raw ".GetValueOrDefault(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.OptionalLong#empty()" (raw "(long?)null") "executable:java.util.OptionalLong#of(long)" (first arguments) "executable:java.util.OptionalLong#ifPresent(java.util.function.LongConsumer)" (compat-call "OptionalLongIfPresent" (into [target-node] arguments)) ("executable:java.lang.Math#acos(double)" "executable:java.lang.Math#abs(double)" "executable:java.lang.Math#abs(float)" "executable:java.lang.Math#abs(int)" "executable:java.lang.Math#abs(long)" "executable:java.lang.Math#atan2(double,double)" "executable:java.lang.Math#cos(double)" "executable:java.lang.Math#floor(double)" "executable:java.lang.Math#log(double)" "executable:java.lang.Math#log10(double)" "executable:java.lang.Math#pow(double,double)" "executable:java.lang.Math#sin(double)" "executable:java.lang.Math#sqrt(double)") (let [name (get {"executable:java.lang.Math#abs(double)" "Abs", "executable:java.lang.Math#pow(double,double)" "Pow", "executable:java.lang.Math#log10(double)" "Log10", "executable:java.lang.Math#floor(double)" "Floor", "executable:java.lang.Math#cos(double)" "Cos", "executable:java.lang.Math#abs(int)" "Abs", "executable:java.lang.Math#abs(long)" "Abs", "executable:java.lang.Math#log(double)" "Log", "executable:java.lang.Math#abs(float)" "Abs", "executable:java.lang.Math#acos(double)" "Acos", "executable:java.lang.Math#atan2(double,double)" "Atan2", "executable:java.lang.Math#sqrt(double)" "Sqrt", "executable:java.lang.Math#sin(double)" "Sin"} key)] (sequence-node [(raw (str "global::System.Math." name "(")) (sequence-node arguments ", ") (raw ")")])) ("executable:java.lang.Math#floorDiv(int,int)" "executable:java.lang.Math#round(double)" "executable:java.lang.Math#round(float)" "executable:java.lang.Math#signum(double)" "executable:java.lang.Math#signum(float)" "executable:java.lang.Math#toDegrees(double)" "executable:java.lang.Math#toRadians(double)") (compat-call (get {"executable:java.lang.Math#floorDiv(int,int)" "FloorDiv", "executable:java.lang.Math#round(double)" "MathRound", "executable:java.lang.Math#round(float)" "MathRoundFloat", "executable:java.lang.Math#signum(double)" "SignumDouble", "executable:java.lang.Math#signum(float)" "SignumFloat", "executable:java.lang.Math#toDegrees(double)" "ToDegrees", "executable:java.lang.Math#toRadians(double)" "ToRadians"} key) arguments) ("executable:java.lang.Math#addExact(long,long)" "executable:java.lang.StrictMath#addExact(long,long)") (compat-call "AddExact" arguments) ("executable:java.lang.Math#addExact(int,int)" "executable:java.lang.StrictMath#addExact(int,int)") (compat-call "AddExactInt" arguments) ("executable:java.lang.Math#negateExact(int)" "executable:java.lang.Math#negateExact(long)" "executable:java.lang.StrictMath#negateExact(int)" "executable:java.lang.StrictMath#negateExact(long)") (compat-call "NegateExact" arguments) ("executable:java.lang.Math#incrementExact(int)" "executable:java.lang.Math#incrementExact(long)" "executable:java.lang.StrictMath#incrementExact(int)" "executable:java.lang.StrictMath#incrementExact(long)") (compat-call "IncrementExact" arguments) ("executable:java.lang.Math#decrementExact(int)" "executable:java.lang.Math#decrementExact(long)" "executable:java.lang.StrictMath#decrementExact(int)" "executable:java.lang.StrictMath#decrementExact(long)") (compat-call "DecrementExact" arguments) "executable:java.lang.StrictMath#toIntExact(long)" (compat-call "ToIntExact" arguments) ("executable:java.lang.StrictMath#abs(double)" "executable:java.lang.StrictMath#abs(long)" "executable:java.lang.StrictMath#acos(double)" "executable:java.lang.StrictMath#asin(double)" "executable:java.lang.StrictMath#atan(double)" "executable:java.lang.StrictMath#atan2(double,double)" "executable:java.lang.StrictMath#cbrt(double)" "executable:java.lang.StrictMath#ceil(double)" "executable:java.lang.StrictMath#copySign(double,double)" "executable:java.lang.StrictMath#cos(double)" "executable:java.lang.StrictMath#exp(double)" "executable:java.lang.StrictMath#floor(double)" "executable:java.lang.StrictMath#log(double)" "executable:java.lang.StrictMath#log10(double)" "executable:java.lang.StrictMath#max(double,double)" "executable:java.lang.StrictMath#max(long,long)" "executable:java.lang.StrictMath#min(double,double)" "executable:java.lang.StrictMath#min(long,long)" "executable:java.lang.StrictMath#pow(double,double)" "executable:java.lang.StrictMath#rint(double)" "executable:java.lang.StrictMath#sin(double)" "executable:java.lang.StrictMath#sqrt(double)" "executable:java.lang.StrictMath#tan(double)") (let [method-name (get {"executable:java.lang.StrictMath#exp(double)" "Exp", "executable:java.lang.StrictMath#floor(double)" "Floor", "executable:java.lang.StrictMath#asin(double)" "Asin", "executable:java.lang.StrictMath#cbrt(double)" "Cbrt", "executable:java.lang.StrictMath#atan2(double,double)" "Atan2", "executable:java.lang.StrictMath#cos(double)" "Cos", "executable:java.lang.StrictMath#sqrt(double)" "Sqrt", "executable:java.lang.StrictMath#max(double,double)" "Max", "executable:java.lang.StrictMath#min(long,long)" "Min", "executable:java.lang.StrictMath#abs(long)" "Abs", "executable:java.lang.StrictMath#log10(double)" "Log10", "executable:java.lang.StrictMath#pow(double,double)" "Pow", "executable:java.lang.StrictMath#copySign(double,double)" "CopySign", "executable:java.lang.StrictMath#ceil(double)" "Ceiling", "executable:java.lang.StrictMath#sin(double)" "Sin", "executable:java.lang.StrictMath#acos(double)" "Acos", "executable:java.lang.StrictMath#min(double,double)" "Min", "executable:java.lang.StrictMath#rint(double)" "Round", "executable:java.lang.StrictMath#max(long,long)" "Max", "executable:java.lang.StrictMath#atan(double)" "Atan", "executable:java.lang.StrictMath#tan(double)" "Tan", "executable:java.lang.StrictMath#log(double)" "Log", "executable:java.lang.StrictMath#abs(double)" "Abs"} key)] (csharp/invocation (raw (str "global::System.Math." method-name)) arguments)) ("executable:java.lang.StrictMath#getExponent(double)" "executable:java.lang.Math#getExponent(double)") (compat-call "GetExponent" arguments) "executable:java.lang.Double#doubleToRawLongBits(double)" (sequence-node [(raw "global::System.BitConverter.DoubleToInt64Bits(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StrictMath#signum(double)" (compat-call "SignumDouble" arguments) ("executable:java.lang.Math#multiplyExact(long,long)" "executable:java.lang.Math#multiplyExact(long,int)" "executable:java.lang.StrictMath#multiplyExact(long,int)" "executable:java.lang.StrictMath#multiplyExact(long,long)") (compat-call "MultiplyExact" arguments) ("executable:java.lang.Math#multiplyExact(int,int)" "executable:java.lang.StrictMath#multiplyExact(int,int)") (compat-call "MultiplyExactInt" arguments) ("executable:java.lang.Math#subtractExact(long,long)" "executable:java.lang.StrictMath#subtractExact(long,long)") (compat-call "SubtractExact" arguments) ("executable:java.text.Bidi#getBaseLevel()" "executable:java.text.Bidi#getRunCount()" "executable:java.text.Bidi#getRunLevel(int)" "executable:java.text.Bidi#getRunLimit(int)" "executable:java.text.Bidi#getRunStart(int)" "executable:java.text.Bidi#isMixed()") (let [name (get {"executable:java.text.Bidi#getBaseLevel()" "GetBaseLevel", "executable:java.text.Bidi#getRunCount()" "GetRunCount", "executable:java.text.Bidi#getRunLevel(int)" "GetRunLevel", "executable:java.text.Bidi#getRunLimit(int)" "GetRunLimit", "executable:java.text.Bidi#getRunStart(int)" "GetRunStart", "executable:java.text.Bidi#isMixed()" "IsMixed"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.text.Bidi#reorderVisually(byte[],int,java.lang.Object[],int,int)" (sequence-node [(raw "global::DripSharp.Runtime.JavaBidi.ReorderVisually(") (sequence-node arguments ", ") (raw ")")]) "executable:java.text.Normalizer#normalize(java.lang.CharSequence,java.text.Normalizer$Form)" (compat-call "Normalize" arguments) "executable:javax.net.ssl.KeyManagerFactory#getDefaultAlgorithm()" (raw "global::DripSharp.Runtime.JavaKeyManagerFactory.GetDefaultAlgorithm()") "executable:javax.net.ssl.KeyManagerFactory#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaKeyManagerFactory.GetInstance(") (sequence-node arguments ", ") (raw ")")]) ("executable:javax.net.ssl.KeyManagerFactory#init(java.security.KeyStore,char[])" "executable:javax.net.ssl.TrustManagerFactory#init(java.security.KeyStore)" "executable:javax.net.ssl.SSLContext#init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)") (sequence-node [target-node (raw ".Init(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.KeyManagerFactory#getKeyManagers()" (sequence-node [target-node (raw ".GetKeyManagers()")]) "executable:javax.net.ssl.TrustManagerFactory#getDefaultAlgorithm()" (raw "global::DripSharp.Runtime.JavaTrustManagerFactory.GetDefaultAlgorithm()") "executable:javax.net.ssl.TrustManagerFactory#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaTrustManagerFactory.GetInstance(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.TrustManagerFactory#getTrustManagers()" (sequence-node [target-node (raw ".GetTrustManagers()")]) "executable:javax.net.ssl.SSLContext#getDefault()" (raw "global::DripSharp.Runtime.JavaSslContext.GetDefault()") "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaSslContext.GetInstance(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.SSLSocketFactory#getDefault()" (raw "global::DripSharp.Runtime.JavaSocketFactory.Default") "executable:javax.net.ssl.SSLContext#getSocketFactory()" (sequence-node [target-node (raw ".GetSocketFactory()")]) "executable:javax.net.ssl.SSLContext#getServerSocketFactory()" (sequence-node [target-node (raw ".GetServerSocketFactory()")]) "executable:java.lang.String#lines()" (compat-call "StringLines" [target-node]) "executable:java.lang.String#strip()" (sequence-node [target-node (raw ".Trim()")]) "executable:java.util.stream.Stream#skip(long)" (compat-call "DropValues" (into [target-node] arguments)) "executable:java.util.Objects#requireNonNullElseGet(java.lang.Object,java.util.function.Supplier)" (compat-call "RequireNonNullElseGet" arguments) "executable:java.util.Random#nextLong()" (sequence-node [target-node (raw ".NextLong()")]) "executable:java.util.concurrent.CompletableFuture#complete(java.lang.Object)" (sequence-node [target-node (raw ".Complete(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.concurrent.CompletableFuture#completeExceptionally(java.lang.Throwable)" (sequence-node [target-node (raw ".CompleteExceptionally(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.concurrent.Future#get()" (sequence-node [target-node (raw ".Get()")]) "executable:java.lang.StringBuilder#append(char[])" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StringBuilder#append(char[],int,int)" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StringBuilder#append(java.lang.CharSequence)" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Long#byteValue()" (sequence-node [(raw "unchecked((sbyte)(") target-node (raw "))")]) "executable:java.lang.Long#shortValue()" (sequence-node [(raw "unchecked((short)(") target-node (raw "))")]) "executable:java.lang.Long#intValue()" (sequence-node [(raw "unchecked((int)(") target-node (raw "))")]) "executable:java.lang.Float#doubleValue()" (sequence-node [(raw "(double)(") target-node (raw ")")]) "executable:java.net.URI#getAuthority()" (sequence-node [(compat-call "UriAuthority" [target-node]) (raw "!")]) "executable:java.net.URI#getFragment()" (sequence-node [(compat-call "UriFragment" [target-node]) (raw "!")]) "executable:java.net.URI#getQuery()" (sequence-node [(compat-call "UriQuery" [target-node]) (raw "!")]) "executable:java.net.URI#getSchemeSpecificPart()" (sequence-node [(compat-call "UriSchemeSpecificPart" [target-node]) (raw "!")]) "executable:java.net.URI#getRawAuthority()" (sequence-node [(compat-call "UriRawAuthority" [target-node]) (raw "!")]) "executable:java.net.URI#getRawSchemeSpecificPart()" (sequence-node [(compat-call "UriRawSchemeSpecificPart" [target-node]) (raw "!")]) "executable:java.net.URI#getRawUserInfo()" (sequence-node [(compat-call "UriRawUserInfo" [target-node]) (raw "!")]) "executable:java.net.URI#isAbsolute()" (csharp/member target-node "IsAbsoluteUri") "executable:java.net.URI#isOpaque()" (compat-call "UriIsOpaque" [target-node]) "executable:java.net.URI#normalize()" (compat-call "NormalizeUri" [target-node]) "executable:java.net.URI#relativize(java.net.URI)" (compat-call "RelativizeUri" (into [target-node] arguments)) ("executable:java.net.URI#resolve(java.lang.String)" "executable:java.net.URI#resolve(java.net.URI)") (compat-call "ResolveUri" (into [target-node] arguments)) "executable:java.net.URI#toASCIIString()" (csharp/member target-node "AbsoluteUri") "executable:java.net.URI#toURL()" target-node "executable:java.net.URI#compareTo(java.net.URI)" (compat-call "CompareUri" (into [target-node] arguments)) "executable:java.net.URL#toURI()" target-node "executable:java.net.URL#getProtocol()" (compat-call "UriScheme" [target-node]) "executable:java.net.URLConnection#connect()" (csharp/invocation (csharp/member target-node "Connect") arguments) "executable:java.net.URLConnection#setUseCaches(boolean)" (csharp/invocation (csharp/member target-node "SetUseCaches") arguments) "executable:java.net.URLConnection#getInputStream()" (csharp/invocation (csharp/member target-node "GetInputStream") arguments) "executable:java.net.URLConnection#getURL()" (csharp/invocation (csharp/member target-node "GetURL") arguments) "executable:java.lang.invoke.VarHandle#storeStoreFence()" (csharp/invocation (raw "global::System.Threading.Thread.MemoryBarrier") []) "executable:java.nio.file.Path#toString()" (sequence-node [target-node (raw ".ToString()!")]) "executable:java.nio.file.Path#of(java.lang.String,java.lang.String[])" (compat-call "PathOf" arguments) "executable:java.nio.file.Path#of(java.net.URI)" (compat-call "PathOfUri" arguments) "executable:java.nio.file.Path#getRoot()" (compat-call "PathRoot" [target-node]) "executable:java.nio.file.Path#isAbsolute()" (compat-call "PathIsAbsolute" [target-node]) "executable:java.nio.file.Path#normalize()" (compat-call "NormalizePath" [target-node]) "executable:java.nio.file.Path#startsWith(java.nio.file.Path)" (compat-call "PathStartsWith" (into [target-node] arguments)) ("executable:java.nio.file.Path#endsWith(java.lang.String)" "executable:java.nio.file.Path#endsWith(java.nio.file.Path)") (compat-call "PathEndsWith" (into [target-node] arguments)) "executable:java.nio.file.Path#getFileName()" (csharp/invocation (raw "global::System.IO.Path.GetFileName") [target-node]) "executable:java.nio.file.Path#getParent()" (csharp/invocation (raw "global::System.IO.Path.GetDirectoryName") [target-node]) "executable:java.nio.file.Path#resolveSibling(java.lang.String)" (compat-call "PathResolveSibling" (into [target-node] arguments)) "executable:java.nio.file.Path#getNameCount()" (compat-call "PathNameCount" [target-node]) "executable:java.nio.file.Path#getName(int)" (compat-call "PathName" (into [target-node] arguments)) "executable:java.nio.file.Path#relativize(java.nio.file.Path)" (compat-call "PathRelativize" (into [target-node] arguments)) ("executable:java.nio.file.Path#resolve(java.lang.String)" "executable:java.nio.file.Path#resolve(java.nio.file.Path)") (compat-call "PathResolve" (into [target-node] arguments)) "executable:java.nio.file.Path#toAbsolutePath()" (csharp/invocation (raw "global::System.IO.Path.GetFullPath") [target-node]) "executable:java.nio.file.Path#toRealPath(java.nio.file.LinkOption[])" (compat-call "RealPath" [target-node]) "executable:java.nio.file.Path#toUri()" (compat-call "PathToUri" [target-node]) "executable:java.nio.file.Files#exists(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "Exists" [(first arguments)]) "executable:java.nio.file.Files#createDirectories(java.nio.file.Path,java.nio.file.attribute.FileAttribute[])" (compat-call "CreateDirectories" [(first arguments)]) "executable:java.nio.file.Files#newOutputStream(java.nio.file.Path,java.nio.file.OpenOption[])" (compat-call "NewOutputStream" arguments) "executable:java.nio.file.Files#deleteIfExists(java.nio.file.Path)" (compat-call "DeleteIfExists" arguments) ("executable:java.nio.file.Files#readString(java.nio.file.Path)" "executable:java.nio.file.Files#readString(java.nio.file.Path,java.nio.charset.Charset)") (compat-call "ReadString" arguments) ("executable:java.nio.file.Files#copy(java.io.InputStream,java.nio.file.Path,java.nio.file.CopyOption[])" "executable:java.nio.file.Files#copy(java.nio.file.Path,java.io.OutputStream)" "executable:java.nio.file.Files#copy(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption[])") (compat-call "Copy" arguments) "executable:java.nio.file.Files#move(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption[])" (compat-call "Move" arguments) "executable:java.nio.file.Files#writeString(java.nio.file.Path,java.lang.CharSequence,java.nio.file.OpenOption[])" (compat-call "WriteString" arguments) "executable:java.nio.file.Files#isSymbolicLink(java.nio.file.Path)" (compat-call "IsSymbolicLink" arguments) "executable:java.nio.file.Files#newDirectoryStream(java.nio.file.Path)" (compat-call "NewDirectoryStream" arguments) "executable:java.nio.file.Files#isDirectory(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "IsDirectory" [(first arguments)]) "executable:java.nio.file.Files#isRegularFile(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "PathIsRegularFile" [(first arguments)]) "executable:java.nio.file.Files#list(java.nio.file.Path)" (compat-call "List" arguments) "executable:java.nio.file.FileSystem#getPath(java.lang.String,java.lang.String[])" (csharp/invocation (csharp/member target-node "GetPath") arguments) "executable:java.nio.file.FileSystem#provider()" (csharp/invocation (csharp/member target-node "Provider") arguments) "executable:java.nio.file.FileSystem#isOpen()" (csharp/invocation (csharp/member target-node "IsOpen") arguments) "executable:java.nio.file.FileSystem#isReadOnly()" (csharp/invocation (csharp/member target-node "IsReadOnly") arguments) "executable:java.nio.file.FileSystem#getSeparator()" (csharp/invocation (csharp/member target-node "GetSeparator") arguments) "executable:java.nio.file.FileSystem#getFileStores()" (csharp/invocation (csharp/member target-node "GetFileStores") arguments) "executable:java.nio.file.FileSystem#supportedFileAttributeViews()" (csharp/invocation (csharp/member target-node "SupportedFileAttributeViews") arguments) "executable:java.nio.file.FileSystem#getPathMatcher(java.lang.String)" (csharp/invocation (csharp/member target-node "GetPathMatcher") arguments) "executable:java.nio.file.FileSystem#getUserPrincipalLookupService()" (csharp/invocation (csharp/member target-node "GetUserPrincipalLookupService") arguments) "executable:java.nio.file.FileSystem#newWatchService()" (csharp/invocation (csharp/member target-node "NewWatchService") arguments) "executable:java.nio.file.FileSystem#close()" (csharp/invocation (csharp/member target-node "Close") arguments) "executable:java.nio.file.FileSystems#getDefault()" (csharp/invocation (csharp/member target-node "GetDefault") arguments) "executable:java.nio.file.FileSystems#getFileSystem(java.net.URI)" (csharp/invocation (csharp/member target-node "GetFileSystem") arguments) "executable:java.nio.file.FileSystems#newFileSystem(java.net.URI,java.util.Map)" (csharp/invocation (csharp/member target-node "NewFileSystem") arguments) "executable:java.util.EnumSet#noneOf(java.lang.Class)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetNoneOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.EnumSet#allOf(java.lang.Class)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetAllOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.EnumSet#copyOf(java.util.EnumSet)" "executable:java.util.EnumSet#copyOf(java.util.Collection)") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetCopyOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum[])") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.SetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.net.http.HttpRequest#newBuilder()" "executable:java.net.http.HttpRequest#newBuilder(java.net.URI)") (csharp/invocation (csharp/member target-node "NewBuilder") arguments) "executable:java.net.http.HttpRequest#uri()" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpRequest#headers()" (csharp/invocation (csharp/member target-node "Headers") arguments) "executable:java.net.http.HttpRequest#expectContinue()" (csharp/invocation (csharp/member target-node "ExpectContinue") arguments) "executable:java.net.http.HttpRequest#method()" (csharp/invocation (csharp/member target-node "Method") arguments) "executable:java.net.http.HttpRequest#timeout()" (csharp/invocation (csharp/member target-node "Timeout") arguments) "executable:java.net.http.HttpRequest#version()" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpRequest#bodyPublisher()" (csharp/invocation (csharp/member target-node "BodyPublisher") arguments) "executable:java.net.http.HttpRequest$Builder#uri(java.net.URI)" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpRequest$Builder#timeout(java.time.Duration)" (csharp/invocation (csharp/member target-node "Timeout") arguments) "executable:java.net.http.HttpRequest$Builder#version(java.net.http.HttpClient$Version)" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpRequest$Builder#header(java.lang.String,java.lang.String)" (csharp/invocation (csharp/member target-node "Header") arguments) "executable:java.net.http.HttpRequest$Builder#setHeader(java.lang.String,java.lang.String)" (csharp/invocation (csharp/member target-node "SetHeader") arguments) "executable:java.net.http.HttpRequest$Builder#expectContinue(boolean)" (csharp/invocation (csharp/member target-node "ExpectContinue") arguments) "executable:java.net.http.HttpRequest$Builder#method(java.lang.String,java.net.http.HttpRequest$BodyPublisher)" (csharp/invocation (csharp/member target-node "Method") arguments) "executable:java.net.http.HttpRequest$Builder#GET()" (csharp/invocation (csharp/member target-node "GET") arguments) "executable:java.net.http.HttpRequest$Builder#DELETE()" (csharp/invocation (csharp/member target-node "DELETE") arguments) "executable:java.net.http.HttpRequest$Builder#build()" (csharp/invocation (csharp/member target-node "Build") arguments) "executable:java.net.http.HttpRequest$BodyPublishers#noBody()" (csharp/invocation (csharp/member target-node "NoBody") arguments) "executable:java.net.http.HttpResponse#statusCode()" (csharp/invocation (csharp/member target-node "StatusCode") arguments) "executable:java.net.http.HttpResponse#body()" (csharp/invocation (csharp/member target-node "Body") arguments) "executable:java.net.http.HttpResponse#request()" (csharp/invocation (csharp/member target-node "Request") arguments) "executable:java.net.http.HttpResponse#previousResponse()" (csharp/invocation (csharp/member target-node "PreviousResponse") arguments) "executable:java.net.http.HttpResponse#uri()" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpResponse#headers()" (csharp/invocation (csharp/member target-node "Headers") arguments) "executable:java.net.http.HttpResponse#version()" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpHeaders#firstValue(java.lang.String)" (csharp/invocation (csharp/member target-node "FirstValue") arguments) "executable:java.net.http.HttpHeaders#map()" (csharp/invocation (csharp/member target-node "Map") arguments) "executable:java.net.http.HttpResponse$BodyHandlers#ofInputStream()" (csharp/invocation (csharp/member target-node "OfInputStream") arguments) "executable:java.net.http.HttpResponse$BodyHandlers#ofByteArray()" (csharp/invocation (csharp/member target-node "OfByteArray") arguments) "executable:java.util.zip.ZipInputStream#getNextEntry()" (csharp/invocation (csharp/member target-node "GetNextEntry") arguments) "executable:java.util.zip.ZipInputStream#readAllBytes()" (csharp/invocation (csharp/member target-node "ReadAllBytes") arguments) "executable:java.util.zip.ZipInputStream#closeEntry()" (csharp/invocation (csharp/member target-node "CloseEntry") arguments) "executable:java.util.zip.ZipOutputStream#putNextEntry(java.util.zip.ZipEntry)" (csharp/invocation (csharp/member target-node "PutNextEntry") arguments) "executable:java.util.zip.ZipOutputStream#closeEntry()" (csharp/invocation (csharp/member target-node "CloseEntry") arguments) "executable:java.util.zip.ZipEntry#getName()" (csharp/invocation (csharp/member target-node "GetName") arguments) "executable:java.util.zip.ZipEntry#isDirectory()" (csharp/invocation (csharp/member target-node "IsDirectory") arguments) "executable:java.util.zip.ZipEntry#setTimeLocal(java.time.LocalDateTime)" (csharp/invocation (csharp/member target-node "SetTimeLocal") arguments) "executable:java.util.Arrays#stream(java.lang.Object[])" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.StreamOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) nil)))
+  (cond (or (and (str/starts-with? key "executable:java.util.function.") (or (str/includes? key "#accept(") (str/includes? key "#apply(") (str/includes? key "#get()"))) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (= key "executable:java.lang.invoke.MethodHandles#lookup()")) (cond (str/starts-with? key "executable:java.util.function.") (csharp/invocation target-node arguments) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (csharp/invocation (csharp/member target-node "Compare") arguments) :else (raw "global::DripSharp.Runtime.JavaMethodHandles.lookup()")) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (csharp/invocation target-node arguments) (str/starts-with? key "executable:java.util.Set#of(") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) (str/starts-with? key "executable:java.util.Map#of(") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.MapOf") (mapv (fn* [p1__477#] (type-node ctx p1__477#)) (.getActualTypeArguments (.getType element)))) (raw "(") (sequence-node arguments ", ") (raw ")")]) (and (str/starts-with? key "executable:java.util.Arrays#copyOf(") (str/ends-with? key ",int)")) (let [component (some-> (first (.getArguments element)) .getType .getComponentType)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.CopyOf") [(type-node ctx component)]) (raw "(") (sequence-node arguments ", ") (raw ")")])) (and (str/starts-with? key "executable:java.util.Arrays#copyOfRange(") (str/ends-with? key ",int,int)")) (let [component (some-> (first (.getArguments element)) .getType .getComponentType)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.CopyOfRange") [(type-node ctx component)]) (raw "(") (sequence-node arguments ", ") (raw ")")])) :else (case key ("executable:java.lang.Character#isLetterOrDigit(int)" "executable:java.lang.Character#isUnicodeIdentifierPart(int)" "executable:java.lang.Character#isUnicodeIdentifierStart(int)") (compat-call (case key "executable:java.lang.Character#isLetterOrDigit(int)" "IsLetterOrDigit" "executable:java.lang.Character#isUnicodeIdentifierPart(int)" "IsUnicodeIdentifierPart" "IsUnicodeIdentifierStart") arguments) "executable:java.lang.Character#isHighSurrogate(char)" (sequence-node [(raw "char.IsHighSurrogate(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Character#isLowSurrogate(char)" (sequence-node [(raw "char.IsLowSurrogate(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Character#toString(int)" (compat-call "CodePointToString" arguments) "executable:java.lang.Character#toTitleCase(int)" (compat-call "ToTitleCase" arguments) "executable:java.lang.Character#isTitleCase(int)" (compat-call "IsTitleCase" arguments) ("executable:java.lang.Character#isUpperCase(char)" "executable:java.lang.Character#isUpperCase(int)") (compat-call "IsUpperCase" arguments) "executable:java.lang.Character#toUpperCase(int)" (compat-call "ToUpperCase" arguments) "executable:java.lang.CharSequence#isEmpty()" (csharp/binary "==" 40 (sequence-node [target-node (raw ".Length")]) (raw "0")) "executable:java.lang.String#formatted(java.lang.Object[])" (compat-call "Formatted" (into [target-node] arguments)) "executable:java.lang.String#isBlank()" (sequence-node [(raw "global::System.String.IsNullOrWhiteSpace(") target-node (raw ")")]) "executable:java.lang.String#repeat(int)" (compat-call "Repeat" (into [target-node] arguments)) "executable:java.lang.String#regionMatches(boolean,int,java.lang.String,int,int)" (compat-call "RegionMatches" (into [target-node] arguments)) "executable:java.lang.String#regionMatches(int,java.lang.String,int,int)" (compat-call "RegionMatches" (into [target-node (raw "false")] arguments)) "executable:java.lang.String#lastIndexOf(int,int)" (compat-call "StringLastIndexOf" (into [target-node] arguments)) "executable:java.lang.String#lastIndexOf(java.lang.String)" (sequence-node [target-node (raw ".LastIndexOf(") (first arguments) (raw ", global::System.StringComparison.Ordinal)")]) "executable:java.util.Deque#getFirst()" (compat-call "DequeGetFirst" [target-node]) "executable:java.util.Deque#descendingIterator()" (csharp/invocation (csharp/member target-node "DescendingIterator") []) ("executable:java.util.List#of()" "executable:java.util.List#of(java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object[])") (let [element-node (collection-element-type-node ctx element)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.ListOf") [element-node]) (raw "(") (sequence-node (collection-factory-argument-nodes ctx element arguments element-node) ", ") (raw ")")])) "executable:java.util.List#copyOf(java.util.Collection)" (compat-call "ListCopyOf" arguments) ("executable:java.util.List#addAll(java.util.Collection)" "executable:java.util.ArrayList#addAll(java.util.Collection)") (compat-call "AddAll" (into [target-node] arguments)) "executable:java.util.Locale#getDefault()" (raw "global::System.Globalization.CultureInfo.CurrentCulture") "executable:java.util.Collections#singleton(java.lang.Object)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.SetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Objects#deepEquals(java.lang.Object,java.lang.Object)" (compat-call "DeepEquals" arguments) "executable:java.util.Map#equals(java.lang.Object)" (compat-call "Equals" (into [target-node] arguments)) ("executable:java.util.function.Function#apply(java.lang.Object)" "executable:java.util.function.LongFunction#apply(long)" "executable:java.lang.Runnable#run()") (csharp/invocation target-node arguments) "executable:java.util.function.Function#identity()" (raw "value => value") "executable:java.util.function.Function#andThen(java.util.function.Function)" (compat-call "AndThen" (into [target-node] arguments)) "executable:java.util.ResourceBundle#getBundle(java.lang.String,java.util.Locale)" (compat-call "GetResourceBundle" arguments) "executable:java.util.ResourceBundle#getString(java.lang.String)" (compat-call "GetResourceString" (into [target-node] arguments)) "executable:java.util.stream.IntStream#allMatch(java.util.function.IntPredicate)" (compat-call "All" (into [target-node] arguments)) "executable:java.util.stream.IntStream#skip(long)" (compat-call "Skip" (into [target-node] arguments)) "executable:java.lang.Iterable#iterator()" (compat-call "Iterator" [target-node]) ("executable:java.util.stream.IntStream#iterator()" "executable:java.util.stream.LongStream#iterator()") (compat-call "Iterator" [target-node]) "executable:java.util.stream.Collectors#joining(java.lang.CharSequence)" (compat-call "Joining" arguments) "executable:java.util.stream.Collectors#toMap(java.util.function.Function,java.util.function.Function)" (let [key-selector-type (.getType (first (.getArguments element))) value-selector-type (.getType (second (.getArguments element))) input-type (first (.getActualTypeArguments key-selector-type)) key-type (second (.getActualTypeArguments key-selector-type)) value-type (second (.getActualTypeArguments value-selector-type))] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.ToMap") (mapv (fn* [p1__479#] (type-node ctx p1__479#)) [input-type key-type value-type])) (raw "(") (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#end()" (sequence-node [target-node (raw ".End()")]) "executable:java.util.regex.Matcher#find()" (sequence-node [target-node (raw ".Find()")]) "executable:java.util.regex.Matcher#find(int)" (sequence-node [target-node (raw ".Find(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.regex.Matcher#group()" (sequence-node [target-node (raw ".Group()")]) "executable:java.util.regex.Matcher#group(int)" (sequence-node [target-node (raw ".Group(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.regex.Matcher#group(java.lang.String)" "executable:java.util.regex.Matcher#groupCount()" "executable:java.util.regex.Matcher#lookingAt()" "executable:java.util.regex.Matcher#region(int,int)" "executable:java.util.regex.Matcher#replaceFirst(java.lang.String)" "executable:java.util.regex.Matcher#start(int)" "executable:java.util.regex.Matcher#end(int)" "executable:java.util.regex.Matcher#toMatchResult()" "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuffer,java.lang.String)" "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuilder,java.lang.String)" "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuffer)" "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuilder)") (let [name (get {"executable:java.util.regex.Matcher#groupCount()" "GroupCount", "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuilder)" "AppendTail", "executable:java.util.regex.Matcher#replaceFirst(java.lang.String)" "ReplaceFirst", "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuffer,java.lang.String)" "AppendReplacement", "executable:java.util.regex.Matcher#group(java.lang.String)" "Group", "executable:java.util.regex.Matcher#start(int)" "Start", "executable:java.util.regex.Matcher#end(int)" "End", "executable:java.util.regex.Matcher#toMatchResult()" "ToMatchResult", "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuilder,java.lang.String)" "AppendReplacement", "executable:java.util.regex.Matcher#lookingAt()" "LookingAt", "executable:java.util.regex.Matcher#region(int,int)" "Region", "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuffer)" "AppendTail"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#quoteReplacement(java.lang.String)" (compat-call "QuoteReplacement" arguments) ("executable:java.util.regex.MatchResult#end()" "executable:java.util.regex.MatchResult#end(int)" "executable:java.util.regex.MatchResult#group()" "executable:java.util.regex.MatchResult#group(int)" "executable:java.util.regex.MatchResult#groupCount()" "executable:java.util.regex.MatchResult#start()" "executable:java.util.regex.MatchResult#start(int)") (let [name (get {"executable:java.util.regex.MatchResult#end()" "End", "executable:java.util.regex.MatchResult#end(int)" "End", "executable:java.util.regex.MatchResult#group()" "Group", "executable:java.util.regex.MatchResult#group(int)" "Group", "executable:java.util.regex.MatchResult#groupCount()" "GroupCount", "executable:java.util.regex.MatchResult#start()" "Start", "executable:java.util.regex.MatchResult#start(int)" "Start"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#replaceAll(java.lang.String)" (sequence-node [target-node (raw ".ReplaceAll(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.regex.Matcher#start()" (sequence-node [target-node (raw ".Start()")]) "executable:java.util.regex.Pattern#matches(java.lang.String,java.lang.CharSequence)" (compat-call "StringMatches" [(second arguments) (first arguments)]) "executable:java.util.regex.Pattern#compile(java.lang.String,int)" (compat-call "CompileRegex" arguments) ("executable:java.util.regex.Pattern#pattern()" "executable:java.util.regex.Pattern#toString()") (compat-call "RegexPattern" [target-node]) "executable:java.util.regex.Pattern#flags()" (compat-call "RegexFlags" [target-node]) "executable:java.util.regex.Pattern#quote(java.lang.String)" (compat-call "QuoteRegex" arguments) "executable:java.util.regex.Pattern#split(java.lang.CharSequence,int)" (compat-call "RegexSplit" (into [target-node] arguments)) "executable:java.util.stream.Stream#anyMatch(java.util.function.Predicate)" (compat-call "Any" (into [target-node] arguments)) "executable:java.util.stream.Stream#allMatch(java.util.function.Predicate)" (compat-call "AllValues" (into [target-node] arguments)) "executable:java.util.stream.Stream#noneMatch(java.util.function.Predicate)" (compat-call "NoValues" (into [target-node] arguments)) "executable:java.util.stream.Stream#distinct()" (sequence-node [(raw "global::System.Linq.Enumerable.Distinct(") target-node (raw ")")]) "executable:java.util.stream.Stream#count()" (sequence-node [(raw "global::System.Linq.Enumerable.LongCount(") target-node (raw ")")]) "executable:java.util.stream.Stream#reduce(java.util.function.BinaryOperator)" (compat-call "ReduceOptional" (into [target-node] arguments)) "executable:java.util.stream.Stream#findFirst()" (compat-call "FindFirstOptional" [target-node]) "executable:java.util.stream.StreamSupport#stream(java.util.Spliterator,boolean)" (first arguments) ("executable:java.lang.Iterable#spliterator()" "executable:java.util.Collection#spliterator()" "executable:java.util.ServiceLoader#spliterator()" "executable:java.util.stream.Stream#spliterator()") target-node "executable:java.util.stream.Stream#toList()" (compat-call "ToListValues" [target-node]) "executable:java.util.stream.IntStream#toArray()" (sequence-node [(raw "global::System.Linq.Enumerable.ToArray(") target-node (raw ")")]) "executable:java.util.stream.IntStream#max()" (compat-call "MaxOptionalInt" [target-node]) "executable:java.util.stream.IntStream#forEach(java.util.function.IntConsumer)" (compat-call "ForEach" (into [target-node] arguments)) "executable:java.util.Optional#empty()" (sequence-node [(type-node ctx (.getType element)) (raw ".Empty()")]) "executable:java.util.Optional#of(java.lang.Object)" (sequence-node [(type-node ctx (.getType element)) (raw ".Of(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ofNullable(java.lang.Object)" (sequence-node [(type-node ctx (.getType element)) (raw ".OfNullable(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#get()" (sequence-node [target-node (raw ".Get()")]) "executable:java.util.Optional#isPresent()" (sequence-node [target-node (raw ".IsPresent()")]) "executable:java.util.Optional#isEmpty()" (sequence-node [target-node (raw ".IsEmpty()")]) "executable:java.util.Optional#equals(java.lang.Object)" (compat-call "Equals" (into [target-node] arguments)) "executable:java.util.Optional#map(java.util.function.Function)" (sequence-node [target-node (raw ".Map(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#orElse(java.lang.Object)" (sequence-node [target-node (raw ".OrElse(") (if (and (= 1 (count (.getArguments element))) (instance? CtLiteral (first (.getArguments element))) (nil? (.getValue (first (.getArguments element))))) (raw "default!") (sequence-node arguments ", ")) (raw ")")]) "executable:java.util.Optional#orElseGet(java.util.function.Supplier)" (sequence-node [target-node (raw ".OrElseGet(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ifPresent(java.util.function.Consumer)" (sequence-node [target-node (raw ".IfPresent(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ifPresentOrElse(java.util.function.Consumer,java.lang.Runnable)" (sequence-node [target-node (raw ".IfPresentOrElse(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.Optional#orElseThrow()" "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)") (sequence-node [target-node (raw ".OrElseThrow(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.OptionalInt#isPresent()" (sequence-node [target-node (raw ".HasValue")]) "executable:java.util.OptionalInt#getAsInt()" (sequence-node [target-node (raw ".Value")]) "executable:java.util.OptionalInt#empty()" (raw "(int?)null") "executable:java.util.OptionalInt#of(int)" (first arguments) "executable:java.util.OptionalInt#orElse(int)" (sequence-node [target-node (raw ".GetValueOrDefault(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.OptionalLong#empty()" (raw "(long?)null") "executable:java.util.OptionalLong#of(long)" (first arguments) "executable:java.util.OptionalLong#ifPresent(java.util.function.LongConsumer)" (compat-call "OptionalLongIfPresent" (into [target-node] arguments)) ("executable:java.lang.Math#acos(double)" "executable:java.lang.Math#abs(double)" "executable:java.lang.Math#abs(float)" "executable:java.lang.Math#abs(int)" "executable:java.lang.Math#abs(long)" "executable:java.lang.Math#atan2(double,double)" "executable:java.lang.Math#cos(double)" "executable:java.lang.Math#floor(double)" "executable:java.lang.Math#log(double)" "executable:java.lang.Math#log10(double)" "executable:java.lang.Math#pow(double,double)" "executable:java.lang.Math#sin(double)" "executable:java.lang.Math#sqrt(double)") (let [name (get {"executable:java.lang.Math#abs(double)" "Abs", "executable:java.lang.Math#pow(double,double)" "Pow", "executable:java.lang.Math#log10(double)" "Log10", "executable:java.lang.Math#floor(double)" "Floor", "executable:java.lang.Math#cos(double)" "Cos", "executable:java.lang.Math#abs(int)" "Abs", "executable:java.lang.Math#abs(long)" "Abs", "executable:java.lang.Math#log(double)" "Log", "executable:java.lang.Math#abs(float)" "Abs", "executable:java.lang.Math#acos(double)" "Acos", "executable:java.lang.Math#atan2(double,double)" "Atan2", "executable:java.lang.Math#sqrt(double)" "Sqrt", "executable:java.lang.Math#sin(double)" "Sin"} key)] (sequence-node [(raw (str "global::System.Math." name "(")) (sequence-node arguments ", ") (raw ")")])) ("executable:java.lang.Math#floorDiv(int,int)" "executable:java.lang.Math#round(double)" "executable:java.lang.Math#round(float)" "executable:java.lang.Math#signum(double)" "executable:java.lang.Math#signum(float)" "executable:java.lang.Math#toDegrees(double)" "executable:java.lang.Math#toRadians(double)") (compat-call (get {"executable:java.lang.Math#floorDiv(int,int)" "FloorDiv", "executable:java.lang.Math#round(double)" "MathRound", "executable:java.lang.Math#round(float)" "MathRoundFloat", "executable:java.lang.Math#signum(double)" "SignumDouble", "executable:java.lang.Math#signum(float)" "SignumFloat", "executable:java.lang.Math#toDegrees(double)" "ToDegrees", "executable:java.lang.Math#toRadians(double)" "ToRadians"} key) arguments) ("executable:java.lang.Math#addExact(long,long)" "executable:java.lang.StrictMath#addExact(long,long)") (compat-call "AddExact" arguments) ("executable:java.lang.Math#addExact(int,int)" "executable:java.lang.StrictMath#addExact(int,int)") (compat-call "AddExactInt" arguments) ("executable:java.lang.Math#negateExact(int)" "executable:java.lang.Math#negateExact(long)" "executable:java.lang.StrictMath#negateExact(int)" "executable:java.lang.StrictMath#negateExact(long)") (compat-call "NegateExact" arguments) ("executable:java.lang.Math#incrementExact(int)" "executable:java.lang.Math#incrementExact(long)" "executable:java.lang.StrictMath#incrementExact(int)" "executable:java.lang.StrictMath#incrementExact(long)") (compat-call "IncrementExact" arguments) ("executable:java.lang.Math#decrementExact(int)" "executable:java.lang.Math#decrementExact(long)" "executable:java.lang.StrictMath#decrementExact(int)" "executable:java.lang.StrictMath#decrementExact(long)") (compat-call "DecrementExact" arguments) "executable:java.lang.StrictMath#toIntExact(long)" (compat-call "ToIntExact" arguments) ("executable:java.lang.StrictMath#abs(double)" "executable:java.lang.StrictMath#abs(long)" "executable:java.lang.StrictMath#acos(double)" "executable:java.lang.StrictMath#asin(double)" "executable:java.lang.StrictMath#atan(double)" "executable:java.lang.StrictMath#atan2(double,double)" "executable:java.lang.StrictMath#cbrt(double)" "executable:java.lang.StrictMath#ceil(double)" "executable:java.lang.StrictMath#copySign(double,double)" "executable:java.lang.StrictMath#cos(double)" "executable:java.lang.StrictMath#exp(double)" "executable:java.lang.StrictMath#floor(double)" "executable:java.lang.StrictMath#log(double)" "executable:java.lang.StrictMath#log10(double)" "executable:java.lang.StrictMath#max(double,double)" "executable:java.lang.StrictMath#max(long,long)" "executable:java.lang.StrictMath#min(double,double)" "executable:java.lang.StrictMath#min(long,long)" "executable:java.lang.StrictMath#pow(double,double)" "executable:java.lang.StrictMath#rint(double)" "executable:java.lang.StrictMath#sin(double)" "executable:java.lang.StrictMath#sqrt(double)" "executable:java.lang.StrictMath#tan(double)") (let [method-name (get {"executable:java.lang.StrictMath#exp(double)" "Exp", "executable:java.lang.StrictMath#floor(double)" "Floor", "executable:java.lang.StrictMath#asin(double)" "Asin", "executable:java.lang.StrictMath#cbrt(double)" "Cbrt", "executable:java.lang.StrictMath#atan2(double,double)" "Atan2", "executable:java.lang.StrictMath#cos(double)" "Cos", "executable:java.lang.StrictMath#sqrt(double)" "Sqrt", "executable:java.lang.StrictMath#max(double,double)" "Max", "executable:java.lang.StrictMath#min(long,long)" "Min", "executable:java.lang.StrictMath#abs(long)" "Abs", "executable:java.lang.StrictMath#log10(double)" "Log10", "executable:java.lang.StrictMath#pow(double,double)" "Pow", "executable:java.lang.StrictMath#copySign(double,double)" "CopySign", "executable:java.lang.StrictMath#ceil(double)" "Ceiling", "executable:java.lang.StrictMath#sin(double)" "Sin", "executable:java.lang.StrictMath#acos(double)" "Acos", "executable:java.lang.StrictMath#min(double,double)" "Min", "executable:java.lang.StrictMath#rint(double)" "Round", "executable:java.lang.StrictMath#max(long,long)" "Max", "executable:java.lang.StrictMath#atan(double)" "Atan", "executable:java.lang.StrictMath#tan(double)" "Tan", "executable:java.lang.StrictMath#log(double)" "Log", "executable:java.lang.StrictMath#abs(double)" "Abs"} key)] (csharp/invocation (raw (str "global::System.Math." method-name)) arguments)) ("executable:java.lang.StrictMath#getExponent(double)" "executable:java.lang.Math#getExponent(double)") (compat-call "GetExponent" arguments) "executable:java.lang.Double#doubleToRawLongBits(double)" (sequence-node [(raw "global::System.BitConverter.DoubleToInt64Bits(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StrictMath#signum(double)" (compat-call "SignumDouble" arguments) ("executable:java.lang.Math#multiplyExact(long,long)" "executable:java.lang.Math#multiplyExact(long,int)" "executable:java.lang.StrictMath#multiplyExact(long,int)" "executable:java.lang.StrictMath#multiplyExact(long,long)") (compat-call "MultiplyExact" arguments) ("executable:java.lang.Math#multiplyExact(int,int)" "executable:java.lang.StrictMath#multiplyExact(int,int)") (compat-call "MultiplyExactInt" arguments) ("executable:java.lang.Math#subtractExact(long,long)" "executable:java.lang.StrictMath#subtractExact(long,long)") (compat-call "SubtractExact" arguments) ("executable:java.text.Bidi#getBaseLevel()" "executable:java.text.Bidi#getRunCount()" "executable:java.text.Bidi#getRunLevel(int)" "executable:java.text.Bidi#getRunLimit(int)" "executable:java.text.Bidi#getRunStart(int)" "executable:java.text.Bidi#isMixed()") (let [name (get {"executable:java.text.Bidi#getBaseLevel()" "GetBaseLevel", "executable:java.text.Bidi#getRunCount()" "GetRunCount", "executable:java.text.Bidi#getRunLevel(int)" "GetRunLevel", "executable:java.text.Bidi#getRunLimit(int)" "GetRunLimit", "executable:java.text.Bidi#getRunStart(int)" "GetRunStart", "executable:java.text.Bidi#isMixed()" "IsMixed"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.text.Bidi#reorderVisually(byte[],int,java.lang.Object[],int,int)" (sequence-node [(raw "global::DripSharp.Runtime.JavaBidi.ReorderVisually(") (sequence-node arguments ", ") (raw ")")]) "executable:java.text.Normalizer#normalize(java.lang.CharSequence,java.text.Normalizer$Form)" (compat-call "Normalize" arguments) "executable:javax.net.ssl.KeyManagerFactory#getDefaultAlgorithm()" (raw "global::DripSharp.Runtime.JavaKeyManagerFactory.GetDefaultAlgorithm()") "executable:javax.net.ssl.KeyManagerFactory#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaKeyManagerFactory.GetInstance(") (sequence-node arguments ", ") (raw ")")]) ("executable:javax.net.ssl.KeyManagerFactory#init(java.security.KeyStore,char[])" "executable:javax.net.ssl.TrustManagerFactory#init(java.security.KeyStore)" "executable:javax.net.ssl.SSLContext#init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)") (sequence-node [target-node (raw ".Init(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.KeyManagerFactory#getKeyManagers()" (sequence-node [target-node (raw ".GetKeyManagers()")]) "executable:javax.net.ssl.TrustManagerFactory#getDefaultAlgorithm()" (raw "global::DripSharp.Runtime.JavaTrustManagerFactory.GetDefaultAlgorithm()") "executable:javax.net.ssl.TrustManagerFactory#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaTrustManagerFactory.GetInstance(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.TrustManagerFactory#getTrustManagers()" (sequence-node [target-node (raw ".GetTrustManagers()")]) "executable:javax.net.ssl.SSLContext#getDefault()" (raw "global::DripSharp.Runtime.JavaSslContext.GetDefault()") "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaSslContext.GetInstance(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.SSLSocketFactory#getDefault()" (raw "global::DripSharp.Runtime.JavaSocketFactory.Default") "executable:javax.net.ssl.SSLContext#getSocketFactory()" (sequence-node [target-node (raw ".GetSocketFactory()")]) "executable:javax.net.ssl.SSLContext#getServerSocketFactory()" (sequence-node [target-node (raw ".GetServerSocketFactory()")]) "executable:java.lang.String#lines()" (compat-call "StringLines" [target-node]) "executable:java.lang.String#strip()" (sequence-node [target-node (raw ".Trim()")]) "executable:java.util.stream.Stream#skip(long)" (compat-call "DropValues" (into [target-node] arguments)) "executable:java.util.Objects#requireNonNullElseGet(java.lang.Object,java.util.function.Supplier)" (compat-call "RequireNonNullElseGet" arguments) "executable:java.util.Random#nextLong()" (sequence-node [target-node (raw ".NextLong()")]) "executable:java.util.concurrent.CompletableFuture#complete(java.lang.Object)" (sequence-node [target-node (raw ".Complete(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.concurrent.CompletableFuture#completeExceptionally(java.lang.Throwable)" (sequence-node [target-node (raw ".CompleteExceptionally(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.concurrent.Future#get()" (sequence-node [target-node (raw ".Get()")]) "executable:java.lang.StringBuilder#append(char[])" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StringBuilder#append(char[],int,int)" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StringBuilder#append(java.lang.CharSequence)" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Long#byteValue()" (sequence-node [(raw "unchecked((sbyte)(") target-node (raw "))")]) "executable:java.lang.Long#shortValue()" (sequence-node [(raw "unchecked((short)(") target-node (raw "))")]) "executable:java.lang.Long#intValue()" (sequence-node [(raw "unchecked((int)(") target-node (raw "))")]) "executable:java.lang.Float#doubleValue()" (sequence-node [(raw "(double)(") target-node (raw ")")]) "executable:java.net.URI#getAuthority()" (sequence-node [(compat-call "UriAuthority" [target-node]) (raw "!")]) "executable:java.net.URI#getFragment()" (sequence-node [(compat-call "UriFragment" [target-node]) (raw "!")]) "executable:java.net.URI#getQuery()" (sequence-node [(compat-call "UriQuery" [target-node]) (raw "!")]) "executable:java.net.URI#getSchemeSpecificPart()" (sequence-node [(compat-call "UriSchemeSpecificPart" [target-node]) (raw "!")]) "executable:java.net.URI#getRawAuthority()" (sequence-node [(compat-call "UriRawAuthority" [target-node]) (raw "!")]) "executable:java.net.URI#getRawSchemeSpecificPart()" (sequence-node [(compat-call "UriRawSchemeSpecificPart" [target-node]) (raw "!")]) "executable:java.net.URI#getRawUserInfo()" (sequence-node [(compat-call "UriRawUserInfo" [target-node]) (raw "!")]) "executable:java.net.URI#isAbsolute()" (csharp/member target-node "IsAbsoluteUri") "executable:java.net.URI#isOpaque()" (compat-call "UriIsOpaque" [target-node]) "executable:java.net.URI#normalize()" (compat-call "NormalizeUri" [target-node]) "executable:java.net.URI#relativize(java.net.URI)" (compat-call "RelativizeUri" (into [target-node] arguments)) ("executable:java.net.URI#resolve(java.lang.String)" "executable:java.net.URI#resolve(java.net.URI)") (compat-call "ResolveUri" (into [target-node] arguments)) "executable:java.net.URI#toASCIIString()" (csharp/member target-node "AbsoluteUri") "executable:java.net.URI#toURL()" target-node "executable:java.net.URI#compareTo(java.net.URI)" (compat-call "CompareUri" (into [target-node] arguments)) "executable:java.net.URL#toURI()" target-node "executable:java.net.URL#getProtocol()" (compat-call "UriScheme" [target-node]) "executable:java.net.URLConnection#connect()" (csharp/invocation (csharp/member target-node "Connect") arguments) "executable:java.net.URLConnection#setUseCaches(boolean)" (csharp/invocation (csharp/member target-node "SetUseCaches") arguments) "executable:java.net.URLConnection#getInputStream()" (csharp/invocation (csharp/member target-node "GetInputStream") arguments) "executable:java.net.URLConnection#getURL()" (csharp/invocation (csharp/member target-node "GetURL") arguments) "executable:java.lang.invoke.VarHandle#storeStoreFence()" (csharp/invocation (raw "global::System.Threading.Thread.MemoryBarrier") []) "executable:java.nio.file.Path#toString()" (sequence-node [target-node (raw ".ToString()!")]) "executable:java.nio.file.Path#of(java.lang.String,java.lang.String[])" (compat-call "PathOf" arguments) "executable:java.nio.file.Path#of(java.net.URI)" (compat-call "PathOfUri" arguments) "executable:java.nio.file.Path#getRoot()" (compat-call "PathRoot" [target-node]) "executable:java.nio.file.Path#isAbsolute()" (compat-call "PathIsAbsolute" [target-node]) "executable:java.nio.file.Path#normalize()" (compat-call "NormalizePath" [target-node]) "executable:java.nio.file.Path#startsWith(java.nio.file.Path)" (compat-call "PathStartsWith" (into [target-node] arguments)) ("executable:java.nio.file.Path#endsWith(java.lang.String)" "executable:java.nio.file.Path#endsWith(java.nio.file.Path)") (compat-call "PathEndsWith" (into [target-node] arguments)) "executable:java.nio.file.Path#getFileName()" (csharp/invocation (raw "global::System.IO.Path.GetFileName") [target-node]) "executable:java.nio.file.Path#getParent()" (compat-call "PathParent" [target-node]) "executable:java.nio.file.Path#resolveSibling(java.lang.String)" (compat-call "PathResolveSibling" (into [target-node] arguments)) "executable:java.nio.file.Path#getNameCount()" (compat-call "PathNameCount" [target-node]) "executable:java.nio.file.Path#getName(int)" (compat-call "PathName" (into [target-node] arguments)) "executable:java.nio.file.Path#relativize(java.nio.file.Path)" (compat-call "PathRelativize" (into [target-node] arguments)) ("executable:java.nio.file.Path#resolve(java.lang.String)" "executable:java.nio.file.Path#resolve(java.nio.file.Path)") (compat-call "PathResolve" (into [target-node] arguments)) "executable:java.nio.file.Path#toAbsolutePath()" (csharp/invocation (raw "global::System.IO.Path.GetFullPath") [target-node]) "executable:java.nio.file.Path#toRealPath(java.nio.file.LinkOption[])" (compat-call "RealPath" [target-node]) "executable:java.nio.file.Path#toUri()" (compat-call "PathToUri" [target-node]) "executable:java.nio.file.Files#exists(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "Exists" [(first arguments)]) "executable:java.nio.file.Files#createDirectories(java.nio.file.Path,java.nio.file.attribute.FileAttribute[])" (compat-call "CreateDirectories" [(first arguments)]) "executable:java.nio.file.Files#newOutputStream(java.nio.file.Path,java.nio.file.OpenOption[])" (compat-call "NewOutputStream" arguments) "executable:java.nio.file.Files#deleteIfExists(java.nio.file.Path)" (compat-call "DeleteIfExists" arguments) ("executable:java.nio.file.Files#readString(java.nio.file.Path)" "executable:java.nio.file.Files#readString(java.nio.file.Path,java.nio.charset.Charset)") (compat-call "ReadString" arguments) ("executable:java.nio.file.Files#copy(java.io.InputStream,java.nio.file.Path,java.nio.file.CopyOption[])" "executable:java.nio.file.Files#copy(java.nio.file.Path,java.io.OutputStream)" "executable:java.nio.file.Files#copy(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption[])") (compat-call "Copy" arguments) "executable:java.nio.file.Files#move(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption[])" (compat-call "Move" arguments) "executable:java.nio.file.Files#writeString(java.nio.file.Path,java.lang.CharSequence,java.nio.file.OpenOption[])" (compat-call "WriteString" arguments) "executable:java.nio.file.Files#isSymbolicLink(java.nio.file.Path)" (compat-call "IsSymbolicLink" arguments) "executable:java.nio.file.Files#newDirectoryStream(java.nio.file.Path)" (compat-call "NewDirectoryStream" arguments) "executable:java.nio.file.Files#isDirectory(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "IsDirectory" [(first arguments)]) "executable:java.nio.file.Files#isRegularFile(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "PathIsRegularFile" [(first arguments)]) "executable:java.nio.file.Files#list(java.nio.file.Path)" (compat-call "List" arguments) "executable:java.nio.file.FileSystem#getPath(java.lang.String,java.lang.String[])" (csharp/invocation (csharp/member target-node "GetPath") arguments) "executable:java.nio.file.FileSystem#provider()" (csharp/invocation (csharp/member target-node "Provider") arguments) "executable:java.nio.file.FileSystem#isOpen()" (csharp/invocation (csharp/member target-node "IsOpen") arguments) "executable:java.nio.file.FileSystem#isReadOnly()" (csharp/invocation (csharp/member target-node "IsReadOnly") arguments) "executable:java.nio.file.FileSystem#getSeparator()" (csharp/invocation (csharp/member target-node "GetSeparator") arguments) "executable:java.nio.file.FileSystem#getFileStores()" (csharp/invocation (csharp/member target-node "GetFileStores") arguments) "executable:java.nio.file.FileSystem#supportedFileAttributeViews()" (csharp/invocation (csharp/member target-node "SupportedFileAttributeViews") arguments) "executable:java.nio.file.FileSystem#getPathMatcher(java.lang.String)" (csharp/invocation (csharp/member target-node "GetPathMatcher") arguments) "executable:java.nio.file.FileSystem#getUserPrincipalLookupService()" (csharp/invocation (csharp/member target-node "GetUserPrincipalLookupService") arguments) "executable:java.nio.file.FileSystem#newWatchService()" (csharp/invocation (csharp/member target-node "NewWatchService") arguments) "executable:java.nio.file.FileSystem#close()" (csharp/invocation (csharp/member target-node "Close") arguments) "executable:java.nio.file.FileSystems#getDefault()" (csharp/invocation (csharp/member target-node "GetDefault") arguments) "executable:java.nio.file.FileSystems#getFileSystem(java.net.URI)" (csharp/invocation (csharp/member target-node "GetFileSystem") arguments) "executable:java.nio.file.FileSystems#newFileSystem(java.net.URI,java.util.Map)" (csharp/invocation (csharp/member target-node "NewFileSystem") arguments) "executable:java.util.EnumSet#noneOf(java.lang.Class)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetNoneOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.EnumSet#allOf(java.lang.Class)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetAllOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.EnumSet#copyOf(java.util.EnumSet)" "executable:java.util.EnumSet#copyOf(java.util.Collection)") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetCopyOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum[])") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.SetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.net.http.HttpRequest#newBuilder()" "executable:java.net.http.HttpRequest#newBuilder(java.net.URI)") (csharp/invocation (csharp/member target-node "NewBuilder") arguments) "executable:java.net.http.HttpRequest#uri()" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpRequest#headers()" (csharp/invocation (csharp/member target-node "Headers") arguments) "executable:java.net.http.HttpRequest#expectContinue()" (csharp/invocation (csharp/member target-node "ExpectContinue") arguments) "executable:java.net.http.HttpRequest#method()" (csharp/invocation (csharp/member target-node "Method") arguments) "executable:java.net.http.HttpRequest#timeout()" (csharp/invocation (csharp/member target-node "Timeout") arguments) "executable:java.net.http.HttpRequest#version()" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpRequest#bodyPublisher()" (csharp/invocation (csharp/member target-node "BodyPublisher") arguments) "executable:java.net.http.HttpRequest$Builder#uri(java.net.URI)" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpRequest$Builder#timeout(java.time.Duration)" (csharp/invocation (csharp/member target-node "Timeout") arguments) "executable:java.net.http.HttpRequest$Builder#version(java.net.http.HttpClient$Version)" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpRequest$Builder#header(java.lang.String,java.lang.String)" (csharp/invocation (csharp/member target-node "Header") arguments) "executable:java.net.http.HttpRequest$Builder#setHeader(java.lang.String,java.lang.String)" (csharp/invocation (csharp/member target-node "SetHeader") arguments) "executable:java.net.http.HttpRequest$Builder#expectContinue(boolean)" (csharp/invocation (csharp/member target-node "ExpectContinue") arguments) "executable:java.net.http.HttpRequest$Builder#method(java.lang.String,java.net.http.HttpRequest$BodyPublisher)" (csharp/invocation (csharp/member target-node "Method") arguments) "executable:java.net.http.HttpRequest$Builder#GET()" (csharp/invocation (csharp/member target-node "GET") arguments) "executable:java.net.http.HttpRequest$Builder#DELETE()" (csharp/invocation (csharp/member target-node "DELETE") arguments) "executable:java.net.http.HttpRequest$Builder#build()" (csharp/invocation (csharp/member target-node "Build") arguments) "executable:java.net.http.HttpRequest$BodyPublishers#noBody()" (csharp/invocation (csharp/member target-node "NoBody") arguments) "executable:java.net.http.HttpResponse#statusCode()" (csharp/invocation (csharp/member target-node "StatusCode") arguments) "executable:java.net.http.HttpResponse#body()" (csharp/invocation (csharp/member target-node "Body") arguments) "executable:java.net.http.HttpResponse#request()" (csharp/invocation (csharp/member target-node "Request") arguments) "executable:java.net.http.HttpResponse#previousResponse()" (csharp/invocation (csharp/member target-node "PreviousResponse") arguments) "executable:java.net.http.HttpResponse#uri()" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpResponse#headers()" (csharp/invocation (csharp/member target-node "Headers") arguments) "executable:java.net.http.HttpResponse#version()" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpHeaders#firstValue(java.lang.String)" (csharp/invocation (csharp/member target-node "FirstValue") arguments) "executable:java.net.http.HttpHeaders#map()" (csharp/invocation (csharp/member target-node "Map") arguments) "executable:java.net.http.HttpResponse$BodyHandlers#ofInputStream()" (csharp/invocation (csharp/member target-node "OfInputStream") arguments) "executable:java.net.http.HttpResponse$BodyHandlers#ofByteArray()" (csharp/invocation (csharp/member target-node "OfByteArray") arguments) "executable:java.util.zip.ZipInputStream#getNextEntry()" (csharp/invocation (csharp/member target-node "GetNextEntry") arguments) "executable:java.util.zip.ZipInputStream#readAllBytes()" (csharp/invocation (csharp/member target-node "ReadAllBytes") arguments) "executable:java.util.zip.ZipInputStream#closeEntry()" (csharp/invocation (csharp/member target-node "CloseEntry") arguments) "executable:java.util.zip.ZipOutputStream#putNextEntry(java.util.zip.ZipEntry)" (csharp/invocation (csharp/member target-node "PutNextEntry") arguments) "executable:java.util.zip.ZipOutputStream#closeEntry()" (csharp/invocation (csharp/member target-node "CloseEntry") arguments) "executable:java.util.zip.ZipEntry#getName()" (csharp/invocation (csharp/member target-node "GetName") arguments) "executable:java.util.zip.ZipEntry#isDirectory()" (csharp/invocation (csharp/member target-node "IsDirectory") arguments) "executable:java.util.zip.ZipEntry#setTimeLocal(java.time.LocalDateTime)" (csharp/invocation (csharp/member target-node "SetTimeLocal") arguments) "executable:java.util.Arrays#stream(java.lang.Object[])" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.StreamOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) nil)))
 
 (defn- reflection-invocation-node
   [key target-node arguments]
@@ -3398,8 +3494,14 @@
      {:node (sequence-node [(raw "double.IsNaN(") (sequence-node arguments ", ") (raw ")")])}),
    :java-library.mapping.executable/handler-0555
    (fn
-     [{:keys [target-node arguments]}]
-     {:node (compat-call "ComputeIfAbsent" (into [target-node] arguments))}),
+     [{:keys [target-node arguments element]}]
+     {:node
+      (compat-call
+       "ComputeIfAbsent"
+       (into
+        [target-node]
+        (unbox-nullable-boxed-invocation-arguments
+         @ctx-holder element arguments #{0})))}),
    :java-library.mapping.executable/handler-0508
    (fn
      [{:keys [target-node arguments]}]
@@ -3541,7 +3643,8 @@
    :java-library.mapping.executable/handler-0194
    (fn
      [{:keys [target-node arguments]}]
-     {:node (sequence-node [target-node (raw ".CompareTo(") (first arguments) (raw ")")])}),
+     {:node (compat-call "CalendarCompareTo"
+                         [target-node (first arguments)])}),
    :java-library.mapping.executable/handler-0449
    (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".Dispose()")])}),
    :java-library.mapping.executable/handler-0063
@@ -3746,8 +3849,14 @@
         (raw ")")])}),
    :java-library.mapping.executable/handler-0557
    (fn
-     [{:keys [target-node arguments]}]
-     {:node (compat-call "ComputeIfAbsent" (into [target-node] arguments))}),
+     [{:keys [target-node arguments element]}]
+     {:node
+      (compat-call
+       "ComputeIfAbsent"
+       (into
+        [target-node]
+        (unbox-nullable-boxed-invocation-arguments
+         @ctx-holder element arguments #{0})))}),
    :java-library.mapping.executable/handler-0580
    (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".Key")])}),
    :java-library.mapping.executable/handler-0347
@@ -3960,8 +4069,14 @@
      {:node (compat-call "RemoveIf" (into [target-node] arguments))}),
    :java-library.mapping.executable/handler-0556
    (fn
-     [{:keys [target-node arguments]}]
-     {:node (compat-call "ComputeIfAbsent" (into [target-node] arguments))}),
+     [{:keys [target-node arguments element]}]
+     {:node
+      (compat-call
+       "ComputeIfAbsent"
+       (into
+        [target-node]
+        (unbox-nullable-boxed-invocation-arguments
+         @ctx-holder element arguments #{0})))}),
    :java-library.mapping.executable/handler-0572
    (fn
      [{:keys [target-node arguments]}]
@@ -4420,7 +4535,7 @@
    :java-library.mapping.executable/handler-0197
    (fn
      [{:keys [target-node]}]
-     {:node (sequence-node [target-node (raw ".ToUnixTimeMilliseconds()")])}),
+     {:node (compat-call "CalendarGetTimeInMillis" [target-node])}),
    :java-library.mapping.executable/handler-0207
    (fn
      [{:keys [target-node arguments]}]
@@ -4971,11 +5086,7 @@
    :java-library.mapping.executable/handler-0120
    (fn
      [{:keys [target-node]}]
-     {:node
-      (sequence-node
-       [(raw "global::System.Convert.ToInt32(")
-        target-node
-        (raw ", global::System.Globalization.CultureInfo.InvariantCulture)")])}),
+     {:node (compat-call "NumberIntValue" [target-node])}),
    :java-library.mapping.executable/handler-0288
    (fn
      [{:keys [target-node arguments]}]
@@ -5067,8 +5178,14 @@
    (fn [{:keys [target-node]}] {:node (compat-call "FileIsFile" [target-node])}),
    :java-library.mapping.executable/handler-0631
    (fn
-     [{:keys [target-node arguments]}]
-     {:node (sequence-node [target-node (raw ".Add(") (sequence-node arguments ", ") (raw ")")])}),
+     [{:keys [target-node arguments element]}]
+     (let [arguments
+           (unbox-nullable-boxed-invocation-arguments
+            @ctx-holder element arguments #{0})]
+       {:node
+        (sequence-node
+         [target-node (raw ".Add(")
+          (sequence-node arguments ", ") (raw ")")])})),
    :java-library.mapping.executable/handler-0170 (fn [{:keys [target-node]}] {:node target-node}),
    :java-library.mapping.executable/handler-0159
    (fn [{:keys [arguments]}] {:node (compat-call "IdentityHashCode" arguments)}),
@@ -6163,7 +6280,9 @@
                owner (when anonymous-class (nearest-enclosing-type element))
                captures (when anonymous-class (anonymous-captures anonymous-class))
                outer? (when anonymous-class
-                        (anonymous-uses-outer? anonymous-class owner))
+                        (or (anonymous-uses-outer? anonymous-class owner)
+                            (some-> element .getType .getTypeDeclaration
+                                    non-static-member-class?)))
                destination-adaptation
                (or
                 (when-let [adaptation
@@ -6240,8 +6359,12 @@
                                 (.getExecutable element))
                declaration (:declaration occurrence)
                constructor? (= :constructor (:kind occurrence))
-               static? (and (instance? CtMethod declaration)
-                            (.hasModifier ^CtMethod declaration ModifierKind/STATIC))
+               static? (or (and (instance? CtMethod declaration)
+                                (.hasModifier ^CtMethod declaration
+                                              ModifierKind/STATIC))
+                           (and (instance? Method declaration)
+                                (java.lang.reflect.Modifier/isStatic
+                                 (.getModifiers ^Method declaration))))
                parameter-count (count (.getParameters (.getExecutable element)))
                parameters (mapv #(raw (str "value" %)) (range parameter-count))
                functional-type (some-> element .getType .getQualifiedName)
@@ -6263,6 +6386,13 @@
                    "java.util.function.UnaryOperator"
                    (first functional-arguments)
                    nil))
+               file-delete-reference?
+               (and (= "delete" (.getSimpleName (.getExecutable element)))
+                    (instance? CtTypeAccess target-element)
+                    (= "java.io.File"
+                       (some-> ^CtTypeAccess target-element
+                               .getAccessedType
+                               .getQualifiedName)))
                destination-method-reference?
                (:destination-method-reference? @ctx-holder)
                discards-result?
@@ -6274,9 +6404,12 @@
                              (not= Void/TYPE
                                    (.getReturnType ^Method declaration))))
                     (contains? #{"java.util.function.Consumer"
-                                 "java.util.function.BiConsumer"}
+                                 "java.util.function.BiConsumer"
+                                 "org.junit.jupiter.api.function.Executable"
+                                 "org.assertj.core.api.ThrowableAssert$ThrowingCallable"}
                                functional-type))]
-           (when-not (or (and (= :project (:origin occurrence))
+           (when-not (or file-delete-reference?
+                         (and (= :project (:origin occurrence))
                               (or (instance? CtMethod declaration)
                                   (instance? CtRecordComponent declaration)
                                   (instance? CtConstructor declaration)))
@@ -6331,6 +6464,9 @@
             (functional-expression-node
              @ctx-holder element
              (cond
+               file-delete-reference?
+               (raw "(value0) => { value0.Delete(); }")
+
                (= "executable:java.lang.Class#isInstance(java.lang.Object)"
                   (:key occurrence))
                (sequence-node
@@ -6823,6 +6959,9 @@
        (fn [{:keys [^CtConditional element children]}]
          (let [primitive-result? (.isPrimitive (.getType element))
                result-reference (.getType element)
+               nullable-boxed-result?
+               (and (boxed-primitive-reference? result-reference)
+                    (nullable-boxed-expression? @ctx-holder element))
                object-result? (wildcard-generic-conditional-result? element)
                branch-node
                (fn [^CtExpression expression]
@@ -6830,6 +6969,12 @@
                    (cond
                      primitive-result?
                      (maybe-unbox-node @ctx-holder expression node)
+
+                     nullable-boxed-result?
+                     (sequence-node
+                      [(raw "(")
+                       (nullable-node (type-node @ctx-holder result-reference))
+                       (raw ")(") node (raw ")")])
 
                      object-result?
                      (sequence-node [(raw "(object)(") node (raw ")")])
@@ -7710,9 +7855,25 @@
            (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                               (declaring-types type))))))
 
+(def ^:private model-all-types-cache (WeakHashMap.))
+
+(defn- model-all-types [model]
+  (locking model-all-types-cache
+    (or (.get model-all-types-cache model)
+        (let [all-types
+              (->> (.getAllTypes model)
+                   (mapcat
+                    #(tree-seq
+                      (fn [^CtType type] (seq (.getNestedTypes type)))
+                      (fn [^CtType type] (.getNestedTypes type))
+                      %))
+                   vec)]
+          (.put model-all-types-cache model all-types)
+          all-types))))
+
 (defn- public-derived-type? [^CtType type]
   (let [qualified-name (.getQualifiedName type)
-        all-types (.getAllTypes (.getModel (.getFactory type)))]
+        all-types (model-all-types (.getModel (.getFactory type)))]
     (boolean
      (some
       (fn [^CtType candidate]
@@ -7773,14 +7934,7 @@
       (let [^IdentityHashMap result
             (or
              (.get public-signature-types-cache model)
-             (let [all-types
-                   (->> (.getAllTypes model)
-                        (mapcat
-                         #(tree-seq
-                           (fn [^CtType type] (seq (.getNestedTypes type)))
-                           (fn [^CtType type] (.getNestedTypes type))
-                           %))
-                        vec)
+             (let [all-types (model-all-types model)
                    types-by-name
                    (into {} (map (juxt #(.getQualifiedName ^CtType %) identity)
                                  all-types))
@@ -8080,7 +8234,8 @@
              (.getSuperInterfaces type)))))
 
 (def ^:private functional-interface-types
-  #{"java.util.concurrent.Callable"
+  #{"java.lang.Runnable"
+    "java.util.concurrent.Callable"
     "java.util.function.Supplier"
     "java.util.function.UnaryOperator"})
 
@@ -8536,12 +8691,7 @@
   [^CtType owner ^CtMethod method modifier]
   (let [[root-owner root-method] (override-family-root owner method)
         simple-name (.getSimpleName ^CtMethod root-method)
-        all-types
-        (mapcat (fn [^CtType root]
-                  (tree-seq (fn [^CtType type] (seq (.getNestedTypes type)))
-                            (fn [^CtType type] (.getNestedTypes type))
-                            root))
-                (.getAllTypes (.getModel (.getFactory owner))))]
+        all-types (model-all-types (.getModel (.getFactory owner)))]
     (boolean
      (some
       (fn [^CtType candidate-owner]
@@ -8576,6 +8726,16 @@
    (let [static? (.hasModifier method ModifierKind/STATIC)
          abstract? (and (not (interface-type? owner))
                         (.hasModifier method ModifierKind/ABSTRACT))
+         superclass-reference (when (instance? CtClass owner)
+                                (.getSuperclass ^CtClass owner))
+         superclass-declaration (some-> superclass-reference
+                                         .getTypeDeclaration)
+         external-superclass?
+         (and superclass-reference
+              (or (nil? superclass-declaration)
+                  (.isShadow ^CtType superclass-declaration))
+              (some? (translated-external-type-base
+                      ctx superclass-reference)))
          super-method (when-not static? (superclass-method owner method))
          inherited-runtime-interface-method
          (when-not static? (inherited-runtime-interface-method owner method))
@@ -8589,9 +8749,18 @@
          protected-override-family? (protected-override-family? owner method)
          wildcard-generic-covariant-override?
          (wildcard-generic-covariant-override? owner method)
+         source-override-annotation?
+         (some #(= "java.lang.Override"
+                   (some-> ^CtAnnotation %
+                           .getAnnotationType
+                           .getQualifiedName))
+               (.getAnnotations method))
+         external-source-override?
+         (and source-override-annotation? external-superclass?)
          override? (and (not static?)
                         (not wildcard-generic-covariant-override?)
-                        (or (destination-object-method? method)
+                        (or external-source-override?
+                            (destination-object-method? method)
                             (and (java-map-entry-implementation? owner)
                                  (= "setValue" (.getSimpleName method))
                                  (= 1 (count (.getParameters method))))
@@ -8623,6 +8792,12 @@
                      (java-linked-hash-map-subclass? owner))
                 "protected internal"
 
+                (and (:destination-external-override-protected? ctx)
+                     override?
+                     external-superclass?
+                     (.hasModifier method ModifierKind/PROTECTED))
+                "protected"
+
                 widened-override-family? "public"
 
                 protected-override-family? "protected internal"
@@ -8651,6 +8826,9 @@
   (loop [current (when (.isParentInitialized element) (.getParent element))]
     (cond
       (nil? current) nil
+      (instance? CtLambda current)
+      (recur (when (.isParentInitialized ^CtElement current)
+               (.getParent ^CtElement current)))
       (instance? CtExecutable current) current
       (.isParentInitialized ^CtElement current) (recur (.getParent ^CtElement current))
       :else nil)))
@@ -8828,10 +9006,13 @@
         (when (and (instance? CtClass declaration)
                    (not (.isShadow ^CtClass declaration)))
           (or
-           (some
+          (some
             #(when (and
                     (= (destination-field-name ctx field)
-                       (destination-field-name ctx ^CtField %)))
+                       (destination-field-name ctx ^CtField %))
+                    (or (not (.hasModifier ^CtField % ModifierKind/PRIVATE))
+                        (some? (.getDeclaringType ^CtClass declaration))
+                        (java-serialization-uid? ^CtField %)))
                %)
             (.getFields ^CtClass declaration))
            (recur (.getSuperclass ^CtClass declaration))))))))
@@ -9254,11 +9435,21 @@
         constructor-occurrence
         (when constructor-invocation
           (invocation-occurrence ctx constructor-invocation))
+        constructor-declaration (:declaration constructor-occurrence)
+        constructor-target-reference
+        (when (and (instance? CtClass owner)
+                   (instance? CtConstructor constructor-declaration)
+                   (not (identical?
+                         owner
+                         (.getDeclaringType
+                          ^CtConstructor constructor-declaration))))
+          (.getSuperclass ^CtClass owner))
         constructor-parameter-types
         (when constructor-invocation
           (executable-parameter-types
-           (:declaration constructor-occurrence)
-           (.getExecutable ^CtInvocation constructor-invocation)))
+           constructor-declaration
+           (.getExecutable ^CtInvocation constructor-invocation)
+           constructor-target-reference))
         constructor-arguments
         (when constructor-invocation
           (mapv
@@ -9276,15 +9467,18 @@
               false))
            (range)
            (.getArguments ^CtInvocation constructor-invocation)))
+        base-outer? (non-static-member-superclass? owner)
         initializer-kind
-        (when constructor-invocation
+        (cond
+          constructor-invocation
           (if (and (= :project (:origin constructor-occurrence))
                    (instance? CtConstructor (:declaration constructor-occurrence))
                    (identical? owner
                                (.getDeclaringType
                                 ^CtConstructor (:declaration constructor-occurrence))))
             "this"
-            "base"))
+            "base")
+          base-outer? "base")
         inner? (non-static-member-class? owner)
         outer-field-name (:outer-field-name ctx)
         outer-parameter-node
@@ -9336,13 +9530,14 @@
                   outer-parameter-node (conj outer-parameter-node))
                 ", ")
                (raw ")")
-               (when constructor-invocation
+               (when (or constructor-invocation base-outer?)
                  (sequence-node
                   [(raw (str " : " initializer-kind "("))
                    (sequence-node
                     (cond->
-                     constructor-arguments
-                      (and inner? (= "this" initializer-kind))
+                     (vec constructor-arguments)
+                      (or (and inner? (= "this" initializer-kind))
+                          (and base-outer? (= "base" initializer-kind)))
                       (conj (raw outer-field-name)))
                     ", ")
                    (raw ")")]))])
@@ -9596,7 +9791,10 @@
     (csharp/with-source
       (sequence-node
        [(raw (str emitted-visibility " " name "("))
-        (owner-type-node ctx outer) (raw (str " " outer-field-name ") {\nthis."))
+        (owner-type-node ctx outer) (raw (str " " outer-field-name ")"))
+        (when (non-static-member-superclass? type)
+          (raw (str " : base(" outer-field-name ")")))
+        (raw " {\nthis.")
         (raw outer-field-name) (raw (str " = " outer-field-name ";\n"))
         (sequence-node
          (mapv #(instance-initialization-node ctx %)
@@ -9609,6 +9807,8 @@
 
 (defn- functional-adapter-node [ctx ^CtType type ^CtTypeReference interface]
   (let [method-name (case (.getQualifiedName interface)
+                      "java.lang.Runnable"
+                      (if (csharp-public-names? ctx) "Run" "run")
                       "java.util.concurrent.Callable"
                       (if (csharp-public-names? ctx) "Call" "call")
                       "java.util.function.Supplier"
@@ -9626,12 +9826,13 @@
     (when-not (or (anonymous-iterator? call)
                   (anonymous-x509-trust-manager? call)
                   (anonymous-filter-output-stream? call)
+                  (anonymous-byte-array-output-stream? call)
                   (anonymous-linked-hash-map? call)
-                  (anonymous-project-type? call))
+                  (anonymous-project-type? ctx call))
       (unsupported! (str "Anonymous class base type "
                          (pr-str (some-> call .getType .getQualifiedName))
                          " at " (pr-str (spoon/source-location anonymous-class))
-                         " requires exact Callable, Iterator, X509TrustManager, FilterOutputStream, LinkedHashMap, or project-class semantics")
+                         " requires exact Callable, Iterator, X509TrustManager, FilterOutputStream, ByteArrayOutputStream, LinkedHashMap, or project-class semantics")
                     anonymous-class))
     (when (and (or (anonymous-iterator? call)
                    (anonymous-x509-trust-manager? call))
@@ -9644,7 +9845,10 @@
           (constructor-call-parameter-types
            (some-> call .getExecutable .getDeclaration) call)
           captures (anonymous-captures anonymous-class)
-          outer? (anonymous-uses-outer? anonymous-class owner)
+          base-outer? (some-> call .getType .getTypeDeclaration
+                              non-static-member-class?)
+          outer? (or (anonymous-uses-outer? anonymous-class owner)
+                     base-outer?)
           capture-names (IdentityHashMap.)
           _ (doseq [[index declaration] (map-indexed vector captures)]
               (.put capture-names declaration (str "__capture_" index)))
@@ -9732,12 +9936,14 @@
              [(raw (str "public " name "("))
               (sequence-node constructor-parameters ", ")
               (raw ")")
-              (when (seq base-arguments)
+              (when (or (seq base-arguments) base-outer?)
                 (sequence-node
                  [(raw " : base(")
                   (sequence-node
-                   (mapv #(raw (str "baseArgument" %))
-                         (range (count base-arguments)))
+                   (cond->
+                    (mapv #(raw (str "baseArgument" %))
+                          (range (count base-arguments)))
+                     base-outer? (conj (raw "__outer")))
                    ", ")
                   (raw ")")]))
               (raw " {")

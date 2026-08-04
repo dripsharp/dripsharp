@@ -222,26 +222,59 @@ internal static partial class JavaCompat
         TimeSpan.FromSeconds(seconds) + TimeSpan.FromTicks(nanos / 100);
     internal static TimeZoneInfo GetTimeZone(string id)
     {
-        if (string.Equals(id, "UTC", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(id, "GMT", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(id, "UTC", StringComparison.OrdinalIgnoreCase))
             return TimeZoneInfo.Utc;
+        if (string.Equals(id, "GMT", StringComparison.OrdinalIgnoreCase))
+            return NewSimpleTimeZone(0, "GMT");
+        if (string.Equals(id, "PST", StringComparison.OrdinalIgnoreCase))
+            return NewSimpleTimeZone(-8 * 60 * 60 * 1000, "PST");
+        if (string.Equals(id, "EST", StringComparison.OrdinalIgnoreCase))
+            return NewSimpleTimeZone(-5 * 60 * 60 * 1000, "EST");
         try
         {
             return TimeZoneInfo.FindSystemTimeZoneById(id);
         }
         catch (TimeZoneNotFoundException)
         {
-            return TimeZoneInfo.Utc;
+            return NewSimpleTimeZone(0, "GMT");
         }
         catch (InvalidTimeZoneException)
         {
-            return TimeZoneInfo.Utc;
+            return NewSimpleTimeZone(0, "GMT");
         }
     }
+    private static readonly ConcurrentDictionary<
+        (long Ticks, long OffsetTicks), TimeZoneInfo> CalendarZones = new();
+    private static (long Ticks, long OffsetTicks) CalendarKey(DateTimeOffset value) =>
+        (value.Ticks, value.Offset.Ticks);
+    private static DateTimeOffset RememberCalendarZone(
+        DateTimeOffset value,
+        TimeZoneInfo zone)
+    {
+        CalendarZones[CalendarKey(value)] = zone;
+        return value;
+    }
+    private static bool TryCalendarZone(DateTimeOffset value, out TimeZoneInfo zone) =>
+        CalendarZones.TryGetValue(CalendarKey(value), out zone!);
+    private static TimeSpan CalendarZoneOffset(TimeZoneInfo zone, DateTime value) =>
+        TimeZoneMetadata.TryGetValue(zone, out var metadata) &&
+        metadata.RawOffsetMilliseconds.HasValue
+            ? TimeSpan.FromMilliseconds(metadata.RawOffsetMilliseconds.Value)
+            : zone.GetUtcOffset(value);
     internal static DateTimeOffset CalendarInstance(TimeZoneInfo zone) =>
-        TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
+        RememberCalendarZone(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone), zone);
+    private static DateTimeOffset CalendarValue(DateTimeOffset? value) =>
+        value ?? throw new NullReferenceException();
+    internal static long CalendarGetTimeInMillis(DateTimeOffset value) =>
+        value.ToUnixTimeMilliseconds();
+    internal static long CalendarGetTimeInMillis(DateTimeOffset? value) =>
+        CalendarGetTimeInMillis(CalendarValue(value));
+    internal static int CalendarCompareTo(DateTimeOffset? value, DateTimeOffset? other) =>
+        CalendarValue(value).CompareTo(CalendarValue(other));
     internal static DateTimeOffset CalendarClear(DateTimeOffset value) =>
         new(1970, 1, 1, 0, 0, 0, value.Offset);
+    internal static DateTimeOffset CalendarClear(DateTimeOffset? value) =>
+        CalendarClear(CalendarValue(value));
     internal static TimeZoneInfo NewSimpleTimeZone(int rawOffsetMilliseconds, string id) =>
         TimeZoneInfo.CreateCustomTimeZone(
             id,
@@ -288,22 +321,34 @@ internal static partial class JavaCompat
     internal static void CalendarSetLenient(DateTimeOffset _, bool __)
     {
     }
+    internal static void CalendarSetLenient(DateTimeOffset? value, bool lenient) =>
+        CalendarSetLenient(CalendarValue(value), lenient);
     internal static DateTimeOffset CalendarSetTimeZone(
         DateTimeOffset value,
         TimeZoneInfo zone)
     {
-        var offset = TimeSpan.FromMilliseconds(TimeZoneRawOffset(zone));
-        return value.ToOffset(offset);
+        var offset = CalendarZoneOffset(zone, value.UtcDateTime);
+        return RememberCalendarZone(value.ToOffset(offset), zone);
     }
+    internal static DateTimeOffset CalendarSetTimeZone(
+        DateTimeOffset? value,
+        TimeZoneInfo zone) =>
+        CalendarSetTimeZone(CalendarValue(value), zone);
     internal static TimeZoneInfo CalendarGetTimeZone(DateTimeOffset value) =>
-        NewSimpleTimeZone(
-            checked((int)value.Offset.TotalMilliseconds),
-            value.Offset == TimeSpan.Zero ? "GMT" : $"GMT{value:zzz}");
+        TryCalendarZone(value, out var zone)
+            ? zone
+            : value.Offset == TimeSpan.Zero
+            ? TimeZoneInfo.Utc
+            : NewSimpleTimeZone(
+                checked((int)value.Offset.TotalMilliseconds), $"GMT{value:zzz}");
+    internal static TimeZoneInfo CalendarGetTimeZone(DateTimeOffset? value) =>
+        CalendarGetTimeZone(CalendarValue(value));
     internal static DateTimeOffset CalendarAdd(
         DateTimeOffset value,
         int field,
-        int amount) =>
-        field switch
+        int amount)
+    {
+        var result = field switch
         {
             1 => value.AddYears(amount),
             2 => value.AddMonths(amount),
@@ -314,6 +359,15 @@ internal static partial class JavaCompat
             14 => value.AddMilliseconds(amount),
             _ => throw new ArgumentOutOfRangeException(nameof(field))
         };
+        if (!TryCalendarZone(value, out var zone)) return result;
+        var local = DateTime.SpecifyKind(result.DateTime, DateTimeKind.Unspecified);
+        return RememberCalendarZone(new DateTimeOffset(local, CalendarZoneOffset(zone, local)), zone);
+    }
+    internal static DateTimeOffset CalendarAdd(
+        DateTimeOffset? value,
+        int field,
+        int amount) =>
+        CalendarAdd(CalendarValue(value), field, amount);
     internal static DateTimeOffset CalendarSet(
         DateTimeOffset value,
         int year,
@@ -321,33 +375,77 @@ internal static partial class JavaCompat
         int day,
         int hour,
         int minute,
+        int second)
+    {
+        var local = new DateTime(
+            Math.Max(1, year), zeroBasedMonth + 1, day, hour, minute, second,
+            DateTimeKind.Unspecified);
+        if (!TryCalendarZone(value, out var zone))
+            return new DateTimeOffset(local, value.Offset);
+        return RememberCalendarZone(new DateTimeOffset(local, CalendarZoneOffset(zone, local)), zone);
+    }
+    internal static DateTimeOffset CalendarSet(
+        DateTimeOffset? value,
+        int year,
+        int zeroBasedMonth,
+        int day,
+        int hour,
+        int minute,
         int second) =>
-        new(year, zeroBasedMonth + 1, day, hour, minute, second, value.Offset);
-    internal static DateTimeOffset CalendarSet(DateTimeOffset value, int field, int fieldValue) =>
-        field == 14
+        CalendarSet(CalendarValue(value), year, zeroBasedMonth, day, hour, minute, second);
+    internal static DateTimeOffset CalendarSet(DateTimeOffset value, int field, int fieldValue)
+    {
+        var result = field == 14
             ? new DateTimeOffset(value.Year, value.Month, value.Day, value.Hour, value.Minute,
                 value.Second, fieldValue, value.Offset)
             : throw new ArgumentOutOfRangeException(nameof(field));
-    internal static int CalendarGet(DateTimeOffset value, int field) => field switch
+        return TryCalendarZone(value, out var zone)
+            ? RememberCalendarZone(result, zone)
+            : result;
+    }
+    internal static DateTimeOffset CalendarSet(
+        DateTimeOffset? value,
+        int field,
+        int fieldValue) =>
+        CalendarSet(CalendarValue(value), field, fieldValue);
+    internal static int CalendarGet(DateTimeOffset value, int field)
     {
-        1 => value.Year,
-        2 => value.Month - 1,
-        5 => value.Day,
-        11 => value.Hour,
-        12 => value.Minute,
-        13 => value.Second,
-        14 => value.Millisecond,
-        15 => checked((int)value.Offset.TotalMilliseconds),
-        16 => 0,
-        _ => throw new ArgumentOutOfRangeException(nameof(field))
-    };
+        var totalOffset = checked((int)value.Offset.TotalMilliseconds);
+        var rawOffset = TryCalendarZone(value, out var zone)
+            ? TimeZoneRawOffset(zone)
+            : totalOffset;
+        return field switch
+        {
+            1 => value.Year,
+            2 => value.Month - 1,
+            5 => value.Day,
+            11 => value.Hour,
+            12 => value.Minute,
+            13 => value.Second,
+            14 => value.Millisecond,
+            15 => rawOffset,
+            16 => totalOffset - rawOffset,
+            _ => throw new ArgumentOutOfRangeException(nameof(field))
+        };
+    }
+    internal static int CalendarGet(DateTimeOffset? value, int field) =>
+        CalendarGet(CalendarValue(value), field);
     internal static DateTimeOffset ParseZonedDateTime(
         string value,
-        JavaDateTimeFormatter formatter) =>
-        DateTimeOffset.Parse(
+        JavaDateTimeFormatter formatter)
+    {
+        _ = formatter;
+        if (!Regex.IsMatch(value, @"(?:Z|[+-]\d{2}:\d{2})$", RegexOptions.CultureInvariant))
+            throw new FormatException("A zoned date-time requires an explicit UTC offset.");
+        return DateTimeOffset.Parse(
             value,
             CultureInfo.InvariantCulture,
             DateTimeStyles.AllowWhiteSpaces);
+    }
+    internal static DateTimeOffset ToInstant(DateTimeOffset value) =>
+        value.ToUniversalTime();
+    internal static DateTimeOffset ToInstant(DateTimeOffset? value) =>
+        (value ?? throw new NullReferenceException()).ToUniversalTime();
     internal static DateTime ParseLocalDateTime(
         string value,
         JavaDateTimeFormatter formatter) =>

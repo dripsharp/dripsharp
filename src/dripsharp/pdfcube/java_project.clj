@@ -42,7 +42,16 @@
     :version "10.0.0"}})
 
 (def ^:private commons-type-mappings
-  {"org.apache.commons.logging.Log"
+  {"java.math.BigDecimal"
+   ["global::DripSharp.Runtime.JavaCompat.JavaBigDecimal"
+    :pdfcube.type/big-decimal]
+   "java.util.Calendar"
+   ["global::System.DateTimeOffset?"
+    :pdfcube.type/nullable-date-time-offset]
+   "java.util.GregorianCalendar"
+   ["global::System.DateTimeOffset?"
+    :pdfcube.type/nullable-date-time-offset]
+   "org.apache.commons.logging.Log"
    ["global::Microsoft.Extensions.Logging.ILogger"
     :pdfcube.type/microsoft-logger]
    "org.apache.commons.logging.LogFactory"
@@ -377,6 +386,12 @@
     (csharp/sequence-node arguments ", ")
     (raw ")")]))
 
+(defn- java-compat-call [member arguments]
+  (sequence-node
+   [(raw (str "global::DripSharp.Runtime.JavaCompat." member "("))
+    (csharp/sequence-node arguments ", ")
+    (raw ")")]))
+
 (defn- font-compat-call [member arguments]
   (sequence-node
    [(raw (str "global::DripSharp.Runtime.PdfCartonFontCompat." member "("))
@@ -419,8 +434,48 @@
     (raw (str ".IsEnabled(global::Microsoft.Extensions.Logging.LogLevel."
               level ")"))]))
 
+(defn- class-name-adaptation [source-package destination-namespace]
+  (fn [target _arguments]
+    (csharp/invocation
+     (raw "global::DripSharp.Runtime.JavaCompat.ClassName")
+     [target
+      (raw (pr-str destination-namespace))
+      (raw (pr-str source-package))])))
+
 (def ^:private commons-invocation-adaptations
-  {"executable:org.apache.commons.logging.LogFactory#getLog(java.lang.Class)"
+  {"executable:java.math.BigDecimal#valueOf(double)"
+   (fn [_target arguments]
+     (java-compat-call "JavaBigDecimalValueOf" arguments))
+
+   "executable:java.math.BigDecimal#multiply(java.math.BigDecimal)"
+   (fn [target arguments]
+     (java-compat-call "JavaBigDecimalMultiply" (into [target] arguments)))
+
+   "executable:java.math.BigDecimal#divide(java.math.BigDecimal,int,java.math.RoundingMode)"
+   (fn [target arguments]
+     (java-compat-call "JavaBigDecimalDivide" (into [target] arguments)))
+
+   "executable:java.math.BigDecimal#setScale(int,java.math.RoundingMode)"
+   (fn [target arguments]
+     (java-compat-call "JavaBigDecimalSetScale" (into [target] arguments)))
+
+   "executable:java.math.BigDecimal#intValue()"
+   (fn [target _arguments]
+     (java-compat-call "JavaBigDecimalIntValue" [target]))
+
+   "executable:java.math.BigDecimal#stripTrailingZeros()"
+   (fn [target _arguments]
+     (java-compat-call "JavaBigDecimalStripTrailingZeros" [target]))
+
+   "executable:java.math.BigDecimal#toPlainString()"
+   (fn [target _arguments]
+     (java-compat-call "JavaBigDecimalToPlainString" [target]))
+
+   "executable:java.math.BigDecimal#toString()"
+   (fn [target _arguments]
+     (java-compat-call "JavaBigDecimalToString" [target]))
+
+   "executable:org.apache.commons.logging.LogFactory#getLog(java.lang.Class)"
    (fn [_target _arguments]
      (raw "global::Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance"))
 
@@ -1982,7 +2037,15 @@
    (direct-instance-adaptation "Dispose")})
 
 (def ^:private commons-constructor-adaptations
-  {"executable:java.awt.Graphics2D#<init>()"
+  {"executable:java.math.BigDecimal#<init>(int)"
+   (fn [arguments]
+     (java-compat-call "JavaBigDecimalValueOf" arguments))
+
+   "executable:java.math.BigDecimal#<init>(java.lang.String)"
+   (fn [arguments]
+     (java-compat-call "JavaBigDecimalParse" arguments))
+
+   "executable:java.awt.Graphics2D#<init>()"
    (fn [_arguments]
      (raw "new global::DripSharp.Runtime.PdfCartonGraphics2D()"))
 
@@ -3415,7 +3478,7 @@
              (-> declaration
                  (update :header
                          csharp/replace-raw-text
-                         [["void" "global::System.DateTimeOffset"]])
+                         [["void" "global::System.DateTimeOffset?"]])
                  (append-statement (csharp/raw "return cal;")))
 
              "parseTZoffset"
@@ -3424,10 +3487,162 @@
                      [["global::System.DateTimeOffset"
                        "ref global::System.DateTimeOffset"]])
 
+             "parseSimpleDate"
+             (assoc
+              declaration
+              :body
+              (csharp/block
+               [(csharp/raw
+                 (str
+                  "foreach (string fmt in fmts) {\n"
+                  "global::DripSharp.Runtime.JavaParsePosition where = new global::DripSharp.Runtime.JavaParsePosition(initialWhere.GetIndex());\n"
+                  "global::DripSharp.Runtime.JavaSimpleDateFormat sdf = new global::DripSharp.Runtime.JavaSimpleDateFormat(fmt, global::System.Globalization.CultureInfo.GetCultureInfo(\"en\"));\n"
+                  "global::System.DateTimeOffset? retCal = global::DripSharp.PdfCarton.Util.DateConverter.newGreg();\n"
+                  "sdf.SetCalendar(retCal);\n"
+                  "global::System.DateTimeOffset? parsedDate = sdf.Parse(text, where);\n"
+                  "if ((parsedDate != default!)) {\n"
+                  "initialWhere.SetIndex(where.GetIndex());\n"
+                  "global::DripSharp.PdfCarton.Util.DateConverter.skipOptionals(text, initialWhere, \" \" );\n"
+                  "return parsedDate;\n"
+                  "}\n"
+                  "}\n"
+                  "return default!;"))]))
+
              declaration))))))
+
+(def ^:private cos-update-info-contract
+  "global::DripSharp.PdfCarton.Cos.COSUpdateInfo")
+
+(defn- preserve-cos-update-dispatch
+  [configuration node]
+  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
+    node
+    (update-declaration
+     node
+     :type
+     "org.apache.pdfbox.cos.UnmodifiableCOSDictionary"
+     #(add-base-contract % cos-update-info-contract))))
+
+(def ^:private annotation-transform-assignment
+  (str "global::DripSharp.PdfCarton.Util.Matrix aa = "
+       "global::DripSharp.PdfCarton.Util.Matrix.Concatenate(a, matrix);"))
+
+(def ^:private annotation-transform-quantization
+  (str "for (int row = 0; row < 3; row++) {\n"
+       "for (int column = 0; column < 2; column++) {\n"
+       "aa.SetValue(row, column, (float)global::System.Math.Round("
+       "aa.GetValue(row, column), 5, "
+       "global::System.MidpointRounding.AwayFromZero));\n"
+       "}\n"
+       "}"))
+
+(defn- insert-after-rendered-statement
+  [declaration rendered-statement inserted-statement]
+  (let [found? (volatile! false)
+        transformed
+        (update
+         declaration
+         :body
+         csharp/transform
+         (fn [current]
+           (if (and (not @found?)
+                    (contains? #{:raw :sequence} (:kind current))
+                    (= rendered-statement (:text (csharp/render current))))
+             (do
+               (vreset! found? true)
+               (csharp/sequence-node
+                [current (csharp/raw "\n") inserted-statement]))
+             current)))]
+    (when-not @found?
+      (fail! "Structured method is missing the expected statement"
+             {:kind :missing-pdfcube-structured-statement
+              :expected rendered-statement
+              :declaration-data (:data declaration)}))
+    transformed))
+
+(defn- preserve-skia-annotation-rasterization
+  [configuration node]
+  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
+    node
+    (update-declaration
+     node
+     :method
+     "org.apache.pdfbox.contentstream.PDFStreamEngine"
+     (fn [declaration]
+       (if (= "processAnnotation" (get-in declaration [:data :source-name]))
+         (insert-after-rendered-statement
+          declaration
+          annotation-transform-assignment
+          (csharp/raw annotation-transform-quantization))
+         declaration)))))
+
+(def ^:private sampled-image-raster-return
+  "return bim!;")
+
+(def ^:private sampled-image-raster-sync
+  (str "global::DripSharp.Runtime.PdfCartonFontCompat."
+       "SetImageData(bim!, raster);"))
+
+(defn- preserve-sampled-image-raster-synchronization
+  [configuration node]
+  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
+    node
+    (update-declaration
+     node
+     :method
+     "org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader"
+     (fn [declaration]
+       (if (= "from1Bit" (get-in declaration [:data :source-name]))
+         (let [found? (volatile! false)
+               transformed
+               (update
+                declaration
+                :body
+                csharp/transform
+                (fn [current]
+                  (if (and (not @found?)
+                           (contains? #{:raw :sequence} (:kind current))
+                           (= sampled-image-raster-return
+                              (:text (csharp/render current))))
+                    (do
+                      (vreset! found? true)
+                      (csharp/sequence-node
+                       [(csharp/raw sampled-image-raster-sync)
+                        (csharp/raw "\n")
+                        current]))
+                    current)))]
+           (when-not @found?
+             (fail! "Sampled-image translation is missing its bitmap return"
+                    {:kind :missing-pdfcube-structured-statement
+                     :expected sampled-image-raster-return
+                     :declaration-data (:data declaration)}))
+           transformed)
+         declaration)))))
+
+(defn- preserve-pdfbox-text-normalization
+  [configuration node]
+  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
+    node
+    (update-declaration
+     node
+     :method
+     "org.apache.pdfbox.text.PDFTextStripper"
+     (fn [declaration]
+       (if (= "normalizeWord" (get-in declaration [:data :source-name]))
+         (assoc declaration :body
+                (csharp/block
+                 [(csharp/raw
+                   (str
+                    "return this.handleDirection("
+                    "global::DripSharp.Runtime.PdfBoxTextCompatibility."
+                    "NormalizeVisualWord(word, this.sortByPosition));"))]))
+         declaration)))))
 
 (def ^:private preflight-font-container-contract
   "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer")
+
+(def ^:private preflight-font-validator-contract
+  "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator")
 
 (defn- replace-single-generic-argument
   [node targets source replacement]
@@ -3520,8 +3735,22 @@
          (fn [declaration]
            (if (= "getClosestPathElement"
                   (get-in declaration [:data :source-name]))
+             (if (str/includes? (:text (csharp/render (:body declaration)))
+                                "GetPathElement<T>")
+               declaration
+               (update declaration :body csharp/replace-raw-text
+                       [["GetPathElement" "GetPathElement<T>"]]))
+             declaration)))
+        (update-declaration
+         :method
+         "org.apache.pdfbox.preflight.font.Type0FontValidator"
+         (fn [declaration]
+           (if (= "createDescendantValidator"
+                  (get-in declaration [:data :source-name]))
              (update declaration :body csharp/replace-raw-text
-                     [["GetPathElement" "GetPathElement<T>"]])
+                     [["var cidFontValidator = default!;"
+                       (str preflight-font-validator-contract
+                            " cidFontValidator = default!;")]])
              declaration)))
         (erase-generic-name "GetClosestTypePosition"))))
 
@@ -3536,6 +3765,10 @@
     (->> node
          (erase-security-handler-carrier configuration)
          (preserve-calendar-value-semantics configuration)
+         (preserve-cos-update-dispatch configuration)
+         (preserve-skia-annotation-rasterization configuration)
+         (preserve-sampled-image-raster-synchronization configuration)
+         (preserve-pdfbox-text-normalization configuration)
          (preserve-preflight-generic-contracts configuration))))
 
 (defn- compatibility-asset [configuration asset]
@@ -3737,7 +3970,12 @@
                  invocation-adaptations
                  (cond-> (merge commons-invocation-adaptations
                                 translated-project-invocation-adaptations
-                                graphics-invocation-adaptations)
+                                graphics-invocation-adaptations
+                                (when-let [[source-package destination-namespace]
+                                           (first (:namespace-prefixes configuration))]
+                                  {"executable:java.lang.Class#getName()"
+                                   (class-name-adaptation
+                                    source-package destination-namespace)}))
                    (contains? (:internal-capabilities configuration)
                               :font-discovery)
                    (merge font-discovery-invocation-adaptations))]

@@ -261,8 +261,13 @@ internal static partial class JavaCompat
         Stream result)
     {
         settings.CloseOutput = false;
-        using var writer = System.Xml.XmlWriter.Create(result, settings);
-        WriteXmlTransform(settings, source, writer);
+        using var buffer = new MemoryStream();
+        using (var writer = System.Xml.XmlWriter.Create(buffer, settings))
+            WriteXmlTransform(settings, source, writer);
+        var serialized = buffer.ToArray();
+        var text = settings.Encoding.GetString(serialized).Replace(" />", "/>");
+        var normalized = settings.Encoding.GetBytes(text);
+        result.Write(normalized, 0, normalized.Length);
     }
     internal static void XmlTransform(
         System.Xml.XmlWriterSettings settings,
@@ -270,8 +275,17 @@ internal static partial class JavaCompat
         TextWriter result)
     {
         settings.CloseOutput = false;
-        using var writer = System.Xml.XmlWriter.Create(result, settings);
-        WriteXmlTransform(settings, source, writer);
+        var buffer = new StringBuilder();
+        using (var text = new XmlTransformStringWriter(buffer, result.Encoding))
+        using (var writer = System.Xml.XmlWriter.Create(text, settings))
+            WriteXmlTransform(settings, source, writer);
+        result.Write(buffer.ToString().Replace(" />", "/>"));
+    }
+    private sealed class XmlTransformStringWriter(
+        StringBuilder buffer,
+        Encoding encoding) : StringWriter(buffer, CultureInfo.InvariantCulture)
+    {
+        public override Encoding Encoding { get; } = encoding;
     }
     private static void WriteXmlTransform(
         System.Xml.XmlWriterSettings settings,
@@ -400,7 +414,7 @@ internal static partial class JavaCompat
                 writer.WriteEndElement();
                 return;
             case System.Xml.XmlNodeType.Text:
-                writer.WriteString(node.Value ?? "");
+                if (!string.IsNullOrEmpty(node.Value)) writer.WriteString(node.Value);
                 return;
             case System.Xml.XmlNodeType.CDATA:
                 writer.WriteCData(node.Value ?? "");

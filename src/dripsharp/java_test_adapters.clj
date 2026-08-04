@@ -756,6 +756,7 @@
   (case qualified
     "org.junit.jupiter.api.function.Executable" "global::System.Action"
     "org.junit.jupiter.api.function.ThrowingSupplier" "global::System.Delegate"
+    "org.junit.jupiter.params.provider.Arguments" "object[]"
     "org.assertj.core.api.ThrowableAssert$ThrowingCallable" "global::System.Action"
     "org.mockito.verification.VerificationMode"
     "global::DripSharp.Testing.JavaVerificationMode"

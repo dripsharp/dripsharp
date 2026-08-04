@@ -312,9 +312,10 @@ sealed class JavaSimpleDateFormat
         timeZone = value ?? throw new ArgumentNullException(nameof(value));
     }
 
-    public void SetCalendar(DateTimeOffset value)
+    public void SetCalendar(DateTimeOffset? value)
     {
-        calendar = value;
+        calendar = value ?? throw new NullReferenceException();
+        timeZone = JavaCompat.CalendarGetTimeZone(calendar);
     }
 
     public string Format(DateTimeOffset? value)
@@ -340,16 +341,43 @@ sealed class JavaSimpleDateFormat
         for (var end = text.Length; end > start; end--)
         {
             var candidate = text[start..end];
-            if (!DateTime.TryParseExact(
-                    candidate,
-                    pattern,
-                    culture,
-                    DateTimeStyles.AllowWhiteSpaces,
-                    out var parsed))
+            var yearPatterns = Regex.IsMatch(pattern, @"(?<!y)yy(?!y)")
+                ? new[] { Regex.Replace(pattern, @"(?<!y)yy(?!y)", "yyyy"), pattern }
+                : new[] { pattern };
+            var parsePatterns = yearPatterns
+                .SelectMany(parsePattern =>
+                    Regex.IsMatch(parsePattern, @"(?<!M)MMM(?!M)")
+                        ? new[]
+                        {
+                            Regex.Replace(parsePattern, @"(?<!M)MMM(?!M)", "MMMM"),
+                            parsePattern
+                        }
+                        : new[] { parsePattern })
+                .SelectMany(parsePattern =>
+                {
+                    var relaxedPattern = RelaxNumericPattern(parsePattern);
+                    return string.Equals(relaxedPattern, parsePattern, StringComparison.Ordinal)
+                        ? new[] { parsePattern }
+                        : new[] { parsePattern, relaxedPattern };
+                })
+                .Distinct(StringComparer.Ordinal);
+            DateTime? parsedValue = null;
+            foreach (var parsePattern in parsePatterns)
+            {
+                if (TryParseJavaDate(candidate, parsePattern, out var parsed))
+                {
+                    if (Regex.IsMatch(parsePattern, @"(?<!y)yy(?!y)"))
+                        parsed = ApplyTwoDigitYearWindow(parsed);
+                    parsedValue = parsed;
+                    break;
+                }
+            }
+            if (!parsedValue.HasValue)
                 continue;
-            var offset = timeZone.GetUtcOffset(parsed);
+            var parsedDate = parsedValue.Value;
+            var offset = timeZone.GetUtcOffset(parsedDate);
             calendar = new DateTimeOffset(
-                DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified),
+                DateTime.SpecifyKind(parsedDate, DateTimeKind.Unspecified),
                 offset);
             position.SetIndex(end);
             position.SetErrorIndex(-1);
@@ -357,6 +385,98 @@ sealed class JavaSimpleDateFormat
         }
         position.SetErrorIndex(start);
         return null;
+    }
+
+    private bool TryParseJavaDate(
+        string candidate,
+        string parsePattern,
+        out DateTime parsed)
+    {
+        if (TryParseExactPattern(candidate, parsePattern, out parsed))
+            return true;
+
+        var weekdayToken = parsePattern.StartsWith("dddd", StringComparison.Ordinal)
+            ? "dddd"
+            : parsePattern.StartsWith("ddd", StringComparison.Ordinal)
+                ? "ddd"
+                : null;
+        if (weekdayToken is null)
+            return false;
+
+        var weekdayNames = culture.DateTimeFormat.DayNames
+            .Concat(culture.DateTimeFormat.AbbreviatedDayNames)
+            .Distinct(StringComparer.Create(culture, true));
+        var weekdayStart = 0;
+        while (weekdayStart < candidate.Length &&
+               char.IsWhiteSpace(candidate[weekdayStart]))
+            weekdayStart++;
+        var weekdayAndRest = candidate[weekdayStart..];
+        foreach (var weekdayName in weekdayNames)
+        {
+            if (string.IsNullOrEmpty(weekdayName) ||
+                !weekdayAndRest.StartsWith(weekdayName, true, culture))
+                continue;
+            var withoutWeekday = candidate[..weekdayStart] +
+                                 weekdayAndRest[weekdayName.Length..];
+            if (TryParseExactPattern(
+                    withoutWeekday,
+                    parsePattern[weekdayToken.Length..],
+                    out parsed))
+                return true;
+        }
+        return false;
+    }
+
+    private bool TryParseExactPattern(
+        string candidate,
+        string parsePattern,
+        out DateTime parsed)
+    {
+        if (parsePattern.Contains("zzz", StringComparison.Ordinal))
+        {
+            var offsetCandidate = Regex.Replace(
+                candidate,
+                @"\b(?:GMT|UTC)(?=[+-]\d)",
+                "",
+                RegexOptions.IgnoreCase);
+            if (DateTimeOffset.TryParseExact(
+                    offsetCandidate,
+                    parsePattern,
+                    culture,
+                    DateTimeStyles.AllowWhiteSpaces,
+                    out var parsedWithOffset))
+            {
+                parsed = parsedWithOffset.DateTime;
+                timeZone = JavaCompat.NewSimpleTimeZone(
+                    checked((int)parsedWithOffset.Offset.TotalMilliseconds),
+                    $"GMT{parsedWithOffset:zzz}");
+                return true;
+            }
+        }
+        return DateTime.TryParseExact(
+            candidate,
+            parsePattern,
+            culture,
+            DateTimeStyles.AllowWhiteSpaces,
+            out parsed);
+    }
+
+    private static DateTime ApplyTwoDigitYearWindow(DateTime parsed)
+    {
+        var windowStart = DateTime.Now.AddYears(-80);
+        var year = windowStart.Year / 100 * 100 + parsed.Year % 100;
+        var adjusted = parsed.AddYears(year - parsed.Year);
+        return adjusted < windowStart ? adjusted.AddYears(100) : adjusted;
+    }
+
+    private static string RelaxNumericPattern(string parsePattern)
+    {
+        foreach (var token in new[] { "d", "M", "H", "h", "m", "s" })
+            parsePattern = Regex.Replace(
+                parsePattern,
+                $@"(?<!{token}){token}{{2}}(?!{token})",
+                token);
+        return parsePattern;
     }
 
     private static string ConvertPattern(string javaPattern)
@@ -578,9 +698,11 @@ internal static partial class JavaCompat
             if (flags.Contains('+') && rendered.Length > 0 && rendered[0] != '-') rendered = "+" + rendered;
             if (width > rendered.Length)
             {
-                var padding = new string(flags.Contains('0') && !flags.Contains('-') ? '0' : ' ',
-                    width - rendered.Length);
-                rendered = flags.Contains('-') ? rendered + padding : padding + rendered;
+                var zeroPadding = flags.Contains('0') && !flags.Contains('-');
+                var padding = new string(zeroPadding ? '0' : ' ', width - rendered.Length);
+                rendered = zeroPadding && rendered.Length > 0 && rendered[0] is '+' or '-'
+                    ? rendered[0] + padding + rendered[1..]
+                    : flags.Contains('-') ? rendered + padding : padding + rendered;
             }
             result.Append(rendered);
             index = cursor;

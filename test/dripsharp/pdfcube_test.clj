@@ -207,7 +207,14 @@
         transformed
         (render-transformed
          {:package {:id "DripSharp.PdfCarton.Preflight"}}
-         (csharp/sequence-node [position-method path-method] "\n"))]
+         (csharp/sequence-node [position-method path-method] "\n"))
+        transformed-twice
+        (csharp/render
+         (transform-node
+          {:package {:id "DripSharp.PdfCarton.Preflight"}}
+          (transform-node
+           {:package {:id "DripSharp.PdfCarton.Preflight"}}
+           (csharp/sequence-node [position-method path-method] "\n"))))]
     (is (str/includes?
          (:text transformed)
          "public int GetClosestTypePosition(global::System.Type type)"))
@@ -215,8 +222,36 @@
                             "GetClosestTypePosition<T>")))
     (is (str/includes? (:text transformed)
                        "GetPathElement<T>("))
+    (is (not (str/includes? (:text transformed-twice)
+                            "GetPathElement<T><T>")))
     (is (not (str/includes? (:text transformed)
                             "GetClosestTypePosition<object>")))))
+
+(deftest preflight-null-wildcard-validator-local-uses-erased-contract
+  (let [method
+        (csharp/declaration
+         (csharp/raw
+          (str "protected global::DripSharp.PdfCarton.Preflight.Font.IFontValidator "
+               "CreateDescendantValidator(object font)"))
+         (csharp/block
+          (csharp/statement-list
+           [(csharp/raw "var cidFontValidator = default!;")
+            (csharp/raw "return cidFontValidator!;")]
+           "\n"))
+         {:declaration-kind :method
+          :source-qualified-name
+          "org.apache.pdfbox.preflight.font.Type0FontValidator"
+          :source-name "createDescendantValidator"})
+        result
+        (render-transformed
+         {:package {:id "DripSharp.PdfCarton.Preflight"}}
+         method)]
+    (is (str/includes?
+         (:text result)
+         (str "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator "
+              "cidFontValidator = default!;")))
+    (is (not (str/includes? (:text result)
+                            "var cidFontValidator = default!;")))))
 
 (deftest preflight-type3-widths-preserve-nullable-boxed-floats
   (let [configuration {:package {:id "DripSharp.PdfCarton.Preflight"}}
@@ -315,7 +350,7 @@
            (csharp/raw "void")
            (csharp/raw
             (str " adjustTimeZoneNicely("
-                 "global::System.DateTimeOffset cal, "
+                 "global::System.DateTimeOffset? cal, "
                  "global::System.TimeZoneInfo tz)"))])
          (csharp/block
           [(csharp/raw
@@ -327,27 +362,133 @@
         parse-offset
         (csharp/declaration
          (csharp/raw
-          (str "internal static bool parseTZoffset(string text, "
-               "global::System.DateTimeOffset cal, Position initialWhere)"))
+         (str "internal static bool parseTZoffset(string text, "
+               "global::System.DateTimeOffset? cal, Position initialWhere)"))
          (csharp/block [])
          {:declaration-kind :method
           :source-name "parseTZoffset"
+          :source-qualified-name "org.apache.pdfbox.util.DateConverter"})
+        parse-simple
+        (csharp/declaration
+         (csharp/raw
+          (str "private static global::System.DateTimeOffset? parseSimpleDate("
+               "string text, string[] fmts, Position initialWhere)"))
+         (csharp/block [(csharp/raw "return retCal;")])
+         {:declaration-kind :method
+          :source-name "parseSimpleDate"
           :source-qualified-name "org.apache.pdfbox.util.DateConverter"})
         transformed
         (:text
          (render-transformed
           {:internal-capabilities #{:calendar-value-semantics}}
-          (csharp/sequence-node [adjust (csharp/raw "\n") parse-offset])))]
+          (csharp/sequence-node
+           [adjust (csharp/raw "\n") parse-offset
+            (csharp/raw "\n") parse-simple])))]
     (is (str/includes?
          transformed
-         "private static global::System.DateTimeOffset adjustTimeZoneNicely("))
+         "private static global::System.DateTimeOffset? adjustTimeZoneNicely("))
     (is (str/includes?
          transformed
          "CalendarAdd(cal, 12, -offset);\nreturn cal;\n}"))
     (is (str/includes?
          transformed
-         "parseTZoffset(string text, ref global::System.DateTimeOffset cal,"))
+         "parseTZoffset(string text, ref global::System.DateTimeOffset? cal,"))
+    (is (str/includes? transformed "parsedDate = sdf.Parse(text, where);"))
+    (is (str/includes? transformed "return parsedDate;"))
+    (is (not (str/includes? transformed "return retCal;")))
     (is (not (str/includes? transformed "private static void")))))
+
+(deftest pdfbox-unmodifiable-dictionary-reimplements-update-interface
+  (let [declaration
+        (csharp/declaration
+         (csharp/sequence-node
+          [(csharp/raw "internal sealed class UnmodifiableCOSDictionary")
+           (csharp/raw " : global::DripSharp.PdfCarton.Cos.COSDictionary")])
+         (csharp/block (csharp/statement-list [] "\n\n"))
+         {:declaration-kind :type
+          :name "UnmodifiableCOSDictionary"
+          :source-qualified-name
+          "org.apache.pdfbox.cos.UnmodifiableCOSDictionary"
+          :has-base-types? true
+          :has-constraints? false})
+        transformed
+        (:text
+         (render-transformed
+          {:package {:id "DripSharp.PdfCarton"}}
+          declaration))]
+    (is (str/includes?
+         transformed
+         (str "COSDictionary, "
+              "global::DripSharp.PdfCarton.Cos.COSUpdateInfo")))))
+
+(deftest pdfbox-annotation-rendering-matches-content-stream-number-precision
+  (let [assignment
+        (str "global::DripSharp.PdfCarton.Util.Matrix aa = "
+             "global::DripSharp.PdfCarton.Util.Matrix.Concatenate(a, matrix);")
+        declaration
+        (csharp/declaration
+         (csharp/raw "protected internal void processAnnotation()")
+         (csharp/block [(csharp/raw assignment)])
+         {:declaration-kind :method
+          :source-name "processAnnotation"
+          :source-qualified-name
+          "org.apache.pdfbox.contentstream.PDFStreamEngine"})
+        transformed
+        (:text
+         (render-transformed
+          {:package {:id "DripSharp.PdfCarton"}}
+          declaration))]
+    (is (str/includes? transformed assignment))
+    (is (str/includes? transformed "for (int row = 0; row < 3; row++)"))
+    (is (str/includes? transformed "aa.GetValue(row, column), 5"))
+    (is (str/includes?
+         transformed
+         "global::System.MidpointRounding.AwayFromZero"))))
+
+(deftest sampled-one-bit-images-synchronize-managed-raster-before-return
+  (let [declaration
+        (csharp/declaration
+         (csharp/raw "private static object from1Bit()")
+         (csharp/block [(csharp/raw "return bim!;")])
+         {:declaration-kind :method
+          :source-name "from1Bit"
+          :source-qualified-name
+          "org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader"})
+        transformed
+        (:text
+         (render-transformed
+          {:package {:id "DripSharp.PdfCarton"}}
+          declaration))]
+    (is (str/includes?
+         transformed
+         "PdfCartonFontCompat.SetImageData(bim!, raster);"))
+    (is (< (.indexOf transformed "SetImageData(bim!, raster)")
+           (.indexOf transformed "return bim!;")))))
+
+(deftest pdfbox-text-normalization-preserves-upstream-arabic-mark-order
+  (let [declaration
+        (csharp/declaration
+         (csharp/raw "private string normalizeWord(string word)")
+         (csharp/block [(csharp/raw "return word;")])
+         {:declaration-kind :method
+          :source-name "normalizeWord"
+          :source-qualified-name
+          "org.apache.pdfbox.text.PDFTextStripper"})
+        transformed
+        (:text
+         (render-transformed
+          {:package {:id "DripSharp.PdfCarton"}}
+          declaration))]
+    (is (str/includes?
+         transformed
+         (str "PdfBoxTextCompatibility.NormalizeVisualWord("
+              "word, this.sortByPosition)")))
+    (is (str/includes?
+         (slurp "targets/pdfcube/runtime/DripSharp.PdfCarton.Compat.cs")
+         "normalized = ReverseUtf16(normalized)"))
+    (is (str/includes?
+         (slurp "targets/pdfcube/runtime/DripSharp.PdfCarton.Compat.cs")
+         "ReorderCombiningMarks(normalizedResult)"))))
 
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]

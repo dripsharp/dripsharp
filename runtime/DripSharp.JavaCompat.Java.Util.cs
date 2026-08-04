@@ -1413,6 +1413,36 @@ internal sealed class JavaReadOnlyDictionary<K, V> : IReadOnlyDictionary<K, V>, 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+internal sealed class JavaUnmodifiableDictionary<K, V> :
+    IDictionary<K, V>, JavaReadOnlyAdapter
+    where K : notnull
+{
+    private readonly IDictionary<K, V> values;
+    internal JavaUnmodifiableDictionary(IDictionary<K, V> values) => this.values = values;
+    object JavaReadOnlyAdapter.MutableSource => values;
+    public int Count => values.Count;
+    public bool IsReadOnly => true;
+    public ICollection<K> Keys => values.Keys;
+    public ICollection<V> Values => values.Values;
+    public V this[K key]
+    {
+        get => values[key];
+        set => throw new NotSupportedException();
+    }
+    public bool ContainsKey(K key) => values.ContainsKey(key);
+    public bool TryGetValue(K key, out V value) => values.TryGetValue(key, out value!);
+    public bool Contains(KeyValuePair<K, V> item) => values.Contains(item);
+    public void CopyTo(KeyValuePair<K, V>[] array, int arrayIndex) =>
+        values.CopyTo(array, arrayIndex);
+    public IEnumerator<KeyValuePair<K, V>> GetEnumerator() => values.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    public void Add(K key, V value) => throw new NotSupportedException();
+    public void Add(KeyValuePair<K, V> item) => throw new NotSupportedException();
+    public void Clear() => throw new NotSupportedException();
+    public bool Remove(K key) => throw new NotSupportedException();
+    public bool Remove(KeyValuePair<K, V> item) => throw new NotSupportedException();
+}
+
 internal sealed class JavaReadOnlySet<T> : IReadOnlySet<T>, JavaReadOnlyAdapter
 {
     private readonly ISet<T> values;
@@ -1747,6 +1777,19 @@ class JavaLinkedHashMap<K, V> :
     JavaMapValueUpdater<K, V>
     where K : notnull
 {
+    private readonly struct StorageKey(K value)
+    {
+        internal K Value { get; } = value;
+        public static implicit operator StorageKey(K value) => new(value);
+    }
+
+    private sealed class StorageKeyComparer : IEqualityComparer<StorageKey>
+    {
+        public bool Equals(StorageKey left, StorageKey right) =>
+            JavaCompat.Equals(left.Value, right.Value);
+        public int GetHashCode(StorageKey value) => JavaCompat.HashCode(value.Value);
+    }
+
     private sealed class Entry(K key, V value)
     {
         internal K Key { get; } = key;
@@ -1759,7 +1802,7 @@ class JavaLinkedHashMap<K, V> :
         public int GetHashCode(K value) => JavaCompat.HashCode(value);
     }
 
-    private readonly Dictionary<K, LinkedListNode<Entry>> entries;
+    private readonly Dictionary<StorageKey, LinkedListNode<Entry>> entries;
     private readonly LinkedList<Entry> order = new();
     private readonly bool accessOrder;
 
@@ -1772,7 +1815,8 @@ class JavaLinkedHashMap<K, V> :
         if (initialCapacity < 0) throw new ArgumentOutOfRangeException(nameof(initialCapacity));
         if (!(loadFactor > 0) || float.IsNaN(loadFactor))
             throw new ArgumentOutOfRangeException(nameof(loadFactor));
-        entries = new Dictionary<K, LinkedListNode<Entry>>(initialCapacity, new KeyComparer());
+        entries = new Dictionary<StorageKey, LinkedListNode<Entry>>(
+            initialCapacity, new StorageKeyComparer());
         this.accessOrder = accessOrder;
     }
     public JavaLinkedHashMap(IEnumerable<KeyValuePair<K, V>> values) : this()
@@ -1804,7 +1848,8 @@ class JavaLinkedHashMap<K, V> :
     }
     object? IDictionary.this[object key]
     {
-        get => key is K typed && TryGetValue(typed, out var value) ? value : null;
+        get => JavaCompat.TryMapKey(key, out K typed) &&
+            TryGetValue(typed, out var value) ? value : null;
         set => Put(RequireKey(key), RequireValue(value));
     }
 
@@ -1940,7 +1985,8 @@ class JavaLinkedHashMap<K, V> :
 
     public bool Contains(KeyValuePair<K, V> item) =>
         entries.TryGetValue(item.Key, out var node) && JavaCompat.Equals(node.Value.Value, item.Value);
-    bool IDictionary.Contains(object key) => key is K typed && ContainsKey(typed);
+    bool IDictionary.Contains(object key) =>
+        JavaCompat.TryMapKey(key, out K typed) && ContainsKey(typed);
 
     public void CopyTo(KeyValuePair<K, V>[] array, int arrayIndex)
     {
@@ -1955,7 +2001,7 @@ class JavaLinkedHashMap<K, V> :
     public bool Remove(KeyValuePair<K, V> item) => Contains(item) && Remove(item.Key);
     void IDictionary.Remove(object key)
     {
-        if (key is K typed) Remove(typed);
+        if (JavaCompat.TryMapKey(key, out K typed)) Remove(typed);
     }
 
     public IEnumerator<KeyValuePair<K, V>> GetEnumerator()
@@ -1967,9 +2013,11 @@ class JavaLinkedHashMap<K, V> :
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     IDictionaryEnumerator IDictionary.GetEnumerator() => new DictionaryEnumerator(this);
 
-    private static K RequireKey(object key) => key is K typed
-        ? typed
-        : throw new ArgumentException($"Key must be assignable to {typeof(K)}.", nameof(key));
+    private static K RequireKey(object? key) =>
+        JavaCompat.TryMapKey(key, out K typed)
+            ? typed
+            : throw new ArgumentException(
+                $"Key must be assignable to {typeof(K)}.", nameof(key));
 
     private static V RequireValue(object? value)
     {
@@ -2433,9 +2481,13 @@ internal static partial class JavaCompat
     }
     internal static bool RemoveAll<T>(ICollection<T> collection, System.Collections.IEnumerable values)
     {
+        var removed = values.Cast<object?>().ToArray();
         var changed = false;
-        foreach (var value in values.Cast<object?>().ToArray())
-            if (value is T typed) changed |= collection.Remove(typed);
+        foreach (var value in collection.ToArray())
+        {
+            if (removed.Any(candidate => Equals(value, candidate)))
+                changed |= collection.Remove(value);
+        }
         return changed;
     }
     internal static bool RetainAll<T>(ICollection<T> collection, System.Collections.IEnumerable values)
@@ -2476,10 +2528,26 @@ internal static partial class JavaCompat
         return result;
     }
 
+    internal static bool TryMapKey<K>(object? key, out K typed)
+    {
+        if (key is K value)
+        {
+            typed = value;
+            return true;
+        }
+        if (key is null && default(K) is null)
+        {
+            typed = default!;
+            return true;
+        }
+        typed = default!;
+        return false;
+    }
+
     internal static bool MapContainsKey<K, V>(IDictionary<K, V> map, object? key) where K : notnull =>
-        key is K typed && map.ContainsKey(typed);
+        TryMapKey(key, out K typed) && map.ContainsKey(typed);
     internal static bool MapContainsKey<K, V>(IReadOnlyDictionary<K, V> map, object? key) where K : notnull =>
-        key is K typed && map.ContainsKey(typed);
+        TryMapKey(key, out K typed) && map.ContainsKey(typed);
 
     internal static ISet<JavaMapEntry<K, V>> MapEntrySet<K, V>(IDictionary<K, V> map) where K : notnull =>
         new JavaMapEntrySet<K, V>(map);
@@ -2524,8 +2592,10 @@ internal static partial class JavaCompat
         value is V typed && map.Values.Contains(typed);
     internal static V MapRemove<K, V>(IDictionary<K, V> map, object? key) where K : notnull
     {
-        if (key is K typed && map.Remove(typed, out var value)) return value;
-        return default!;
+        if (!TryMapKey(key, out K typed)) return default!;
+        var previous = map.TryGetValue(typed, out var value) ? value : default!;
+        map.Remove(typed);
+        return previous;
     }
     internal static V ComputeIfAbsent<K, V>(IDictionary<K, V> map, K key, Func<K, V> factory) where K : notnull
     {
@@ -2574,6 +2644,7 @@ internal static partial class JavaCompat
 
     internal static void MapPutAll<K, V>(IDictionary<K, V> map, IEnumerable<KeyValuePair<K, V>> values) where K : notnull
     {
+        if (map.IsReadOnly) throw new NotSupportedException();
         if (map is JavaLinkedHashMap<K, V> linked)
         {
             linked.PutAll(values);
@@ -2582,30 +2653,36 @@ internal static partial class JavaCompat
         foreach (var (key, value) in values) map[key] = value;
     }
 
-    internal static V MapGet<K, V>(IDictionary<K, V> map, object? key) where K : notnull =>
-        key is K typed
-            ? map is JavaLinkedHashMap<K, V> linked
-                ? linked.Get(typed)
-                : map.TryGetValue(typed, out var value) ? value : default!
+    internal static V MapGet<K, V>(IDictionary<K, V> map, object? key) where K : notnull
+    {
+        if (!TryMapKey(key, out K typed)) return default!;
+        if (map is JavaLinkedHashMap<K, V> linked) return linked.Get(typed);
+        return typed is not null && map.TryGetValue(typed, out var value)
+            ? value
             : default!;
+    }
     internal static V MapGet<K, V>(ConcurrentDictionary<K, V> map, object? key)
         where K : notnull =>
         key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
     internal static V MapGet<K, V>(IReadOnlyDictionary<K, V> map, object? key) where K : notnull =>
-        key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
+        TryMapKey(key, out K typed) && typed is not null &&
+        map.TryGetValue(typed, out var value) ? value : default!;
 
     internal static V? MapGetNullable<K, V>(IDictionary<K, V> map, object? key)
         where K : notnull
         where V : struct =>
-        key is K typed && map.TryGetValue(typed, out var value) ? value : null;
+        TryMapKey(key, out K typed) && typed is not null &&
+        map.TryGetValue(typed, out var value) ? value : null;
     internal static V? MapGetNullable<K, V>(SortedDictionary<K, V> map, object? key)
         where K : notnull
         where V : struct =>
-        key is K typed && map.TryGetValue(typed, out var value) ? value : null;
+        TryMapKey(key, out K typed) && typed is not null &&
+        map.TryGetValue(typed, out var value) ? value : null;
     internal static V? MapGetNullable<K, V>(IReadOnlyDictionary<K, V> map, object? key)
         where K : notnull
         where V : struct =>
-        key is K typed && map.TryGetValue(typed, out var value) ? value : null;
+        TryMapKey(key, out K typed) && typed is not null &&
+        map.TryGetValue(typed, out var value) ? value : null;
 
     internal static V MapPut<K, V>(IDictionary<K, V> map, K key, V value) where K : notnull
     {
@@ -2629,7 +2706,7 @@ internal static partial class JavaCompat
 
     internal static ReadOnlyCollection<T> ListOf<T>(params T[] values) => new(values);
 
-    internal static IList<T> AsList<T>(params T[] values) => new JavaArrayList<T>(values);
+    internal static IList<T> AsList<T>(params T[] values) => values;
 
     internal static HashSet<T> SetOf<T>(params T[] values) =>
         new(values, new JavaEqualityComparer<T>());
@@ -2659,9 +2736,9 @@ internal static partial class JavaCompat
         new JavaMapBackedSet<T>(map);
 
     internal static IDictionary<K, V> UnmodifiableMap<K, V>(IDictionary<K, V> values)
-        where K : notnull => new ReadOnlyDictionary<K, V>(values);
+        where K : notnull => new JavaUnmodifiableDictionary<K, V>(values);
     internal static IDictionary<K, V> EmptyMap<K, V>() where K : notnull =>
-        new ReadOnlyDictionary<K, V>(new Dictionary<K, V>());
+        new JavaUnmodifiableDictionary<K, V>(new JavaLinkedHashMap<K, V>());
 
     internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
@@ -2721,15 +2798,14 @@ internal static partial class JavaCompat
             .Single(candidate => candidate.Name == methodName && candidate.IsGenericMethodDefinition);
         return method.MakeGenericMethod(targetType.GetGenericArguments()).Invoke(null, new[] { value });
     }
-    internal static Dictionary<TKey, TValue> NewJavaDictionary<TKey, TValue>(params object?[] arguments)
+    internal static JavaLinkedHashMap<TKey, TValue> NewJavaDictionary<TKey, TValue>(params object?[] arguments)
         where TKey : notnull
     {
-        var comparer = new JavaEqualityComparer<TKey>();
-        if (arguments.Length == 0) return new Dictionary<TKey, TValue>(comparer);
+        if (arguments.Length == 0) return new JavaLinkedHashMap<TKey, TValue>();
         if (arguments.Length == 1 && arguments[0] is int capacity)
-            return new Dictionary<TKey, TValue>(capacity, comparer);
+            return new JavaLinkedHashMap<TKey, TValue>(capacity);
         if (arguments.Length == 1 && arguments[0] is IEnumerable<KeyValuePair<TKey, TValue>> values)
-            return new Dictionary<TKey, TValue>(values, comparer);
+            return new JavaLinkedHashMap<TKey, TValue>(values);
         throw new ArgumentException("Unsupported Java HashMap constructor arguments.");
     }
 

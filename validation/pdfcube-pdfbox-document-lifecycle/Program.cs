@@ -119,6 +119,10 @@ internal static class Program
             new DateTimeOffset(2021, 2, 3, 4, 5, 6, TimeSpan.FromHours(5.5));
         info.SetCreationDate(date);
         info.SetModificationDate(date.AddMinutes(7));
+        var creationDate = info.GetCreationDate()
+            ?? throw new InvalidDataException("Document creation date is missing.");
+        var modificationDate = info.GetModificationDate()
+            ?? throw new InvalidDataException("Document modification date is missing.");
         Observe(
             "document-info",
             "roundtrip",
@@ -131,10 +135,10 @@ internal static class Program
             info.GetProducer(),
             info.GetCustomMetadataValue("Custom"),
             info.GetTrapped(),
-            info.GetCreationDate().ToUnixTimeMilliseconds(),
-            info.GetCreationDate().Offset.TotalMinutes,
-            info.GetModificationDate().ToUnixTimeMilliseconds(),
-            info.GetModificationDate().Offset.TotalMinutes,
+            creationDate.ToUnixTimeMilliseconds(),
+            creationDate.Offset.TotalMinutes,
+            modificationDate.ToUnixTimeMilliseconds(),
+            modificationDate.Offset.TotalMinutes,
             string.Join(",", info.GetMetadataKeys().OrderBy(value => value)));
 
         info.SetTitle(null!);
@@ -529,6 +533,8 @@ internal static class Program
     {
         using var loaded = Loader.LoadPDF(new FileInfo(path));
         var firstContent = CollapseWhitespace(ReadAll(loaded.GetPage(0).GetContents()));
+        var creationDate = loaded.GetDocumentInformation().GetCreationDate()
+            ?? throw new InvalidDataException("Reopened document creation date is missing.");
         var original =
             string.Join(
                 "|",
@@ -537,10 +543,8 @@ internal static class Program
                 loaded.GetDocumentInformation().GetAuthor(),
                 loaded.GetDocumentCatalog().GetLanguage(),
                 loaded.GetVersion().ToString(CultureInfo.InvariantCulture),
-                loaded.GetDocumentInformation().GetCreationDate()
-                    .ToUnixTimeMilliseconds(),
-                loaded.GetDocumentInformation().GetCreationDate()
-                    .Offset.TotalMinutes,
+                creationDate.ToUnixTimeMilliseconds(),
+                creationDate.Offset.TotalMinutes,
                 loaded.GetPage(0).GetRotation(),
                 firstContent);
 

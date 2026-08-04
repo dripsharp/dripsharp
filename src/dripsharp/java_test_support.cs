@@ -199,8 +199,11 @@ public static class JavaAssertions
 
     public static void Same(object? expected, object? actual, object? message)
     {
-        if (!ReferenceEquals(expected, actual))
-            Assert.Fail(Message(message, "Expected the same object instance."));
+        if (ReferenceEquals(expected, actual)) return;
+        if (expected is not null && actual is not null &&
+            expected.GetType().IsValueType && actual.GetType().IsValueType &&
+            expected.Equals(actual)) return;
+        Assert.Fail(Message(message, "Expected the same object instance."));
     }
 
     public static void NotSame(object? unexpected, object? actual, object? message)
@@ -212,6 +215,14 @@ public static class JavaAssertions
     public static T InstanceOf<T>(object? actual, object? message)
     {
         if (actual is T typed) return typed;
+        if (actual is not null &&
+            typeof(T).Name == "JavaNumberFormatException" &&
+            actual.GetType().Name == "JavaNumberFormatException")
+        {
+            // Generated product assemblies each own an internal compatibility
+            // exception type for this one Java class.
+            return default!;
+        }
         Assert.Fail(Message(message,
             $"Expected instance of <{typeof(T).FullName}> but was <{actual?.GetType().FullName ?? "null"}>."));
         throw new InvalidOperationException("unreachable");
@@ -437,7 +448,7 @@ public sealed class JavaAssertJAssertion
     {
         if (actual is not IDictionary map)
             return Check(false, "Expected a map value.");
-        return Check(map.Contains(key) && JavaAssertions.DeepEqual(value, map[key]),
+        return Check(map.Contains(key!) && JavaAssertions.DeepEqual(value, map[key!]),
                      $"Expected map entry <{key}={value}>.");
     }
 

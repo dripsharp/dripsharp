@@ -150,6 +150,25 @@
                  (str "executable:example.Base#run()|systematic-adaptation="
                       "package-protected-override-family-widening")))))))
 
+(deftest model-type-flattening-is-cached-for-override-family-analysis
+  (let [fixture
+        (model!
+         {"example/Base.java"
+          (str "package example; public class Base { "
+               "public void run() {} }")
+          "example/Child.java"
+          (str "package example; public class Child extends Base { "
+               "@Override public void run() {} }")})
+        model (:model (:model fixture))
+        model-all-types @#'java-library/model-all-types
+        first-result (model-all-types model)
+        second-result (model-all-types model)]
+    (is (identical? first-result second-result))
+    (is (= #{"example.Base" "example.Child"}
+           (into #{}
+                 (map #(.getQualifiedName ^spoon.reflect.declaration.CtType %))
+                 first-result)))))
+
 (deftest derived-surface-includes-mapped-runtime-interface-contracts
   (let [fixture
         (model!
@@ -294,7 +313,7 @@
              [:long (long 42) "42L"]
              [:float (float 1.25) "1.25F"]
              [:double (double 1.25) "1.25D"]
-             [:fallback (short 12) "12"]]]
+             [:fallback (short 12) "unchecked((short)12)"]]]
       (testing (name label)
         (is (= expected (render value)))))))
 
@@ -940,6 +959,14 @@
                "public void passMap(Map<String, E> values) { acceptMap(values); } "
                "private void acceptValues(Map<String, ?> values) {} "
                "public void passValues(Map<String, E> values) { acceptValues(values); } "
+               "static class Base {} static final class Child extends Base {} "
+               "private void acceptCovariant(Map<String, ? extends Base> values) {} "
+               "public void passCovariant(Map<String, Child> values) { "
+               "acceptCovariant(values); } "
+               "public Map<String, E> readonly(Map<String, E> values) { "
+               "return java.util.Collections.unmodifiableMap(values); } "
+               "public void merge(Map<String, E> values, Map<String, E> other) { "
+               "values.putAll(other); } "
                "public Map<?, ?> copyMap(Map<String, E> values) { return values; } "
                "public static <T> void sort(List<T> values, Comparator<? super T> cmp) { "
                "Object[] array = values.toArray(); sortObjects(array, (Comparator)cmp); } "
@@ -964,6 +991,11 @@
     (is (str/includes?
          source
          "JavaCompat.CastDictionary<string, object>(values)"))
+    (is (= 2 (count (re-seq #"JavaCompat\.CastDictionary<string, E>" source))))
+    (is (str/includes?
+         source
+         "JavaCompat.CastDictionary<string, global::Example.Java.Library.GenericCollections<object>.Base>(values)"))
+    (is (not (str/includes? source "JavaCompat.CastDictionary<K, V>")))
     (is (str/includes? source "JavaCompat.EraseComparer(cmp)"))
     (is (not (str/includes? source "CastObjects(global::DripSharp.Runtime.JavaCompat.AsList")))
     (is (str/includes? source ".OrElse(default!)"))
@@ -988,6 +1020,8 @@
                "if (cached == null) { cached = values(); } return cached; } "
                "public List<Float> optional(boolean present) { "
                "return present ? values() : Collections.emptyList(); } "
+               "public Integer optionalNumber(boolean present) { "
+               "return present ? 7 : null; } "
                "public float first() { Float value = values().get(0); "
                "return value == null ? 0 : value; } "
                "public int ordinary(List<Integer> values) { "
@@ -1016,6 +1050,9 @@
          source
          "float? value = global::DripSharp.Runtime.JavaCompat.ListGet"))
     (is (str/includes? source "JavaCompat.Unbox(value)"))
+    (is (str/includes?
+         source
+         "return (present ? (int?)(7) : (int?)(default!));"))
     (is (str/includes? source "int value = global::DripSharp.Runtime.JavaCompat.ListGet"))
     (is (str/includes? source "(value0) => value0 is not null"))
     (is (zero? (:exit
@@ -1122,10 +1159,21 @@
   (let [fixture
         (model! {"example/Boxed.java"
                  (str "package example; import java.util.List; "
+                      "import java.util.Map; import java.util.HashMap; "
+                      "import java.util.Set; import java.util.HashSet; "
                       "public final class Boxed { "
                       "private Boolean state = null; "
                       "public Integer maybe(boolean present) { "
                       "return present ? 7 : null; } "
+                      "public boolean conditional(boolean present) { "
+                      "Float value = present ? 1.0f : null; "
+                      "return value != null && Float.compare(value, 1.0f) == 0; } "
+                      "public int guardedKey(boolean present) { "
+                      "Map<Long, Integer> values = new HashMap<>(); "
+                      "Set<Long> stable = new HashSet<>(); "
+                      "Long key = present ? 1L : null; "
+                      "if (key != null) { int value = values.computeIfAbsent(key, k -> 1); "
+                      "stable.add(key); return value; } return 0; } "
                       "public int required() { return maybe(true); } "
                       "public void reset(Integer value) {} "
                       "public void clear() { reset(null); } "
@@ -1140,6 +1188,21 @@
                                         "src/Example/Java/Library/Boxed.cs")))]
     (is (str/includes? source "private bool? __field_state = default!;"))
     (is (str/includes? source "public int? maybe(bool present)"))
+    (is (str/includes? source "float? value = (present ? (float?)(1.0F) : (float?)(default!));"))
+    (is (str/includes?
+         source
+         (str "(value != default!) && "
+              "(global::DripSharp.Runtime.JavaCompat.CompareFloat("
+              "(float)(global::DripSharp.Runtime.JavaCompat.Unbox(value)), "
+              "1.0F) == 0)")))
+    (is (str/includes? source "long? key = (present ? (long?)(1L) : (long?)(default!));"))
+    (is (str/includes?
+         source
+         (str "ComputeIfAbsent(values, "
+              "global::DripSharp.Runtime.JavaCompat.Unbox(key), (k) => 1)")))
+    (is (str/includes?
+         source
+         "stable.Add(global::DripSharp.Runtime.JavaCompat.Unbox(key));"))
     (is (str/includes? source "this.reset((int?)default!);"))
     (is (str/includes?
          source
@@ -1759,9 +1822,9 @@
                                         "src/Example/Java/Library/Frozen.cs")))]
     (is (str/includes?
          first-source
-         (str "global::System.Collections.Generic.IDictionary<string, global::Example.Java.Library.Frozen.Item> copied = new global::DripSharp.Runtime.JavaLinkedHashMap<string, global::Example.Java.Library.Frozen.Item>(source);\n"
+         (str "global::System.Collections.Generic.IDictionary<string, global::Example.Java.Library.Frozen.Item> copied = new global::DripSharp.Runtime.JavaLinkedHashMap<string, global::Example.Java.Library.Frozen.Item>(global::DripSharp.Runtime.JavaCompat.CastDictionary<string, global::Example.Java.Library.Frozen.Item>(source));\n"
               "global::DripSharp.Runtime.JavaCompat.ForEach(global::DripSharp.Runtime.JavaCompat.MapEntrySet(copied), (entry) => entry.SetValue(entry.Value.freeze()));\n"
-              "this.items = global::DripSharp.Runtime.JavaCompat.UnmodifiableMap(copied);\n"
+              "this.items = global::DripSharp.Runtime.JavaCompat.UnmodifiableMap(global::DripSharp.Runtime.JavaCompat.CastDictionary<string, global::Example.Java.Library.Frozen.Item>(copied));\n"
               "this.names = global::DripSharp.Runtime.JavaCompat.UnmodifiableList(new global::System.Collections.Generic.List<string>(names));")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
@@ -1903,6 +1966,8 @@
                       "public static Calendar calendarMutationsAfterNull(Calendar replacement) { "
                       "Calendar value = null; value = replacement; "
                       "value.clear(); value.set(1, 2); return value; } "
+                      "public static long calendarMillis(Calendar value) { "
+                      "return value.getTimeInMillis(); } "
                       "public static String objectText(Object value) { return value.toString(); } "
                       "public static String integerText(Integer value) { return value.toString(); } "
                       "static String optionalText(Optional<Object> value) { "
@@ -1935,7 +2000,7 @@
                      first-source))))
     (is (str/includes?
          first-source
-         "return left.CompareTo(right);"))
+         "return global::DripSharp.Runtime.JavaCompat.CalendarCompareTo(left, right);"))
     (is (str/includes?
          first-source
          "return global::DripSharp.Runtime.JavaCompat.StringValueOf(value);"))
@@ -1950,6 +2015,9 @@
               "value = global::DripSharp.Runtime.JavaCompat.CalendarClear(value!);\n"
               "value = global::DripSharp.Runtime.JavaCompat.CalendarSet(value!, 1, 2);\n"
               "return value!;")))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.CalendarGetTimeInMillis(value);"))
     (is (not (str/includes? first-source "value! =")))
     (is (str/includes?
          first-source
@@ -2479,7 +2547,7 @@
          first-source
          (str "return ((((int)('a') <= (int)(value)) && "
               "((int)(value) <= (int)('z'))) ? "
-              "(char)((value - 32)) : value);")))
+              "unchecked((char)((value - 32))) : value);")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -2582,6 +2650,13 @@
                       "public static InputStream concat(byte[] first, byte[] second) { "
                       "return new SequenceInputStream(new ByteArrayInputStream(first), "
                       "new ByteArrayInputStream(second)); } "
+                      "public static int reset(byte[] bytes) throws IOException { "
+                      "ByteArrayInputStream input = new ByteArrayInputStream(bytes); "
+                      "int first = input.read(); input.read(); input.reset(); "
+                      "return first == input.read() ? first : -1; } "
+                      "public static boolean invalidCodePoint() { "
+                      "return !Character.isDigit(-1) && "
+                      "!Character.isLetterOrDigit(-1) && Character.getType(-1) == 0; } "
                       "public static void text(Writer writer, String value) "
                       "throws IOException { writer.write(value); writer.flush(); } "
                       "public static String text(String value) throws IOException { "
@@ -2602,7 +2677,31 @@
                                         "src/Example/Java/Library/Wire.cs")))
         second-source
         (slurp (str (paths/resolve-path (:project-root second)
-                                        "src/Example/Java/Library/Wire.cs")))]
+                                        "src/Example/Java/Library/Wire.cs")))
+        consumer-root (temp-directory)
+        generated-project
+        (paths/resolve-path (:project-root first) (:project-file first))
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>enable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "return global::Example.Java.Library.Wire.reset("
+                 "new sbyte[] { 11, 12 }) == 11 && "
+                 "global::Example.Java.Library.Wire.invalidCodePoint() ? 0 : 1;\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
     (is (str/includes?
          first-source
          (str "global::DripSharp.Runtime.JavaCompat.OutputStreamWrite(output, "
@@ -2640,6 +2739,7 @@
          (str "public static int require(int? value) {\n"
               "if (value.HasValue) {\nreturn value.Value;\n}\nreturn -1;")))
     (is (= first-source second-source))
+    (is (zero? (:exit result)))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -2988,7 +3088,7 @@
               "global::System.IO.Stream input = "
               "global::DripSharp.Runtime.JavaCompat.SocketStream(socket);\n"
               "output.Flush();\n"
-              "global::System.Collections.Generic.Dictionary<string, string> values = "
+              "global::DripSharp.Runtime.JavaLinkedHashMap<string, string> values = "
               "global::DripSharp.Runtime.JavaCompat.NewJavaDictionary<string, string>(4);\n"
               (str "global::DripSharp.Runtime.JavaByteArrayOutputStream buffer = "
                    "new global::DripSharp.Runtime.JavaByteArrayOutputStream(16);\n")
@@ -4086,6 +4186,7 @@
     (is (str/includes?
          (.getMessage error)
          (str "requires exact Callable, Iterator, X509TrustManager, FilterOutputStream, "
+              "ByteArrayOutputStream, "
               "LinkedHashMap, or project-class semantics")))))
 
 (deftest anonymous-callables-lower-to-capturing-func-lambdas
@@ -4646,7 +4747,10 @@
         (model! {"example/PrimitiveConversions.java"
                  (str "package example; public final class PrimitiveConversions { "
                       "static char asChar(int value) { char result = (char) value; "
-                      "return result; } static byte[] markers() { "
+                      "return result; } static short asShort() { "
+                      "return (short) 0xAA00; } static void assign(byte[] values, "
+                      "int value) { values[0] = value > 0 ? (byte) value : 0; } "
+                      "static byte[] markers() { "
                       "byte[] result = new byte[2]; result[0] = '\\r'; "
                       "result[1] = '\\n'; return result; } }")})
         first (emit! fixture 1)
@@ -4658,7 +4762,12 @@
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/PrimitiveConversions.cs")))]
     (is (str/includes?
-         first-source "char result = unchecked((char)((char)(value)));"))
+         first-source
+         "char result = unchecked((char)(unchecked((char)(value))));"))
+    (is (str/includes? first-source "return unchecked((short)(43520));"))
+    (is (str/includes?
+         first-source
+         "values[0] = unchecked((sbyte)(((value > 0) ? unchecked((sbyte)(value)) : 0)));"))
     (is (str/includes?
          first-source "result[0] = unchecked((sbyte)('\\r'));"))
     (is (str/includes?
@@ -5806,14 +5915,21 @@
                "public final class Sink extends OutputStream { "
                "@Override public void write(int value) {} "
                "@Override public void write(byte[] values, int offset, int count) {} "
-               "@Override public void flush() {} }")})
+               "@Override public void flush() {} }")
+          "example/Buffer.java"
+          (str "package example; import java.io.ByteArrayOutputStream; "
+               "public final class Buffer extends ByteArrayOutputStream { "
+               "@Override public void close() {} }")})
         emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
         (slurp (str (paths/resolve-path (:project-root emission)
                                         "src/Example/Java/Library/Source.cs")))
         sink
         (slurp (str (paths/resolve-path (:project-root emission)
-                                        "src/Example/Java/Library/Sink.cs")))]
+                                        "src/Example/Java/Library/Sink.cs")))
+        buffer
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Buffer.cs")))]
     (doseq [signature ["public override int Read()"
                        "public override int Available()"
                        "public override bool MarkSupported()"]]
@@ -5823,6 +5939,7 @@
                        "public override void Write(sbyte[] values, int offset, int count)"
                        "public override void Flush()"]]
       (is (str/includes? sink signature)))
+    (is (str/includes? buffer "public override void Dispose()"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)
@@ -6031,6 +6148,37 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest number-narrowing-path-parent-and-nested-casts-use-java-semantics
+  (let [fixture
+        (model! {"example/JavaSemantics.java"
+                 (str "package example; import java.nio.file.Path; "
+                      "public final class JavaSemantics { "
+                      "public static int narrow(Number value) { return value.intValue(); } "
+                      "public static boolean hasParent(Path value) { "
+                      "return value.getParent() != null; } "
+                      "public static float truncate(Number value) { "
+                      "return (float)(int)(value.floatValue()); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/JavaSemantics.cs")))]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.NumberIntValue(value);"))
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.PathParent(value) != default!"))
+    (is (str/includes?
+         source
+         (str "return (float)((int)(global::System.Convert.ToSingle(value, "
+              "global::System.Globalization.CultureInfo.InvariantCulture)));")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -6845,6 +6993,39 @@
     (is (str/includes?
          visitable
          "this.accept<TWildcard0_0, object>(visitor, (object)default!)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest null-initialized-project-wildcard-locals-use-erased-type
+  (let [fixture
+        (model! {"example/Container.java"
+                 "package example; public interface Container<T> {}"
+                 "example/Validator.java"
+                 (str "package example; public abstract class Validator<T extends Container<?>> "
+                      "implements ErasedValidator {}")
+                 "example/ErasedValidator.java"
+                 "package example; public interface ErasedValidator {}"
+                 "example/Use.java"
+                 (str "package example; public final class Use { "
+                      "public ErasedValidator choose() { "
+                      "Validator<? extends Container<?>> value = null; "
+                      "return value; } }")})
+        result
+        (emit! fixture 1 #{}
+               {:generic-erasure-mappings
+                {"example.Validator"
+                 "global::Example.Java.Library.ErasedValidator"}})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Use.cs")))]
+    (is (str/includes?
+         source
+         (str "global::Example.Java.Library.ErasedValidator value = "
+              "default!;")))
+    (is (not (str/includes? source "var value = default!;")))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root result)
                                :command ["dotnet" "build" (:project-file result)
@@ -7940,7 +8121,13 @@
                "private static final long serialVersionUID = 1L; }")
           "example/ChildFailure.java"
           (str "package example; public final class ChildFailure extends BaseFailure { "
-               "private static final long serialVersionUID = 2L; }")})
+               "private static final long serialVersionUID = 2L; }")
+          "example/BaseFields.java"
+          (str "package example; public class BaseFields { private int count; "
+               "public int baseCount() { return count; } }")
+          "example/ChildFields.java"
+          (str "package example; public final class ChildFields extends BaseFields { "
+               "private int count; public int childCount() { return count; } }")})
         emission (emit! fixture 2 #{:java-compat :java-regex-unicode})
         root (:project-root emission)
         provider (slurp (str (paths/resolve-path root
@@ -7950,7 +8137,9 @@
         quiet (slurp (str (paths/resolve-path root
                                               "src/Example/Java/Library/QuietFailure.cs")))
         child (slurp (str (paths/resolve-path root
-                                              "src/Example/Java/Library/ChildFailure.cs")))]
+                                              "src/Example/Java/Library/ChildFailure.cs")))
+        child-fields (slurp (str (paths/resolve-path root
+                                                     "src/Example/Java/Library/ChildFields.cs")))]
     (is (str/includes? provider "public void Dispose();"))
     (is (not (str/includes? provider "public new void Dispose();")))
     (is (str/includes? options "public static readonly global::Example.Java.Library.Options __field_values"))
@@ -7959,6 +8148,8 @@
     (is (str/includes? quiet "public global::System.Exception fillInStackTrace()"))
     (is (not (str/includes? quiet "override global::System.Exception fillInStackTrace()")))
     (is (str/includes? child "internal new const long serialVersionUID = 2L;"))
+    (is (str/includes? child-fields "private int count"))
+    (is (not (str/includes? child-fields "private new int count")))
     (is (zero? (:exit
                 (process/run! {:directory root
                                :command ["dotnet" "build" (:project-file emission)
@@ -7972,14 +8163,26 @@
                       "public Chains() { this(1); } "
                       "public Chains(int value) { super(); this.value = value; } "
                       "String left() { return \"left\"; } String right() { return \"right\"; } "
-                      "String choose(boolean left) { return left ? left() : right(); } }")})
+                      "String choose(boolean left) { return left ? left() : right(); } }")
+                 "example/GenericBase.java"
+                 (str "package example; public class GenericBase<T> { "
+                      "public GenericBase(T value) {} }")
+                 "example/GenericChild.java"
+                 (str "package example; public final class GenericChild "
+                      "extends GenericBase<String> { public GenericChild(String value) { "
+                      "super(value); } }")})
         emission (emit! fixture 2)
         source
         (slurp (str (paths/resolve-path (:project-root emission)
-                                        "src/Example/Java/Library/Chains.cs")))]
+                                        "src/Example/Java/Library/Chains.cs")))
+        generic-child
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/GenericChild.cs")))]
     (is (str/includes? source "public Chains() : this(1)"))
     (is (str/includes? source "public Chains(int value) : base()"))
     (is (str/includes? source "return (left ? this.left() : this.right());"))
+    (is (str/includes? generic-child "public GenericChild(string value) : base(value)"))
+    (is (not (str/includes? generic-child "CastReference<T>")))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)

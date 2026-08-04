@@ -1,4 +1,5 @@
 {:schema-version 2
+ :timeout-ms 900000
  :projects
  [{:id "DripSharp.PdfCarton.Tests"
    :directory "tests/DripSharp.PdfCarton.Tests"
@@ -10,8 +11,9 @@
    :project-references []
    :packages
    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
-    {:id "xunit" :version "2.9.3"}
-    {:id "xunit.runner.visualstudio" :version "3.1.4"}]}]
+    {:id "xunit.v3" :version "3.2.2"}
+    {:id "xunit.runner.visualstudio" :version "3.1.5"}
+    {:id "Castle.Core" :version "5.1.1"}]}]
  :strategies
  [{:id :focused-consumer
    :kind :focused-consumer
@@ -44,4 +46,9 @@
      :destination "Fixtures/metadata.xmp"
      :sha256 "e0e15a9c1ad91ba8389c1e23e3fd598e299aa28c73b45dee49b923e054464fc6"
      :license "Apache-2.0"
-     :attribution "Authored for the PdfCarton generated consumer suite."}]}]}
+     :attribution "Authored for the PdfCarton generated consumer suite."}]}
+  {:id :pdfcarton-adapted-upstream
+   :kind :adapted-upstream
+   :policy :shipped
+   :project "DripSharp.PdfCarton.Tests"
+   :handler dripsharp.pdfcube.test-suite/strategy!}]}

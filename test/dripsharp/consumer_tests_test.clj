@@ -141,6 +141,7 @@
     (try
       (is (= ["restore" "build" "test"]
              (mapv #(second (:command %)) @calls)))
+      (is (every? #(= 300000 (:timeout-ms %)) @calls))
       (is (every? #(= (.resolve workspace
                                 "target/generated/brine")
                       (:directory %))
@@ -150,6 +151,47 @@
            "tests/DripSharp.Brine.Tests/DripSharp.Brine.Tests.csproj"))
       (is (= #{"DripSharp.Brine.Tests"}
              (set (keys (:project-files result)))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest staged-verification-honors-the-suite-timeout
+  (let [workspace (temp-directory)
+        staging (.resolve workspace "target/generated/timeout-probe")
+        tests-root (.resolve staging "tests")
+        project-root (.resolve staging "timeout-probe")
+        project-file (.resolve project-root "Timeout.Probe.Tests.csproj")
+        contract
+        {:target :timeout-probe
+         :publication
+         {:staging-path "target/generated/timeout-probe"
+          :test-suites
+          {:timeout-ms 900000
+           :projects
+           [{:id "Timeout.Probe.Tests"
+             :directory "timeout-probe"
+             :assembly-name "Timeout.Probe.Tests"}]
+           :strategies []}}}
+        calls (atom [])]
+    (try
+      (Files/createDirectories tests-root (make-array FileAttribute 0))
+      (Files/createDirectories project-root (make-array FileAttribute 0))
+      (Files/writeString project-file "<Project />\n"
+                         (make-array OpenOption 0))
+      (Files/writeString (.resolve tests-root "Sentinel.txt") "probe\n"
+                         (make-array OpenOption 0))
+      (Files/writeString (.resolve tests-root "SHA256SUMS")
+                         (str "25be323556dad377abb57fe7ec8c4b99a"
+                              "6527f488dda28d0c9b686528659c909"
+                              "  Sentinel.txt\n")
+                         (make-array OpenOption 0))
+      (consumer-tests/verify!
+       {:workspace-root workspace
+        :target-contract contract
+        :run-command! (fn [request]
+                        (swap! calls conj request)
+                        {:exit 0 :output ""})})
+      (is (= 3 (count @calls)))
+      (is (every? #(= 900000 (:timeout-ms %)) @calls))
       (finally
         (delete-tree! workspace)))))
 

@@ -522,6 +522,16 @@ internal static partial class JavaCompat
         value <= int.MinValue ? int.MinValue :
         (int)value;
 
+    internal static int NumberIntValue(IConvertible value) => value switch
+    {
+        float number => NarrowToInt(number),
+        double number => NarrowToInt(number),
+        decimal number when number >= int.MaxValue => int.MaxValue,
+        decimal number when number <= int.MinValue => int.MinValue,
+        decimal number => (int)decimal.Truncate(number),
+        _ => unchecked((int)value.ToInt64(CultureInfo.InvariantCulture))
+    };
+
     internal static readonly TextWriter @out = Console.Out;
     internal static readonly TextWriter err = Console.Error;
     private static readonly Dictionary<string, string> SystemProperties = new(StringComparer.Ordinal)
@@ -562,10 +572,18 @@ internal static partial class JavaCompat
         type.GetField(name, BindingFlags.Instance | BindingFlags.Static |
             BindingFlags.Public | BindingFlags.NonPublic) ??
         throw new MissingFieldException(type.FullName, name);
-    internal static MethodInfo GetMethod(Type type, string name, params Type[] parameterTypes) =>
-        type.GetMethod(name, BindingFlags.Instance | BindingFlags.Static |
-            BindingFlags.Public | BindingFlags.NonPublic, parameterTypes) ??
-        throw new MissingMethodException(type.FullName, name);
+    internal static MethodInfo GetMethod(Type type, string name, params Type[] parameterTypes)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Static |
+            BindingFlags.Public | BindingFlags.NonPublic;
+        MethodInfo? method = type.GetMethod(name, flags, parameterTypes);
+        if (method is null && name.Length > 0)
+        {
+            string publicName = char.ToUpperInvariant(name[0]) + name.Substring(1);
+            method = type.GetMethod(publicName, flags, parameterTypes);
+        }
+        return method ?? throw new MissingMethodException(type.FullName, name);
+    }
     internal static void SetAccessible(MemberInfo _, bool __) { }
     internal static T RequireNonNullElseGet<T>(T? value, Func<T> supplier) =>
         value is null ? RequireNonNull(supplier()) : value;
@@ -583,18 +601,39 @@ internal static partial class JavaCompat
         return string.IsNullOrEmpty(message) ? typeName : typeName + ": " + message;
     }
 
+    internal static string ClassName(
+        Type type,
+        string destinationNamespace,
+        string sourcePackage)
+    {
+        var fullName = type.FullName ?? type.Name;
+        if (!fullName.Equals(destinationNamespace, StringComparison.Ordinal) &&
+            !fullName.StartsWith(destinationNamespace + ".", StringComparison.Ordinal))
+            return fullName.Replace('+', '$');
+        var relative = fullName.Substring(destinationNamespace.Length).TrimStart('.');
+        var typeSeparator = relative.LastIndexOf('.');
+        if (typeSeparator < 0) return sourcePackage + "." + relative.Replace('+', '$');
+        var package = relative.Substring(0, typeSeparator).ToLowerInvariant();
+        var className = relative.Substring(typeSeparator + 1).Replace('+', '$');
+        return sourcePackage + "." + package + "." + className;
+    }
+
     internal static string Concat(object? left, object? right) =>
         JavaString(left) + JavaString(right);
 
     private static string JavaString(object? value) => StringValueOf(value);
 
-    internal static bool IsDigit(int codePoint) => Rune.GetUnicodeCategory(new Rune(codePoint)) == UnicodeCategory.DecimalDigitNumber;
+    internal static bool IsDigit(int codePoint) =>
+        Rune.IsValid(codePoint) &&
+        Rune.GetUnicodeCategory(new Rune(codePoint)) == UnicodeCategory.DecimalDigitNumber;
 
     internal static bool IsLetterOrDigit(int codePoint) =>
-        Rune.IsLetter(new Rune(codePoint)) || IsDigit(codePoint);
+        Rune.IsValid(codePoint) &&
+        (Rune.IsLetter(new Rune(codePoint)) || IsDigit(codePoint));
 
     internal static bool IsUnicodeIdentifierStart(int codePoint)
     {
+        if (!Rune.IsValid(codePoint)) return false;
         var category = Rune.GetUnicodeCategory(new Rune(codePoint));
         return Rune.IsLetter(new Rune(codePoint)) ||
                category is UnicodeCategory.LetterNumber or UnicodeCategory.CurrencySymbol or UnicodeCategory.ConnectorPunctuation;
@@ -602,6 +641,7 @@ internal static partial class JavaCompat
 
     internal static bool IsUnicodeIdentifierPart(int codePoint)
     {
+        if (!Rune.IsValid(codePoint)) return false;
         var category = Rune.GetUnicodeCategory(new Rune(codePoint));
         return IsUnicodeIdentifierStart(codePoint) ||
                category is UnicodeCategory.DecimalDigitNumber or UnicodeCategory.NonSpacingMark or
@@ -617,7 +657,8 @@ internal static partial class JavaCompat
     }
 
     internal static int CodePointAt(string value, int index) => char.ConvertToUtf32(value, index);
-    internal static int CharacterType(int codePoint) => Rune.GetUnicodeCategory(new Rune(codePoint)) switch
+    internal static int CharacterType(int codePoint) =>
+        !Rune.IsValid(codePoint) ? 0 : Rune.GetUnicodeCategory(new Rune(codePoint)) switch
     {
         UnicodeCategory.UppercaseLetter => 1,
         UnicodeCategory.LowercaseLetter => 2,
@@ -659,7 +700,9 @@ internal static partial class JavaCompat
         return digit >= 0 && digit < radix ? digit : -1;
     }
     internal static bool IsWhitespace(char value) => char.IsWhiteSpace(value);
-    internal static int ToUpperCase(int codePoint) => Rune.ToUpperInvariant(new Rune(codePoint)).Value;
+    internal static int ToUpperCase(int codePoint) => Rune.IsValid(codePoint)
+        ? Rune.ToUpperInvariant(new Rune(codePoint)).Value
+        : codePoint;
     internal static StringBuilder AppendCodePoint(StringBuilder builder, int codePoint) =>
         builder.Append(CodePointToString(codePoint));
 
@@ -721,6 +764,7 @@ internal static partial class JavaCompat
         float number => JavaFloatingString(number),
         Uri uri => UriToString(uri),
         Regex regex => JavaCompat.RegexPattern(regex),
+        System.Xml.XmlNode node => $"[{node.Name}: {node.Value ?? "null"}]",
         System.Collections.IDictionary map when value.GetType().GetMethod(nameof(ToString), Type.EmptyTypes)?.DeclaringType == typeof(object) => "{" + string.Join(", ", map.Keys.Cast<object?>().Select(key => StringValueOf(key) + "=" + StringValueOf(map[key!]))) + "}",
         System.Collections.IEnumerable values when value is not string && !value.GetType().IsArray && value.GetType().GetMethod(nameof(ToString), Type.EmptyTypes)?.DeclaringType == typeof(object) => "[" + string.Join(", ", values.Cast<object?>().Select(StringValueOf)) + "]",
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),

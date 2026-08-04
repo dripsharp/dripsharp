@@ -4,7 +4,7 @@
  :modules
  {:fontbox
   {:source-count 44
-   :fixture-count 27
+   :fixture-count 38
    :case-count 192
    :parameter-row-count 8
    :helper-count 298
@@ -12,7 +12,7 @@
    :platform-condition-count 4}
   :io
   {:source-count 10
-   :fixture-count 2
+   :fixture-count 4
    :case-count 122
    :parameter-row-count 0
    :helper-count 136
@@ -20,7 +20,7 @@
    :platform-condition-count 0}
   :pdfbox
   {:source-count 128
-   :fixture-count 300
+   :fixture-count 392
    :case-count 739
    :parameter-row-count 18
    :helper-count 1292
@@ -28,7 +28,7 @@
    :platform-condition-count 32}
   :preflight
   {:source-count 23
-   :fixture-count 8
+   :fixture-count 213
    :case-count 71
    :parameter-row-count 6
    :helper-count 196
@@ -44,7 +44,7 @@
    :platform-condition-count 3}}
  :totals
  {:source-count 233
-  :fixture-count 371
+  :fixture-count 681
   :case-count 1281
   :parameter-row-count 72
   :helper-count 2247
@@ -57,8 +57,8 @@
   "c52aafe75df17e4cc6d4eac13bcc22eb4d8065288f7b52cea0f916f1e2d8faac"
   :enablement
   "1372f1623ddf838c2d593ff5dc1ecbd9ae7f6400f16554901a49885e1c27689c"
-  :fixtures
-  "b7b804073948152c712dafeda065b60d7509cbc7ee02e22616d03aa480b134b0"
+ :fixtures
+  "4637f8c88fd611073e2058fafff68d5b3c68d65ce61ff60a2bdd7aa2a4112d56"
   :framework-calls
   "1b7141ae2dc1d0b288fe865287f792c31c99c4b2df6d5d83c9902d6c9a09742e"
   :helpers
