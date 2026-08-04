@@ -11,6 +11,7 @@
             [dripsharp.process :as process]
             [dripsharp.project :as project]
             [dripsharp.project-input :as project-input]
+            [dripsharp.pkl.parser-test-contract :as parser-test-contract]
             [dripsharp.pkl.public-api-contract :as public-api-contract]
             [dripsharp.util :as util])
   (:import [java.io ByteArrayInputStream File]
@@ -1727,11 +1728,17 @@
         delegate (or (:run-command! options) process/run!)
         options (assoc options :run-command!
                        #(delegate (assoc % :timeout-ms command-timeout-ms)))
+        parser-suite-contract
+        (parser-test-contract/verify-contract!
+         (select-keys options [:workspace-root :run-command!]))
         parser (verify-parser-differential! options)
         core (verify-core-differential! options)
-        summary {:parser (:summary parser) :core (:summary core)}]
+        summary {:parser-suite-contract (:summary parser-suite-contract)
+                 :parser (:summary parser)
+                 :core (:summary core)}]
     (println "Independent upstream/package differential suite passed:" (pr-str summary))
-    {:parser parser :core core :summary summary}))
+    {:parser-suite-contract parser-suite-contract
+     :parser parser :core core :summary summary}))
 
 (defn verify-differential!
   "Regenerates, packs, consumes, and independently compares the complete parser

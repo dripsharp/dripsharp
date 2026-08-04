@@ -1678,18 +1678,23 @@
     (raw ">(") node (raw ")")]))
 
 (defn- destination-value-node
-  [ctx kind source target-reference target node]
-  (if-let [adapt (:destination-value-adapter ctx)]
-    (or
-     (adapt
-      {:destination-context ctx
-       :kind kind
-       :source source
-       :target target
-       :target-reference target-reference
-       :node node})
-     node)
-    node))
+  ([ctx kind source target-reference target node]
+   (destination-value-node
+    ctx kind source target-reference target node nil))
+  ([ctx kind source target-reference target node destination-metadata]
+   (if-let [adapt (:destination-value-adapter ctx)]
+     (or
+      (adapt
+       (merge
+        {:destination-context ctx
+         :kind kind
+         :source source
+         :target target
+         :target-reference target-reference
+         :node node}
+        destination-metadata))
+      node)
+     node)))
 
 (defn- assignment-value-node [ctx ^CtElement assigned ^CtExpression assignment node]
   (let [assigned-declaration
@@ -2046,7 +2051,9 @@
           actual-nodes
           (mapv
            (fn [index ^CtTypeReference reference]
-             (or (get formal-overrides index) (type-node ctx reference)))
+             (or (when (instance? CtTypeParameterReference reference)
+                   (get formal-overrides index))
+                 (type-node ctx reference)))
            (range)
            actual)
           emitted
@@ -2308,7 +2315,8 @@
           node)))))
 
 (defn- argument-value-node
-  [ctx ^CtExpression argument ^CtTypeReference expected node force-value?]
+  [ctx ^CtExpression argument ^CtTypeReference expected
+   ^CtTypeReference declared-target-reference node force-value?]
   (let [expected-name (some-> expected .getQualifiedName)
         argument-name (some-> argument .getType .getQualifiedName)
         argument-declaration
@@ -2355,13 +2363,22 @@
                        expected-name)
             (= "java.util.List" argument-name)
             (covariant-list-node ctx argument (.getType argument)))
-       (let [bound
+       (let [argument-declaration
+             (when (instance? CtVariableAccess argument)
+               (some-> ^CtVariableAccess argument .getVariable .getDeclaration))
+             argument-type
+             (or (some-> argument-declaration .getType)
+                 (.getType argument))
+             argument-reference
+             (first (.getActualTypeArguments ^CtTypeReference argument-type))
+             bound
              (.getBoundingType
               ^CtWildcardReference
-              (first (.getActualTypeArguments (.getType argument))))]
+              argument-reference)
+             element-node (type-node ctx bound)]
          (sequence-node
           [(raw "global::DripSharp.Runtime.JavaCompat.ToListValues<")
-           (type-node ctx bound) (raw ">(") node (raw ")")]))
+           element-node (raw ">(") node (raw ")")]))
 
        (and (= "byte" expected-name)
             (not= "byte" argument-name))
@@ -2453,7 +2470,8 @@
                     (instance? CtTypeParameterReference expected))))
        value-node
 
-       :else node))))
+       :else node)
+     {:declared-target-reference declared-target-reference})))
 
 (defn- enclosing-method [^CtElement element]
   (loop [current (when (.isParentInitialized element) (.getParent element))]
@@ -2943,7 +2961,10 @@
              (infer bindings parameter (.getType argument)))
            {}
            (map vector parameter-types (.getArguments call))))
-        substitutions (merge substitutions inferred-substitutions)]
+        ;; Explicit owner arguments are authoritative. Inference fills raw
+        ;; calls only; a null actual must not replace `MutableReference<T>`'s
+        ;; declared T with Spoon's null/Object marker.
+        substitutions (merge inferred-substitutions substitutions)]
     (mapv
      (fn [^CtTypeReference reference]
        (substituted-executable-type-reference reference substitutions))
@@ -2975,6 +2996,18 @@
         (.getComponentType ^CtArrayTypeReference expected)
         expected))))
 
+(defn- declared-call-parameter-type
+  "Returns the original declaration-owned parameter reference for destination
+  adapters. Unlike the substituted call parameter, this reference retains its
+  declaration parent and therefore any target-owned public-boundary policy."
+  [declaration argument-count index ^CtExpression argument]
+  (when (instance? CtExecutable declaration)
+    (call-parameter-type
+     declaration
+     (mapv #(.getType ^CtParameter %)
+           (.getParameters ^CtExecutable declaration))
+     argument-count index argument)))
+
 (defn- invocation-target-node
   [ctx children ^CtExpression target declaration executable-reference]
   (let [static-declaration?
@@ -2985,13 +3018,15 @@
              (some? (.getBody ^CtMethod declaration))
              (interface-type? (.getDeclaringType ^CtMethod declaration)))
         interface-self-target?
-        (and (not (:inlined-default-interface-body? ctx))
-             default-interface-method?
+        (and default-interface-method?
              (instance? CtThisAccess target)
-             (= (some-> target .getType .getQualifiedName)
-                (some-> ^CtMethod declaration
-                        .getDeclaringType
-                        .getQualifiedName)))
+             (or
+              (= :direct (:default-interface-self-dispatch ctx))
+              (and (not (:inlined-default-interface-body? ctx))
+                   (= (some-> target .getType .getQualifiedName)
+                      (some-> ^CtMethod declaration
+                              .getDeclaringType
+                              .getQualifiedName)))))
         node
         (cond
           static-declaration?
@@ -5932,7 +5967,11 @@
                      (raw-list-constructor-for-generic-owner-node
                       @ctx-holder argument expected declaration target node)
                      (argument-value-node
-                      @ctx-holder argument expected node
+                      @ctx-holder argument expected
+                      (declared-call-parameter-type
+                       declaration (count (.getArguments element))
+                       index argument)
+                      node
                       (contains? generic-value-argument-executables
                                  (:key occurrence))))))
                 (range)
@@ -5972,6 +6011,11 @@
                     :occurrence occurrence
                     :target target
                     :target-node target-node
+                    :source-target-node
+                    (when target
+                      (if (instance? CtThisAccess target)
+                        (this-node @ctx-holder ^CtThisAccess target)
+                        (child-node children target)))
                     :arguments arguments}))
                 (when
                  (= "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)"
@@ -6086,6 +6130,9 @@
                          (count (.getArguments element)) index argument)]
                     (argument-value-node
                      @ctx-holder argument expected
+                     (declared-call-parameter-type
+                      declaration (count (.getArguments element))
+                      index argument)
                      (child-node children argument) false)))
                 (range)
                 (.getArguments element))
@@ -9221,6 +9268,10 @@
               (when (seq constructor-parameter-types)
                 (nth constructor-parameter-types
                      (min index (dec (count constructor-parameter-types)))))
+              (declared-call-parameter-type
+               (:declaration constructor-occurrence)
+               (count (.getArguments ^CtInvocation constructor-invocation))
+               index argument)
               (translated-node ctx argument)
               false))
            (range)

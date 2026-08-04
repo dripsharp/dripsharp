@@ -1736,7 +1736,11 @@ sealed class JavaDeque<T> : ICollection<T>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
 public
+#endif
 class JavaLinkedHashMap<K, V> :
     IDictionary<K, V>,
     IDictionary,

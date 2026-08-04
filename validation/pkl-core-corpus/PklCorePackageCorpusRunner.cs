@@ -136,6 +136,7 @@ static class Program
             RedirectStandardError = true,
             WorkingDirectory = Environment.CurrentDirectory
         };
+        AddRunnerHostArguments(process.StartInfo);
         process.StartInfo.ArgumentList.Add(Assembly.GetExecutingAssembly().Location);
         process.StartInfo.ArgumentList.Add("--child");
         process.StartInfo.ArgumentList.Add(manifestPath);
@@ -181,6 +182,21 @@ static class Program
                 row, manifest.Revision, "CRASH", "",
                 NormalizeDiagnostic(error.GetType().FullName + ": " + error.Message));
         }
+    }
+
+    static void AddRunnerHostArguments(ProcessStartInfo start)
+    {
+        string? deps = Environment.GetEnvironmentVariable("DRIPSHARP_RUNNER_DEPS_FILE");
+        string? runtime = Environment.GetEnvironmentVariable(
+            "DRIPSHARP_RUNNER_RUNTIME_CONFIG");
+        Require((deps is null) == (runtime is null),
+            "runner dependency and runtime configuration must be supplied together");
+        if (deps is null) return;
+        start.ArgumentList.Add("exec");
+        start.ArgumentList.Add("--depsfile");
+        start.ArgumentList.Add(deps);
+        start.ArgumentList.Add("--runtimeconfig");
+        start.ArgumentList.Add(runtime!);
     }
 
     static int RunChild(string[] args)
@@ -5727,6 +5743,7 @@ static class Program
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
+            AddRunnerHostArguments(process.StartInfo);
             process.StartInfo.ArgumentList.Add(Assembly.GetExecutingAssembly().Location);
             process.StartInfo.ArgumentList.Add("--external-reader");
             process.Start();

@@ -95,6 +95,8 @@
                                     :project-references])))
                  project-reference-count))
           (is (str/includes? project-first "../../src/"))
+          (is (str/includes? project-first
+                             "TargetPath=\"Fixtures/"))
           (is (not (str/includes? project-first
                                   (str (:target-directory contract)))))
           (is (= project-first project-second))
@@ -107,6 +109,10 @@
                                "Contracts/LanguageSnippetContract.tsv"))
             (is (str/includes? inventory-first
                                "Contracts/PklCoreTestContract.tsv"))
+            (is (str/includes? inventory-first
+                               "Contracts/PklParserTestContract.tsv"))
+            (is (str/includes? inventory-first
+                               "DripSharp.Brine.ParserTestRunner"))
             (is (str/includes? inventory-first "TEST-PROVENANCE.tsv"))
             (is (str/includes?
                  (Files/readString
@@ -224,7 +230,7 @@
             ledger (.resolve ^Path tests-root "TEST-PROVENANCE.tsv")
             original (Files/readString ledger)
             proof (brine-xunit/verify-provenance! tests-root)]
-        (is (= 1129 (count (:rows proof))))
+        (is (= 1132 (count (:rows proof))))
         (is (= 4 (count (:counts proof))))
         (Files/writeString
          ledger

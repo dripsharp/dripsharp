@@ -271,7 +271,10 @@ static class Program
         };
         if (Path.GetFileNameWithoutExtension(start.FileName)
             .Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            AddRunnerHostArguments(start);
             start.ArgumentList.Add(Assembly.GetEntryAssembly()!.Location);
+        }
         foreach (string argument in new[]
         {
             "--worker", contractCase.Id, contractCase.Input, snippets, projects, packageBuild,
@@ -324,6 +327,21 @@ static class Program
                 NormalizeDiagnostic("Malformed worker protocol:\n" + workerLines[0], snippets));
         }
         return new CaseResult(fields[1], fields[2], fields[3], fields[4], fields[5]);
+    }
+
+    static void AddRunnerHostArguments(ProcessStartInfo start)
+    {
+        string? deps = Environment.GetEnvironmentVariable("DRIPSHARP_RUNNER_DEPS_FILE");
+        string? runtime = Environment.GetEnvironmentVariable(
+            "DRIPSHARP_RUNNER_RUNTIME_CONFIG");
+        Require((deps is null) == (runtime is null),
+            "runner dependency and runtime configuration must be supplied together");
+        if (deps is null) return;
+        start.ArgumentList.Add("exec");
+        start.ArgumentList.Add("--depsfile");
+        start.ArgumentList.Add(deps);
+        start.ArgumentList.Add("--runtimeconfig");
+        start.ArgumentList.Add(runtime!);
     }
 
     static IReadOnlyList<ContractCase> ReadCases(string manifest, string snippets)

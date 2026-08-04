@@ -6967,7 +6967,53 @@
                                         "src/Example/Java/Library/Value.cs")))]
     (is (str/includes?
          source
-         (str "return ((global::Example.Java.Library.Copyable)(this)).copy();")))
+         "return ((global::Example.Java.Library.Copyable)(this)).copy();"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest explicit-generic-call-target-types-win-over-argument-inference
+  (let [fixture
+        (model! {"example/Pair.java"
+                 (str "package example; public final class Pair<K,V> { "
+                      "public Pair(K key, V value) {} }")
+                 "example/Pairs.java"
+                 (str "package example; public final class Pairs { "
+                      "public static <K,V> Pair<K,V> of(K key, V value) { "
+                      "return new Pair<>(key, value); } "
+                      "public Pair<Object,String> create(String key) { "
+                      "return Pairs.<Object,String>of(key, \"value\"); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Pairs.cs")))]
+    (is (str/includes?
+         source
+         "Pairs.of<object, string>(key, \"value\")"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest explicit-generic-constructor-types-win-over-null-inference
+  (let [fixture
+        (model! {"example/Reference.java"
+                 (str "package example; public final class Reference<T> { "
+                      "public Reference(T value) {} }")
+                 "example/References.java"
+                 (str "package example; public final class References { "
+                      "public Reference<String> create() { "
+                      "return new Reference<String>(null); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/References.cs")))]
+    (is (str/includes?
+         source
+         "new global::Example.Java.Library.Reference<string>((string)default!)"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)

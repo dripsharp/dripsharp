@@ -13,16 +13,21 @@ public sealed class UpstreamContractTests
     const string PinnedRevision = "f7cac257ade5775c1dfc255f4fda2eacc296e9d0";
     const string ApprovedLanguageExclusion = "outside-epic-approved-exclusion";
     const string CoreExecutionOwner = "complete-pkl-core-runner";
+    const string ParserExecutionOwner = "complete-pkl-parser-runner";
 
     static readonly string Root = FindProductRoot();
     static readonly Lazy<IReadOnlyDictionary<string, LanguageResult>> LanguageResults =
         new(RunLanguageCorpus);
     static readonly Lazy<IReadOnlyDictionary<string, CoreResult>> CoreResults =
         new(RunCoreCorpus);
+    static readonly Lazy<IReadOnlyDictionary<string, ParserResult>> ParserResults =
+        new(RunParserSuite);
     static readonly IReadOnlyDictionary<string, LanguageCase> LanguageContract =
         ReadLanguageContract();
     static readonly IReadOnlyDictionary<string, CoreCase> CoreContract =
         ReadCoreContract();
+    static readonly IReadOnlyDictionary<string, ParserCase> ParserContract =
+        ReadParserContract();
     static readonly IReadOnlyDictionary<string, ExpectedLanguageResult> LanguageExpected =
         ReadLanguageExpected();
 
@@ -36,6 +41,13 @@ public sealed class UpstreamContractTests
             .Where(row => row.ExecutionOwner == CoreExecutionOwner)
             .Where(row => row.PlatformConditions != "os=windows" ||
                           OperatingSystem.IsWindows())
+            .Select(row => new object[] { row.Id });
+
+    public static IEnumerable<object[]> ParserCases() =>
+        ParserContract.Values
+            .Where(row => row.ExecutionOwner == ParserExecutionOwner)
+            .Where(row => row.EnabledState == "enabled")
+            .Where(row => row.PlatformConditions == "all-supported-hosts")
             .Select(row => new object[] { row.Id });
 
     [Theory]
@@ -61,6 +73,18 @@ public sealed class UpstreamContractTests
         Assert.Equal("PASS", actual.Status);
     }
 
+    [Theory]
+    [MemberData(nameof(ParserCases))]
+    public void PklParserCaseMatchesPinnedUpstreamObservation(string caseId)
+    {
+        ParserCase contract = ParserContract[caseId];
+        ParserResult actual = ParserResults.Value[caseId];
+        Assert.True(
+            ParserMatches(contract, actual),
+            $"pkl-parser case {caseId} observed {actual.ObservationSha256}; " +
+            $"expected {contract.ExpectedSha256}. Diagnostic: {Decode(actual.DiagnosticBase64)}");
+    }
+
     [Fact]
     public void GeneratedCoverageAndProvenanceAreExact()
     {
@@ -70,6 +94,10 @@ public sealed class UpstreamContractTests
         Assert.Equal(524, CoreContract.Values.Count(row =>
             row.ExecutionOwner == CoreExecutionOwner));
         Assert.Equal(OperatingSystem.IsWindows() ? 524 : 523, CoreCases().Count());
+        Assert.Equal(849, ParserContract.Count);
+        Assert.Equal(849, ParserCases().Count());
+        Assert.Equal(10, ParserContract.Values.Select(row => row.JunitUniqueId).Distinct().Count());
+        Assert.Equal(840, ParserContract.Values.Count(row => row.CaseKind == "fixture-invocation"));
         VerifyInventory();
         VerifyProvenance();
     }
@@ -83,6 +111,11 @@ public sealed class UpstreamContractTests
         var perturbed = new ExpectedLanguageResult(
             actual.Status, Convert.ToBase64String("deliberately perturbed"u8));
         Assert.False(LanguageMatches(contract, perturbed, actual));
+        string parserId = ParserCases().Select(row => (string)row[0]).First();
+        ParserCase parser = ParserContract[parserId];
+        ParserResult parserActual = ParserResults.Value[parserId];
+        ParserCase parserPerturbed = parser with { ExpectedSha256 = new string('0', 64) };
+        Assert.False(ParserMatches(parserPerturbed, parserActual));
     }
 
     static bool LanguageMatches(
@@ -108,6 +141,11 @@ public sealed class UpstreamContractTests
                    "DripSharp.Brine.PklBugException: An unexpected error has occurred.",
                    StringComparison.Ordinal);
     }
+
+    static bool ParserMatches(ParserCase contract, ParserResult actual) =>
+        actual.Status == "PASS" &&
+        actual.ObservationSha256 == contract.ExpectedSha256 &&
+        actual.DiagnosticBase64.Length == 0;
 
     static IReadOnlyDictionary<string, LanguageCase> ReadLanguageContract()
     {
@@ -169,6 +207,43 @@ public sealed class UpstreamContractTests
         Require(rows.Count == 605, "Pkl.Core contract row count drifted.");
         Require(rows.Values.Count(row => row.ExecutionOwner == CoreExecutionOwner) == 524,
             "Pkl.Core product matrix drifted.");
+        return rows;
+    }
+
+    static IReadOnlyDictionary<string, ParserCase> ReadParserContract()
+    {
+        string path = ProductPath("tests", "Contracts", "PklParserTestContract.tsv");
+        string? revision = null;
+        string[]? columns = null;
+        var rows = new Dictionary<string, ParserCase>(StringComparer.Ordinal);
+        foreach (string line in File.ReadLines(path, Encoding.UTF8))
+        {
+            string[] fields = line.Split('\t');
+            if (fields[0] == "meta" && fields.Length == 3 &&
+                fields[1] == "source-revision")
+                revision = fields[2];
+            else if (fields[0] == "case-columns")
+                columns = fields.Skip(1).ToArray();
+            else if (fields[0] == "case")
+            {
+                Dictionary<string, string> row = Row(columns, fields, path);
+                var value = new ParserCase(
+                    Required(row, "case-id"),
+                    Required(row, "junit-unique-id"),
+                    Required(row, "case-kind"),
+                    Required(row, "enabled-state"),
+                    Required(row, "platform-conditions"),
+                    Required(row, "expected-observation-sha256"),
+                    Required(row, "execution-owner"));
+                AddUnique(rows, value.Id, value, path);
+            }
+        }
+        Require(revision == PinnedRevision, "pkl-parser contract revision drifted.");
+        Require(rows.Count == 849, "pkl-parser adapted case count drifted.");
+        Require(rows.Values.Select(row => row.JunitUniqueId).Distinct().Count() == 10,
+            "pkl-parser JUnit identity count drifted.");
+        Require(rows.Values.Count(row => row.CaseKind == "fixture-invocation") == 840,
+            "pkl-parser fixture invocation count drifted.");
         return rows;
     }
 
@@ -247,6 +322,36 @@ public sealed class UpstreamContractTests
         return rows;
     }
 
+    static IReadOnlyDictionary<string, ParserResult> RunParserSuite()
+    {
+        string runner = Runner("DripSharp.Brine.ParserTestRunner");
+        string output = Temporary("parser-results.tsv");
+        string manifest = ProductPath("tests", "Contracts", "PklParserTestContract.tsv");
+        string fixtures = ProductPath(
+            "tests", "Fixtures", "pkl", "pkl-core", "src", "test", "files",
+            "LanguageSnippetTests", "input");
+        Run(runner, manifest, output, fixtures, WorkerCount());
+        string[] lines = File.ReadAllLines(output, Encoding.UTF8);
+        Require(lines.Length >= 2 &&
+                lines[0] == "DRIPSHARP_PKL_PARSER_SUITE_RESULTS_V1",
+            "pkl-parser runner result schema drifted.");
+        var rows = new Dictionary<string, ParserResult>(StringComparer.Ordinal);
+        foreach (string line in lines.Skip(2))
+        {
+            string[] fields = line.Split('\t');
+            Require(fields.Length == 5 && fields[0] == "case",
+                "Malformed pkl-parser result row.");
+            AddUnique(
+                rows,
+                fields[1],
+                new ParserResult(fields[2], fields[3], fields[4]),
+                output);
+        }
+        Require(rows.Keys.SequenceEqual(ParserContract.Keys, StringComparer.Ordinal),
+            "pkl-parser results do not cover the contract in order.");
+        return rows;
+    }
+
     static void Run(string runner, params string[] arguments)
     {
         using var process = new Process();
@@ -258,6 +363,17 @@ public sealed class UpstreamContractTests
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        process.StartInfo.ArgumentList.Add("exec");
+        process.StartInfo.ArgumentList.Add("--depsfile");
+        process.StartInfo.ArgumentList.Add(Path.Combine(
+            AppContext.BaseDirectory, "DripSharp.Brine.Tests.deps.json"));
+        process.StartInfo.ArgumentList.Add("--runtimeconfig");
+        process.StartInfo.ArgumentList.Add(Path.Combine(
+            AppContext.BaseDirectory, "DripSharp.Brine.Tests.runtimeconfig.json"));
+        process.StartInfo.Environment["DRIPSHARP_RUNNER_DEPS_FILE"] = Path.Combine(
+            AppContext.BaseDirectory, "DripSharp.Brine.Tests.deps.json");
+        process.StartInfo.Environment["DRIPSHARP_RUNNER_RUNTIME_CONFIG"] = Path.Combine(
+            AppContext.BaseDirectory, "DripSharp.Brine.Tests.runtimeconfig.json");
         process.StartInfo.ArgumentList.Add(runner);
         foreach (string argument in arguments) process.StartInfo.ArgumentList.Add(argument);
         process.Start();
@@ -276,8 +392,7 @@ public sealed class UpstreamContractTests
 
     static string Runner(string assembly)
     {
-        string path = ProductPath(
-            "tests", assembly, "bin", "Release", "net10.0", assembly + ".dll");
+        string path = Path.Combine(AppContext.BaseDirectory, assembly + ".dll");
         Require(File.Exists(path), $"Generated runner is missing: {path}");
         return path;
     }
@@ -474,8 +589,17 @@ public sealed class UpstreamContractTests
 
     sealed record LanguageCase(string Id, string ProductScope, string ExecutionRequirements);
     sealed record CoreCase(string Id, string ExecutionOwner, string PlatformConditions);
+    sealed record ParserCase(
+        string Id,
+        string JunitUniqueId,
+        string CaseKind,
+        string EnabledState,
+        string PlatformConditions,
+        string ExpectedSha256,
+        string ExecutionOwner);
     sealed record ExpectedLanguageResult(string Status, string PayloadBase64);
     sealed record LanguageResult(
         string Status, string PayloadBase64, string LoggerBase64, string DiagnosticBase64);
     sealed record CoreResult(string Revision, string Status, string DiagnosticBase64);
+    sealed record ParserResult(string Status, string ObservationSha256, string DiagnosticBase64);
 }

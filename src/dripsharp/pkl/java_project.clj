@@ -11,6 +11,7 @@
             [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
+            [dripsharp.java-translate :as java]
             [dripsharp.java-types :as java-types]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.java-body :as java-body]
@@ -1285,7 +1286,7 @@
 (defn- translated-node [ctx ^CtElement element]
   (let [translation (java-library/translate-body
                      (current-body-context ctx) element)]
-    (swap! (:body-translations ctx) conj translation)
+    (swap! (:body-translations ctx) conj (java/coverage-totals translation))
     (:node translation)))
 
 (defn- executable-owner [^CtExecutable executable]
@@ -1733,6 +1734,7 @@
             (sequence-node
              [(raw " ")
               (translated-node (assoc ctx
+                                      :default-interface-self-dispatch :direct
                                       :signature-adaptation signature-adaptation
                                       :product-return-reference return-reference)
                                body)])

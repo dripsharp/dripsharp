@@ -43,6 +43,13 @@
    :public-contract-rows 1200}}
  :contracts
  {:language-snippets {:cases 940}
+  :parser-tests
+  {:sources 6
+   :test-sources 3
+   :helper-sources 3
+   :junit-cases 10
+   :adapted-cases 849
+   :fixture-invocations 840}
   :core-tests
   {:sources 86
    :naive-test-sources 85

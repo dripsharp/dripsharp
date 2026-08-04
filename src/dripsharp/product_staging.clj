@@ -188,7 +188,8 @@
                  "```sh\n"
                  "dotnet restore " test-project "\n"
                  "dotnet build " test-project
-                 " --configuration Release --no-restore\n"
+                 " --configuration Release --no-restore --no-incremental"
+                 " -warnaserror\n"
                  "dotnet test " test-project
                  " --configuration Release --no-restore --no-build\n"
                  "```\n\n")))

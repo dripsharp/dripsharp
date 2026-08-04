@@ -7,7 +7,8 @@
    :profile-references ["pkl-parser" "pkl-core-value-model"]
    :project-references
    ["tests/DripSharp.Brine.LanguageSnippetRunner/DripSharp.Brine.LanguageSnippetRunner.csproj"
-    "tests/DripSharp.Brine.CoreTestRunner/DripSharp.Brine.CoreTestRunner.csproj"]
+    "tests/DripSharp.Brine.CoreTestRunner/DripSharp.Brine.CoreTestRunner.csproj"
+    "tests/DripSharp.Brine.ParserTestRunner/DripSharp.Brine.ParserTestRunner.csproj"]
    :packages
    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
     {:id "xunit" :version "2.9.3"}

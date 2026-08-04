@@ -130,7 +130,9 @@
   [{:keys [destination]}]
   (project-xml/element
    "None"
-   [["Update" destination] ["CopyToOutputDirectory" "PreserveNewest"]]
+   [["Update" destination]
+    ["TargetPath" destination]
+    ["CopyToOutputDirectory" "PreserveNewest"]]
    []))
 
 (defn- render-project
@@ -162,6 +164,8 @@
          (project-xml/element "IsPackable"
                               [(project-xml/text "false")])
          (project-xml/element "IsTestProject"
+                              [(project-xml/text "true")])
+         (project-xml/element "TreatWarningsAsErrors"
                               [(project-xml/text "true")])
          (project-xml/element "RollForward"
                               [(project-xml/text "Major")])])
@@ -254,7 +258,8 @@
   (let [project (project-relative-path* project)]
     {:restore ["dotnet" "restore" project]
      :build ["dotnet" "build" project
-             "--configuration" "Release" "--no-restore"]
+             "--configuration" "Release" "--no-restore"
+             "--no-incremental" "-warnaserror"]
      :test ["dotnet" "test" project
             "--configuration" "Release" "--no-restore" "--no-build"]}))
 

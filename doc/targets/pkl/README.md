@@ -38,9 +38,16 @@ Java-to-C# machinery used by this target.
 The shared [product repository contract](../../product-repositories.md) governs
 Brine's generated-publication lifecycle.
 
-The generated Brine checkout includes repository-local xUnit coverage derived
-from the pinned upstream LanguageSnippet and Pkl.Core contracts. DripSharp owns
-the disposable generator, authored package adapters, fixture inventory,
-mechanical/authored/vendored provenance boundary, and fail-closed checks; the
-generated product repository remains a consumer of those inputs rather than a
-durable source of manual test fixes.
+The generated Brine checkout includes the complete repository-local adapted
+suite for the selected production profiles: the pinned upstream LanguageSnippet,
+Pkl.Core, and pkl-parser contracts plus the existing focused consumer cases.
+Independent xUnit case identities and companion .NET runners preserve parameter
+and fixture invocations, enablement, platform conditions, assertions, and exact
+provenance. The non-packable suite restores, builds with warnings as errors, and
+runs through `dotnet test` using only files in the generated checkout; it does
+not require DripSharp, Java, Kotlin, Gradle, or an external fixture tree.
+
+DripSharp owns the disposable generator, authored package adapters, fixture
+inventory, mechanical/authored/vendored provenance boundary, and fail-closed
+checks; the generated product repository remains a consumer of those inputs
+rather than a durable source of manual test fixes.

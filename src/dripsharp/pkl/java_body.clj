@@ -191,7 +191,8 @@
 (defn value-adapter
   "Preserves Pkl public-signature collection shapes at shared assignment,
   return, and argument boundaries."
-  [{:keys [destination-context kind source target-reference target node]}]
+  [{:keys [destination-context kind source target-reference
+           declared-target-reference target node]}]
   (let [services (:services destination-context)
         source-reference (some-> ^CtExpression source .getType)
         source-type (some-> ^CtTypeReference source-reference .getQualifiedName)
@@ -258,6 +259,14 @@
 
       (= :idiomatic-byte-array method-adaptation)
       (compat-call "ToUnsignedBytes" [node])
+
+      (and (= :argument kind)
+           declared-target-reference
+           (when-let [adaptation
+                      (:product-signature-collection-adaptation services)]
+             (adaptation declared-target-reference)))
+      (adapt-product-collection-argument
+       services target-reference node true)
 
       (and (= :argument kind)
            (= :idiomatic-byte-array current-signature-adaptation)
@@ -677,7 +686,7 @@
   invocations. Returning nil delegates ordinary Java behavior to the shared
   Java-library rule bundle."
   [{:keys [destination-context ^CtInvocation element occurrence target
-           target-node arguments]}]
+           target-node source-target-node arguments]}]
   (let [services (:services destination-context)
         key (:key occurrence)
         argc (count arguments)
@@ -731,6 +740,20 @@
       (invoke
        (member target-node "wrap")
        [(compat-call "ToSignedBytes" [(argument 0)])])
+
+      (and
+       (= :idiomatic-byte-array
+          (when-let [adaptation (:current-signature-adaptation services)]
+            (adaptation)))
+       (str/starts-with?
+        key
+        "executable:org.pkl.core.EvaluatorImpl#doEvaluate("))
+      (generic-call
+       destination-context
+       (raw
+        (str (:text (csharp/render source-target-node)) ".DoEvaluate"))
+       [((:current-product-return-reference services))]
+       arguments)
 
       (contains?
        #{"executable:com.oracle.truffle.api.TruffleLanguage$ContextReference#create(java.lang.Class)"
@@ -1355,17 +1378,26 @@
 
       (and
        (not (instance? CtSuperAccess target))
-       (contains?
-        #{"executable:org.pkl.core.runtime.ReaderBase#hasHierarchicalUris()"
-          "executable:org.pkl.core.runtime.ReaderBase#isGlobbable()"
-          "executable:org.pkl.core.runtime.ReaderBase#hasFragmentPaths()"
-          "executable:org.pkl.core.runtime.ReaderBase#hasElement(org.pkl.core.SecurityManager,java.net.URI)"
-          "executable:org.pkl.core.runtime.ReaderBase#listElements(org.pkl.core.SecurityManager,java.net.URI)"
-          "executable:org.pkl.core.runtime.ReaderBase#resolveUri(java.net.URI,java.net.URI)"}
-        key))
+       (or
+        (contains?
+         #{"executable:org.pkl.core.runtime.ReaderBase#hasHierarchicalUris()"
+           "executable:org.pkl.core.runtime.ReaderBase#isGlobbable()"
+           "executable:org.pkl.core.runtime.ReaderBase#hasFragmentPaths()"
+           "executable:org.pkl.core.runtime.ReaderBase#hasElement(org.pkl.core.SecurityManager,java.net.URI)"
+           "executable:org.pkl.core.runtime.ReaderBase#listElements(org.pkl.core.SecurityManager,java.net.URI)"
+           "executable:org.pkl.core.runtime.ReaderBase#resolveUri(java.net.URI,java.net.URI)"}
+         key)
+        (and
+         (contains?
+          #{"hasHierarchicalUris" "isGlobbable" "hasFragmentPaths"
+            "hasElement" "listElements" "resolveUri"}
+          (.getSimpleName (.getExecutable element)))
+         (str/includes?
+         (:text (csharp/render target-node))
+          "global::DripSharp.Brine.Runtime.ReaderBase"))))
       (invoke
        (member
-        target-node
+        source-target-node
         (java-library/pascal
          (.getSimpleName (.getExecutable element))))
        arguments)
@@ -1499,7 +1531,7 @@
                     .getDeclaringType
                     .getQualifiedName))
            (= "convert" (.getSimpleName (.getExecutable element))))
-      (invoke (member target-node "Convert") arguments)
+      (invoke (member source-target-node "Convert") arguments)
 
       (and (= "doVisitCollection"
               (.getSimpleName (.getExecutable element)))

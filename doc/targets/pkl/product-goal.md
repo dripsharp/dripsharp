@@ -71,7 +71,8 @@ Only these product surfaces are excluded:
 * Java, Kotlin, and other non-C# code-generation products.
 * Kotlin-to-C# translation and a Kotlin PSI or Analysis API frontend.
 * Native-image and JVM distribution packaging.
-* Build, benchmark, and test infrastructure as shipped product surface.
+* Upstream JVM, Kotlin-toolchain, Gradle, benchmark, build, test-harness, and
+  release infrastructure as product API or package surface.
 * Manual patches to generated C# as durable implementation.
 
 The exclusion of non-C# code-generation products concerns the languages emitted
@@ -79,10 +80,21 @@ by Pkl schema generators. It does not exclude general Java source input to
 DripSharp or reduce the requirement that the Java-to-C# translator remain
 reusable beyond Pkl.
 
-Test infrastructure is excluded from what is shipped, not from the evidence
-used to prove behavior. Upstream Pkl tests and fixtures are authoritative
-behavior specifications and should be ported, adapted, or used for differential
-validation where they cover the .NET library goal.
+The infrastructure exclusion does not exclude the generated .NET adaptation of
+an upstream test that specifies in-scope Brine behavior. Under the
+user-approved 2026-08-03 shipped-test policy, the complete adapted upstream
+suite, its required fixtures and resources, and target-owned .NET runners ship
+in the Brine repository as runnable, non-packable test projects. They are not
+NuGet packages, reusable product APIs, or a requirement to ship Java, Kotlin,
+JUnit, Gradle, or an external fixture tree. Missing translation, an upstream
+implementation language, or difficult behavior is pending work rather than an
+exclusion. An upstream-disabled test may remain disabled only with its pinned
+status and reason; the adaptation may add no skip or quarantine.
+
+Upstream Pkl tests and fixtures are authoritative behavior specifications and
+must be ported, adapted, or used for differential validation where they cover
+the .NET library goal. Repository-local generated tests are therefore shipped
+behavior evidence while remaining outside the public package surface.
 
 Kotlin source and tests may also provide behavior evidence for an in-scope .NET
 capability, but their presence does not require Kotlin translation. Such

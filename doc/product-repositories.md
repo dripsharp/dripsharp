@@ -53,8 +53,9 @@ Publication follows this order:
 1. Generate the complete product family into its disposable staging directory.
 2. Run the required compilation, packaging, consumption, and conformance
    checks against that staged output.
-3. Restore, build, and run the focused generated consumer test suite against
-   that complete staged family.
+3. Restore, build, and run every declared generated test project, including
+   focused consumers and any target-required complete adapted upstream suite,
+   against that complete staged family.
 4. Require the destination product submodule to be clean, then synchronize
    only its declared managed paths.
 5. Review and commit the generated change in the product repository.
@@ -81,9 +82,11 @@ project. Target strategies distinguish focused consumers from adapted upstream
 suites and declare shipped or validation-only policy explicitly.
 Target-owned checksums, fixture attribution, and generated `SHA256SUMS` files
 make the suite deterministic. Brine additionally publishes independently named
-xUnit rows generated from the pinned LanguageSnippet and Pkl.Core contracts,
-with the bounded upstream fixtures and authored .NET adapters needed to run
-without a DripSharp checkout or JVM. Its generated test-provenance and
+xUnit rows generated from the complete pinned LanguageSnippet, Pkl.Core, and
+pkl-parser contracts for its selected production profiles, with all required
+upstream fixtures/resources and authored .NET adapters needed to run without a
+DripSharp checkout, JVM, Kotlin toolchain, Gradle installation, or external
+fixture tree. The projects are non-packable. Its generated test-provenance and
 authorship ledgers keep normalized upstream material, vendored fixtures,
 authored adapters, and deterministic wrapper glue distinct. Comprehensive
 translator, differential, conformance, and packaging gates remain in

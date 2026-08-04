@@ -23,8 +23,10 @@ needed to bridge JVM behavior for which .NET has no suitable equivalent.
 
 The target does not include command-line tooling, the Pkl server, Gradle
 integration, documentation site generation, Java/Kotlin code generators, native
-image packaging, or build/test infrastructure except where those systems expose
-runtime behavior that the .NET library must preserve.
+image packaging, or upstream build/test infrastructure as product API except
+where those systems expose runtime behavior that the .NET library must
+preserve. The generated repository-local .NET test adaptation described below
+is shipped evidence, not product API.
 
 ## Explicit Scope Decisions
 
@@ -124,3 +126,34 @@ The following libraries generally belong to out-of-scope surfaces for the first
 Out-of-scope source still matters when it exposes behavior required by an
 in-scope runtime path. Otherwise, project selection should exclude it
 explicitly rather than letting it enter translation accidentally.
+
+## Target Test-Suite Contract
+
+The user-approved 2026-08-03 policy requires Brine to ship a complete adapted
+suite for every pinned upstream test that specifies behavior of the selected
+generated `pkl-parser` and `pkl-core` production profiles. This consists of the
+complete LanguageSnippet corpus contract, the complete Pkl.Core JUnit contract,
+and the complete pkl-parser JUnit contract, including parameter and fixture
+invocations. Focused public-consumer tests remain distinct cases and continue to
+run alongside that suite.
+
+The adaptation inventories exact upstream case identities, parameter rows,
+source and helper files, fixtures and resources, enabled or disabled state,
+disabled reason, and platform conditions. It may use systematic .NET adapters
+and contract-driven runners instead of reproducing the Kotlin helper hierarchy
+or upstream file layout one-for-one. Tests disabled upstream may retain that
+state and reason; Brine adds no skips or quarantines. Source language, missing
+translation, and implementation difficulty are not classifications and do not
+exclude behavior.
+
+The emitted xUnit and companion runner projects are non-packable, reference only
+projects and support files in the generated checkout, and run with `dotnet
+test`. A clean Brine checkout must restore, build with warnings as errors, and
+run them without DripSharp, Java, Kotlin, Gradle, or an external fixture tree.
+Every emitted contract, helper, fixture, resource, and adapter is covered by the
+generated inventory and exact SHA-256 provenance ledger.
+
+Tests in upstream modules that do not exercise either currently selected
+production profile remain evidence for pending product areas rather than new
+product exclusions. Adding a future Brine production profile brings its
+behavioral tests under this same shipped-suite rule.

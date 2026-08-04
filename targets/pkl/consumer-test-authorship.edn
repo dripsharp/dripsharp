@@ -2,17 +2,29 @@
  :scope :pkl-generated-xunit
  :sources
  [{:path "src/dripsharp/consumer_tests.clj"
-   :sha256 "d2fff9c35f9b2ddc405b86e553ea0fd5abe23e1ea4225797500fed2c2aad9f2a"
-   :lines 523
-   :line-budget 523
-   :review-evidence "beads:pkl-ktx7.1"
+   :sha256 "2f791f9eca70a6ea36d353fa99859e27d2504df1f6e1a2a84a246fed942a715f"
+   :lines 590
+   :line-budget 590
+   :review-evidence "beads:pkl-rjf1.1"
    :role :generic-test-emitter}
   {:path "src/dripsharp/pkl/brine_xunit.clj"
-   :sha256 "79dd2ba0a66afcabd772fb8acfec6eced6e7bfc763cb3bf7641642dda19278b0"
-   :lines 663
-   :line-budget 663
-   :review-evidence "beads:pkl-ktx7.1"
+   :sha256 "df4afc593f0fd6fd3b9930d93dc1b2ecad4dd4771a63ddce0eba9da6efbd25b8"
+   :lines 690
+   :line-budget 690
+   :review-evidence "beads:pkl-rjf1.1"
    :role :brine-test-generator}
+  {:path "src/dripsharp/pkl/parser_test_contract.clj"
+   :sha256 "d13afb824a731bfb00731baaa066ca7f1f7dd181d74f615e130c841766987fae"
+   :lines 582
+   :line-budget 582
+   :review-evidence "beads:pkl-rjf1.1"
+   :role :pkl-parser-contract-generator}
+  {:path "gradle/pkl-parser-test-contract.gradle"
+   :sha256 "cb101a43b76950e76661a5c87b9133576aecb53adf1a48215d8daed9c207afeb"
+   :lines 45
+   :line-budget 45
+   :review-evidence "beads:pkl-rjf1.1"
+   :role :pkl-parser-junit-discovery}
   {:path "targets/pkl/consumer-tests/CoreConsumerTests.cs"
    :sha256 "124ff154dcfdc0e852c7995802f4a249ba6e15325da13de4dee9f28df779d1af"
    :lines 33
@@ -26,10 +38,10 @@
    :review-evidence "beads:pkl-nk5q"
    :role :authored-public-api-smoke-test}
   {:path "targets/pkl/consumer-tests/UpstreamContractTests.cs"
-   :sha256 "10a18fb55dc8dd353004b75f77e7a5751aa3ee6c3be05b2f3f5069d06862a48e"
-   :lines 481
-   :line-budget 481
-   :review-evidence "beads:pkl-nk5q"
+   :sha256 "5578a79642d468106d5e4e97accb950086eb506ae69b7746c3cb14d3483dc713"
+   :lines 605
+   :line-budget 605
+   :review-evidence "beads:pkl-rjf1.1"
    :role :authored-xunit-contract-adapter}
   {:path "targets/pkl/consumer-tests/fixtures/sample.pkl"
    :sha256 "59ca6eaa229aee0998e880122880ed9841bdf6e6bbb9448687e7ba86cc845a78"
@@ -37,17 +49,23 @@
    :line-budget 2
    :review-evidence "beads:pkl-nk5q"
    :role :authored-smoke-fixture}
+  {:path "targets/pkl/validation/oracle/UpstreamOracle.java"
+   :sha256 "7a31c9505dd520e8a1d58cb1eee3c14e7e35e207a593aee3127b8b0585374860"
+   :lines 236
+   :line-budget 236
+   :review-evidence "beads:pkl-rjf1.1"
+   :role :pinned-parser-observation-oracle}
   {:path "validation/language-snippet-runner/LanguageSnippetPackageRunner.cs"
-   :sha256 "2057ef27df9d3eaedd580e3f510a523e97215330e600d58edb285fb7ecae737d"
-   :lines 886
-   :line-budget 886
-   :review-evidence "beads:pkl-nk5q"
+   :sha256 "fc144f524f73e4141ecbbdef4b0bafedc686a65a3d65d70a659aa368acf383d5"
+   :lines 904
+   :line-budget 904
+   :review-evidence "beads:pkl-rjf1.1"
    :role :authored-language-package-adapter}
   {:path "validation/pkl-core-corpus/PklCorePackageCorpusRunner.cs"
-   :sha256 "30bdc95746403404297e26d9edb96d733873dfea4ba2f55602a6826ca537d424"
-   :lines 6196
-   :line-budget 6196
-   :review-evidence "beads:pkl-nk5q"
+   :sha256 "204b308ca3886459d49900bdf5f19a7b28c632444e2a653252444b4156a8a061"
+   :lines 6213
+   :line-budget 6213
+   :review-evidence "beads:pkl-rjf1.1"
    :role :authored-core-package-adapter}
   {:path "validation/pkl-core-corpus/fixtures/module.pkl"
    :sha256 "88f92d58d9706e16b293aacf471dd930213780b70cbf773d31c716c3e1e84682"
@@ -60,4 +78,16 @@
    :lines 1
    :line-budget 1
    :review-evidence "beads:pkl-nk5q"
-   :role :authored-core-fixture-emulator}]}
+   :role :authored-core-fixture-emulator}
+  {:path "validation/pkl-core-test-contract/PklCoreTestDiscoveryListener.java"
+   :sha256 "6f94b54f25956576015aea897675f9f33de81fc25dbe631e31a20437aea29a06"
+   :lines 161
+   :line-budget 161
+   :review-evidence "beads:pkl-rjf1.1"
+   :role :pkl-junit-discovery-listener}
+  {:path "validation/pkl-parser-suite/PklParserPackageSuiteRunner.cs"
+   :sha256 "3c986f61c5f0806b78ad48e9758f3edeb1a75c76e5d629aa522e60955d1d6127"
+   :lines 370
+   :line-budget 370
+   :review-evidence "beads:pkl-rjf1.1"
+   :role :authored-parser-package-adapter}]}
