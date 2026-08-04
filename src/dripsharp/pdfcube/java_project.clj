@@ -2859,7 +2859,9 @@
      :source-path
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.IO.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.IO focused behavior passed."}
-    :friend-assemblies #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
+    :friend-assemblies
+    #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
+      "DripSharp.PdfCarton.Tests"}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
     :internal-capabilities #{:java-io :java-nio}
@@ -2879,6 +2881,7 @@
     :package-dependencies ["DripSharp.PdfCarton.IO"]
     :project-references
     ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"]
+    :friend-assemblies #{"DripSharp.PdfCarton.Tests"}
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.Fonts.PackageConsumer.csproj"
@@ -2903,6 +2906,7 @@
     :source-project-dependencies []
     :package-dependencies []
     :project-references []
+    :friend-assemblies #{"DripSharp.PdfCarton.Tests"}
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.Xmp.PackageConsumer.csproj"
@@ -2932,7 +2936,8 @@
     :project-references
     ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"
      "../DripSharp.PdfCarton.Fonts/DripSharp.PdfCarton.Fonts.csproj"]
-    :friend-assemblies #{"DripSharp.PdfCarton.Preflight"}
+    :friend-assemblies
+    #{"DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Tests"}
     :package-consumer
     {:strategy :compile-only
      :project-file "DripSharp.PdfCarton.PackageConsumer.csproj"
@@ -2969,6 +2974,7 @@
     :project-references
     ["../DripSharp.PdfCarton/DripSharp.PdfCarton.csproj"
      "../DripSharp.PdfCarton.Xmp/DripSharp.PdfCarton.Xmp.csproj"]
+    :friend-assemblies #{"DripSharp.PdfCarton.Tests"}
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.Preflight.PackageConsumer.csproj"

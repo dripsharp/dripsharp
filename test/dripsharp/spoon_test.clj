@@ -198,6 +198,40 @@
            (mapv #(select-keys % [:kind :key :origin :resolution :location])
                  (:occurrences second-model))))))
 
+(deftest inherited-runtime-interface-fields-use-the-declaring-symbol
+  (let [root (Files/createTempDirectory "dripsharp-inherited-runtime-field-"
+                                        (make-array FileAttribute 0))
+        source (paths/resolve-path root "InheritedConstant.java")
+        _ (Files/writeString
+           source
+           (str "import java.awt.image.ColorModel;\n"
+                "final class InheritedConstant {\n"
+                "  int value() { return ColorModel.OPAQUE; }\n"
+                "}\n")
+           (make-array OpenOption 0))
+        model
+        (spoon/build-resolved-model!
+         root
+         {:schema-version 1
+          :project-id "inherited-runtime-field-fixture"
+          :source-roots [root]
+          :resource-roots []
+          :production-sources [source]
+          :generated-production-sources []
+          :production-resources []
+          :java-toolchain
+          {:home (paths/absolute (System/getProperty "java.home"))
+           :release 17
+           :preview-features? false}
+          :project-dependencies []
+          :external-dependencies []
+          :classpath-artifacts []})
+        occurrences
+        (get (:symbols model) "field:java.awt.Transparency#OPAQUE")]
+    (is (= 1 (count occurrences)))
+    (is (= :jdk (:origin (first occurrences))))
+    (is (= :runtime-member (:resolution (first occurrences))))))
+
 (deftest lazy-resolution-is-serialized-and-retains-translator-failure-details
   (let [{:keys [discovery] resolved :first} (fixture/models)
         source-files

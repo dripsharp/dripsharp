@@ -957,7 +957,10 @@
               :else value))]
     (strip-live plan)))
 
-(defn- row-identities
+(defn row-identities
+  "Returns the stable xUnit execution-row identities represented by one JUnit
+  case. Runtime member sources retain an explicit provider identity until the
+  generated xUnit data member enumerates their rows."
   [case]
   (let [parameters (:parameters case)]
     (cond

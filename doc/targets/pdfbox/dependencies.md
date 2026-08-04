@@ -195,7 +195,7 @@ dependencies:
 
 | Source dependency | Treatment |
 | --- | --- |
-| JUnit Jupiter | Adapt relevant upstream assertions and fixtures to the selected Microsoft .NET test infrastructure. |
+| JUnit Jupiter | Adapt the complete ordinary upstream assertion, lifecycle, parameter, enablement, condition, helper, and fixture contract to repository-local xUnit projects. |
 | Commons IO in Preflight tests | Use `System.IO` and focused test helpers. |
 | Java Diff Utils | Use focused comparison/reporting test helpers; no product dependency. |
 | Mockito | Use focused test doubles for the small mocked surface; no product dependency. |

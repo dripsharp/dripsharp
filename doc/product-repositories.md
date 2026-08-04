@@ -174,11 +174,18 @@ The Apache PDFBox-derived product family uses this mapping:
 | Fonts project | `src/DripSharp.PdfCarton.Fonts` |
 | XMP project | `src/DripSharp.PdfCarton.Xmp` |
 | Preflight project | `src/DripSharp.PdfCarton.Preflight` |
+| Complete adapted test project | `tests/DripSharp.PdfCarton.Tests` |
 | Managed repository files | `src/`, `tests/`, `LICENSE`, `NOTICE`, `README.md` |
 
 The PdfCarton repository contains all five generated projects as one versioned
-product family. Repository creation remains an explicit owner action and is not
-implied by this approved mapping.
+product family. It also contains the complete adapted ordinary PDFBox suite and
+fixtures as one or more repository-local runnable, non-packable .NET test
+projects. The five focused package-consumer tests remain a distinct strategy and
+are not counted as that upstream coverage. The shipped suite restores, builds
+with warnings as errors, and runs through `dotnet test` using only the generated
+checkout; it requires no DripSharp checkout, Java runtime, Maven installation,
+or external fixture tree. Repository creation remains an explicit owner action
+and is not implied by this approved mapping.
 
 ## SqlTrellis Mapping
 

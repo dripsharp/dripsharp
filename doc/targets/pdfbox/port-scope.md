@@ -108,6 +108,36 @@ Source and fixtures from excluded artifacts remain usable as behavior evidence
 for included libraries. An excluded wrapper does not exclude the underlying
 library API it exercises.
 
+These are exclusions from shipped product surfaces, not from the 2026-08-03
+shipped-test contract. Upstream Maven, JVM, benchmark, build, test-runner,
+release, example-application, and shaded-application infrastructure is not
+translated as a product, while every upstream ordinary test that specifies
+in-scope behavior is adapted into the repository-local .NET suite. Missing or
+difficult translation, optional fixture size, and absent one-to-one helper
+types do not remove a test or behavior from that suite.
+
+## Complete Adapted Test Suite
+
+`DripSharp.PdfCarton.Tests`, or explicitly declared companion test projects,
+contains the complete adapted ordinary upstream suite for all five selected
+modules. Test projects target `net10.0`, set `IsTestProject=true` and
+`IsPackable=false`, and reference all required production and test-support
+projects within the generated repository. They are included in repository-local
+restore, warnings-as-errors build, and `dotnet test` execution but never in
+NuGet packing.
+
+The target-owned test-suite contract and generated ledgers account for every
+pinned test source, ordinary case, parameter row or provider result, helper,
+fixture, resource, enabled or upstream-disabled state, platform condition,
+framework call, and cross-module dependency. Fixture destinations preserve
+classpath/resource lookup semantics and carry exact hashes, source paths,
+licenses, authorship, and attribution. Upstream-disabled cases retain the exact
+upstream state and reason; the adaptation adds no skips or quarantines.
+
+The existing five focused public-API consumer tests remain a distinct shipped
+strategy, one for each production package. They are neither counted as the
+complete adapted suite nor duplicated as upstream-derived executions.
+
 ## Project Ingestion
 
 PDFBox is a multi-module Maven build. Accepted product generation requires
@@ -147,10 +177,18 @@ Compilation is necessary but insufficient. Verification must include:
 * Clean generation and compilation of every selected package.
 * Package dependency and public-surface checks.
 * Isolated consumption of each package through its public API.
-* Adapted upstream unit and regression tests where appropriate.
+* The complete repository-local adapted upstream ordinary test suite, including
+  parameters, helpers, fixtures, enablement, and platform conditions.
 * Independent comparisons against the pinned stable Java release using upstream
   PDFs, fonts, metadata, and other fixtures.
 * Cross-package workflows representative of the complete selected module graph.
+
+Clean generated-checkout verification restores and builds all five production
+projects and every shipped test project with warnings as errors, then runs the
+suite without a DripSharp checkout, Java runtime, Maven installation, or
+external fixture tree. Repeated generation must produce byte-identical managed
+test inputs and ledgers. Target-supported host execution includes the native
+SkiaSharp assets and exact platform conditions required by the tests.
 
 By explicit user decision on 2026-07-28, operating-system execution evidence is
 required only for macOS on x64 and ARM64. Windows and Linux remain supported

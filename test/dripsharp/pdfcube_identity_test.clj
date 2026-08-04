@@ -116,10 +116,14 @@
       (is (= expected (get-in @destinations [id :package-dependencies]))))
     (doseq [[id expected] expected-project-references]
       (is (= expected (get-in @destinations [id :project-references]))))
-    (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
+    (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
+             "DripSharp.PdfCarton.Tests"}
            (get-in @destinations [:io :friend-assemblies])))
-    (is (= #{"DripSharp.PdfCarton.Preflight"}
+    (is (= #{"DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Tests"}
            (get-in @destinations [:pdfbox :friend-assemblies])))
+    (doseq [id [:fontbox :xmpbox :preflight]]
+      (is (= #{"DripSharp.PdfCarton.Tests"}
+             (get-in @destinations [id :friend-assemblies]))))
     (is (= "DripSharp.PdfCarton.Runtime.Fonts"
            (get-in @destinations [:fontbox :compatibility-namespace])))
     (is (= "DripSharp.PdfCarton.Runtime.Xmp"

@@ -562,12 +562,18 @@
          (:generic-erasure-mappings
           (:destination
            (read-profile-and-destination "pdfcube-preflight")))))
-    (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
+    (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
+             "DripSharp.PdfCarton.Tests"}
            (:friend-assemblies
             (:destination (read-profile-and-destination "pdfcube-io")))))
-    (is (= #{"DripSharp.PdfCarton.Preflight"}
+    (is (= #{"DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Tests"}
            (:friend-assemblies
             (:destination (read-profile-and-destination "pdfcube-pdfbox")))))
+    (doseq [profile ["pdfcube-fontbox" "pdfcube-xmpbox"
+                     "pdfcube-preflight"]]
+      (is (= #{"DripSharp.PdfCarton.Tests"}
+             (:friend-assemblies
+              (:destination (read-profile-and-destination profile))))))
     (doseq [{:keys [profile destination]} prepared]
       (is (= :maven (:build-tool profile)))
       (is (= "net10.0" (get-in destination [:project :target-framework])))

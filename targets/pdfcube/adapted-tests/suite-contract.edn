@@ -1,0 +1,71 @@
+{:schema-version 1
+ :target :pdfcube
+ :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+ :modules
+ {:fontbox
+  {:source-count 44
+   :fixture-count 27
+   :case-count 192
+   :parameter-row-count 8
+   :helper-count 298
+   :disabled-count 5
+   :platform-condition-count 4}
+  :io
+  {:source-count 10
+   :fixture-count 2
+   :case-count 122
+   :parameter-row-count 0
+   :helper-count 136
+   :disabled-count 0
+   :platform-condition-count 0}
+  :pdfbox
+  {:source-count 128
+   :fixture-count 300
+   :case-count 739
+   :parameter-row-count 18
+   :helper-count 1292
+   :disabled-count 0
+   :platform-condition-count 32}
+  :preflight
+  {:source-count 23
+   :fixture-count 8
+   :case-count 71
+   :parameter-row-count 6
+   :helper-count 196
+   :disabled-count 0
+   :platform-condition-count 19}
+  :xmpbox
+  {:source-count 28
+   :fixture-count 34
+   :case-count 157
+   :parameter-row-count 40
+   :helper-count 325
+   :disabled-count 0
+   :platform-condition-count 3}}
+ :totals
+ {:source-count 233
+  :fixture-count 371
+  :case-count 1281
+  :parameter-row-count 72
+  :helper-count 2247
+  :disabled-count 5
+  :platform-condition-count 58}
+ :digests
+ {:cases
+  "96480c70c6033d307fc7eb6f265d9fa93e5a6c1f407ba10f5f7b996409a876fc"
+  :dependencies
+  "c52aafe75df17e4cc6d4eac13bcc22eb4d8065288f7b52cea0f916f1e2d8faac"
+  :enablement
+  "1372f1623ddf838c2d593ff5dc1ecbd9ae7f6400f16554901a49885e1c27689c"
+  :fixtures
+  "b7b804073948152c712dafeda065b60d7509cbc7ee02e22616d03aa480b134b0"
+  :framework-calls
+  "1b7141ae2dc1d0b288fe865287f792c31c99c4b2df6d5d83c9902d6c9a09742e"
+  :helpers
+  "48c7cbd20d8f5162194f7baeb9e9bc3fd68f976f8a46c136d6b84311f78b608e"
+  :parameter-rows
+  "3502758ef8dc95da55be621fa5e0bcd0b70a5892f01204ea1c66b2e895a467dc"
+  :platform-conditions
+  "8cbf279f2ccf2ae7636f5747a2b3bb9e76f02f892550cb6c08f55fe219d56ec3"
+  :sources
+  "b4d6ce2cf6f32cbf0aa664d8fc5dfbdc83605b220fb6aa1c266b166ef8a76b1d"}}

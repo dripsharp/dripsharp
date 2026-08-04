@@ -568,9 +568,20 @@
                        :unresolved-field reference
                        (str "Cannot resolve project field "
                             (field-key reference (.getQualifiedName owner))))})
-          (let [^Field field (.getActualField reference)
+          (let [^Class owner-class (.getActualClass owner-reference)
+                ^Field field
+                (try
+                  (.getActualField reference)
+                  (catch Throwable _
+                    ;; Spoon asks the referenced class for a declared field and
+                    ;; therefore misses public constants inherited from an
+                    ;; interface (for example ColorModel.OPAQUE from
+                    ;; java.awt.Transparency). Reflection's getField performs
+                    ;; the Java member lookup required by the source language.
+                    (.getField owner-class name)))
                 ^Class declaring-class (.getDeclaringClass field)]
-            (resolved :field (field-key reference)
+            (resolved :field
+                      (field-key reference (.getName declaring-class))
                       (class-origin declaring-class) reference field
                       :runtime-member)))))
     (catch Throwable error

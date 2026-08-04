@@ -52,7 +52,8 @@
  :project-references
  ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"
   "../DripSharp.PdfCarton.Fonts/DripSharp.PdfCarton.Fonts.csproj"]
- :friend-assemblies #{"DripSharp.PdfCarton.Preflight"}
+ :friend-assemblies
+ #{"DripSharp.PdfCarton.Preflight" "DripSharp.PdfCarton.Tests"}
  :external-dependencies
  {"commons-logging:commons-logging:jar:1.4.0"
   {:source-scope :compile-runtime
