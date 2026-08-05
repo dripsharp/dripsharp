@@ -1145,6 +1145,89 @@ namespace DripSharp.Brine.Runtime
     }
 }
 
+namespace DripSharp.Runtime
+{
+    // Pkl deliberately represents java.math.BigDecimal with System.Decimal.
+    // These operations are destination-specific so targets that preserve the
+    // complete Java decimal model remain on JavaBigDecimal.
+    internal static partial class JavaCompat
+    {
+        internal static decimal BigDecimalParse(string value) =>
+            decimal.Parse(
+                value,
+                global::System.Globalization.NumberStyles.Number |
+                    global::System.Globalization.NumberStyles.AllowExponent,
+                global::System.Globalization.CultureInfo.InvariantCulture);
+
+        internal static decimal BigDecimalValueOf(double value) =>
+            BigDecimalParse(value.ToString(
+                "R", global::System.Globalization.CultureInfo.InvariantCulture));
+
+        internal static decimal BigDecimalMultiply(decimal left, decimal right) =>
+            checked(left * right);
+
+        internal static decimal BigDecimalDivide(
+            decimal left,
+            decimal right,
+            int scale,
+            global::DripSharp.Runtime.JavaRoundingMode roundingMode) =>
+            BigDecimalRound(left / right, scale, roundingMode);
+
+        internal static decimal BigDecimalSetScale(
+            decimal value,
+            int scale,
+            global::DripSharp.Runtime.JavaRoundingMode roundingMode) =>
+            BigDecimalRound(value, scale, roundingMode);
+
+        private static decimal BigDecimalRound(
+            decimal value,
+            int scale,
+            global::DripSharp.Runtime.JavaRoundingMode roundingMode)
+        {
+            if (scale is < 0 or > 28)
+                throw new global::System.ArithmeticException(
+                    "Scale is outside System.Decimal range.");
+            return roundingMode switch
+            {
+                global::DripSharp.Runtime.JavaRoundingMode.Down => decimal.Round(
+                    value, scale, global::System.MidpointRounding.ToZero),
+                global::DripSharp.Runtime.JavaRoundingMode.Ceiling => decimal.Round(
+                    value, scale, global::System.MidpointRounding.ToPositiveInfinity),
+                global::DripSharp.Runtime.JavaRoundingMode.Floor => decimal.Round(
+                    value, scale, global::System.MidpointRounding.ToNegativeInfinity),
+                global::DripSharp.Runtime.JavaRoundingMode.HalfUp => decimal.Round(
+                    value, scale, global::System.MidpointRounding.AwayFromZero),
+                global::DripSharp.Runtime.JavaRoundingMode.HalfEven => decimal.Round(
+                    value, scale, global::System.MidpointRounding.ToEven),
+                global::DripSharp.Runtime.JavaRoundingMode.Unnecessary
+                    when value == decimal.Round(
+                        value, scale, global::System.MidpointRounding.ToZero) => value,
+                _ => throw new global::System.ArgumentOutOfRangeException(
+                    nameof(roundingMode))
+            };
+        }
+
+        internal static int BigDecimalIntValue(decimal value) =>
+            decimal.ToInt32(decimal.Truncate(value));
+
+        internal static decimal BigDecimalStripTrailingZeros(decimal value)
+        {
+            if (value == 0) return decimal.Zero;
+            return decimal.Parse(
+                value.ToString(
+                    "G29", global::System.Globalization.CultureInfo.InvariantCulture),
+                global::System.Globalization.NumberStyles.Number,
+                global::System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        internal static string BigDecimalToPlainString(decimal value) =>
+            value.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+
+        internal static string BigDecimalToString(decimal value) =>
+            value.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+    }
+}
+
 namespace DripSharp.Brine.Runtime.Polyglot
 {
     internal sealed class PolyglotException : Exception

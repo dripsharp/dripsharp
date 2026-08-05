@@ -9,8 +9,8 @@
    :charset nil
    :capability nil
    :source-files 5
-   :max-source-lines 7048
-   :max-emitted-lines 7048
+   :max-source-lines 7131
+   :max-emitted-lines 7131
    :source-inventory-sha256
    "f6d3337014845d7b71085af02b6861a3a35beb20b8b26d3215c83fe36fd1fc5d"
    :public-types

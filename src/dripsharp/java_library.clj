@@ -857,11 +857,19 @@
 
 (defn- concrete-map-type-arguments
   [^CtTypeReference reference]
-  (let [arguments (some-> reference .getActualTypeArguments vec)]
+  (let [arguments (some-> reference .getActualTypeArguments vec)
+        resolved
+        (mapv
+         (fn [argument]
+           (if (instance? CtWildcardReference argument)
+             (when (.isUpper ^CtWildcardReference argument)
+               (.getBoundingType ^CtWildcardReference argument))
+             argument))
+         arguments)]
     (when (and (= "java.util.Map" (some-> reference .getQualifiedName))
                (= 2 (count arguments))
-               (not-any? #(instance? CtWildcardReference %) arguments))
-      arguments)))
+               (every? some? resolved))
+      resolved)))
 
 (defn- resolved-wildcard-map-component
   [^CtTypeReference expected ^CtTypeReference argument]

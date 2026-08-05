@@ -967,6 +967,9 @@
                "return java.util.Collections.unmodifiableMap(values); } "
                "public void merge(Map<String, E> values, Map<String, E> other) { "
                "values.putAll(other); } "
+               "public void mergeWild(Map<String, Object> values, "
+               "Map<? extends String, ? extends Object> other) { "
+               "values.putAll(other); } "
                "public Map<?, ?> copyMap(Map<String, E> values) { return values; } "
                "public static <T> void sort(List<T> values, Comparator<? super T> cmp) { "
                "Object[] array = values.toArray(); sortObjects(array, (Comparator)cmp); } "
@@ -992,6 +995,9 @@
          source
          "JavaCompat.CastDictionary<string, object>(values)"))
     (is (= 2 (count (re-seq #"JavaCompat\.CastDictionary<string, E>" source))))
+    (is (str/includes?
+         source
+         "JavaCompat.CastDictionary<string, object>(other)"))
     (is (str/includes?
          source
          "JavaCompat.CastDictionary<string, global::Example.Java.Library.GenericCollections<object>.Base>(values)"))
