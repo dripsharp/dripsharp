@@ -454,6 +454,18 @@
           [(raw destination)
            :dotnet.type/raw-or-wildcard-generic-erasure])))))
 
+(declare nullable-boxed-collection-expression?
+         nullable-boxed-collection-node)
+
+(defn- enclosing-invocation
+  [^CtElement element]
+  (loop [current element]
+    (cond
+      (instance? CtInvocation current) current
+      (and current (.isParentInitialized current))
+      (recur (.getParent current))
+      :else nil)))
+
 (defn- neutral-type-shape
   [ctx ^CtTypeReference reference occurrence recur-node]
   (cond
@@ -479,6 +491,17 @@
            actual-arguments (vec (.getActualTypeArguments reference))
            arguments
            (cond
+             (and
+              (= "java.util.Optional" (.getQualifiedName reference))
+              (= 1 (count actual-arguments))
+              (let [invocation (enclosing-invocation reference)
+                    source (when invocation
+                             (first (.getArguments invocation)))]
+                (and invocation
+                     source
+                     (nullable-boxed-collection-expression? source []))))
+             [(nullable-boxed-collection-node ctx (first actual-arguments))]
+
              (contains?
               #{"java.lang.Class" "java.lang.reflect.Constructor"}
               (.getQualifiedName reference))
@@ -866,8 +889,7 @@
                (.getBoundingType ^CtWildcardReference argument))
              argument))
          arguments)]
-    (when (and (= "java.util.Map" (some-> reference .getQualifiedName))
-               (= 2 (count arguments))
+    (when (and (= 2 (count arguments))
                (every? some? resolved))
       resolved)))
 
@@ -899,6 +921,23 @@
       (recur (.getParent ^CtElement current))
       :else nil)))
 
+(defn- explicitly-nullable-expression?
+  [^CtExpression expression]
+  (cond
+    (nil? expression)
+    false
+
+    (instance? CtLiteral expression)
+    (nil? (.getValue ^CtLiteral expression))
+
+    (instance? CtConditional expression)
+    (or (explicitly-nullable-expression?
+         (.getThenExpression ^CtConditional expression))
+        (explicitly-nullable-expression?
+         (.getElseExpression ^CtConditional expression)))
+
+    :else false))
+
 (defn- null-adding-boxed-collection-local?
   [^CtLocalVariable local]
   (when (boxed-primitive-collection-element (.getType local))
@@ -911,12 +950,81 @@
                 (identical?
                  local
                  (some-> target .getVariable .getDeclaration))
-                (some #(and (instance? CtLiteral %)
-                            (nil? (.getValue ^CtLiteral %)))
+                (some #(explicitly-nullable-expression? %)
                       (.getArguments invocation)))))
        (.getElements executable (TypeFilter. CtInvocation))))))
 
 (declare nullable-boxed-collection-declaration?)
+
+(defn- accessed-declaration
+  [^CtExpression expression]
+  (when (instance? CtVariableAccess expression)
+    (some-> ^CtVariableAccess expression .getVariable .getDeclaration)))
+
+(defn- null-literal-expression?
+  [^CtExpression expression]
+  (and (instance? CtLiteral expression)
+       (nil? (.getValue ^CtLiteral expression))))
+
+(defn- variable-null-comparison?
+  [^CtBinaryOperator binary ^CtElement variable]
+  (let [left (.getLeftHandOperand binary)
+        right (.getRightHandOperand binary)]
+    (or (and (identical? variable (accessed-declaration left))
+             (null-literal-expression? right))
+        (and (null-literal-expression? left)
+             (identical? variable (accessed-declaration right))))))
+
+(defn- null-compared-boxed-collection-field?
+  [^CtField field]
+  (boolean
+   (some
+    (fn [^CtForEach foreach]
+      (and
+       (identical? field (accessed-declaration (.getExpression foreach)))
+       (let [variable (.getVariable foreach)]
+         (some #(variable-null-comparison? % variable)
+               (.getElements (.getBody foreach)
+                             (TypeFilter. CtBinaryOperator))))))
+    (.getElements (.getDeclaringType field)
+                  (TypeFilter. CtForEach)))))
+
+(defn- nullable-boxed-collection-parameter?
+  [^CtParameter parameter seen]
+  (let [executable (when (.isParentInitialized parameter)
+                     (.getParent parameter))]
+    (boolean
+     (when (instance? CtExecutable executable)
+       (or
+        (some
+         (fn [^CtAssignment assignment]
+           (let [target (accessed-declaration (.getAssigned assignment))]
+             (and
+              (identical? parameter
+                          (accessed-declaration (.getAssignment assignment)))
+              (instance? CtTypedElement target)
+              (nullable-boxed-collection-declaration?
+               target (.getType ^CtTypedElement target) seen))))
+         (.getElements executable (TypeFilter. CtAssignment)))
+        (some
+         (fn [^CtInvocation invocation]
+           (let [target (.getDeclaration (.getExecutable invocation))
+                 parameters (when (instance? CtExecutable target)
+                              (vec (.getParameters ^CtExecutable target)))]
+             (some
+              identity
+              (map-indexed
+               (fn [index ^CtExpression argument]
+                 (when (and
+                        (identical? parameter (accessed-declaration argument))
+                        (< index (count parameters)))
+                   (let [target-parameter (nth parameters index)]
+                     (nullable-boxed-collection-declaration?
+                      target-parameter
+                      (.getType ^CtParameter target-parameter)
+                      seen))))
+               (.getArguments invocation)))))
+         (.getElements executable (TypeFilter. CtInvocation))))))))
 
 (defn- nullable-boxed-collection-expression?
   [^CtExpression expression seen]
@@ -932,9 +1040,14 @@
 
     (instance? CtInvocation expression)
     (let [declaration (some-> expression .getExecutable .getDeclaration)]
-      (and (instance? CtMethod declaration)
-           (nullable-boxed-collection-declaration?
-            declaration (.getType ^CtMethod declaration) seen)))
+      (or
+       (and (instance? CtMethod declaration)
+            (nullable-boxed-collection-declaration?
+             declaration (.getType ^CtMethod declaration) seen))
+       (nullable-boxed-collection-expression?
+        (.getTarget ^CtInvocation expression) seen)
+       (some #(nullable-boxed-collection-expression? % seen)
+             (.getArguments ^CtInvocation expression))))
 
     (instance? CtVariableAccess expression)
     (let [declaration (some-> expression .getVariable .getDeclaration)]
@@ -965,17 +1078,22 @@
 
           (instance? CtField declaration)
           (let [owner (.getDeclaringType ^CtField declaration)]
-            (some
-             (fn [^CtAssignment assignment]
-               (let [assigned (.getAssigned assignment)]
-                 (and
-                  (instance? CtVariableAccess assigned)
-                  (identical?
-                   declaration
-                   (some-> assigned .getVariable .getDeclaration))
-                  (nullable-boxed-collection-expression?
-                   (.getAssignment assignment) seen))))
-             (.getElements owner (TypeFilter. CtAssignment))))
+            (or
+             (null-compared-boxed-collection-field? declaration)
+             (some
+              (fn [^CtAssignment assignment]
+                (let [assigned (.getAssigned assignment)]
+                  (and
+                   (instance? CtVariableAccess assigned)
+                   (identical?
+                    declaration
+                    (some-> assigned .getVariable .getDeclaration))
+                   (nullable-boxed-collection-expression?
+                    (.getAssignment assignment) seen))))
+              (.getElements owner (TypeFilter. CtAssignment)))))
+
+          (instance? CtParameter declaration)
+          (nullable-boxed-collection-parameter? declaration seen)
 
           (instance? CtMethod declaration)
           (when-let [body (.getBody ^CtMethod declaration)]
@@ -2127,7 +2245,8 @@
           actual-nodes
           (mapv
            (fn [index ^CtTypeReference reference]
-             (or (when (instance? CtTypeParameterReference reference)
+             (or (when (or (instance? CtTypeParameterReference reference)
+                           (.isImplicit reference))
                    (get formal-overrides index))
                  (type-node ctx reference)))
            (range)
@@ -2412,16 +2531,18 @@
         (when (instance? CtVariableAccess argument)
           (some-> ^CtVariableAccess argument .getVariable .getDeclaration))
         emitted-argument-reference
-        (or (when (instance? CtLocalVariable argument-declaration)
-              (let [declared (.getType ^CtLocalVariable argument-declaration)
+        (or (when (instance? CtTypedElement argument-declaration)
+              (let [declared (.getType ^CtTypedElement argument-declaration)
                     initializer
-                    (some-> ^CtLocalVariable argument-declaration
-                            .getDefaultExpression .getType)]
-                (when (and initializer
-                           (empty? (.getActualTypeArguments declared))
-                           (seq (.getActualTypeArguments
-                                 ^CtTypeReference initializer)))
-                  initializer)))
+                    (when (instance? CtLocalVariable argument-declaration)
+                      (some-> ^CtLocalVariable argument-declaration
+                              .getDefaultExpression .getType))]
+                (if (and initializer
+                         (empty? (.getActualTypeArguments declared))
+                         (seq (.getActualTypeArguments
+                               ^CtTypeReference initializer)))
+                  initializer
+                  declared)))
             (.getType argument))
         value-node (maybe-unbox-node ctx argument node)]
     (destination-value-node
@@ -6097,8 +6218,12 @@
                        declaration (count (.getArguments element))
                        index argument)
                       node
-                      (contains? generic-value-argument-executables
-                                 (:key occurrence))))))
+                      (and
+                       (contains? generic-value-argument-executables
+                                  (:key occurrence))
+                       (not
+                        (nullable-boxed-collection-expression?
+                         target [])))))))
                 (range)
                 (.getArguments element))
                default-interface?
@@ -6662,13 +6787,23 @@
                               first)
                       (some-> ^CtTypeReference parent-result-type
                               .getActualTypeArguments
-                              first))]
+                              first))
+                     nullable-element?
+                     (and
+                      element-type
+                      (boxed-primitive-reference? element-type)
+                      (instance? CtInvocation parent)
+                      (nullable-boxed-collection-expression?
+                       (.getTarget ^CtInvocation parent) []))]
                  (sequence-node
                   [(raw "() => new ")
                    (if element-type
                      (csharp/generic-name
                       (raw "global::System.Collections.Generic.List")
-                      [(type-node @ctx-holder element-type)])
+                      [(if nullable-element?
+                         (sequence-node
+                          [(type-node @ctx-holder element-type) (raw "?")])
+                         (type-node @ctx-holder element-type))])
                      target)
                    (raw "()")]))
 
@@ -7249,7 +7384,23 @@
        :class CtForEach
        :emit
        (fn [{:keys [context ^CtForEach element children]}]
-         (let [variable (.getVariable element) mutable? (boolean (some (fn [^CtVariableWrite candidate] (identical? variable (some-> candidate .getVariable .getDeclaration))) (.getElements (.getBody element) (TypeFilter. CtVariableWrite)))) variable-name (local-declaration-name variable) iteration-name (str "__foreachValue_" variable-name) variable-type-node (if (.isInferred variable) (raw "var") (declaration-type-node @ctx-holder variable (.getType variable)))]
+         (let [variable (.getVariable element)
+               mutable? (boolean (some (fn [^CtVariableWrite candidate] (identical? variable (some-> candidate .getVariable .getDeclaration))) (.getElements (.getBody element) (TypeFilter. CtVariableWrite))))
+               variable-name (local-declaration-name variable)
+               iteration-name (str "__foreachValue_" variable-name)
+               nullable-boxed-element?
+               (and (boxed-primitive-reference? (.getType variable))
+                    (nullable-boxed-collection-expression?
+                     (.getExpression element) []))
+               variable-type-node
+               (cond
+                 (.isInferred variable) (raw "var")
+                 nullable-boxed-element?
+                 (sequence-node
+                  [(type-node @ctx-holder (.getType variable)) (raw "?")])
+                 :else
+                 (declaration-type-node
+                  @ctx-holder variable (.getType variable)))]
            {:node
             (sequence-node
              [(raw "foreach (")

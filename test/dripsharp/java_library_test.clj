@@ -970,6 +970,9 @@
                "public void mergeWild(Map<String, Object> values, "
                "Map<? extends String, ? extends Object> other) { "
                "values.putAll(other); } "
+               "private java.util.LinkedHashMap<String, Object> concrete; "
+               "public Map<String, Object> copyConcrete() { "
+               "return new java.util.LinkedHashMap<>(concrete); } "
                "public Map<?, ?> copyMap(Map<String, E> values) { return values; } "
                "public static <T> void sort(List<T> values, Comparator<? super T> cmp) { "
                "Object[] array = values.toArray(); sortObjects(array, (Comparator)cmp); } "
@@ -1017,11 +1020,28 @@
          {"example/NullableElements.java"
           (str "package example; import java.util.ArrayList; "
                "import java.util.Collections; import java.util.List; import java.util.Objects; "
+               "import java.util.Optional; "
                "public final class NullableElements { "
                "private List<Float> cached; "
+               "private List<Integer> stored = new ArrayList<>(); "
                "public List<Float> values() { "
                "List<Float> values = new ArrayList<>(); "
                "values.add(1.0f); values.add(null); return values; } "
+               "public List<Integer> dimensions(boolean present) { "
+               "List<Integer> values = new ArrayList<>(); "
+               "values.add(present ? Integer.valueOf(7) : null); return values; } "
+               "public void setDimensions(List<Integer> values) { stored = values; } "
+               "public List<Integer> withDimensions(List<Integer> values) { "
+               "setDimensions(values); return values; } "
+               "public void parseDimensions(boolean present) { "
+               "List<Integer> values = new ArrayList<>(); "
+               "values.add(present ? Integer.valueOf(7) : null); setDimensions(values); } "
+               "public int dimensionCount() { int count = 0; "
+               "for (Integer value : stored) { if (value != null) { count++; } } "
+               "return count; } "
+               "public List<Integer> normalized() { "
+               "List<Integer> values = Optional.ofNullable(stored)"
+               ".orElseGet(ArrayList::new); return values; } "
                "public List<Float> cached() { "
                "if (cached == null) { cached = values(); } return cached; } "
                "public List<Float> optional(boolean present) { "
@@ -1042,6 +1062,25 @@
     (is (str/includes?
          source
          "public global::System.Collections.Generic.IList<float?> values()"))
+    (is (str/includes?
+         source
+         "public global::System.Collections.Generic.IList<int?> dimensions(bool present)"))
+    (is (str/includes?
+         source
+         "private global::System.Collections.Generic.IList<int?> stored"))
+    (is (str/includes?
+         source
+         "public void setDimensions(global::System.Collections.Generic.IList<int?> values)"))
+    (is (str/includes?
+         source
+         "public global::System.Collections.Generic.IList<int?> withDimensions(global::System.Collections.Generic.IList<int?> values)"))
+    (is (str/includes?
+         source
+         "JavaOptional<global::System.Collections.Generic.IList<int?>>"))
+    (is (str/includes?
+         source
+         (str "JavaCompat.Add(values, "
+              "(present ? (int?)(7) : (int?)(default!)))")))
     (is (str/includes?
          source
          "global::System.Collections.Generic.IList<float?> values = "))
@@ -7256,6 +7295,33 @@
     (is (str/includes?
          source
          "value.accept<Result, object>(this, (object)default!)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest generic-visitor-inference-preserves-owner-void-and-context
+  (let [fixture
+        (model! {"example/Visitor.java"
+                 (str "package example; public interface Visitor<R> { "
+                      "<S> R visit(Value value, S context); }")
+                 "example/Value.java"
+                 (str "package example; public final class Value { "
+                      "public <R,S> R accept(Visitor<R> visitor, S context) { "
+                      "return visitor.visit(this, context); } }")
+                 "example/VoidFinder.java"
+                 (str "package example; public final class VoidFinder<Void> "
+                      "implements Visitor<Void> { "
+                      "public <S> Void visit(Value value, S context) { "
+                      "value.accept(this, context); return null; } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/VoidFinder.cs")))]
+    (is (str/includes?
+         source
+         "value.accept<Void, S>(this, context)"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)

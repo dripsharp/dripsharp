@@ -1591,7 +1591,11 @@
     (mapv :emission results)))
 
 (defn- fixture-targets []
-  (str "<Project>\n  <ItemGroup>\n"
+  (str "<Project>\n"
+       "  <PropertyGroup>\n"
+       "    <NoWarn>$(NoWarn);CS0108;CS0168;CS8632;CS8765;xUnit1013;xUnit1014;xUnit1026</NoWarn>\n"
+       "  </PropertyGroup>\n"
+       "  <ItemGroup>\n"
        "    <None Update=\"Fixtures/**/*\">\n"
        "      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>\n"
        "    </None>\n"
