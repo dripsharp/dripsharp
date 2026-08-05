@@ -26,9 +26,9 @@
     (is (= 681 (count (:fixtures accounting))))
     (is (= 681 (count (distinct (map :destination
                                      (:fixtures accounting))))))
-    (is (= {:mechanically-upstream-derived 372
+    (is (= {:mechanically-upstream-derived 371
             :third-party-test-fixture 306
-            :target-adapted-test-fixture 1
+            :target-adapted-test-fixture 2
             :third-party-test-fixture-license 1
             :third-party-test-fixture-notice 1}
            (frequencies (map :authorship (:fixtures accounting)))))

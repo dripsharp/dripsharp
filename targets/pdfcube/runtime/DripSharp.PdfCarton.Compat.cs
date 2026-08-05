@@ -95,10 +95,7 @@ internal static class PdfBoxTextCompatibility
 
             normalizedWord.Append(character);
         }
-        var normalizedResult = normalizedWord.ToString();
-        return sortByPosition
-            ? ReorderCombiningMarks(normalizedResult)
-            : normalizedResult;
+        return normalizedWord.ToString();
     }
 
     private static bool IsNormalizedPresentationForm(char value) =>
@@ -111,48 +108,4 @@ internal static class PdfBoxTextCompatibility
         return new string(characters);
     }
 
-    private static string ReorderCombiningMarks(string value)
-    {
-        var reordered = new global::System.Text.StringBuilder(value.Length);
-        for (var index = 0; index < value.Length; index++)
-        {
-            if (!IsCombiningMark(value[index]))
-            {
-                reordered.Append(value[index]);
-                continue;
-            }
-
-            var markStart = index;
-            while (index + 1 < value.Length && IsCombiningMark(value[index + 1]))
-            {
-                index++;
-            }
-            if (index + 1 < value.Length && IsArabicLetter(value[index + 1]))
-            {
-                reordered.Append(value[index + 1]);
-                reordered.Append(value, markStart, index - markStart + 1);
-                index++;
-            }
-            else
-            {
-                reordered.Append(value, markStart, index - markStart + 1);
-            }
-        }
-        return reordered.ToString();
-    }
-
-    private static bool IsCombiningMark(char value) =>
-        global::System.Globalization.CharUnicodeInfo.GetUnicodeCategory(value) is
-            global::System.Globalization.UnicodeCategory.NonSpacingMark or
-            global::System.Globalization.UnicodeCategory.SpacingCombiningMark or
-            global::System.Globalization.UnicodeCategory.EnclosingMark;
-
-    private static bool IsArabicLetter(char value) =>
-        value is >= '\u0600' and <= '\u06ff' &&
-        global::System.Globalization.CharUnicodeInfo.GetUnicodeCategory(value) is
-            global::System.Globalization.UnicodeCategory.UppercaseLetter or
-            global::System.Globalization.UnicodeCategory.LowercaseLetter or
-            global::System.Globalization.UnicodeCategory.TitlecaseLetter or
-            global::System.Globalization.UnicodeCategory.ModifierLetter or
-            global::System.Globalization.UnicodeCategory.OtherLetter;
 }

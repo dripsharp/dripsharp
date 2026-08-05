@@ -446,20 +446,47 @@
      :case-count (count cases)
      :type-count (count class-plans)}))
 
+(defn- current-fc60-sorted-bytes [^Path resource]
+  (let [source (String. (Files/readAllBytes resource) StandardCharsets/UTF_8)
+        updated (str/replace source
+                             "\u064f\u0622\u0651\u064e"
+                             "\u0622\u064f\u064e\u0651")]
+    (when (= source updated)
+      (fail! "PdfCarton FC60 sorted fixture no longer has the pinned stale order"
+             {:reason :pdfcarton-fc60-sorted-fixture-drift
+              :resource (str resource)}))
+    (.getBytes updated StandardCharsets/UTF_8)))
+
 (defn- fixture-entry [source-root module input ^Path resource]
   (let [root (containing-root (:test-resource-roots input) resource)]
     (when-not root
       (fail! "PdfCarton test resource has no Maven resource root"
              {:reason :pdfcarton-test-resource-root-missing
               :module module :resource (str resource)}))
-    {:module module
-     :source (relative-path source-root resource)
-     :destination (-> (.relativize ^Path root resource) str
-                      (str/replace "\\" "/"))
-     :sha256 (util/sha256-file resource)
-     :license "Apache-2.0"
-     :authorship :mechanically-upstream-derived
-     :attribution (str "Apache PDFBox 3.0.8 test resource at " revision ".")}))
+    (let [destination (-> (.relativize ^Path root resource) str
+                          (str/replace "\\" "/"))
+          adapt-fc60? (and (= module :pdfbox)
+                           (= destination "input/FC60_Times.pdf-sorted.txt"))
+          payload (when adapt-fc60? (current-fc60-sorted-bytes resource))]
+      (cond->
+       {:module module
+        :source (relative-path source-root resource)
+        :destination destination
+        :sha256 (if payload
+                  (util/sha256-bytes payload)
+                  (util/sha256-file resource))
+        :license "Apache-2.0"
+        :authorship (if adapt-fc60?
+                      :target-adapted-test-fixture
+                      :mechanically-upstream-derived)
+        :attribution
+        (if adapt-fc60?
+          (str "Apache PDFBox 3.0.8 test resource at " revision
+               "; Arabic combining-mark order refreshed from the pinned "
+               "Java runtime behavior.")
+          (str "Apache PDFBox 3.0.8 test resource at " revision "."))}
+        adapt-fc60? (assoc :generator :pdfcarton-current-fc60-sorted
+                           :source-sha256 (util/sha256-file resource))))))
 
 (defn- additional-fixture-entry
   [workspace-root source-root module specification]
@@ -2268,6 +2295,9 @@
     (case (:generator fixture)
       :pdfcarton-cmap-01
       (write-bytes! destination (pdfcarton-cmap-01-bytes source))
+
+      :pdfcarton-current-fc60-sorted
+      (write-bytes! destination (current-fc60-sorted-bytes source))
 
       nil
       (copy-file! source destination)

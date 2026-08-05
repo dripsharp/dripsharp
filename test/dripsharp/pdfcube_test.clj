@@ -488,7 +488,7 @@
          "normalized = ReverseUtf16(normalized)"))
     (is (str/includes?
          (slurp "targets/pdfcube/runtime/DripSharp.PdfCarton.Compat.cs")
-         "ReorderCombiningMarks(normalizedResult)"))))
+         "return normalizedWord.ToString()"))))
 
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]
