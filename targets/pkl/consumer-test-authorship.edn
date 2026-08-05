@@ -2,9 +2,9 @@
  :scope :pkl-generated-xunit
  :sources
  [{:path "src/dripsharp/consumer_tests.clj"
-   :sha256 "2f791f9eca70a6ea36d353fa99859e27d2504df1f6e1a2a84a246fed942a715f"
-   :lines 590
-   :line-budget 590
+   :sha256 "b533b87a91b7b7a68de3a50c07bd3b8022d65bf68e6cda22d4005d9120a239a1"
+   :lines 594
+   :line-budget 594
    :review-evidence "beads:pkl-rjf1.1"
    :role :generic-test-emitter}
   {:path "src/dripsharp/pkl/brine_xunit.clj"
