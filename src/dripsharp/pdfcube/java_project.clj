@@ -3317,13 +3317,7 @@
                 "$(DefineConstants);DRIPSHARP_PDFBOX_CRYPTO")]))
            (project-xml/element
             "PackageLicenseFile"
-            [(project-xml/text (:package-path license))])
-           (project-xml/element "DebugType"
-                                [(project-xml/text "portable")])
-           (project-xml/element "IncludeSymbols"
-                                [(project-xml/text "true")])
-           (project-xml/element "SymbolPackageFormat"
-                                [(project-xml/text "snupkg")])]))
+            [(project-xml/text (:package-path license))])]))
         items
         (vec
          (concat

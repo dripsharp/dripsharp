@@ -131,6 +131,7 @@
     :repository-url "https://github.com/dripsharp/acme.git"
     :repository-type "git"
     :repository-commit-policy :exact-clean-generated-product-commit
+    :symbols :snupkg
     :readme "README.md"}
    :package-readme-source "../../README.md"
    :output {:project-directory "generated/acme/src/Acme.Core"
@@ -276,6 +277,10 @@
      :repository-url "https://github.com/dripsharp/acme.git"
      :repository-type "git"
      :repository-commit-policy :exact-clean-generated-product-commit
+     :symbols
+     {:debug-type :portable
+      :package-format :snupkg
+      :source-link :exact-generated-product-commit}
      :version-policy {:kind :upstream-alpha-revision
                       :translator-revision 1}
      :readme "README.md"
@@ -459,6 +464,14 @@
        (is (= :acme (:target target)))
        (is (= :acme (:product-family target)))
        (is (= :product (get-in target [:proof :role])))
+       (is (= {:debug-type :portable
+               :package-format :snupkg
+               :source-link :exact-generated-product-commit}
+              (get-in target [:publication :nuget :symbols])))
+       (is (= :snupkg
+              (get-in target
+                      [:profiles "acme-core" :destination :configuration
+                       :package :symbols])))
        (is (= [:acme-required-proof]
               (mapv :id (get-in target [:proof :ladders]))))
        (is (= #{"acme-core"} (set (keys (:profiles target)))))
@@ -550,6 +563,8 @@
                  "https://github.com/upstream/acme.git"]
                 [[:publication :nuget :packages "Acme.Core" :version]
                  "1.0.0-alpha.2"]
+                [[:publication :nuget :symbols :source-link]
+                 :upstream-source-commit]
                 [[:publication :nuget :icon :reason]
                  "Branding will be decided later."]]]
          (create-target-workspace! root)

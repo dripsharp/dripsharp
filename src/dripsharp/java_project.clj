@@ -716,6 +716,38 @@
   [name value]
   (project-xml/element name [(project-xml/text value)]))
 
+(defn- generated-product-project-path
+  [configuration]
+  (let [project-directory (get-in configuration [:output :project-directory])]
+    (or (some-> (re-matches #"generated/[^/]+/(.+)" project-directory)
+                second)
+        (destination-error
+         "Symbol-enabled destination is not rooted in a generated product repository"
+         {:project-directory project-directory
+          :expected "generated/<product-family>/<repository-project-path>"}))))
+
+(defn- github-raw-repository-root
+  [configuration]
+  (let [repository-url (get-in configuration [:package :repository-url])
+        [_ owner repository]
+        (re-matches #"https://github[.]com/([^/]+)/([^/]+?)(?:[.]git)?"
+                    repository-url)]
+    (if (and owner repository)
+      (str "https://raw.githubusercontent.com/" owner "/" repository)
+      (destination-error
+       "Symbol-enabled destination requires an exact GitHub product repository"
+       {:repository-url repository-url}))))
+
+(defn source-link-url
+  "Returns the exact generated-product raw source URL emitted into a portable
+  PDB. The commit remains an MSBuild property until the synchronized product
+  repository proof supplies it to the packaging build."
+  [configuration]
+  (str (github-raw-repository-root configuration)
+       "/$(RepositoryCommit)/"
+       (generated-product-project-path configuration)
+       "/*"))
+
 (defn- project-node*
   [configuration resource-artifacts
    {:keys [additional-properties additional-items]
@@ -748,6 +780,20 @@
            (project-property "RootNamespace" (:root-namespace project))
            (project-property "Deterministic" "true")
            (project-property "ContinuousIntegrationBuild" "true")
+           (when (:symbols package)
+             (project-property "DebugType" "portable"))
+           (when (:symbols package)
+             (project-property "DebugSymbols" "true"))
+           (when (:symbols package)
+             (project-property "IncludeSymbols" "true"))
+           (when (:symbols package)
+             (project-property "SymbolPackageFormat" "snupkg"))
+           (when (:symbols package)
+             (project-property "PublishRepositoryUrl" "true"))
+           (when (:symbols package)
+             (project-property "EmbedUntrackedSources" "false"))
+           (when (:symbols package)
+             (project-property "EnableSourceControlManagerQueries" "false"))
            (project-property "PackageId" (:id package))
            (project-property "Version" (:version package))
            (project-property "Title" (:title package))
@@ -781,6 +827,15 @@
             "Compile"
             [["Include" (str (:source-directory output) "/**/*.cs")]]
             [])]
+          (when (:symbols package)
+            [(project-xml/element
+              "SourceRoot"
+              [["Include" "$(MSBuildProjectDirectory)/"]
+               ["RepositoryUrl" (:repository-url package)]
+               ["SourceControl" "git"]
+               ["RevisionId" "$(RepositoryCommit)"]
+               ["SourceLinkUrl" (source-link-url configuration)]]
+              [])])
           (for [reference (sort (:project-references configuration))]
             (project-xml/element
              "ProjectReference" [["Include" reference]] []))

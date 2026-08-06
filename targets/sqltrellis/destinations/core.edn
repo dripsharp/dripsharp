@@ -18,6 +18,7 @@
   :description "JSqlParser for .NET, mechanically translated by DripSharp as an independent project not affiliated with or endorsed by the JSqlParser project."
   :authors "Isak Sky"
   :copyright "Portions Copyright JSqlParser contributors; see LICENSE.txt and NOTICE.txt."
+  :symbols :snupkg
   :tags "sql parser jsqlparser dotnet sqltrellis dripsharp"
   :project-url "https://github.com/dripsharp/sqltrellis"
   :repository-url "https://github.com/dripsharp/sqltrellis.git"

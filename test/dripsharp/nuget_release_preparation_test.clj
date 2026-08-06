@@ -226,6 +226,7 @@
                           [:destination :configuration :package :symbols]))
              :paired
              :absent)))]
+    (is (= {:paired 8} expected-symbol-statuses))
     (is (= ["pdfcube" "pkl" "sqltrellis"] @(:proof-calls fixture)))
     (is (= 8 (count @(:package-calls fixture))))
     (is (= 11 (count @(:repository-calls fixture))))

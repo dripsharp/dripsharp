@@ -88,6 +88,7 @@
                       " --version " (:version package) "`.\n")]]
        {:target target
         :publication (:nuget (:publication contract))
+        :destination destination
         :configured-package (:package destination)
         :mechanical-source (:mechanical-source destination)
         :package package
@@ -225,16 +226,21 @@
            (set (map #(get-in % [:publication :source]) contracts))))
     (is (= #{:deferred}
            (set (map #(get-in % [:publication :icon :status]) contracts))))
+    (is (= #{{:debug-type :portable
+              :package-format :snupkg
+              :source-link :exact-generated-product-commit}}
+           (set (map #(get-in % [:publication :symbols]) contracts))))
     (is (= 1
            (count
             (set (map #(get-in % [:publication :icon :reason]) contracts)))))
-    (doseq [{:keys [target package configured-package mechanical-source
+    (doseq [{:keys [target package destination configured-package mechanical-source
                     assembly-name target-framework dependencies files project]
              :as contract}
             contracts]
       (testing (:id package)
         (is (= :exact-clean-generated-product-commit
                (:repository-commit-policy configured-package)))
+        (is (= :snupkg (:symbols configured-package)))
         (is (not (contains? configured-package :repository-commit)))
         (is (not= (:repository-url configured-package)
                   (:repository mechanical-source)))
@@ -251,6 +257,17 @@
           (is (= 3 (count (filter #(str/starts-with? (:path %) "THIRD-PARTY/")
                                   files)))))
         (is (str/includes? project "<Authors>Isak Sky</Authors>"))
+        (doseq [property ["<DebugType>portable</DebugType>"
+                          "<DebugSymbols>true</DebugSymbols>"
+                          "<IncludeSymbols>true</IncludeSymbols>"
+                          "<SymbolPackageFormat>snupkg</SymbolPackageFormat>"
+                          "<PublishRepositoryUrl>true</PublishRepositoryUrl>"
+                          "<EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>"]]
+          (is (str/includes? project property)))
+        (is (str/includes? project
+                           (java-project/source-link-url destination)))
+        (is (not (str/includes? (java-project/source-link-url destination)
+                                (:repository mechanical-source))))
         (is (str/includes? project "<PackageReadmeFile>README.md</PackageReadmeFile>"))
         (is (str/includes? project
                            "<None Include=\"../../README.md\" Pack=\"true\" PackagePath=\"/\" />"))

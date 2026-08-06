@@ -589,14 +589,12 @@
     (let [metadata (exactly-one-child! root "metadata" "package")
           configured-elements
           (cond->
-           [["id" (:id package)]
+          [["id" (:id package)]
             ["version" (:version package)]
             ["title" (:title package)]
             ["projectUrl" (:project-url package)]
             ["description" (:description package)]
             ["tags" (:tags package)]]
-            (:readme package)
-            (conj ["readme" (:readme package)])
             (:copyright package)
             (conj ["copyright" (:copyright package)]))]
       (require-exact-attributes! metadata {} "package/metadata")
@@ -1374,6 +1372,60 @@
                              "--output" (str output)]
                    :directory project-root})))
 
+(defn- build-source-linked-projects!
+  [run-command! build-configuration repository-commit specs]
+  (doseq [{:keys [emission destination]} specs
+          :when (= :snupkg (get-in destination [:package :symbols]))]
+    (let [project-root (:project-root emission)
+          project-file (:project-file emission)]
+      (run-command!
+       {:command ["dotnet" "build" (str project-file)
+                  "--nologo" "--verbosity:minimal"
+                  "--configuration" build-configuration
+                  "--no-restore" "--no-incremental" "-warnaserror"
+                  (str "-p:RepositoryCommit=" repository-commit)]
+        :directory project-root}))))
+
+(defn- inspect-source-debugging!
+  [run-command! root artifact symbol-artifact repository-commit
+   {:keys [emission destination]}]
+  (let [assembly-name (get-in destination [:project :assembly-name])
+        target-framework (get-in destination [:project :target-framework])
+        assembly-entry (str "lib/" target-framework "/" assembly-name ".dll")
+        pdb-entry (str "lib/" target-framework "/" assembly-name ".pdb")
+        document-pattern "/_/*"
+        source-url
+        (str/replace (java-project/source-link-url destination)
+                     "$(RepositoryCommit)" repository-commit)
+        inspector
+        (paths/resolve-path root "validation" "symbol-inspector"
+                            "SymbolInspector.csproj")
+        result
+        (run-command!
+         {:command ["dotnet" "run" "--project" (str inspector)
+                    "--configuration" "Release" "--verbosity" "quiet"
+                    "--" (str artifact) (str symbol-artifact)
+                    assembly-entry pdb-entry (str (:project-root emission))
+                    document-pattern source-url]
+          :directory root})
+        [_ document-count]
+        (re-find #"Portable DLL/PDB pairing inspection passed: (\d+) documents"
+                 (:output result))]
+    (when-not (and document-count
+                   (str/includes?
+                    (:output result)
+                    (str "Source Link inspection passed: " document-pattern
+                         " -> " source-url)))
+      (fail! "Portable PDB debugging inspector did not prove the exact generated source mapping"
+             {:package assembly-name
+              :document-pattern document-pattern
+              :source-url source-url
+              :output (:output result)}))
+    {:document-pattern document-pattern
+     :documents (parse-long document-count)
+     :repository-commit repository-commit
+     :source-url source-url}))
+
 (defn- inspect-package-assembly!
   [run-command! root artifact assembly-entry assembly-name verified-assembly
    package-assembly-names expected-dependency-assemblies expected-resources]
@@ -1452,6 +1504,8 @@
          (resolved-package-repository!
           run-command! root first-specs repository-proof-fn)
          repository-commit (:commit first-repository)
+         _ (build-source-linked-projects!
+            run-command! first-build-configuration repository-commit first-specs)
          first-output (Files/createTempDirectory
                        "dripsharp-first-clean-pack-"
                        (make-array java.nio.file.attribute.FileAttribute 0))]
@@ -1468,6 +1522,8 @@
              second-repository
              (resolved-package-repository!
               run-command! root specs repository-proof-fn)
+             _ (build-source-linked-projects!
+                run-command! build-configuration repository-commit specs)
              first-plan (package-reproducibility-plan first-specs)
              second-plan (package-reproducibility-plan specs)]
          (when-not (and (= first-build-configuration build-configuration)
@@ -1605,12 +1661,19 @@
                              expected-resources)
                             symbol-inspection
                             (when symbols?
-                              (inspect-symbol-package!
-                               symbol-artifact
-                               (assoc package
-                                      :repository-commit repository-commit)
-                               target-framework assembly-name
-                               expected-dependencies verified-pdb))]
+                              (assoc
+                               (inspect-symbol-package!
+                                symbol-artifact
+                                (assoc package
+                                       :repository-commit repository-commit)
+                                target-framework assembly-name
+                                expected-dependencies verified-pdb)
+                               :source-link
+                               (inspect-source-debugging!
+                                run-command! root artifact symbol-artifact
+                                repository-commit
+                                {:emission emission
+                                 :destination destination})))]
                         {:profile profile :primary? primary? :artifact artifact
                          :destination destination
                          :identity {:id id :version version :sha256 first-hash
@@ -1664,6 +1727,11 @@
                   :repository-commit repository-commit
                   :packages (mapv :identity packages)
                   :symbols (mapv :symbol (filter :symbol packages))
+                  :source-debugging
+                  (into (sorted-map)
+                        (map (juxt #(get-in % [:identity :id])
+                                   #(get-in % [:symbol-inspection :source-link])))
+                        (filter :symbol packages))
                   :external-packages external-packages
                   :mechanical-source-headers
                   (into (sorted-map)
@@ -1694,6 +1762,7 @@
              {:verification verification :proof-root proof-root :feed feed
               :packages packages :artifact (:artifact primary)
               :identity (:identity primary) :inspection (:inspection primary)
+              :symbol-inspection (:symbol-inspection primary)
               :external-packages external-packages
               :boundary-report boundary-report
               :summary summary})))
@@ -1902,6 +1971,7 @@
       :artifact artifact
       :identity identity
       :inspection (:inspection package-proof)
+      :symbol-inspection (:symbol-inspection package-proof)
       :packages (:packages package-proof)
       :external-packages (:external-packages package-proof)
       :feed (:feed package-proof)

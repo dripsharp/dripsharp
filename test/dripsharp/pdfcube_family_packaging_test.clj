@@ -115,7 +115,7 @@
                 :authors "Fixture Publisher"
                 :copyright copyright
                 :symbols :snupkg
-                :repository-url "https://github.com/apache/pdfbox.git"
+                :repository-url "https://github.com/dripsharp/pdfcarton.git"
                 :repository-type "git"
                 :repository-commit revision}}
               :artifact package-artifact
@@ -140,7 +140,14 @@
               :symbol-inspection
               {:pdb-entry (str "lib/net10.0/" id ".pdb")
                :pdb-sha256 pdb-hash
-               :dependencies (:dependencies contract)}}))
+               :dependencies (:dependencies contract)
+               :source-link
+               {:document-pattern "/_/*"
+                :documents 1
+                :repository-commit revision
+                :source-url
+                (str "https://raw.githubusercontent.com/dripsharp/pdfcarton/"
+                     revision "/src/" id "/*")}}}))
          (sort-by key contracts))
         external
         (mapv #(external-artifact! feed %)

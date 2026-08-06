@@ -182,9 +182,14 @@
         (project-emission/read-configuration
          (paths/workspace-root)
          "targets/pkl/destinations/parser.edn")]
-    (is (not (contains? (:package configuration) :symbols)))
+    (is (= :snupkg (get-in configuration [:package :symbols])))
     (is (= configuration
            (project-emission/validate-configuration! configuration)))
+    (is (not (contains?
+              (:package
+               (project-emission/validate-configuration!
+                (update configuration :package dissoc :symbols)))
+              :symbols)))
     (is (= :snupkg
            (get-in
             (project-emission/validate-configuration!
@@ -718,7 +723,7 @@
 
     (testing "all production inputs and source declarations are accounted for"
       (is (= 50 (:compilation-units summary)))
-      (is (= 62 (:generated-files summary)))
+      (is (= 63 (:generated-files summary)))
       (is (= 1 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -839,6 +844,23 @@
         (is (str/includes? project
                            "<RepositoryUrl>https://github.com/dripsharp/brine.git</RepositoryUrl>"))
         (is (str/includes? project "<RepositoryType>git</RepositoryType>"))
+        (doseq [property ["<DebugType>portable</DebugType>"
+                          "<DebugSymbols>true</DebugSymbols>"
+                          "<IncludeSymbols>true</IncludeSymbols>"
+                          "<SymbolPackageFormat>snupkg</SymbolPackageFormat>"
+                          "<PublishRepositoryUrl>true</PublishRepositoryUrl>"
+                          "<EmbedUntrackedSources>false</EmbedUntrackedSources>"
+                          "<EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>"]]
+          (is (str/includes? project property)))
+        (is (str/includes?
+             project
+             (str "<SourceRoot Include=\"$(MSBuildProjectDirectory)/\" "
+                  "RepositoryUrl=\"https://github.com/dripsharp/brine.git\" "
+                  "SourceControl=\"git\" RevisionId=\"$(RepositoryCommit)\" "
+                  "SourceLinkUrl=\"https://raw.githubusercontent.com/dripsharp/brine/"
+                  "$(RepositoryCommit)/src/DripSharp.Brine.Parser/*\" />")))
+        (is (not (str/includes? project
+                                "raw.githubusercontent.com/apple/pkl")))
         (is (str/includes? project "<PackageReadmeFile>README.md</PackageReadmeFile>"))
         (is (str/includes? project
                            "<None Include=\"../../README.md\" Pack=\"true\" PackagePath=\"/\" />"))

@@ -94,7 +94,10 @@
 (def ^:private nuget-publication-keys
   #{:decision :authors :owner-organization :publishing-account :source
     :project-url :repository-url :repository-type :repository-commit-policy
-    :version-policy :readme :icon :packages})
+    :symbols :version-policy :readme :icon :packages})
+
+(def ^:private nuget-symbol-policy-keys
+  #{:debug-type :package-format :source-link})
 
 (def ^:private nuget-version-policy-keys
   #{:kind :translator-revision})
@@ -1886,6 +1889,19 @@
      (:repository-commit-policy nuget)
      ":exact-clean-generated-product-commit"
      #{:exact-clean-generated-product-commit})
+    (let [symbols (:symbols nuget)]
+      (exact-keys! "Target NuGet symbol and Source Link policy"
+                   [:publication :nuget :symbols]
+                   nuget-symbol-policy-keys symbols)
+      (validation/check! context [:publication :nuget :symbols :debug-type]
+                         (:debug-type symbols) ":portable" #{:portable})
+      (validation/check! context
+                         [:publication :nuget :symbols :package-format]
+                         (:package-format symbols) ":snupkg" #{:snupkg})
+      (validation/check!
+       context [:publication :nuget :symbols :source-link]
+       (:source-link symbols) ":exact-generated-product-commit"
+       #{:exact-generated-product-commit}))
     (exact-keys! "Target NuGet version policy"
                  [:publication :nuget :version-policy]
                  nuget-version-policy-keys version-policy)
@@ -1949,6 +1965,8 @@
                  [:repository-type (:repository-type nuget)]
                  [:repository-commit-policy
                   (:repository-commit-policy nuget)]
+                 [:symbols
+                  (get-in nuget [:symbols :package-format])]
                  [:readme (:readme nuget)]]]
           (validation/agree!
            context

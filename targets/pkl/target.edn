@@ -93,6 +93,10 @@
    :repository-url "https://github.com/dripsharp/brine.git"
    :repository-type "git"
    :repository-commit-policy :exact-clean-generated-product-commit
+   :symbols
+   {:debug-type :portable
+    :package-format :snupkg
+    :source-link :exact-generated-product-commit}
    :version-policy {:kind :upstream-alpha-revision
                     :translator-revision 1}
    :readme "README.md"

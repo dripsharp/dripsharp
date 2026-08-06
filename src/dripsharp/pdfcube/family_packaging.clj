@@ -278,7 +278,7 @@
      :files (vec (sort expected-files))}))
 
 (defn- exact-package-contract
-  [package]
+  [repository-commit package]
   (let [id (get-in package [:identity :id])
         expected (get package-contract id)
         destination (:destination package)
@@ -303,7 +303,8 @@
           :version (:version symbol)
           :pdb-entry (:pdb-entry symbol-inspection)
           :pdb-sha256 (:pdb-sha256 symbol-inspection)
-          :dependencies (:dependencies symbol-inspection)}}]
+          :dependencies (:dependencies symbol-inspection)
+          :source-link (:source-link symbol-inspection)}}]
     (when-not expected
       (fail! "Packed an unapproved PdfCarton package"
              {:id id :approved (vec (sort (keys package-contract)))}))
@@ -314,6 +315,10 @@
       (when-not (re-matches #"[0-9a-f]{64}" (or value ""))
         (fail! "PdfCarton package proof contains an invalid artifact fingerprint"
                {:id id :subject subject :actual value})))
+    (when-not (pos-int? (get-in actual [:symbol :source-link :documents]))
+      (fail! "PdfCarton portable PDB has no generated source documents"
+             {:id id
+              :source-link (get-in actual [:symbol :source-link])}))
     (let [expected
           {:profile (:profile expected)
            :primary? (:primary? expected)
@@ -332,15 +337,22 @@
             :authors (get-in destination [:package :authors])
             :copyright package-copyright
             :symbols :snupkg
-            :repository-url "https://github.com/apache/pdfbox.git"
+            :repository-url "https://github.com/dripsharp/pdfcarton.git"
             :repository-type "git"
-            :repository-commit source-revision}
+            :repository-commit repository-commit}
            :symbol
            {:id id
             :version (package-version id)
             :pdb-entry (str "lib/" target-framework "/" id ".pdb")
             :pdb-sha256 (get-in actual [:symbol :pdb-sha256])
-            :dependencies (:dependencies expected)}}]
+            :dependencies (:dependencies expected)
+            :source-link
+            {:document-pattern "/_/*"
+             :documents (get-in actual [:symbol :source-link :documents])
+             :repository-commit repository-commit
+             :source-url
+             (str "https://raw.githubusercontent.com/dripsharp/pdfcarton/"
+                  repository-commit "/src/" id "/*")}}}]
       (when-not (= expected actual)
         (fail! "Packed PdfCarton artifact violates its exact package contract"
                {:id id :expected expected :actual actual}))
@@ -368,12 +380,11 @@
             (fail! "PdfCarton package family was not packed from two clean builds"
                    {:expected 2
                     :actual (get-in package-proof [:summary :clean-builds])}))
-        _ (when-not (= source-revision
-                       (get-in package-proof [:summary :repository-commit]))
-            (fail! "PdfCarton packages do not identify the synchronized source revision"
-                   {:expected source-revision
-                    :actual (get-in package-proof
-                                    [:summary :repository-commit])}))
+        repository-commit (get-in package-proof [:summary :repository-commit])
+        _ (when-not (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}"
+                                (or repository-commit ""))
+            (fail! "PdfCarton packages do not identify an exact generated-product revision"
+                   {:actual repository-commit}))
         external
         (set (map #(select-keys % [:id :version])
                   (:external-packages package-proof)))
@@ -381,7 +392,8 @@
             (fail! "PdfCarton package family restored an unapproved external dependency closure"
                    {:expected (vec (sort-by :id external-package-contract))
                     :actual (vec (sort-by :id external))}))
-        validated (mapv exact-package-contract packages)
+        validated (mapv (partial exact-package-contract repository-commit)
+                        packages)
         feed (exact-feed-artifacts! package-proof)
         native (inspect-native-assets!
                 (:feed package-proof) (:external-packages package-proof))]
