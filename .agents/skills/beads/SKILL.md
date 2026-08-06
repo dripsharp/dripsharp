@@ -9,7 +9,10 @@ description: Manually invoked Beads issue-tracking workflow for this repository.
 
 Use this skill only after an explicit user request for Beads. Do not infer Beads usage solely from the presence of a `.beads/` directory.
 
-Use Beads as the source of truth for issue tracking in this repository. Beads data lives in `.beads/` and is tracked in git, so sync it before ending a session when issue data changes.
+Use Beads as the source of truth for issue tracking in this repository. The
+Beads database and `issues.jsonl` export are intentionally local and ignored by
+git. Never add, force-add, or commit them. Keep the local database and export
+aligned with `br sync` before ending a session when issue data changes.
 
 ## Essential Commands
 
@@ -35,7 +38,7 @@ br close <id1> <id2>
 2. **Claim**: Use `br update <id> --status=in_progress`
 3. **Work**: Implement the task
 4. **Complete**: Use `br close <id>`
-5. Manually commit
+5. Sync the local Beads state
 
 ## Concepts
 
@@ -56,7 +59,10 @@ br close <id1> <id2>
 Before ending a session, run this checklist:
 
 ```bash
+br sync --flush-only
+br sync --status
 git status
-git add <files>
-git commit -m "..."
 ```
+
+Commit normal repository changes when the task requires them, but never include
+the local Beads database or `issues.jsonl` export.
