@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assess Port Candidate"
+  short_description: "Research and decide Java library port scope"
+  default_prompt: "Use $assess-port-candidate to evaluate a Java library as a DripSharp target and collect my scope decisions."

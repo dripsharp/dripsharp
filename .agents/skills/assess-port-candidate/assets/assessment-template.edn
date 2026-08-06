@@ -1,0 +1,74 @@
+{:schema-version 1
+ :assessment-id "candidate-1.0"
+ :eyebrow "Candidate target briefing"
+ :title "Should Candidate become a DripSharp target?"
+ :candidate
+ {:name "Candidate Library"
+  :version "1.0.0"
+  :revision "0123456789abcdef"
+  :source-url "https://example.com/upstream"
+  :license "Apache-2.0"}
+ :summary
+ "A concise, evidence-backed explanation of the candidate, its value, and the central porting tradeoff."
+ :recommendation
+ {:title "Proceed only after approving a precise product boundary"
+  :body "Explain the recommended scope and why it matches the upstream architecture without treating unfinished work as excluded."
+  :tone :caution}
+ :facts
+ [{:label "Modules" :value "12" :note "Eight reusable libraries and four applications"}
+  {:label "Production" :value "85k LOC" :note "Pinned stable release"}
+  {:label "Build" :value "Maven"}
+  {:label "Fit" :value "Medium" :note "New runtime capabilities required"}]
+ :findings
+ [{:title "Reusable foundation"
+   :body "Describe the project-neutral ingestion and translation capabilities already present."
+   :tone :positive}
+  {:title "Primary gap"
+   :body "Describe the hardest concrete compatibility or dependency boundary."
+   :tone :critical}]
+ :sources
+ [{:label "Upstream release" :url "https://example.com/releases/1.0.0"}
+  {:label "Upstream source" :url "https://example.com/source/1.0.0"}]
+ :sections
+ [{:id "product-scope"
+   :title "Choose the product boundary"
+   :description "Explain why this choice changes the public promise, package graph, and completion rule."
+   :evidence
+   ["State what upstream calls its reusable library surface."
+    "State which applications or optional facilities sit outside that surface."]
+   :questions
+   [{:id "scope"
+     :type :single
+     :prompt "Which upstream surface should the product promise?"
+     :description "This is a product-scope decision, not a milestone selection."
+     :required? true
+     :options
+     [{:value "core-libraries"
+       :label "Reusable libraries"
+       :description "Include the complete reusable module graph and explicitly exclude application shells."
+       :recommended? true}
+      {:value "complete-distribution"
+       :label "Complete distribution"
+       :description "Include libraries, applications, optional integrations, and their public behavior."}]}]}
+  {:id "evidence-policy"
+   :title "Choose the evidence contract"
+   :description "Decide what must ship and what remains validation-only."
+   :questions
+   [{:id "ship-adapted-tests"
+     :type :boolean
+     :prompt "Should the adapted upstream suite ship in the generated repository?"
+     :required? true}
+    {:id "required-platforms"
+     :type :multi
+     :prompt "Which platforms require completion execution evidence?"
+     :required? true
+     :options
+     [{:value "macos-arm64" :label "macOS ARM64"}
+      {:value "macos-x64" :label "macOS x64"}
+      {:value "linux-x64" :label "Linux x64"}
+      {:value "windows-x64" :label "Windows x64"}]}
+    {:id "product-name"
+     :type :text
+     :prompt "What should the generated product family be called?"
+     :placeholder "Product Name — Upstream for .NET"
+     :required? false}]}]}

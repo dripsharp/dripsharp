@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Port candidate assessment</title>
+    <link rel="stylesheet" href="/assets/style.css">
+  </head>
+  <body>
+    <div id="loading" class="loading-shell">
+      <div class="loading-mark">D</div>
+      <p>Loading assessment…</p>
+    </div>
+    <div id="app" class="app-shell" hidden>
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">D</span>
+          <div>
+            <strong>DripSharp</strong>
+            <span>Port assessment</span>
+          </div>
+        </div>
+        <nav id="sidebar-nav" aria-label="Assessment sections"></nav>
+        <div class="sidebar-footer">
+          <span class="status-dot"></span>
+          Local decision session
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <button id="menu-button" class="menu-button" type="button" aria-label="Toggle navigation">☰</button>
+          <div class="breadcrumbs"><span>Targets</span><b>/</b><span id="crumb-candidate"></span><b>/</b><strong>Assessment</strong></div>
+          <span id="progress-label" class="progress-label">0% complete</span>
+        </header>
+
+        <form id="assessment-form" novalidate>
+          <article id="overview" class="document-section hero-section"></article>
+          <div id="sections"></div>
+          <section id="final-notes" class="document-section notes-section">
+            <div class="section-kicker">Final note</div>
+            <h2>Anything the options missed?</h2>
+            <p>Add qualifications, alternate product names, or constraints the assessment should preserve.</p>
+            <textarea id="notes" rows="5" maxlength="20000" placeholder="Optional context for Codex…"></textarea>
+          </section>
+        </form>
+      </main>
+
+      <footer class="action-bar">
+        <div class="action-progress">
+          <div class="progress-track"><span id="progress-bar"></span></div>
+          <small id="question-count"></small>
+        </div>
+        <div class="action-buttons">
+          <button id="cancel-button" class="button button-secondary" type="button">Cancel</button>
+          <button id="submit-button" class="button button-primary" type="submit" form="assessment-form">Submit decisions</button>
+        </div>
+      </footer>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>
