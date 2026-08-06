@@ -47,10 +47,13 @@
    ["../DripSharp.PdfCarton/DripSharp.PdfCarton.csproj"
     "../DripSharp.PdfCarton.Xmp/DripSharp.PdfCarton.Xmp.csproj"]})
 
-(def ^:private deferred-package-metadata
-  {:authors "Vibeformer"
-   :project-url "https://pdfbox.apache.org/"
-   :repository-url "https://github.com/apache/pdfbox.git"})
+(def ^:private approved-package-metadata
+  {:authors "Isak Sky"
+   :project-url "https://github.com/dripsharp/pdfcarton"
+   :repository-url "https://github.com/dripsharp/pdfcarton.git"
+   :repository-type "git"
+   :repository-commit-policy :exact-clean-generated-product-commit
+   :readme "README.md"})
 
 (defn- identity-bearing-files
   []
@@ -157,8 +160,12 @@
            description
            "not affiliated with, endorsed by, or sponsored by the Apache Software Foundation."))))
 
-  (testing "deferred publisher and repository metadata is untouched"
+  (testing "approved publisher and generated-product metadata is exact"
     (doseq [destination (vals @destinations)]
-      (is (= deferred-package-metadata
+      (is (= approved-package-metadata
              (select-keys (:package destination)
-                          (keys deferred-package-metadata)))))))
+                          (keys approved-package-metadata)))))
+    (is (= #{"3.0.8-alpha.1"}
+           (set (map :version (vals (:packages @baseline))))))
+    (is (= (set (keys (:packages @baseline)))
+           (set (keys (get-in @target [:publication :nuget :packages])))))))

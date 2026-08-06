@@ -146,6 +146,7 @@
 
 (defn- reproducibility-fixture [^Path root divergent?]
   (let [verification-count (atom 0)
+        pack-commands (atom [])
         project-root (.resolve root "generated/brine/src/DripSharp.Brine.Parser")
         source-root (.resolve project-root "src")
         project-file (.resolve project-root "DripSharp.Brine.Parser.csproj")
@@ -227,7 +228,8 @@
             {:output (str (:repository-commit package) "\n")}
 
             (= "dotnet" (first command))
-            (let [output-index (.indexOf ^java.util.List command "--output")
+            (let [_ (swap! pack-commands conj command)
+                  output-index (.indexOf ^java.util.List command "--output")
                   output (Paths/get (nth command (inc output-index))
                                     (make-array String 0))
                   packed (package-archive!
@@ -245,13 +247,14 @@
             (throw (ex-info "Unexpected reproducibility fixture command"
                             {:command command}))))]
     {:verification-count verification-count
+     :pack-commands pack-commands
      :verify-fn verify-fn
      :run-command! run-command!}))
 
 (deftest package-reproducibility-requires-two-independent-clean-builds
   (let [root (Files/createTempDirectory "dripsharp-clean-build-reproducibility"
                                         (make-array FileAttribute 0))
-        {:keys [verification-count verify-fn run-command!]}
+        {:keys [verification-count pack-commands verify-fn run-command!]}
         (reproducibility-fixture root false)
         proof (packaging/pack-verified-profile!
                {:workspace-root root
@@ -263,6 +266,11 @@
                   {:public-surface {:types 1 :members 1
                                     :sha256 (apply str (repeat 64 "a"))}})})]
     (is (= 2 @verification-count))
+    (is (= 2 (count @pack-commands)))
+    (is (every?
+         #(some #{"-p:RepositoryCommit=0123456789abcdef0123456789abcdef01234567"}
+                %)
+         @pack-commands))
     (is (= 2 (get-in proof [:summary :clean-builds])))
     (is (= {:schema-version 1
             :translator "DripSharp"
@@ -728,9 +736,10 @@
         (java-project/read-configuration
          workspace "targets/pkl/destinations/core.edn")
         package
-        (assoc (:package destination)
-               :repository-commit
-               "0123456789abcdef0123456789abcdef01234567")
+        (-> (:package destination)
+            (dissoc :repository-commit-policy)
+            (assoc :repository-commit
+                   "0123456789abcdef0123456789abcdef01234567"))
         license (Files/readString
                  (paths/resolve-path workspace "research/pkl/LICENSE.txt"))
         upstream-notice
@@ -744,10 +753,12 @@
              "<title>" (:title package) "</title>"
              "<description>" (:description package) "</description>"
              "<authors>" (:authors package) "</authors>"
+             "<copyright>" (:copyright package) "</copyright>"
              "<tags>" (:tags package) "</tags>"
              "<license type=\"file\">LICENSE.txt</license>"
              "<licenseUrl>https://aka.ms/deprecateLicenseUrl</licenseUrl>"
              "<projectUrl>" (:project-url package) "</projectUrl>"
+             "<readme>" (:readme package) "</readme>"
              "<repository type=\"" (:repository-type package)
              "\" url=\"" (:repository-url package)
              "\" commit=\"" (:repository-commit package) "\" />"
@@ -760,20 +771,26 @@
         (str/replace
          (content-types)
          "</Types>"
-         "<Default Extension=\"txt\" ContentType=\"application/octet\" /></Types>")
+         (str "<Default Extension=\"txt\" ContentType=\"application/octet\" />"
+              "<Default Extension=\"md\" ContentType=\"application/octet\" />"
+              "</Types>"))
         base-entries
         {"DripSharp.Brine.nuspec" nuspec
          "lib/net8.0/DripSharp.Brine.dll" "assembly"
          "LICENSE.txt" license
+         "README.md" "# Brine\n"
          "[Content_Types].xml" content-types-with-text
          "_rels/.rels" (relationships "DripSharp.Brine.nuspec")
          "package/services/metadata/core-properties/core-properties.psmdcp"
          (core-properties package)}
         artifact (archive! (assoc base-entries "NOTICE.txt" notice))
         expected-files
-        (mapv (fn [{:keys [kind package-path sha256]}]
-                {:kind kind :path package-path :sha256 sha256})
-              (:legal-files destination))
+        (conj
+         (mapv (fn [{:keys [kind package-path sha256]}]
+                 {:kind kind :path package-path :sha256 sha256})
+               (:legal-files destination))
+         {:kind :readme :path "README.md"
+          :sha256 (sha256-text "# Brine\n")})
         dependencies [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}]
         inspection
         (packaging/inspect-package!
@@ -792,6 +809,40 @@
            (subs notice (count upstream-notice))))
     (is (= :package-consumption-failed (:kind (ex-data error))))
     (is (some #{"NOTICE.txt"} (:expected (ex-data error))))))
+
+(deftest generated-product-repository-commit-requires-an-exact-matching-proof
+  (let [repository "https://github.com/dripsharp/brine.git"
+        specs
+        [{:destination
+          {:package
+           {:repository-url repository
+            :repository-commit-policy
+            :exact-clean-generated-product-commit}}}]
+        proof {:repository-url repository
+               :repository-commit
+               "0123456789abcdef0123456789abcdef01234567"
+               :source-sha256 (apply str (repeat 64 "a"))}
+        resolve! @#'packaging/resolved-package-repository!
+        result (resolve! (fn [_] (throw (AssertionError. "unexpected Git call")))
+                         (paths/workspace-root) specs (constantly proof))
+        missing-proof
+        (try
+          (resolve! (fn [_] nil) (paths/workspace-root) specs nil)
+          nil
+          (catch clojure.lang.ExceptionInfo error error))
+        wrong-repository
+        (try
+          (resolve! (fn [_] nil) (paths/workspace-root) specs
+                    #(assoc proof :repository-url
+                            "https://github.com/apple/pkl.git"))
+          nil
+          (catch clojure.lang.ExceptionInfo error error))]
+    (is (= (:repository-commit proof) (:commit result)))
+    (is (= proof (:proof result)))
+    (is (= :package-consumption-failed
+           (:kind (ex-data missing-proof))))
+    (is (= :package-consumption-failed
+           (:kind (ex-data wrong-repository))))))
 
 (deftest package-inspection-rejects-a-bundled-project-dependency-assembly
   (let [artifact (package-archive! {"DripSharp.Brine.nuspec" (core-nuspec)

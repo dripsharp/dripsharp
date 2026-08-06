@@ -14,7 +14,7 @@
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
 
 (def ^:private version
-  "3.0.8-dripsharp.0")
+  "3.0.8-alpha.1")
 
 (def ^:private copyright
   "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")

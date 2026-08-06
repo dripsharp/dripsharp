@@ -21,7 +21,7 @@
 (def ^:private generated-publication-keys
   #{:kind :repository-slug :repository-url :default-branch
     :submodule-path :staging-path :profile-projects :managed-paths
-    :excluded-paths :test-suites :publication-mode})
+    :excluded-paths :test-suites :nuget :publication-mode})
 
 (defn- fail!
   [message data]
@@ -259,8 +259,14 @@
                         :path (str entry)}))
               entry))))))
 
+(defn- transient-build-entry?
+  [root entry]
+  (some #{"bin" "obj"}
+        (map str (iterator-seq (.iterator (.relativize ^Path root
+                                                       ^Path entry))))))
+
 (defn- validate-managed-sources!
-  [staging managed-paths]
+  [staging managed-paths allow-transient-build-artifacts?]
   (mapv
    (fn [relative]
      (let [source (safe-contained-path! staging relative
@@ -279,7 +285,8 @@
                      #(contains? #{"bin" "obj"}
                                  (str (.getFileName ^Path %))))
                     (mapv #(portable (.relativize staging ^Path %))))]
-           (when (seq transient)
+           (when (and (seq transient)
+                      (not allow-transient-build-artifacts?))
              (fail! "Managed staging contains transient build directories"
                     {:reason :transient-build-artifacts
                      :paths transient}))
@@ -324,24 +331,29 @@
   managed-paths)
 
 (defn- managed-inventory
-  [staging managed-paths excluded-paths]
-  (->> managed-paths
-       (mapcat
-        (fn [managed]
-          (let [source (safe-contained-path! staging managed
-                                             "Managed staging path")]
-            (if (directory-no-follow? source)
-              (for [^Path entry (walk-entries source
-                                              "Managed staging directory")
-                    :let [relative (portable (.relativize staging entry))]
-                    :when (not (excluded-path? excluded-paths relative))]
-                (if (directory-no-follow? entry)
-                  [:directory relative nil]
-                  [:file relative (util/sha256-file entry)]))
-              (when-not (excluded-path? excluded-paths managed)
-                [[:file managed (util/sha256-file source)]])))))
-       (sort-by (juxt second first))
-       vec))
+  ([staging managed-paths excluded-paths]
+   (managed-inventory staging managed-paths excluded-paths false))
+  ([staging managed-paths excluded-paths ignore-transient-build-artifacts?]
+   (->> managed-paths
+        (mapcat
+         (fn [managed]
+           (let [source (safe-contained-path! staging managed
+                                              "Managed staging path")]
+             (if (directory-no-follow? source)
+               (for [^Path entry (walk-entries source
+                                               "Managed staging directory")
+                     :let [relative (portable (.relativize staging entry))]
+                     :when (and
+                            (not (excluded-path? excluded-paths relative))
+                            (not (and ignore-transient-build-artifacts?
+                                      (transient-build-entry? staging entry))))]
+                 (if (directory-no-follow? entry)
+                   [:directory relative nil]
+                   [:file relative (util/sha256-file entry)]))
+               (when-not (excluded-path? excluded-paths managed)
+                 [[:file managed (util/sha256-file source)]])))))
+        (sort-by (juxt second first))
+        vec)))
 
 (defn- inventory-sha256
   [inventory]
@@ -445,19 +457,19 @@
          :let [path (:path entry)]
          :when (and (str/starts-with? path "products/")
                     (not= path intended-path))]
-     (do
-       (let [state (product-submodule-state workspace-root run-command! entry)]
-         (when (and (:initialized? state)
-                    (not (str/blank? (:status state))))
-           (fail! "Another product submodule contains local changes"
-                  {:reason :cross-product-changes
-                   :submodule-path path
-                   :status (:status state)}))
-         (parent-path-clean! workspace-root run-command! path)
-         [path state])))))
+     (let [state (product-submodule-state workspace-root run-command! entry)]
+       (when (and (:initialized? state)
+                  (not (str/blank? (:status state))))
+         (fail! "Another product submodule contains local changes"
+                {:reason :cross-product-changes
+                 :submodule-path path
+                 :status (:status state)}))
+       (parent-path-clean! workspace-root run-command! path)
+       [path state]))))
 
 (defn- preflight!
-  [{:keys [workspace-root run-command!] :as options
+  [{:keys [workspace-root run-command! allow-transient-build-artifacts?]
+    :as options
     :or {run-command! process/run!}}]
   (let [workspace-root
         (paths/absolute (or workspace-root (paths/workspace-root)))
@@ -483,7 +495,8 @@
             (fail! "Product submodule is missing or uninitialized"
                    {:reason :uninitialized-product-submodule
                     :path (str product)}))
-        _ (validate-managed-sources! staging managed-paths)
+        _ (validate-managed-sources! staging managed-paths
+                                     allow-transient-build-artifacts?)
         _ (validate-managed-destinations! product managed-paths)
         entries (gitmodule-entries workspace-root run-command!)
         matches (filterv #(= submodule-path (:path %)) entries)
@@ -532,7 +545,8 @@
         other-products
         (other-product-states! workspace-root run-command!
                                entries submodule-path)
-        inventory (managed-inventory staging managed-paths excluded-paths)]
+        inventory (managed-inventory staging managed-paths excluded-paths
+                                     allow-transient-build-artifacts?)]
     {:workspace-root workspace-root
      :target-contract target-contract
      :publication publication
@@ -544,6 +558,34 @@
      :inventory inventory
      :source-sha256 (inventory-sha256 inventory)
      :run-command! run-command!}))
+
+(defn verify-synchronized!
+  "Proves that clean generated-product HEAD contains exactly the managed staged
+  files that will be packed. Returns the exact commit and repository identity
+  without modifying either repository."
+  [{:keys [run-command!] :as options
+    :or {run-command! process/run!}}]
+  (let [{:keys [publication product inventory base-commit source-sha256]
+         :as preflight}
+        (preflight! (assoc options
+                           :run-command! run-command!
+                           :allow-transient-build-artifacts? true))
+        product-inventory
+        (managed-inventory product (:managed-paths publication)
+                           (:excluded-paths publication) true)]
+    (when-not (= inventory product-inventory)
+      (fail! "Generated product HEAD differs from proved package staging"
+             {:reason :stale-generated-product-commit
+              :repository (:repository-url publication)
+              :commit base-commit
+              :staging inventory
+              :product product-inventory}))
+    {:target (get-in preflight [:target-contract :target])
+     :repository-url (:repository-url publication)
+     :repository-commit base-commit
+     :source-sha256 source-sha256
+     :inventory inventory
+     :product-root product}))
 
 (defn- delete-tree!
   [path]

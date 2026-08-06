@@ -1,0 +1,12 @@
+JSqlParser 5.3
+
+This package contains an independent mechanical C#/.NET translation of
+JSqlParser produced by DripSharp. It is not affiliated with or endorsed by the
+JSqlParser project.
+
+JSqlParser contributors retain copyright in the translated upstream material.
+The Apache License 2.0 option selected for this package is provided in
+LICENSE.txt.
+
+Upstream source revision: 8a9479a05c75fcb73d0ed167a822b9b18ab7abaa
+Upstream repository: https://github.com/JSQLParser/JSqlParser.git

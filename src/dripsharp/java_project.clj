@@ -63,7 +63,8 @@
 
 (def ^:private package-allowed-keys
   (into package-required-keys
-        [:repository-commit :license-expression :copyright :symbols]))
+        [:repository-commit :repository-commit-policy :license-expression
+         :copyright :symbols :readme]))
 
 (def ^:private output-keys
   #{:project-directory :source-directory :resource-directory :project-file
@@ -230,6 +231,44 @@
        "a 40- or 64-character lowercase Git identity"
        #(and (string? %)
              (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %))))))
+  (when (contains? (:package configuration) :repository-commit-policy)
+    (validation/check!
+     (destination-context "Destination package repository-commit policy")
+     [:package :repository-commit-policy]
+     (get-in configuration [:package :repository-commit-policy])
+     ":exact-clean-generated-product-commit"
+     #{:exact-clean-generated-product-commit}))
+  (when (and (contains? (:package configuration) :repository-commit)
+             (contains? (:package configuration)
+                        :repository-commit-policy))
+    (validation/fail!
+     (destination-context "Destination package repository commit")
+     [:package]
+     (select-keys (:package configuration)
+                  [:repository-commit :repository-commit-policy])
+     "exactly one of :repository-commit or :repository-commit-policy"))
+  (let [readme (get-in configuration [:package :readme])
+        source (:package-readme-source configuration)]
+    (when-not (= (some? readme) (some? source))
+      (validation/fail!
+       (destination-context "Destination package README")
+       [:package :readme]
+       {:readme readme :source source}
+       ":package/:readme and :package-readme-source together"))
+    (when readme
+      (validation/check!
+       (destination-context "Destination package README")
+       [:package :readme] readme
+       "a normalized portable relative package path"
+       normalized-portable-relative-path?)
+      (validation/check!
+       (destination-context "Destination package README source")
+       [:package-readme-source] source
+       "a parent-relative portable path ending in the package README path"
+       #(and (non-blank-single-line-xml-path? %)
+             (not (str/includes? % "\\"))
+             (boolean (re-matches #"(?:[.][.]/)+[^/]+" %))
+             (str/ends-with? % (str "/" readme))))))
   (when (contains? (:package configuration) :license-expression)
     (let [license (get-in configuration [:package :license-expression])]
       (validation/check!
@@ -722,6 +761,8 @@
            (project-property "RepositoryType" (:repository-type package))
            (when-let [commit (:repository-commit package)]
              (project-property "RepositoryCommit" commit))
+           (when-let [readme (:readme package)]
+             (project-property "PackageReadmeFile" readme))
            (when-let [license (:license-expression package)]
              (project-property "PackageLicenseExpression" license))
            (when license-file
@@ -763,6 +804,13 @@
               ["Pack" "true"]
               ["PackagePath" package-path]]
              []))
+          (when (:readme package)
+            [(project-xml/element
+              "None"
+              [["Include" (:package-readme-source configuration)]
+               ["Pack" "true"]
+               ["PackagePath" "/"]]
+              [])])
           additional-items))]
     (project-xml/element
      "Project"

@@ -430,8 +430,7 @@
           profile-contract (profile workspace-root target profile-key)
           package-id (get-in configuration [:package :id])
           package-contract (package workspace-root target package-id)
-          external (:external-dependencies configuration)
-          pdfcube? (= :pdfcube (target-key target))]
+          external (:external-dependencies configuration)]
       (cond->
        (-> configuration
            (dissoc :baseline-target :baseline-profile :baseline-legal-sets)
@@ -454,11 +453,7 @@
                (legal-files workspace-root target legal-set-keys))
 
         (and (seq legal-set-keys) (:notice-appendix record))
-        (assoc :notice-appendix (:notice-appendix record))
-
-        pdfcube?
-        (assoc-in [:package :repository-commit]
-                  (get-in record [:upstream :revision]))))
+        (assoc :notice-appendix (:notice-appendix record))))
     configuration))
 
 (defn validate-project-input!

@@ -577,14 +577,16 @@
     (is (= revision io-differential/pinned-revision))
     (doseq [{:keys [profile destination]} prepared]
       (is (= revision (:revision profile)))
-      (is (= revision (get-in destination [:package :repository-commit])))
+      (is (= :exact-clean-generated-product-commit
+             (get-in destination [:package :repository-commit-policy])))
+      (is (not (contains? (:package destination) :repository-commit)))
       (is (= {:repository "https://github.com/apache/pdfbox.git"
               :revision revision
               :notice-reference "NOTICE.txt"}
              (:mechanical-source destination)))
       (is (str/ends-with? (:maven-project-id profile) (str ":" version)))
       (is (str/ends-with? (:source-project-id destination) (str ":" version)))
-      (is (= (str version "-dripsharp.0")
+      (is (= (str version "-alpha.1")
              (get-in destination [:package :version]))))
     (is (= revision
            (str/trim
@@ -720,7 +722,7 @@
       (is (= "net10.0" (get-in destination [:project :target-framework])))
       (is (= "disable" (get-in destination [:project :nullable])))
       (is (true? (get-in destination [:project :warnings-as-errors])))
-      (is (= "Vibeformer" (get-in destination [:package :authors])))
+      (is (= "Isak Sky" (get-in destination [:package :authors])))
       (is (= :snupkg (get-in destination [:package :symbols])))
       (is (= (str "Portions Copyright The Apache Software Foundation and "
                   "other upstream contributors; see NOTICE.txt.")

@@ -70,6 +70,7 @@
    :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
    :excluded-paths ["src/DripSharp.Brine/source-map.edn"]
    :test-suites {:schema-version 2}
+   :nuget {:fixture true}
    :publication-mode :pull-request})
 
 (defn- target-contract
@@ -219,6 +220,36 @@
           (is (empty? (:changes second)))
           (is (= (:source-sha256 first) (:source-sha256 second)))
           (is (= (:inventory first) (:inventory second)))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest synchronized-product-head-is-the-only-accepted-package-commit
+  (let [{:keys [workspace brine contract] :as fixture} (fixture!)]
+    (try
+      (product-repository/synchronize!
+       {:workspace-root workspace :target-contract contract})
+      (commit-synchronization! fixture)
+      (write! workspace
+              "target/generated/brine/src/DripSharp.Brine/bin/Release/net10.0/DripSharp.Brine.dll"
+              "verified build output\n")
+      (let [proof
+            (product-repository/verify-synchronized!
+             {:workspace-root workspace :target-contract contract})]
+        (is (= "https://github.com/dripsharp/brine.git"
+               (:repository-url proof)))
+        (is (= (git-output brine "rev-parse" "HEAD")
+               (:repository-commit proof)))
+        (is (not-any? #(= "src/DripSharp.Brine/source-map.edn" (second %))
+                      (:inventory proof))))
+      (write! workspace "target/generated/brine/README.md"
+              "# stale after committed product\n")
+      (let [result
+            (failure
+             #(product-repository/verify-synchronized!
+               {:workspace-root workspace :target-contract contract}))]
+        (is (= :stale-generated-product-commit (:reason result)))
+        (is (= "https://github.com/dripsharp/brine.git"
+               (:repository result))))
       (finally
         (delete-tree! workspace)))))
 

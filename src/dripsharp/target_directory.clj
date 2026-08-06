@@ -18,7 +18,7 @@
   (:import [java.io PushbackReader StringReader]
            [java.nio.file Files LinkOption]))
 
-(def schema-version 7)
+(def schema-version 8)
 (def legal-policy-schema-version 4)
 (def mapping-overlay-schema-version 1)
 
@@ -89,7 +89,21 @@
 (def ^:private generated-publication-keys
   #{:kind :repository-slug :repository-url :default-branch
     :submodule-path :staging-path :profile-projects :managed-paths
-    :excluded-paths :test-suites :publication-mode})
+    :excluded-paths :test-suites :nuget :publication-mode})
+
+(def ^:private nuget-publication-keys
+  #{:decision :authors :owner-organization :publishing-account :source
+    :project-url :repository-url :repository-type :repository-commit-policy
+    :version-policy :readme :icon :packages})
+
+(def ^:private nuget-version-policy-keys
+  #{:kind :translator-revision})
+
+(def ^:private nuget-icon-keys
+  #{:status :reason})
+
+(def ^:private nuget-package-keys
+  #{:version})
 
 (def ^:private conformance-publication-keys
   #{:kind})
@@ -1803,8 +1817,164 @@
                      {:target target :project id :directory directory})))))
       contract)))
 
+(defn- normalized-nuget-upstream-version
+  [version]
+  (let [parts (when (string? version) (str/split version #"[.]"))]
+    (when-not (and (contains? #{2 3} (count parts))
+                   (every? #(boolean (re-matches #"0|[1-9][0-9]*" %))
+                           parts))
+      (fail! "NuGet prerelease policy requires a two- or three-part numeric upstream version"
+             {:upstream-version version}))
+    (str/join "." (if (= 2 (count parts)) (conj parts "0") parts))))
+
+(defn- load-nuget-publication!
+  [target publication profiles baseline-record]
+  (let [nuget (:nuget publication)
+        context (validation-context "Target NuGet publication contract"
+                                    {:target target})
+        repository-url (:repository-url publication)
+        project-url (str/replace repository-url #"[.]git$" "")
+        package-profiles
+        (into
+         (sorted-map)
+         (map
+          (fn [[profile-id profile]]
+            [(get-in profile [:destination :configuration :package :id])
+             {:profile profile-id
+              :destination
+              (get-in profile [:destination :configuration])}]))
+         profiles)
+        package-ids (set (keys package-profiles))
+        baseline-packages (:packages baseline-record)
+        version-policy (:version-policy nuget)
+        revision (:translator-revision version-policy)
+        expected-version
+        (str (normalized-nuget-upstream-version
+              (get-in baseline-record [:upstream :version]))
+             "-alpha." revision)]
+    (exact-keys! "Target NuGet publication contract"
+                 [:publication :nuget]
+                 nuget-publication-keys nuget)
+    (doseq [field [:decision :authors :owner-organization
+                   :publishing-account]]
+      (validation/check! context [:publication :nuget field]
+                         (get nuget field)
+                         "non-blank single-line XML-compatible text"
+                         non-blank-single-line-xml-text?))
+    (doseq [field [:source :project-url :repository-url]]
+      (validation/check! context [:publication :nuget field]
+                         (get nuget field)
+                         "an absolute HTTP(S) URL with a host"
+                         absolute-package-url?))
+    (validation/agree! context
+                       [:publication :repository-url] repository-url
+                       [:publication :nuget :repository-url]
+                       (:repository-url nuget))
+    (validation/agree! context
+                       [:publication :repository-url-without-git-suffix]
+                       project-url
+                       [:publication :nuget :project-url]
+                       (:project-url nuget))
+    (validation/check! context [:publication :nuget :source]
+                       (:source nuget)
+                       "https://api.nuget.org/v3/index.json"
+                       #{"https://api.nuget.org/v3/index.json"})
+    (validation/check! context [:publication :nuget :repository-type]
+                       (:repository-type nuget) "git" #{"git"})
+    (validation/check!
+     context [:publication :nuget :repository-commit-policy]
+     (:repository-commit-policy nuget)
+     ":exact-clean-generated-product-commit"
+     #{:exact-clean-generated-product-commit})
+    (exact-keys! "Target NuGet version policy"
+                 [:publication :nuget :version-policy]
+                 nuget-version-policy-keys version-policy)
+    (validation/check! context [:publication :nuget :version-policy :kind]
+                       (:kind version-policy)
+                       ":upstream-alpha-revision"
+                       #{:upstream-alpha-revision})
+    (validation/check!
+     context [:publication :nuget :version-policy :translator-revision]
+     revision "a positive integer" pos-int?)
+    (validation/check! context [:publication :nuget :readme]
+                       (:readme nuget) "README.md" #{"README.md"})
+    (let [icon (:icon nuget)]
+      (exact-keys! "Target NuGet icon decision"
+                   [:publication :nuget :icon]
+                   nuget-icon-keys icon)
+      (validation/check! context [:publication :nuget :icon :status]
+                         (:status icon) ":deferred" #{:deferred})
+      (validation/check! context [:publication :nuget :icon :reason]
+                         (:reason icon)
+                         "a non-blank value-neutral reason"
+                         #(and (non-blank-text? %)
+                               (str/includes? (str/lower-case %)
+                                              "value-neutral"))))
+    (validation/check! context [:publication :nuget :packages]
+                       (:packages nuget)
+                       "a map containing every production package exactly once"
+                       map?)
+    (validation/agree! context
+                       [:profiles :production-package-ids] package-ids
+                       [:publication :nuget :packages]
+                       (set (keys (:packages nuget))))
+    (validation/agree! context
+                       [:baseline :packages] (set (keys baseline-packages))
+                       [:publication :nuget :packages]
+                       (set (keys (:packages nuget))))
+    (doseq [[package-id package] (:packages nuget)]
+      (exact-keys! "Target NuGet package version"
+                   [:publication :nuget :packages package-id]
+                   nuget-package-keys package)
+      (validation/check! context
+                         [:publication :nuget :packages package-id :version]
+                         (:version package) expected-version #{expected-version})
+      (validation/agree!
+       context
+       [:baseline :packages package-id :version]
+       (get-in baseline-packages [package-id :version])
+       [:publication :nuget :packages package-id :version]
+       (:version package)))
+    (doseq [[package-id {:keys [profile destination]}] package-profiles]
+      (let [package (:package destination)
+            project-path (get-in publication [:profile-projects profile])
+            expected-readme-source
+            (str (apply str (repeat (count (relative-components project-path))
+                                    "../"))
+                 (:readme nuget))]
+        (doseq [[field expected]
+                [[:authors (:authors nuget)]
+                 [:project-url (:project-url nuget)]
+                 [:repository-url (:repository-url nuget)]
+                 [:repository-type (:repository-type nuget)]
+                 [:repository-commit-policy
+                  (:repository-commit-policy nuget)]
+                 [:readme (:readme nuget)]]]
+          (validation/agree!
+           context
+           [:publication :nuget field] expected
+           [:profiles profile :destination :package field]
+           (get package field)))
+        (when (contains? package :repository-commit)
+          (fail! "Generated-product RepositoryCommit policy forbids a static source commit"
+                 {:target target :profile profile :package package-id
+                  :repository-commit (:repository-commit package)}))
+        (validation/agree!
+         context
+         [:publication :profile-projects profile :readme-source]
+         expected-readme-source
+         [:profiles profile :destination :package-readme-source]
+         (:package-readme-source destination))
+        (validation/agree!
+         context
+         [:profiles profile :destination :project :assembly-name]
+         (get-in destination [:project :assembly-name])
+         [:profiles profile :destination :package :id]
+         package-id)))
+    nuget))
+
 (defn- load-publication!
-  [target-root target family publication profiles proof]
+  [target-root target family publication profiles proof baseline-record]
   (let [context (validation-context "Target publication contract"
                                     {:target target})
         kind (:kind publication)]
@@ -1922,6 +2092,9 @@
                [:publication :profile-projects profile-id]
                (str staging-under-target "/" project-path))))
           (assoc publication
+                 :nuget
+                 (load-nuget-publication!
+                  target publication profiles baseline-record)
                  :test-suites
                  (load-test-suites!
                   target-root target test-suites-path profiles
@@ -2156,8 +2329,8 @@
        (validation/check!
         (validation-context "Target manifest")
         [:schema-version] (:schema-version manifest)
-        (str "the supported schema version " schema-version)
-        #{schema-version})
+        (str "a supported schema version in " [7 schema-version])
+        #{7 schema-version})
        (let [target (target-id (:target manifest))
              family (:product-family manifest)
              java (validate-java! (:java manifest))
@@ -2257,7 +2430,14 @@
                  publication
                  (load-publication! target-root target family
                                     (:publication manifest)
-                                    profiles proof)
+                                    profiles proof baseline-record)
+                 _ (when (= :generated-repository (:kind publication))
+                     (validation/check!
+                      (validation-context "Generated target manifest")
+                      [:schema-version] (:schema-version manifest)
+                      (str "the generated-publication schema version "
+                           schema-version)
+                      #{schema-version}))
                  selected-destinations
                  (set (map #(get-in % [:descriptor :destination])
                            (vals profiles)))
@@ -2311,7 +2491,7 @@
                        (vec (sort
                              (set/difference provided-capabilities
                                              declared-capabilities)))}))
-             {:schema-version schema-version
+             {:schema-version (:schema-version manifest)
               :target target
               :product-family family
               :workspace-root workspace-root

@@ -243,8 +243,9 @@
            (:maven-project-id profile)))
     (is (= (get-in pdf-record [:packages "DripSharp.PdfCarton" :version])
            (get-in destination [:package :version])))
-    (is (= (get-in pdf-record [:upstream :revision])
-           (get-in destination [:package :repository-commit])))
+    (is (= :exact-clean-generated-product-commit
+           (get-in destination [:package :repository-commit-policy])))
+    (is (not (contains? (:package destination) :repository-commit)))
     (is (= (baseline/legal-files :pdfcube [:upstream :codecs])
            (:legal-files destination)))
     (doseq [[coordinate dependency] (:external-dependencies destination)]

@@ -9,6 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../probe/SqlTrellisModelApiProgram.cs" Link="Program.cs" />
-    <PackageReference Include="DripSharp.SqlTrellis" Version="5.3.0-dripsharp.0" />
+    <PackageReference Include="DripSharp.SqlTrellis" Version="5.3.0-alpha.1" />
   </ItemGroup>
 </Project>

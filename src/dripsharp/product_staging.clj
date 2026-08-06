@@ -49,6 +49,11 @@
           :target-framework (get-in destination [:project :target-framework])
           :package-title (get-in destination [:package :title])
           :package-description (get-in destination [:package :description])
+          :package-id (get-in destination [:package :id])
+          :package-version
+          (get-in target-contract
+                  [:baseline :record :packages
+                   (get-in destination [:package :id]) :version])
           :repository-path project-path}))
      (sort-by key (:profile-projects publication)))))
 
@@ -143,10 +148,11 @@
         (:content (first present))))))
 
 (defn- project-line
-  [{:keys [assembly-name package-title target-framework repository-path
-           project-file]}]
+  [{:keys [assembly-name package-title package-version target-framework
+           repository-path project-file]}]
   (str "- [`" assembly-name "`](" repository-path "/" project-file ") — "
-       package-title " (`" target-framework "`)\n"))
+       package-title " (`" target-framework "`, version `" package-version
+       "`)\n"))
 
 (defn- render-readme
   [target-contract records]
@@ -177,6 +183,17 @@
          "## Projects\n\n"
          (apply str (map project-line
                          (sort-by :assembly-name records)))
+         "\n## Install\n\n"
+         "The first public packages are prereleases. Install the package you "
+         "need from nuget.org:\n\n"
+         (apply
+          str
+          (for [{:keys [package-id package-version]}
+                (sort-by :package-id records)]
+            (str "```sh\n"
+                 "dotnet add package " package-id
+                 " --version " package-version "\n"
+                 "```\n\n")))
          "\n## Build and test\n\n"
          "From a clean checkout:\n\n"
          (apply

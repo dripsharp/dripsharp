@@ -143,7 +143,7 @@
           (is (= "a non-blank XML-compatible string"
                  (:expected (ex-data error)))))))))
 
-(deftest destination-repository-commit-must-be-absent-or-valid
+(deftest destination-repository-identity-must-use-one-valid-policy
   (let [configuration
         (project-emission/read-configuration
          (paths/workspace-root)
@@ -155,9 +155,9 @@
     (is (= valid-commit
            (get-in
             (project-emission/validate-configuration!
-             (assoc-in configuration
-                       [:package :repository-commit]
-                       valid-commit))
+             (-> configuration
+                 (update :package dissoc :repository-commit-policy)
+                 (assoc-in [:package :repository-commit] valid-commit)))
             [:package :repository-commit])))
     (doseq [value [nil false]]
       (testing (str "a key-present " (pr-str value)
@@ -165,7 +165,9 @@
         (let [error
               (try
                 (project-emission/validate-configuration!
-                 (assoc-in configuration [:package :repository-commit] value))
+                 (-> configuration
+                     (update :package dissoc :repository-commit-policy)
+                     (assoc-in [:package :repository-commit] value)))
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
           (is (= :invalid-destination-configuration
@@ -827,16 +829,19 @@
         (is (str/includes?
              project
              "<DefineConstants>$(DefineConstants);DRIPSHARP_INTERNAL_JAVA_COMPAT</DefineConstants>"))
-        (is (str/includes? project "<Authors>Vibeformer</Authors>"))
+        (is (str/includes? project "<Authors>Isak Sky</Authors>"))
         (is (str/includes? project "<Title>Brine Parser — Pkl for .NET</Title>"))
         (is (str/includes? project pkl-non-affiliation-disclaimer))
         (is (str/includes? project
                            "<PackageTags>brine pkl parser dotnet dripsharp</PackageTags>"))
         (is (str/includes? project
-                           "<PackageProjectUrl>https://github.com/isaksky/pkl-net</PackageProjectUrl>"))
+                           "<PackageProjectUrl>https://github.com/dripsharp/brine</PackageProjectUrl>"))
         (is (str/includes? project
-                           "<RepositoryUrl>https://github.com/isaksky/pkl-net.git</RepositoryUrl>"))
+                           "<RepositoryUrl>https://github.com/dripsharp/brine.git</RepositoryUrl>"))
         (is (str/includes? project "<RepositoryType>git</RepositoryType>"))
+        (is (str/includes? project "<PackageReadmeFile>README.md</PackageReadmeFile>"))
+        (is (str/includes? project
+                           "<None Include=\"../../README.md\" Pack=\"true\" PackagePath=\"/\" />"))
         (is (str/includes? project
                            "LogicalName=\"org.pkl.parser.errorMessages.properties\""))
         (is (= (vec (Files/readAllBytes ^Path upstream))

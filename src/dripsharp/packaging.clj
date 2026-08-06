@@ -336,6 +336,8 @@
             ["authors" (:authors package)]
             ["tags" (:tags package)]
             ["projectUrl" (:project-url package)]]
+            (:readme package)
+            (conj ["readme" (:readme package)])
             (:copyright package)
             (conj ["copyright" (:copyright package)]))]
       (require-exact-attributes! metadata {} "package/metadata")
@@ -593,6 +595,8 @@
             ["projectUrl" (:project-url package)]
             ["description" (:description package)]
             ["tags" (:tags package)]]
+            (:readme package)
+            (conj ["readme" (:readme package)])
             (:copyright package)
             (conj ["copyright" (:copyright package)]))]
       (require-exact-attributes! metadata {} "package/metadata")
@@ -736,7 +740,7 @@
                      expected-dependencies []))
   ([artifact {:keys [id version title description authors tags project-url
                      repository-url repository-type repository-commit
-                     license-expression copyright]}
+                     license-expression copyright readme]}
     target-framework assembly-name
     expected-dependencies expected-package-files]
    (with-open [archive (ZipFile. (str artifact))]
@@ -772,7 +776,7 @@
                              :repository-type repository-type
                              :repository-commit repository-commit
                              :license-expression license-expression
-                             :copyright copyright}
+                             :copyright copyright :readme readme}
                             :license-file
                             (some #(when (= :license (:kind %)) (:path %))
                                   expected-package-files))
@@ -1182,9 +1186,25 @@
           :resource-notice-attribution resource-notice-attribution
           :expected-dependencies expected-dependencies
           :expected-package-files
-          (mapv (fn [{:keys [kind package-path sha256]}]
-                  {:kind kind :path package-path :sha256 sha256})
-                (:legal-files destination))
+          (let [legal
+                (mapv (fn [{:keys [kind package-path sha256]}]
+                        {:kind kind :path package-path :sha256 sha256})
+                      (:legal-files destination))
+                readme (get-in destination [:package :readme])]
+            (if readme
+              (let [source
+                    (paths/resolve-path
+                     (:project-root emission)
+                     (:package-readme-source destination))]
+                (when-not (paths/regular-file? source)
+                  (fail! "Package README source is missing from generated product staging"
+                         {:profile profile
+                          :package (get-in destination [:package :id])
+                          :source (str source)}))
+                (conj legal
+                      {:kind :readme :path readme
+                       :sha256 (sha256 source)}))
+              legal))
           :expected-assembly-dependencies
           (mapv
            (fn [{dependency-destination :destination}]
@@ -1226,6 +1246,38 @@
              {:expected "<40-or-64-character-lowercase-hex>"
               :actual commit :output (:output result)}))
     commit))
+
+(defn- resolved-package-repository!
+  [run-command! root specs repository-proof-fn]
+  (let [packages (mapv #(get-in % [:destination :package]) specs)
+        commits (set (keep :repository-commit packages))
+        policies (set (keep :repository-commit-policy packages))
+        repository-urls (set (map :repository-url packages))]
+    (when (or (< 1 (count commits))
+              (< 1 (count policies))
+              (and (seq commits) (seq policies)))
+      (fail! "NuGet package family has inconsistent RepositoryCommit metadata"
+             {:commits commits :policies policies}))
+    (if (= #{:exact-clean-generated-product-commit} policies)
+      (do
+        (when-not (ifn? repository-proof-fn)
+          (fail! "Generated-product packaging requires a synchronized repository proof"
+                 {:policy :exact-clean-generated-product-commit
+                  :repositories repository-urls}))
+        (let [{:keys [repository-url repository-commit] :as proof}
+              (repository-proof-fn)]
+          (when-not (= #{repository-url} repository-urls)
+            (fail! "Generated-product repository proof identifies the wrong repository"
+                   {:expected repository-urls :actual repository-url}))
+          (when-not (boolean
+                     (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}"
+                                 (or repository-commit "")))
+            (fail! "Generated-product repository proof has no exact Git commit"
+                   {:expected "<40-or-64-character-lowercase-hex>"
+                    :actual repository-commit}))
+          {:commit repository-commit :proof proof}))
+      {:commit (or (first commits) (repository-commit! run-command! root))
+       :proof nil})))
 
 (defn- verified-authorship!
   [emission]
@@ -1308,7 +1360,8 @@
                 (:source-inventory-sha256 proof)})]
     {:ledger ledger :proof proof :manifest manifest-file}))
 
-(defn- pack-project! [run-command! build-configuration ^Path output
+(defn- pack-project! [run-command! build-configuration repository-commit
+                      ^Path output
                       {:keys [emission]}]
   (let [project-root (:project-root emission)
         project-file (:project-file emission)
@@ -1316,7 +1369,9 @@
     (run-command! {:command ["dotnet" "pack" (str project-file)
                              "--nologo" "--verbosity:minimal"
                              "--configuration" build-configuration
-                             "--no-build" "--no-restore" "--output" (str output)]
+                             "--no-build" "--no-restore"
+                             (str "-p:RepositoryCommit=" repository-commit)
+                             "--output" (str output)]
                    :directory project-root})))
 
 (defn- inspect-package-assembly!
@@ -1378,7 +1433,8 @@
   byte-identical inspected dependency closure to a fresh local feed. This does
   not perform independent package consumption."
   ([] (pack-verified-profile! {}))
-  ([{:keys [workspace-root profile verify-fn run-command! inspect-resources-fn]
+  ([{:keys [workspace-root profile verify-fn run-command! inspect-resources-fn
+            repository-proof-fn]
      :or {verify-fn compiler/verify-clean-build!
           run-command! process/run!
           inspect-resources-fn inspect-package-assembly!}}]
@@ -1392,32 +1448,40 @@
                      :build-configuration "Release"})
          first-build-configuration (:build-configuration first-verification)
          first-specs (package-specs (:generation first-verification))
+         first-repository
+         (resolved-package-repository!
+          run-command! root first-specs repository-proof-fn)
+         repository-commit (:commit first-repository)
          first-output (Files/createTempDirectory
                        "dripsharp-first-clean-pack-"
                        (make-array java.nio.file.attribute.FileAttribute 0))]
      (try
        (doseq [spec first-specs]
-         (pack-project! run-command! first-build-configuration first-output spec))
+         (pack-project! run-command! first-build-configuration
+                        repository-commit first-output spec))
        (let [verification
              (verify-fn {:workspace-root root :profile profile
                          :build-configuration "Release"})
              generation (:generation verification)
              build-configuration (:build-configuration verification)
              specs (package-specs generation)
+             second-repository
+             (resolved-package-repository!
+              run-command! root specs repository-proof-fn)
              first-plan (package-reproducibility-plan first-specs)
              second-plan (package-reproducibility-plan specs)]
          (when-not (and (= first-build-configuration build-configuration)
-                        (= first-plan second-plan))
+                        (= first-plan second-plan)
+                        (= first-repository second-repository))
            (fail! "Independent clean builds produced different NuGet package plans"
                   {:profile profile
                    :first-build-configuration first-build-configuration
                    :second-build-configuration build-configuration
-                   :first first-plan :second second-plan}))
+                   :first first-plan :second second-plan
+                   :first-repository first-repository
+                   :second-repository second-repository}))
          (let [package-assembly-names
                (mapv #(get-in % [:destination :project :assembly-name]) specs)
-               repository-commit
-               (or (get-in generation [:destination :package :repository-commit])
-                   (repository-commit! run-command! root))
                proof-root (harness/clean-directory!
                            (paths/resolve-path root "target" "package-proof"))
                second-output (doto (paths/resolve-path proof-root "second-pack")
@@ -1433,7 +1497,8 @@
                       (Files/createDirectories
                        (make-array java.nio.file.attribute.FileAttribute 0)))]
            (doseq [spec specs]
-             (pack-project! run-command! build-configuration second-output spec))
+             (pack-project! run-command! build-configuration
+                            repository-commit second-output spec))
            (let [packages
                  (mapv
                   (fn [{:keys [profile emission destination authorship

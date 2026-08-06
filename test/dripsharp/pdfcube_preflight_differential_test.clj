@@ -71,8 +71,8 @@
           "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp"]
          (get-in preflight-differential/expected-package-contract
                  [:assembly :dependency-assemblies])))
-  (is (= [{:id "DripSharp.PdfCarton.Xmp" :version "3.0.8-dripsharp.0"}
-          {:id "DripSharp.PdfCarton" :version "3.0.8-dripsharp.0"}
+  (is (= [{:id "DripSharp.PdfCarton.Xmp" :version "3.0.8-alpha.1"}
+          {:id "DripSharp.PdfCarton" :version "3.0.8-alpha.1"}
           {:id "Microsoft.Extensions.Logging.Abstractions"
            :version "10.0.0"}
           {:id "SkiaSharp" :version "4.150.1"}]

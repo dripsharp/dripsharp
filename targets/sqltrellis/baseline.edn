@@ -40,9 +40,15 @@
     :destination "Legal/LICENSE.txt"
     :package-path "LICENSE.txt"
     :source-sha256 "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
-    :sha256 "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"}]}
+    :sha256 "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"}
+   {:kind :notice
+    :source "targets/sqltrellis/legal/NOTICE.txt"
+    :destination "Legal/NOTICE.txt"
+    :package-path "NOTICE.txt"
+    :source-sha256 "883f4663464feb3fbd6afb08ebcd90c38c4f0983e390da7df3512db2e2ff7321"
+    :sha256 "883f4663464feb3fbd6afb08ebcd90c38c4f0983e390da7df3512db2e2ff7321"}]}
  :packages
- {"DripSharp.SqlTrellis" {:version "5.3.0-dripsharp.0"}}
+ {"DripSharp.SqlTrellis" {:version "5.3.0-alpha.1"}}
  :profiles
  {:core
   {:profile "sqltrellis"

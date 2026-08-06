@@ -14,13 +14,16 @@
  :package {:id "DripSharp.PdfCarton.Xmp"
            :title "PdfCarton XMP"
            :description "Apache XmpBox metadata APIs for .NET, mechanically translated by DripSharp. This package is an independent translation and is not affiliated with, endorsed by, or sponsored by the Apache Software Foundation."
-           :authors "Vibeformer"
+           :authors "Isak Sky"
            :copyright "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt."
            :symbols :snupkg
            :tags "pdf pdfbox xmp metadata xml dotnet pdfcarton"
-           :project-url "https://pdfbox.apache.org/"
-           :repository-url "https://github.com/apache/pdfbox.git"
-           :repository-type "git"}
+           :project-url "https://github.com/dripsharp/pdfcarton"
+           :repository-url "https://github.com/dripsharp/pdfcarton.git"
+           :repository-type "git"
+           :repository-commit-policy :exact-clean-generated-product-commit
+           :readme "README.md"}
+ :package-readme-source "../../README.md"
  :output {:project-directory "generated/pdfcarton/src/DripSharp.PdfCarton.Xmp"
           :source-directory "src"
           :resource-directory "resources"

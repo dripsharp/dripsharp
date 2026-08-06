@@ -1,4 +1,4 @@
-{:schema-version 7
+{:schema-version 8
  :target :sqltrellis
  :product-family :sqltrellis
  :contracts
@@ -57,6 +57,24 @@
                   "LICENSE" "NOTICE" "README.md"]
   :excluded-paths ["src/DripSharp.SqlTrellis/source-map.edn"]
   :test-suites "test-suites.edn"
+  :nuget
+  {:decision "pkl-4m8d.1"
+   :authors "Isak Sky"
+   :owner-organization "DripSharp"
+   :publishing-account "isaksky"
+   :source "https://api.nuget.org/v3/index.json"
+   :project-url "https://github.com/dripsharp/sqltrellis"
+   :repository-url "https://github.com/dripsharp/sqltrellis.git"
+   :repository-type "git"
+   :repository-commit-policy :exact-clean-generated-product-commit
+   :version-policy {:kind :upstream-alpha-revision
+                    :translator-revision 1}
+   :readme "README.md"
+   :icon
+   {:status :deferred
+    :reason
+    "A package icon is deferred until a shared DripSharp visual identity is approved; omission is value-neutral and does not imply upstream or publisher branding."}
+   :packages {"DripSharp.SqlTrellis" {:version "5.3.0-alpha.1"}}}
   :publication-mode :pull-request}
  :proof
  {:role :product

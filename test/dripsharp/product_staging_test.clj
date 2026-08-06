@@ -84,6 +84,13 @@
                 (paths/resolve-path (:staging first) "NOTICE"))))
         (is (str/includes? first-readme "# Brine — Pkl for .NET"))
         (is (str/includes? first-readme "DripSharp.Brine.Parser"))
+        (is (str/includes?
+             first-readme
+             "dotnet add package DripSharp.Brine --version 0.32.0-alpha.1"))
+        (is (str/includes?
+             first-readme
+             "dotnet add package DripSharp.Brine.Parser --version 0.32.0-alpha.1"))
+        (is (str/includes? first-readme "independent .NET translation"))
         (is (str/includes? first-readme
                            "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"))
         (is (= first-readme (Files/readString readme)))

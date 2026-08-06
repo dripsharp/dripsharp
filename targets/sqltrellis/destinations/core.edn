@@ -16,12 +16,15 @@
  {:id "DripSharp.SqlTrellis"
   :title "SqlTrellis — JSqlParser for .NET"
   :description "JSqlParser for .NET, mechanically translated by DripSharp as an independent project not affiliated with or endorsed by the JSqlParser project."
-  :authors "JSqlParser contributors,Vibeformer translation"
+  :authors "Isak Sky"
+  :copyright "Portions Copyright JSqlParser contributors; see LICENSE.txt and NOTICE.txt."
   :tags "sql parser jsqlparser dotnet sqltrellis dripsharp"
-  :project-url "https://github.com/JSQLParser/JSqlParser"
-  :repository-url "https://github.com/JSQLParser/JSqlParser.git"
+  :project-url "https://github.com/dripsharp/sqltrellis"
+  :repository-url "https://github.com/dripsharp/sqltrellis.git"
   :repository-type "git"
-  :repository-commit "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa"}
+  :repository-commit-policy :exact-clean-generated-product-commit
+  :readme "README.md"}
+ :package-readme-source "../../README.md"
  :output
  {:project-directory "generated/sqltrellis/src/DripSharp.SqlTrellis"
   :source-directory "src"

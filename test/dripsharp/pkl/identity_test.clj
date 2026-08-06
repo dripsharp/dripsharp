@@ -15,10 +15,13 @@
 (def ^:private core (delay (read-edn "targets/pkl/destinations/core.edn")))
 (def ^:private parser (delay (read-edn "targets/pkl/destinations/parser.edn")))
 
-(def ^:private deferred-package-metadata
-  {:authors "Vibeformer"
-   :project-url "https://github.com/isaksky/pkl-net"
-   :repository-url "https://github.com/isaksky/pkl-net.git"})
+(def ^:private approved-package-metadata
+  {:authors "Isak Sky"
+   :project-url "https://github.com/dripsharp/brine"
+   :repository-url "https://github.com/dripsharp/brine.git"
+   :repository-type "git"
+   :repository-commit-policy :exact-clean-generated-product-commit
+   :readme "README.md"})
 
 (deftest approved-brine-identities-govern-generated-dotnet-output
   (testing "the Pkl source target emits the Brine product family"
@@ -98,7 +101,11 @@
       (is (str/includes? (get-in destination [:package :description])
                          "not affiliated with, endorsed by, or sponsored by Apple Inc."))))
 
-  (testing "deferred publisher and repository metadata is untouched"
-    (is (= deferred-package-metadata
-           (select-keys (:package @core) (keys deferred-package-metadata))
-           (select-keys (:package @parser) (keys deferred-package-metadata))))))
+  (testing "approved publisher and generated-product metadata is exact"
+    (is (= approved-package-metadata
+           (select-keys (:package @core) (keys approved-package-metadata))
+           (select-keys (:package @parser) (keys approved-package-metadata))))
+    (is (= #{"0.32.0-alpha.1"}
+           (set (map :version (vals (:packages @baseline))))))
+    (is (= (set (keys (:packages @baseline)))
+           (set (keys (get-in @target [:publication :nuget :packages])))))))

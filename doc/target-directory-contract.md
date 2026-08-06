@@ -14,11 +14,13 @@ to the product-neutral directory loader.
 
 ## Manifest
 
-`targets/<target-id>/target.edn` uses schema version 7 and has exactly these
-keys:
+`targets/<target-id>/target.edn` uses schema version 8 for generated repository
+publication and has exactly these keys. Schema version 7 remains readable for
+the existing conformance-only target; it cannot declare a generated product
+publication.
 
 ```clojure
-{:schema-version 7
+{:schema-version 8
  :target :example
  :product-family :example
 
@@ -86,6 +88,22 @@ keys:
   :profile-projects {"example-core" "src/Example.Core"}
   :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
   :test-suites "test-suites.edn"
+  :nuget
+  {:decision "the approved publication-metadata decision"
+   :authors "Approved Publisher"
+   :owner-organization "DripSharp"
+   :publishing-account "approved-account"
+   :source "https://api.nuget.org/v3/index.json"
+   :project-url "https://github.com/dripsharp/example"
+   :repository-url "https://github.com/dripsharp/example.git"
+   :repository-type "git"
+   :repository-commit-policy :exact-clean-generated-product-commit
+   :version-policy {:kind :upstream-alpha-revision
+                    :translator-revision 1}
+   :readme "README.md"
+   :icon {:status :deferred
+          :reason "An icon is deferred for a documented value-neutral reason."}
+   :packages {"Example.Core" {:version "1.2.3-alpha.1"}}}
   :publication-mode :pull-request}
 
  :proof
@@ -127,6 +145,29 @@ non-overlapping vector of top-level repository paths. This keeps generated
 and proved output outside the product checkout and gives synchronization an
 exact copy boundary. Generated product publications must manage `tests/` and
 reference the canonical target-owned `test-suites.edn` contract.
+
+Schema version 8 also requires one exact `:nuget` contract for every generated
+product repository. Its package ids equal the production profile destinations
+and baseline package inventory. `:upstream-alpha-revision` normalizes a numeric
+upstream version to three components and derives `<upstream>-alpha.<revision>`;
+the derived values must equal both the NuGet contract and baseline. Publisher,
+project URL, repository URL and type, README, and commit policy must agree with
+every destination configuration. The package repository is the generated
+DripSharp product repository, while upstream repository and revision evidence
+remain in the baseline, legal, and provenance contracts.
+
+`:exact-clean-generated-product-commit` is resolved only during packaging. The
+packager proves that the product checkout is clean, its origin is the declared
+repository, its parent gitlink is exact, and its managed inventory is identical
+to the proved staging inventory. It injects that product HEAD as
+`RepositoryCommit` and exact nupkg inspection rejects any mismatch. A static
+upstream source revision in destination package metadata is forbidden.
+
+Every production package packs the generated repository's root `README.md`.
+The README lists the family projects, exact prerelease versions, installation
+commands, build and test entry points, upstream source identity, independent
+translation status, and legal files. Until an icon is approved, the icon entry
+must explicitly record `:deferred` and a non-promotional, value-neutral reason.
 
 The reusable test-suite contract has this shape (vectors may contain multiple
 exact project identities and multiple strategies may contribute to one

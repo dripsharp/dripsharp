@@ -255,6 +255,12 @@
       (stage-options options)
       {:workspace-root (:workspace-root execution)
        :profile (profile-selection! (:profile execution))
+       :repository-proof-fn
+       (when (= :generated-repository
+                (get-in execution [:contract :publication :kind]))
+         #(product-repository/verify-synchronized!
+           {:workspace-root (:workspace-root execution)
+            :target-contract (:contract execution)}))
        :verify-fn
        #(verify-loaded! execution % verify-fn generate-fn)}))))
 

@@ -3168,8 +3168,11 @@
               (get-in configuration [:project :root-namespace])]
              [[:package :id] (get-in configuration [:package :id])]
              [[:package :version] (get-in configuration [:package :version])]
-             [[:package :repository-commit]
-              (get-in configuration [:package :repository-commit])]
+             [[:package :repository-commit-policy]
+              (get-in configuration [:package :repository-commit-policy])]
+             [[:package :readme]
+              (get-in configuration [:package :readme])]
+             [:package-readme-source (:package-readme-source configuration)]
              [[:package :copyright]
               (get-in configuration [:package :copyright])]
              [[:package :symbols]
@@ -3207,7 +3210,10 @@
               [:package :id] package-id
               [:package :version]
               (:version (baseline/package :pdfcube package-id))
-              [:package :repository-commit] source-revision
+              [:package :repository-commit-policy]
+              :exact-clean-generated-product-commit
+              [:package :readme] "README.md"
+              :package-readme-source "../../README.md"
               [:package :copyright] package-copyright
               [:package :symbols] :snupkg
               :mechanical-source mechanical-source

@@ -85,7 +85,7 @@
       :package-path "NOTICE.txt"
       :sha256 (util/sha256-text "Acme notice\n")}]}
    :packages
-   {"Acme.Core" {:version "1.0.0" :assembly-version "1.0.0.0"}}
+   {"Acme.Core" {:version "1.0.0-alpha.1" :assembly-version "1.0.0.0"}}
    :profiles
    {:core
     {:profile "acme-core"
@@ -127,8 +127,12 @@
     :description
     "Acme Core for .NET. This package is an independent translation and is not affiliated with UpstreamCo."
     :authors "DripSharp"
-    :project-url "https://example.invalid/acme"
-    :repository-url "https://example.invalid/acme.git"}
+    :project-url "https://github.com/dripsharp/acme"
+    :repository-url "https://github.com/dripsharp/acme.git"
+    :repository-type "git"
+    :repository-commit-policy :exact-clean-generated-product-commit
+    :readme "README.md"}
+   :package-readme-source "../../README.md"
    :output {:project-directory "generated/acme/src/Acme.Core"
             :source-directory "src"
             :project-file "Acme.Core.csproj"}
@@ -209,7 +213,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 7
+  {:schema-version 8
    :target :acme
    :product-family :acme
    :contracts
@@ -262,6 +266,23 @@
     :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
     :excluded-paths []
     :test-suites "test-suites.edn"
+    :nuget
+    {:decision "acme-release-decision"
+     :authors "DripSharp"
+     :owner-organization "DripSharp"
+     :publishing-account "acme-publisher"
+     :source "https://api.nuget.org/v3/index.json"
+     :project-url "https://github.com/dripsharp/acme"
+     :repository-url "https://github.com/dripsharp/acme.git"
+     :repository-type "git"
+     :repository-commit-policy :exact-clean-generated-product-commit
+     :version-policy {:kind :upstream-alpha-revision
+                      :translator-revision 1}
+     :readme "README.md"
+     :icon
+     {:status :deferred
+      :reason "The package icon is deferred by a value-neutral fixture decision."}
+     :packages {"Acme.Core" {:version "1.0.0-alpha.1"}}}
     :publication-mode :pull-request}
    :proof
    {:role :product
@@ -475,6 +496,12 @@
                (failure-data #(target-directory/read-target root :acme))]
            (is (= :invalid-target-directory (:kind result)))
            (is (= [:publication field] (:path result))))))
+     (testing "schema version 7 cannot declare a generated product"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/target.edn" assoc :schema-version 7)
+       (let [result (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind result)))
+         (is (= [:schema-version] (:path result)))))
      (testing "profile projects must agree exactly with generated destinations"
        (write-edn! root "targets/acme/target.edn" (target-manifest))
        (update-edn! root "targets/acme/target.edn"
@@ -512,6 +539,34 @@
        (update-edn! root "targets/acme/target.edn"
                     assoc-in [:publication :implicit-create?]
                     true)
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme))))))
+     (testing "NuGet publisher, product identity, version, and icon decisions fail closed"
+       (doseq [[path invalid]
+               [[[:publication :nuget :authors] "Different Publisher"]
+                [[:publication :nuget :repository-url]
+                 "https://github.com/upstream/acme.git"]
+                [[:publication :nuget :packages "Acme.Core" :version]
+                 "1.0.0-alpha.2"]
+                [[:publication :nuget :icon :reason]
+                 "Branding will be decided later."]]]
+         (create-target-workspace! root)
+         (update-edn! root "targets/acme/target.edn" assoc-in path invalid)
+         (is (= :invalid-target-directory
+                (:kind
+                 (failure-data
+                  #(target-directory/read-target root :acme)))))))
+     (testing "destinations cannot substitute a static upstream commit"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/destinations/core.edn"
+                    (fn [destination]
+                      (-> destination
+                          (update :package dissoc :repository-commit-policy)
+                          (assoc-in
+                           [:package :repository-commit]
+                           "0123456789abcdef0123456789abcdef01234567"))))
        (is (= :invalid-target-directory
               (:kind
                (failure-data
