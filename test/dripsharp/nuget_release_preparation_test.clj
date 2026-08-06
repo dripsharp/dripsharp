@@ -233,6 +233,8 @@
     (is (= 8 (get-in first-result [:manifest :package-count])))
     (is (= 3 (get-in first-result [:manifest :product-count])))
     (is (= [] (get-in first-result [:manifest :network-mutations])))
+    (is (= :not-checked
+           (get-in first-result [:manifest :remote-availability])))
     (is (false? (get-in first-result
                         [:manifest :publication-credentials-accepted])))
     (is (= (:manifest first-result)

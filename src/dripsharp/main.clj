@@ -20,6 +20,7 @@
    "|alpha-release-prepare <target> <authorized-alpha-tag> <product-commit> "
    "[platform-id,...]"
    "|nuget-release-prepare <pkl|pdfcube|sqltrellis|all>"
+   "|nuget-release-preflight <manifest> [--check-nuget-org]"
    "|nuget-release-publish <manifest> "
    "[--live --authorize-publish --source <https-source>]"
    "|java-compat-differential"
@@ -90,6 +91,19 @@
            (empty? extra))
       (nuget-release-preparation/prepare! {:selection target})
 
+      (and (= "nuget-release-preflight" command)
+           target
+           (nil? selector)
+           (empty? extra))
+      (nuget-release-publisher/preflight! {:manifest target})
+
+      (and (= "nuget-release-preflight" command)
+           target
+           (= "--check-nuget-org" selector)
+           (empty? extra))
+      (nuget-release-publisher/preflight!
+       {:manifest target :check-nuget-org? true})
+
       (and (= "nuget-release-publish" command)
            target
            (nil? selector)
@@ -126,7 +140,8 @@
                     (= "--approve" selector))))
       (rebaseline/run! (paths/workspace-root) (rest args))
 
-      (= "nuget-release-publish" command)
+      (contains? #{"nuget-release-preflight" "nuget-release-publish"}
+                 command)
       (throw (ex-info usage {:kind :invalid-command-line
                              :arguments :redacted}))
 

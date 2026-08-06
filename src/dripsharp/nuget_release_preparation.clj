@@ -18,7 +18,7 @@
            [java.nio.file FileVisitOption Files Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]))
 
-(def schema-version 1)
+(def schema-version 2)
 
 (def ^:private commit-pattern #"[0-9a-f]{40}|[0-9a-f]{64}")
 (def ^:private sha256-pattern #"[0-9a-f]{64}")
@@ -584,6 +584,7 @@
      :products (vec product-records)
      :publication-credentials-accepted false
      :publish-order publish-order
+     :remote-availability :not-checked
      :schema-version schema-version
      :selection selection)))
 

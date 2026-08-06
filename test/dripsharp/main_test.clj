@@ -48,6 +48,10 @@
                   (fn [options]
                     (swap! calls conj [:nuget-release-prepare options])
                     :ok)
+                  nuget-release-publisher/preflight!
+                  (fn [options]
+                    (swap! calls conj [:nuget-release-preflight options])
+                    :ok)
                   nuget-release-publisher/publish!
                   (fn [options]
                     (swap! calls conj [:nuget-release-publish options])
@@ -95,6 +99,13 @@
              (main/dispatch! ["nuget-release-prepare" "all"])))
       (is (= :ok
              (main/dispatch!
+              ["nuget-release-preflight" "release-manifest.edn"])))
+      (is (= :ok
+             (main/dispatch!
+              ["nuget-release-preflight" "release-manifest.edn"
+               "--check-nuget-org"])))
+      (is (= :ok
+             (main/dispatch!
               ["nuget-release-publish" "release-manifest.edn"])))
       (is (= :ok
              (main/dispatch!
@@ -129,6 +140,11 @@
                 "0123456789abcdef0123456789abcdef01234567"
                 :platform-ids ["osx-x64" "osx-arm64"]}]
               [:nuget-release-prepare {:selection "all"}]
+              [:nuget-release-preflight
+               {:manifest "release-manifest.edn"}]
+              [:nuget-release-preflight
+               {:manifest "release-manifest.edn"
+                :check-nuget-org? true}]
               [:nuget-release-publish
                {:manifest "release-manifest.edn"}]
               [:nuget-release-publish
@@ -162,6 +178,10 @@
                  "osx-x64,osx-arm64" "extra"]
                 ["nuget-release-prepare"]
                 ["nuget-release-prepare" "all" "extra"]
+                ["nuget-release-preflight"]
+                ["nuget-release-preflight" "release-manifest.edn" "--live"]
+                ["nuget-release-preflight" "release-manifest.edn"
+                 "--check-nuget-org" "extra"]
                 ["nuget-release-publish"]
                 ["nuget-release-publish" "release-manifest.edn" "--live"]
                 ["nuget-release-publish" "release-manifest.edn" "--live"

@@ -11,10 +11,15 @@
             [dripsharp.process :as process]
             [dripsharp.target-directory :as target-directory]
             [dripsharp.util :as util])
-  (:import [java.io ByteArrayInputStream]
+  (:import [com.fasterxml.jackson.databind ObjectMapper]
+           [java.io ByteArrayInputStream]
            [java.net URI]
+           [java.net.http HttpClient HttpClient$Redirect HttpRequest
+            HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files Path]
+           [java.time Duration]
+           [java.util Locale]
            [java.util.zip ZipEntry ZipFile]
            [javax.xml.parsers DocumentBuilderFactory]
            [org.w3c.dom Element Node]))
@@ -22,11 +27,28 @@
 (def credential-environment-variable "NUGET_API_KEY")
 (def symbol-credential-environment-variable "NUGET_SYMBOL_API_KEY")
 (def default-timeout-seconds 300)
+(def default-remote-timeout-seconds 10)
+(def nuget-org-max-package-bytes (* 250 1024 1024))
+
+(def release-package-ids
+  ["DripSharp.Brine.Parser"
+   "DripSharp.Brine"
+   "DripSharp.PdfCarton.IO"
+   "DripSharp.PdfCarton.Fonts"
+   "DripSharp.PdfCarton.Xmp"
+   "DripSharp.PdfCarton"
+   "DripSharp.PdfCarton.Preflight"
+   "DripSharp.SqlTrellis"])
+
+(def ^:private nuget-org-source
+  "https://api.nuget.org/v3/index.json")
+(def ^:private max-remote-response-characters (* 1024 1024))
+(def ^:private json-mapper (ObjectMapper.))
 
 (def ^:private manifest-keys
   #{:configuration :kind :network-mutations :package-count :packages
     :product-count :products :publication-credentials-accepted :publish-order
-    :schema-version :selection})
+    :remote-availability :schema-version :selection})
 (def ^:private product-keys
   #{:package-ids :product-commit :product-family :proof-ladders
     :repository-url :source-commit :source-repository :target})
@@ -47,6 +69,8 @@
   #"(?=.{1,100}$)[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?")
 (def ^:private version-pattern
   #"(?:0|[1-9][0-9]*)(?:[.](?:0|[1-9][0-9]*)){2}(?:-[0-9A-Za-z-]+(?:[.][0-9A-Za-z-]+)*)?(?:[+][0-9A-Za-z-]+(?:[.][0-9A-Za-z-]+)*)?")
+(def ^:private development-version-pattern
+  #"(?i)(?:^|[.+-])(?:dev|development|local|placeholder|snapshot|unreleased)(?:[.+-]|$)")
 
 (defn- fail!
   [message data]
@@ -73,6 +97,12 @@
   [value]
   (and (string? value)
        (boolean (re-matches version-pattern value))))
+
+(defn- release-version?
+  [value]
+  (and (valid-version? value)
+       (not (str/starts-with? value "0.0.0"))
+       (not (re-find development-version-pattern value))))
 
 (defn- exact-dependencies!
   [package-id dependencies]
@@ -164,8 +194,8 @@
                       (sort-by (juxt :id :version))
                       (mapv #(sorted-map :id (:id %) :version (:version %))))]
              (when-not (and (valid-package-id? package-id)
-                            (valid-version? version))
-               (fail! "Target publication catalog has a malformed identity"
+                            (release-version? version))
+               (fail! "Target publication catalog has an invalid or development-placeholder identity"
                       {:target (:target contract)
                        :profile profile-id
                        :package package-id
@@ -275,6 +305,7 @@
                  (= "Release" (:configuration manifest))
                  (= [] (:network-mutations manifest))
                  (false? (:publication-credentials-accepted manifest))
+                 (= :not-checked (:remote-availability manifest))
                  (string? (:selection manifest))
                  (or (= "all" (:selection manifest))
                      (boolean (re-matches #"[a-z][a-z0-9-]*"
@@ -653,6 +684,77 @@
                {:expected order}))
       validated)))
 
+(defn- complete-release-set!
+  [manifest contracts packages]
+  (let [ids (mapv :id packages)
+        normalized-ids (mapv #(.toLowerCase ^String % Locale/ROOT) ids)
+        package-by-id (into {} (map (juxt :id identity)) packages)
+        expected-ids (set release-package-ids)
+        actual-ids (set ids)
+        targets (set (map :target contracts))]
+    (when-not (= "all" (:selection manifest))
+      (fail! "NuGet release preflight requires the complete all-products manifest"
+             {:selection (:selection manifest)}))
+    (when-not (= #{:pdfcube :pkl :sqltrellis} targets)
+      (fail! "NuGet release preflight target inventory is incomplete"
+             {:expected-targets [:pdfcube :pkl :sqltrellis]
+              :actual-targets (vec (sort targets))}))
+    (when-not (= (count ids) (count (distinct normalized-ids)))
+      (fail! "NuGet release preflight found duplicate package IDs"
+             {:package-count (count ids)
+              :distinct-package-count (count (distinct normalized-ids))}))
+    (when-not (and (= 8 (count ids))
+                   (= expected-ids actual-ids))
+      (fail! "NuGet release preflight package inventory is not the exact eight-package release set"
+             {:expected (vec (sort expected-ids))
+              :actual (vec (sort actual-ids))}))
+    (doseq [{package-id :id package-version :version
+             dependencies :dependencies} packages]
+      (when-not (release-version? package-version)
+        (fail! "NuGet release preflight found an invalid or development-placeholder version"
+               {:package package-id :version package-version}))
+      (doseq [{dependency-id :id dependency-version :version} dependencies
+              :when (.startsWith
+                     (.toLowerCase ^String dependency-id Locale/ROOT)
+                     "dripsharp.")]
+        (let [dependency-package (get package-by-id dependency-id)]
+          (when-not dependency-package
+            (fail! "NuGet release preflight is missing an internal dependency package"
+                   {:package package-id :dependency dependency-id}))
+          (when-not (= (:version dependency-package) dependency-version)
+            (fail! "NuGet release preflight internal dependency version is not exact"
+                   {:package package-id
+                    :dependency dependency-id
+                    :expected (:version dependency-package)
+                    :actual dependency-version})))))
+    packages))
+
+(defn- artifact-size-record
+  [package-id kind ^Path path limit]
+  (let [size (Files/size path)]
+    (when (> size limit)
+      (fail! "NuGet release artifact exceeds the configured nuget.org size limit"
+             {:package package-id
+              :artifact kind
+              :size-bytes size
+              :size-limit-bytes limit}))
+    {:kind kind :size-bytes size}))
+
+(defn- validate-artifact-sizes!
+  [packages limit]
+  (mapv
+   (fn [package]
+     {:artifacts
+      (cond->
+       [(artifact-size-record (:id package) :package
+                              (:package-path package) limit)]
+        (:symbol-path package)
+        (conj (artifact-size-record (:id package) :symbols
+                                    (:symbol-path package) limit)))
+      :id (:id package)
+      :version (:version package)})
+   packages))
+
 (defn- validate-directory-inventory!
   [^Path directory packages]
   (let [expected
@@ -696,6 +798,297 @@
              {:source-count (count sources)}))
     (https-source! (first sources) sources)))
 
+(defn- nuget-org-uri!
+  [value]
+  (let [uri
+        (try
+          (URI. (str value))
+          (catch Exception _ nil))
+        host (some-> uri .getHost (.toLowerCase Locale/ROOT))]
+    (when-not (and (string? value)
+                   uri
+                   (= "https" (some-> uri .getScheme (.toLowerCase Locale/ROOT)))
+                   (or (= "nuget.org" host)
+                       (str/ends-with? (or host "") ".nuget.org"))
+                   (nil? (.getUserInfo uri))
+                   (nil? (.getQuery uri))
+                   (nil? (.getFragment uri)))
+      (fail! "NuGet remote availability resolved an invalid non-nuget.org URI"
+             {:reason :invalid-remote-uri}))
+    uri))
+
+(defn- bounded-http-get!
+  [{:keys [headers method timeout-ms uri] :as request}]
+  (when-not (and (= #{:headers :method :timeout-ms :uri}
+                    (set (keys request)))
+                 (= :get method)
+                 (map? headers)
+                 (integer? timeout-ms)
+                 (pos? timeout-ms))
+    (fail! "NuGet remote availability request is malformed"
+           {:reason :invalid-read-request}))
+  (let [uri (nuget-org-uri! uri)
+        duration (Duration/ofMillis timeout-ms)
+        client (-> (HttpClient/newBuilder)
+                   (.connectTimeout duration)
+                   (.followRedirects HttpClient$Redirect/NEVER)
+                   (.build))
+        builder (doto (HttpRequest/newBuilder uri)
+                  (.timeout duration)
+                  (.GET))
+        _ (doseq [[header value] headers]
+            (.header builder (str header) (str value)))
+        response (.send client (.build builder)
+                        (HttpResponse$BodyHandlers/ofString
+                         StandardCharsets/UTF_8))]
+    {:body (.body response)
+     :status (.statusCode response)}))
+
+(defn- exact-http-response!
+  [response]
+  (when-not (and (map? response)
+                 (= #{:body :status} (set (keys response)))
+                 (integer? (:status response))
+                 (<= 100 (:status response) 599)
+                 (string? (:body response))
+                 (<= (count (:body response))
+                     max-remote-response-characters))
+    (fail! "NuGet remote availability returned an invalid or oversized response"
+           {:reason :invalid-read-response}))
+  response)
+
+(defn- json-map!
+  [label body]
+  (try
+    (let [value (.readValue json-mapper ^String body java.util.Map)]
+      (when-not (instance? java.util.Map value)
+        (fail! (str label " is not a JSON object")
+               {:reason :invalid-remote-json}))
+      value)
+    (catch clojure.lang.ExceptionInfo error
+      (throw error))
+    (catch Exception _
+      (fail! (str label " is not valid bounded JSON")
+             {:reason :invalid-remote-json}))))
+
+(defn- package-base-address!
+  [source request-fn timeout-ms]
+  (let [{:keys [body status]}
+        (exact-http-response!
+         (request-fn
+          {:headers
+           {"Accept" "application/json"
+            "User-Agent" "DripSharp-NuGet-Release-Preflight/1"}
+           :method :get
+           :timeout-ms timeout-ms
+           :uri source}))]
+    (when-not (= 200 status)
+      (fail! "NuGet service index was unavailable to the read-only preflight"
+             {:reason :service-index-unavailable :status status}))
+    (let [document (json-map! "NuGet service index" body)
+          resources (get document "resources")
+          _
+          (when-not (instance? java.util.Collection resources)
+            (fail! "NuGet service index has no resource inventory"
+                   {:reason :invalid-service-index}))
+          addresses
+          (->> resources
+               (keep
+                (fn [resource]
+                  (when (instance? java.util.Map resource)
+                    (let [types (get resource "@type")
+                          types (if (string? types) [types] types)]
+                      (when (and (instance? java.util.Collection types)
+                                 (some #{"PackageBaseAddress/3.0.0"} types))
+                        (get resource "@id"))))))
+               distinct
+               vec)]
+      (when-not (= 1 (count addresses))
+        (fail! "NuGet service index has no unique PackageBaseAddress resource"
+               {:reason :invalid-service-index
+                :package-base-address-count (count addresses)}))
+      (let [address (first addresses)
+            uri (nuget-org-uri! address)]
+        (str uri (when-not (str/ends-with? (str uri) "/") "/"))))))
+
+(defn- normalized-remote-version
+  [version]
+  (-> version
+      (str/split #"[+]" 2)
+      first
+      (.toLowerCase Locale/ROOT)))
+
+(defn- remote-package-availability
+  [base-address package request-fn timeout-ms]
+  (let [id (:id package)
+        version (:version package)
+        lower-id (.toLowerCase ^String id Locale/ROOT)
+        uri (str base-address lower-id "/index.json")]
+    (try
+      (let [{:keys [body status]}
+            (exact-http-response!
+             (request-fn
+              {:headers
+               {"Accept" "application/json"
+                "User-Agent" "DripSharp-NuGet-Release-Preflight/1"}
+               :method :get
+               :timeout-ms timeout-ms
+               :uri uri}))]
+        (cond
+          (= 404 status)
+          {:id id :status :available :version version}
+
+          (= 200 status)
+          (let [document (json-map! "NuGet package version inventory" body)
+                versions (get document "versions")]
+            (if-not (and (instance? java.util.Collection versions)
+                         (every? string? versions))
+              {:id id :reason :invalid-version-inventory
+               :status :indeterminate :version version}
+              {:id id
+               :status
+               (if (contains? (set versions)
+                              (normalized-remote-version version))
+                 :conflict
+                 :available)
+               :version version}))
+
+          :else
+          {:id id :http-status status :reason :unexpected-http-status
+           :status :indeterminate :version version}))
+      (catch Exception _
+        {:id id :reason :remote-request-failed
+         :status :indeterminate :version version}))))
+
+(defn- remote-availability!
+  [packages source request-fn timeout-seconds]
+  (when-not (= nuget-org-source source)
+    (fail! "Remote availability checks are restricted to the exact nuget.org source"
+           {:reason :non-nuget-org-source}))
+  (let [timeout-ms (* 1000 timeout-seconds)
+        base-result
+        (try
+          {:base-address
+           (package-base-address! source request-fn timeout-ms)}
+          (catch Exception _
+            {:failure :service-index-unavailable}))
+        results
+        (if-let [base-address (:base-address base-result)]
+          (mapv #(remote-package-availability base-address % request-fn timeout-ms)
+                packages)
+          (mapv (fn [{:keys [id version]}]
+                  {:id id :reason (:failure base-result)
+                   :status :indeterminate :version version})
+                packages))
+        report
+        {:package-count (count results)
+         :packages results
+         :source source
+         :status :checked}
+        conflicts (filterv #(= :conflict (:status %)) results)
+        indeterminate (filterv #(= :indeterminate (:status %)) results)]
+    (cond
+      (seq conflicts)
+      (fail! "NuGet release has an existing remote ID/version conflict"
+             {:reason :remote-version-conflict
+              :conflicts (mapv #(select-keys % [:id :version]) conflicts)
+              :remote-availability report})
+
+      (seq indeterminate)
+      (fail! "NuGet release remote availability could not be determined"
+             {:reason :remote-availability-indeterminate
+              :indeterminate
+              (mapv #(select-keys % [:id :version :reason :http-status])
+                    indeterminate)
+              :remote-availability report})
+
+      :else report)))
+
+(defn- run-preflight!
+  [{:keys [check-nuget-org? discover-products-fn manifest max-package-bytes
+           read-target-fn remote-request-fn remote-timeout-seconds
+           workspace-root]
+    :or {check-nuget-org? false
+         discover-products-fn preparation/discover-products!
+         max-package-bytes nuget-org-max-package-bytes
+         read-target-fn target-directory/read-target
+         remote-request-fn bounded-http-get!
+         remote-timeout-seconds default-remote-timeout-seconds}
+    :as options}]
+  (let [credential-options
+        (set/intersection forbidden-option-keys (set (keys options)))]
+    (when (seq credential-options)
+      (fail! "NuGet release preflight accepts no publication credential"
+             {:forbidden-options (vec (sort credential-options))})))
+  (when-not (or (true? check-nuget-org?) (false? check-nuget-org?))
+    (fail! "NuGet release remote-check selection is malformed"
+           {:reason :invalid-remote-check-selection}))
+  (when-not (and (integer? max-package-bytes)
+                 (<= 1 max-package-bytes nuget-org-max-package-bytes))
+    (fail! "NuGet release size limit must not exceed the configured nuget.org limit"
+           {:configured-limit-bytes nuget-org-max-package-bytes}))
+  (when-not (and (integer? remote-timeout-seconds)
+                 (<= 1 remote-timeout-seconds 60))
+    (fail! "NuGet release remote timeout must be between 1 and 60 seconds"
+           {:remote-timeout-seconds remote-timeout-seconds}))
+  (when-not (ifn? remote-request-fn)
+    (fail! "NuGet release remote request function is malformed"
+           {:reason :invalid-remote-request-function}))
+  (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+        manifest-file (manifest-path! root manifest)
+        manifest-data (validate-manifest-header! (read-manifest! manifest-file))
+        selection (:selection manifest-data)
+        _ (expected-manifest-path! root selection manifest-file)
+        contracts
+        (selected-contracts! root selection discover-products-fn read-target-fn)
+        products (validate-product-records! manifest-data contracts)
+        directory (.getParent manifest-file)
+        packages
+        (validate-packages! directory manifest-data products contracts)
+        _ (complete-release-set! manifest-data contracts packages)
+        _ (validate-directory-inventory! directory packages)
+        artifacts (validate-artifact-sizes! packages max-package-bytes)
+        source (source-contract! contracts)
+        remote
+        (if check-nuget-org?
+          (remote-availability! packages source remote-request-fn
+                                remote-timeout-seconds)
+          {:package-count (count packages)
+           :packages
+           (mapv (fn [{:keys [id version]}]
+                   {:id id :status :not-checked :version version})
+                 packages)
+           :source source
+           :status :not-checked})
+        manifest-sha256 (util/sha256-file manifest-file)
+        report
+        {:artifact-sizes artifacts
+         :duplicate-version-policy :fail-closed
+         :kind :nuget-release-preflight
+         :manifest (str manifest-file)
+         :manifest-sha256 manifest-sha256
+         :package-count (count packages)
+         :publish-order (:publish-order manifest-data)
+         :remote-availability remote
+         :size-limit-bytes max-package-bytes}]
+    {:contracts contracts
+     :directory directory
+     :manifest-data manifest-data
+     :manifest-file manifest-file
+     :manifest-sha256 manifest-sha256
+     :packages packages
+     :report report
+     :source source}))
+
+(defn preflight!
+  "Validates the exact eight-package release set. Remote nuget.org availability
+  is optional and uses bounded credential-free GET requests only."
+  ([] (preflight! {}))
+  ([options]
+   (let [report (:report (run-preflight! options))]
+     (println "NuGet release preflight passed:" (pr-str report))
+     report)))
+
 (defn- push-command
   [package source timeout-seconds]
   (cond-> ["dotnet" "nuget" "push" (str (:package-path package))
@@ -705,12 +1098,13 @@
     (nil? (:symbol-path package)) (conj "--no-symbols")))
 
 (defn- publish-plan
-  [manifest-file manifest-sha256 packages source timeout-seconds]
+  [manifest-file manifest-sha256 packages preflight source timeout-seconds]
   {:credential-channel credential-environment-variable
    :duplicate-version-policy :fail-closed
    :manifest (str manifest-file)
    :manifest-sha256 manifest-sha256
    :mode :dry-run
+   :preflight preflight
    :source source
    :steps
    (mapv
@@ -805,6 +1199,7 @@
              :manifest (:manifest plan)
              :manifest-sha256 (:manifest-sha256 plan)
              :mode :live
+             :preflight (:preflight plan)
              :source (:source plan)}]
         (println "NuGet publication completed:" (pr-str result))
         result))))
@@ -817,7 +1212,8 @@
   Dependency-injection hooks exist only for offline tests."
   ([] (publish! {}))
   ([{:keys [authorized? credential-fn discover-products-fn live? manifest
-            push-fn read-target-fn source timeout-seconds workspace-root]
+            max-package-bytes push-fn read-target-fn remote-request-fn
+            remote-timeout-seconds source timeout-seconds workspace-root]
      :or {credential-fn (fn [name] (System/getenv name))
           discover-products-fn preparation/discover-products!
           push-fn process/run!
@@ -835,36 +1231,39 @@
             {:timeout-seconds timeout-seconds}))
    (when-not (or (nil? live?) (true? live?) (false? live?))
      (fail! "NuGet publication mode is malformed" {}))
-   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         manifest-file (manifest-path! root manifest)
-         manifest-data (validate-manifest-header! (read-manifest! manifest-file))
-         selection (:selection manifest-data)
-         _ (expected-manifest-path! root selection manifest-file)
-         contracts
-         (selected-contracts! root selection discover-products-fn read-target-fn)
-         products (validate-product-records! manifest-data contracts)
-         directory (.getParent manifest-file)
-         packages
-         (validate-packages! directory manifest-data products contracts)
-         _ (validate-directory-inventory! directory packages)
-         approved-source (source-contract! contracts)
+   (if live?
+     (do
+       (when-not (true? authorized?)
+         (fail! "Live NuGet publication requires --authorize-publish"
+                {:authorization :missing}))
+       (when-not source
+         (fail! "Live NuGet publication requires an explicit source"
+                {:authorization :missing-source}))
+       (https-source! source #{nuget-org-source}))
+     (when (or authorized? source)
+       (fail! "Dry-run publication does not accept live authorization options"
+              {:mode :dry-run})))
+   (let [preflight-options
+         (cond->
+          {:check-nuget-org? (true? live?)
+           :discover-products-fn discover-products-fn
+           :manifest manifest
+           :read-target-fn read-target-fn
+           :workspace-root workspace-root}
+           max-package-bytes
+           (assoc :max-package-bytes max-package-bytes)
+           remote-request-fn
+           (assoc :remote-request-fn remote-request-fn)
+           remote-timeout-seconds
+           (assoc :remote-timeout-seconds remote-timeout-seconds))
+         {:keys [directory manifest-file manifest-sha256 packages report]
+          approved-source :source}
+         (run-preflight! preflight-options)
          effective-source
          (if live?
-           (do
-             (when-not (true? authorized?)
-               (fail! "Live NuGet publication requires --authorize-publish"
-                      {:authorization :missing}))
-             (when-not source
-               (fail! "Live NuGet publication requires an explicit source"
-                      {:authorization :missing-source}))
-             (https-source! source #{approved-source}))
-           (do
-             (when (or authorized? source)
-               (fail! "Dry-run publication does not accept live authorization options"
-                      {:mode :dry-run}))
-             approved-source))
-         manifest-sha256 (util/sha256-file manifest-file)
-         plan (publish-plan manifest-file manifest-sha256 packages
+           (https-source! source #{approved-source})
+           approved-source)
+         plan (publish-plan manifest-file manifest-sha256 packages report
                             effective-source timeout-seconds)]
      (if live?
        (let [credential (credential! credential-fn)]

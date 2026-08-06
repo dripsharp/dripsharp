@@ -198,16 +198,28 @@ fresh-feed, and isolated-consumer gates. It writes byte-stable `.nupkg` and
 `.snupkg` files plus `release-manifest.edn` under
 `target/nuget-release/<selection>`. The command accepts no publication
 credential and performs no tag, release, upload, ownership, or network
-mutation.
+mutation. Its deterministic manifest records remote availability as
+`:not-checked`.
+
+`nuget-release-preflight <manifest> [--check-nuget-org]` requires the complete
+eight-package `all` release set and revalidates exact target-owned identities,
+versions, dependency closure and order, hashes, symbol pairing, and the
+configured 250 MiB nuget.org artifact limit. Offline mode performs no network
+request and reports every ID/version as not checked. The optional nuget.org
+check uses bounded credential-free GET requests and fails the release on an
+existing exact ID/version or an indeterminate response.
 
 `nuget-release-publish <manifest>` revalidates that proved manifest, its exact
-target-owned package graph, every package and symbol digest, and the package
-metadata before printing the ordered push plan. Dry-run is the default and
-performs no network operation. Live publication additionally requires
+eight-package target-owned package graph, every package and symbol digest, and
+the package metadata before printing the ordered push plan. Dry-run is the
+default and performs no network operation. Live publication first requires a
+successful remote availability preflight and additionally requires
 `--live --authorize-publish --source <https-source>`; the source must equal the
 target-owned HTTPS source and the key must be injected through `NUGET_API_KEY`
 (and is forwarded to the symbol push as `NUGET_SYMBOL_API_KEY`). The key is
-never accepted as an argument, printed, or written to release evidence.
+never accepted as an argument, printed, or written to release evidence. Remote
+collisions and push-time conflicts are hard failures; the command never uses
+skip-duplicate behavior.
 
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.
