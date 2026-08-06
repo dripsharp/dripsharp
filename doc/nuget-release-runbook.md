@@ -1,0 +1,485 @@
+# Local NuGet Release Runbook
+
+## Scope and authority
+
+This runbook is the durable operator contract for preparing, inspecting, and,
+after separate authorization, publishing the production NuGet release set. Run
+every command from the root of `dripsharp/dripsharp`.
+
+The release set contains exactly these eight production packages:
+
+| Position | Package | First approved version | Internal dependencies |
+| ---: | --- | --- | --- |
+| 0 | `DripSharp.Brine.Parser` | `0.32.0-alpha.1` | none |
+| 1 | `DripSharp.PdfCarton.IO` | `3.0.8-alpha.1` | none |
+| 2 | `DripSharp.PdfCarton.Xmp` | `3.0.8-alpha.1` | none |
+| 3 | `DripSharp.SqlTrellis` | `5.3.0-alpha.1` | none |
+| 4 | `DripSharp.Brine` | `0.32.0-alpha.1` | `DripSharp.Brine.Parser` at the exact version |
+| 5 | `DripSharp.PdfCarton.Fonts` | `3.0.8-alpha.1` | `DripSharp.PdfCarton.IO` at the exact version |
+| 6 | `DripSharp.PdfCarton` | `3.0.8-alpha.1` | `DripSharp.PdfCarton.IO` and `DripSharp.PdfCarton.Fonts` at the exact version |
+| 7 | `DripSharp.PdfCarton.Preflight` | `3.0.8-alpha.1` | `DripSharp.PdfCarton` and `DripSharp.PdfCarton.Xmp` at the exact version |
+
+The preparation manifest computes this deterministic dependency-first order;
+operators and automation must not reconstruct or reorder it. Exact external
+dependencies are also recorded and inspected in each package entry.
+
+Brine, PdfCarton, and SqlTrellis remain governed by their respective
+[Pkl](targets/pkl/product-goal.md),
+[PDFBox](targets/pdfbox/product-goal.md), and
+[JSqlParser](targets/jsqlparser/product-goal.md) product contracts. RawHTTP
+remains [conformance-only](targets/rawhttp/product-goal.md). The complete
+adapted test projects and fixtures required by the target contracts remain
+runnable, shipped repository evidence but are non-packable and are not part of
+the eight-package inventory. A successful release is not product completion
+and does not change any product scope, exclusion, synchronization rule, or
+shipped-test policy.
+
+All steps before **Authorized live push** are either local-only or explicitly
+read-only. No command in this document implicitly authorizes an upload,
+unlisting, ownership change, tag, release, or GitHub Actions workflow.
+
+## Ownership and approval gates
+
+### Approved non-secret decision
+
+Inspect the human-approved package decision before preparing a release:
+
+```sh
+br show pkl-4m8d.1 --json
+```
+
+The command must exit zero and show a closed decision with all of these exact
+values:
+
+| Field | Approved value |
+| --- | --- |
+| Package `Authors` | `Isak Sky` |
+| nuget.org owner | organization `DripSharp` |
+| Publishing account | individual account `isaksky` acting for `DripSharp` |
+| Source | `https://api.nuget.org/v3/index.json` |
+| Project URLs | `https://github.com/dripsharp/brine`, `https://github.com/dripsharp/pdfcarton`, and `https://github.com/dripsharp/sqltrellis` |
+| Repository URLs | the corresponding project URL with `.git` appended |
+| Repository type | `git` |
+| Repository commit | exact clean generated-product commit used to build the package |
+| Initial release status | the three `alpha.1` prerelease families listed above |
+
+Stop if the decision is absent, open, or different. The target-owned
+`targets/pkl/target.edn`, `targets/pdfcube/target.edn`, and
+`targets/sqltrellis/target.edn` contracts must also name this decision and the
+same values; preparation and publication revalidate those contracts.
+
+`Authors` is display metadata embedded in a package. It neither authenticates
+the publisher nor assigns gallery ownership. nuget.org assigns management and
+future-publish rights to package owners. For the first push, `isaksky` must be
+an authorized member of the `DripSharp` nuget.org organization and the API key
+or trusted-publishing policy must be created for the `DripSharp` owner. See
+NuGet's [package-owner guidance][nuget-publish] and
+[organization model][nuget-organizations]. Never infer ownership from the
+package's `Authors`, repository owner, or namespace.
+
+The approved metadata decision does **not** authorize a live push. Immediately
+before a future live step, a human must separately approve this exact release:
+
+* the manifest path and SHA-256;
+* all eight ID/version pairs and the printed publish order;
+* the `DripSharp` organization owner and `isaksky` publishing account;
+* the exact nuget.org source; and
+* the intended external mutation.
+
+The `--authorize-publish` switch is the operator's assertion that this separate
+approval exists. It is not itself approval and must not be added speculatively.
+Approval records contain the manifest digest and non-secret facts only, never a
+credential.
+
+### Account and credential prerequisites
+
+Before a future first push, confirm in nuget.org that the `DripSharp`
+organization exists, that `isaksky` has the required organization role, and
+that publication notifications and two-factor authentication are enabled. If a
+temporary local API key is explicitly approved, create it under the
+`DripSharp` owner with only push scope and the narrowest package glob that
+covers `DripSharp.*`. Do not paste its value into a shell command, file,
+NuGet.Config, log, GitHub secret, issue, chat, or release artifact.
+
+The local driver relies on NuGet's environment-only `NUGET_API_KEY` and
+`NUGET_SYMBOL_API_KEY` support. Current NuGet
+[environment-variable guidance][nuget-environment] associates this support
+with .NET SDK 10.0.300. Check the live host:
+
+```sh
+dotnet --version
+```
+
+Expected output for a live release is `10.0.300` or a later approved SDK. If
+the host reports an older SDK, stop and upgrade the toolchain. Do not fall back
+to `--api-key`, `--symbol-api-key`, `nuget setApiKey`, or a persisted
+NuGet.Config. The local preparation, inspection, remote check, and dry-run do
+not require a publication credential.
+
+## Prepare the complete release
+
+Preparation runs full proof, clean generation, compilation, Release packing,
+two-pack byte comparison, exact package inspection, fresh local-feed
+publication, isolated consumer validation, and generated-product commit checks
+for every selected target. Before this full gate, check the host's available
+RAM and CPU. On macOS:
+
+```sh
+sysctl -n hw.memsize
+sysctl -n hw.logicalcpu
+```
+
+The host must be able to dedicate a 28 GiB JVM heap and 22 workers without
+unsafe memory pressure. Stop or move to a suitable host if it cannot.
+
+Prepare only the complete `all` selection used by preflight and publication:
+
+```sh
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run nuget-release-prepare all
+```
+
+The command must exit zero. Its final line has this shape:
+
+```text
+Credential-free NuGet release preparation passed: {:artifact-directory ".../target/nuget-release/all", :manifest ".../target/nuget-release/all/release-manifest.edn", :manifest-sha256 "<64 lowercase hexadecimal characters>", :products 3, :packages 8, :publish-order ["DripSharp.Brine.Parser" "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp" "DripSharp.SqlTrellis" "DripSharp.Brine" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"]}
+```
+
+Set local path variables only after that success:
+
+```sh
+RELEASE_DIRECTORY="$PWD/target/nuget-release/all"
+RELEASE_MANIFEST="$RELEASE_DIRECTORY/release-manifest.edn"
+export RELEASE_DIRECTORY RELEASE_MANIFEST
+```
+
+The preparation entry point accepts no credential and records
+`:network-mutations []`, `:publication-credentials-accepted false`, and
+`:remote-availability :not-checked`. It does not reserve an ID and it makes no
+network mutation.
+
+## Inspect the bundle
+
+List the deterministic artifact boundary:
+
+```sh
+find "$RELEASE_DIRECTORY" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort
+```
+
+Expected file output is exactly these 17 names. The local preflight below also
+rejects any extra entry, including a directory or symbolic link:
+
+```text
+DripSharp.Brine.0.32.0-alpha.1.nupkg
+DripSharp.Brine.0.32.0-alpha.1.snupkg
+DripSharp.Brine.Parser.0.32.0-alpha.1.nupkg
+DripSharp.Brine.Parser.0.32.0-alpha.1.snupkg
+DripSharp.PdfCarton.3.0.8-alpha.1.nupkg
+DripSharp.PdfCarton.3.0.8-alpha.1.snupkg
+DripSharp.PdfCarton.Fonts.3.0.8-alpha.1.nupkg
+DripSharp.PdfCarton.Fonts.3.0.8-alpha.1.snupkg
+DripSharp.PdfCarton.IO.3.0.8-alpha.1.nupkg
+DripSharp.PdfCarton.IO.3.0.8-alpha.1.snupkg
+DripSharp.PdfCarton.Preflight.3.0.8-alpha.1.nupkg
+DripSharp.PdfCarton.Preflight.3.0.8-alpha.1.snupkg
+DripSharp.PdfCarton.Xmp.3.0.8-alpha.1.nupkg
+DripSharp.PdfCarton.Xmp.3.0.8-alpha.1.snupkg
+DripSharp.SqlTrellis.5.3.0-alpha.1.nupkg
+DripSharp.SqlTrellis.5.3.0-alpha.1.snupkg
+release-manifest.edn
+```
+
+Confirm the manifest digest independently:
+
+```sh
+shasum -a 256 "$RELEASE_MANIFEST"
+```
+
+Expected output begins with the exact 64-character digest printed by
+preparation and ends with the manifest path. Bind the separate live approval to
+that digest. Never edit, rename, replace, or add files under the artifact
+directory after preparation; rerun preparation instead.
+
+Run the credential-free local preflight:
+
+```sh
+clojure -M:run nuget-release-preflight "$RELEASE_MANIFEST"
+```
+
+The command must exit zero and print a final line beginning with:
+
+```text
+NuGet release preflight passed:
+```
+
+Its EDN report must contain `:kind :nuget-release-preflight`,
+`:package-count 8`, `:duplicate-version-policy :fail-closed`, the exact
+publish order above, `:size-limit-bytes 262144000`, and
+`:remote-availability {:status :not-checked ...}`. The report contains a size
+record for each `.nupkg` and `.snupkg`. Preflight also reopens every archive and
+revalidates its ID, version, target framework, exact dependency edges, symbol
+pair, portable PDB, file path, SHA-256, directory inventory, and target-owned
+contract. Any discrepancy is a stop condition.
+
+## Inspect the dry-run publication plan
+
+The default publication command is a local dry-run:
+
+```sh
+clojure -M:run nuget-release-publish "$RELEASE_MANIFEST"
+```
+
+It must exit zero and print one line beginning with:
+
+```text
+NuGet publication dry-run plan:
+```
+
+The plan must report `:mode :dry-run`,
+`:credential-channel "NUGET_API_KEY"`,
+`:duplicate-version-policy :fail-closed`, the exact manifest digest and source,
+and eight ordered steps matching the table above. Every step must show
+`:symbols {:status :paired ...}`. Its command vectors contain `dotnet nuget
+push`, the exact `.nupkg` path, the exact source, a 300-second timeout, and
+`--force-english-output`; they contain neither `--api-key` nor
+`--skip-duplicate`. Dry-run does not read a credential and performs no network
+request or push.
+
+## Check nuget.org availability read-only
+
+Run the bounded credential-free availability check close to the authorized
+live operation:
+
+```sh
+clojure -M:run nuget-release-preflight "$RELEASE_MANIFEST" --check-nuget-org
+```
+
+It makes only HTTPS GET requests: one nuget.org service-index request and one
+version-inventory request for each package. Expected success is exit zero and
+a `NuGet release preflight passed:` report with
+`:remote-availability {:status :checked, :package-count 8, ...}` and each exact
+ID/version marked `:status :available`.
+
+An existing exact ID/version produces exit 1 and:
+
+```text
+DripSharp command failed: NuGet release has an existing remote ID/version conflict
+```
+
+An HTTP error, timeout, or malformed response also exits 1 as indeterminate.
+Neither condition may be converted to success. An availability result does not
+reserve an ID; the live driver repeats the same complete remote check before it
+reads the credential or starts the first push.
+
+## Authorized live push
+
+This is the only mutating step. Do not run it unless the exact release has the
+separate human authorization described above.
+
+Read a freshly approved organization-scoped key without terminal echo or shell
+history. The following keeps the value in a shell variable rather than a
+command argument or file:
+
+```sh
+printf 'NuGet API key: ' >&2
+IFS= read -r -s NUGET_API_KEY
+printf '\n' >&2
+```
+
+The only visible output is the `NuGet API key: ` prompt followed by a blank
+line; the typed value must never appear.
+
+Publish the exact proved manifest, capture the process status, and immediately
+discard the shell variable:
+
+```sh
+NUGET_API_KEY="$NUGET_API_KEY" clojure -M:run nuget-release-publish "$RELEASE_MANIFEST" --live --authorize-publish --source https://api.nuget.org/v3/index.json
+NUGET_PUBLISH_STATUS=$?
+unset NUGET_API_KEY NUGET_SYMBOL_API_KEY
+test "$NUGET_PUBLISH_STATUS" -eq 0
+```
+
+The driver validates the complete bundle again, repeats the read-only
+availability check, and only then reads `NUGET_API_KEY`. For each dependency-
+ordered `.nupkg` push it passes the key to the NuGet child process through its
+environment and forwards the same value as `NUGET_SYMBOL_API_KEY`. Because the
+proved, paired `.snupkg` is in the same directory and the plan does not use
+`--no-symbols`, NuGet publishes the primary package first and then its symbol
+package. NuGet.org accepts portable-PDB `.snupkg` files through the V3 source;
+see the [symbol-package contract][nuget-symbols].
+
+Success is exit zero and a final line beginning with:
+
+```text
+NuGet publication completed:
+```
+
+The result must have `:mode :live` and eight `:completed` records in the exact
+manifest order. A successful push response means the upload was accepted; it
+does not mean gallery or symbol indexing is complete. Do not run a second push
+to compensate for normal indexing delay.
+
+## Validation, indexing, and remote restore
+
+NuGet validates and indexes primary and symbol packages after upload. The
+gallery reports packages under Unlisted Packages while processing. NuGet says
+normal validation and indexing usually complete within 15 minutes; if a
+package is still processing after an hour, check
+[status.nuget.org](https://status.nuget.org/) and then use the package page's
+authenticated Contact Support link. Symbol validation is separate, so confirm
+all eight `.snupkg` results in the owner view as well as all eight primary
+packages. See NuGet's [validation and indexing guidance][nuget-publish] and
+[symbol indexing guidance][nuget-symbols].
+
+After indexing, prove a clean remote dependency restore from nuget.org only.
+Create an isolated disposable consumer:
+
+```sh
+NUGET_VERIFY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dripsharp-nuget-verify.XXXXXX")"
+NUGET_VERIFY_PROJECT="$NUGET_VERIFY_ROOT/ReleaseConsumer/ReleaseConsumer.csproj"
+export NUGET_VERIFY_ROOT NUGET_VERIFY_PROJECT
+dotnet new classlib --name ReleaseConsumer --framework net10.0 --output "$NUGET_VERIFY_ROOT/ReleaseConsumer"
+dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.Brine --version 0.32.0-alpha.1 --no-restore
+dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.PdfCarton.Preflight --version 3.0.8-alpha.1 --no-restore
+dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.SqlTrellis --version 5.3.0-alpha.1 --no-restore
+printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<configuration>' '  <packageSources>' '    <clear />' '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />' '  </packageSources>' '</configuration>' > "$NUGET_VERIFY_ROOT/NuGet.Config"
+NUGET_PACKAGES="$NUGET_VERIFY_ROOT/packages" NUGET_HTTP_CACHE_PATH="$NUGET_VERIFY_ROOT/http-cache" NUGET_PLUGINS_CACHE_PATH="$NUGET_VERIFY_ROOT/plugins-cache" NUGET_SCRATCH="$NUGET_VERIFY_ROOT/scratch" dotnet restore "$NUGET_VERIFY_PROJECT" --configfile "$NUGET_VERIFY_ROOT/NuGet.Config" --packages "$NUGET_VERIFY_ROOT/packages" --no-http-cache --force --verbosity normal
+dotnet build "$NUGET_VERIFY_PROJECT" --configuration Release --no-restore
+dotnet list "$NUGET_VERIFY_PROJECT" package --include-transitive
+```
+
+The three `dotnet add` commands must report that exact-version references were
+added. Restore must report `Restored ...ReleaseConsumer.csproj` and exit zero;
+build must report `Build succeeded.` with zero errors. The final package list
+must include these exact eight internal ID/version pairs, either directly or
+transitively:
+
+```text
+DripSharp.Brine.Parser 0.32.0-alpha.1
+DripSharp.Brine 0.32.0-alpha.1
+DripSharp.PdfCarton.IO 3.0.8-alpha.1
+DripSharp.PdfCarton.Fonts 3.0.8-alpha.1
+DripSharp.PdfCarton.Xmp 3.0.8-alpha.1
+DripSharp.PdfCarton 3.0.8-alpha.1
+DripSharp.PdfCarton.Preflight 3.0.8-alpha.1
+DripSharp.SqlTrellis 5.3.0-alpha.1
+```
+
+External dependency rows may also appear. The isolated cache and source-only
+NuGet.Config ensure this proof cannot succeed from the preparation feed or an
+ambient package cache. If exact restore still returns not found while the
+owner page says validation is in progress, wait for indexing and repeat the
+same restore; do not republish.
+
+Finally, inspect every package's nuget.org owner view and confirm that
+`DripSharp` is an owner. Correct ownership is a gallery authorization property,
+not something the `.nuspec` `Authors` field can prove.
+
+## Partial failure and immutable-version recovery
+
+nuget.org package ID/version pairs are immutable. A published version cannot be
+overwritten with different bytes or repaired metadata, and the driver treats a
+duplicate response as a hard conflict rather than using `--skip-duplicate`.
+Source control rollback, deleting the local artifact directory, or rebuilding
+the same version does not roll back a remote upload.
+
+On a failed live command, stop immediately. The expected CLI error is:
+
+```text
+DripSharp command failed: NuGet publication stopped after a package push failure
+```
+
+The failed step's remote state is unknown: the server can accept a primary
+package before a symbol upload or client response fails. Do not guess from the
+local exit code and do not manually push the remaining files. Use the same
+credential-free preflight boundary to print the complete remote state:
+
+```sh
+clojure -M -e '(require (quote [dripsharp.nuget-release-publisher :as publisher])) (try (publisher/preflight! {:manifest "target/nuget-release/all/release-manifest.edn" :check-nuget-org? true}) (catch clojure.lang.ExceptionInfo error (binding [*out* *err*] (prn (select-keys (ex-data error) [:reason :conflicts :indeterminate :remote-availability]))) (System/exit 1)))'
+```
+
+Expected recovery output is either a passing checked report with all eight
+versions `:available`, or a failing map with
+`:reason :remote-version-conflict`, exact `:conflicts`, and a
+`:remote-availability` record for all eight packages. Indeterminate remote
+state remains a stop condition.
+
+Recover according to the observed state:
+
+1. If all eight exact versions remain available, nuget.org accepted none of
+   them. Resolve the transient cause, obtain fresh authorization and a fresh
+   credential, repeat the normal remote check, and rerun the same live driver.
+2. If any exact version is a conflict, the release is irreversibly partial.
+   Do not rerun the same manifest, use `--skip-duplicate`, push a missing symbol
+   manually, or publish the remaining packages out of band. Record the accepted
+   ID/version set, check each primary and symbol validation state, and obtain a
+   new version decision. Increment the target-owned translator revision for
+   every affected product family so all packages in that family move together,
+   regenerate the complete eight-package manifest, and restart this runbook.
+   Exact dependency versions and the driver determine which new package bytes
+   are valid; never patch an existing archive.
+
+There is no automatic rollback command. nuget.org generally does not
+permanently delete packages. A separately authorized owner may unlist a bad or
+partial version in the nuget.org management UI and may also deprecate it with a
+replacement recommendation. Unlisting only removes normal search visibility;
+exact-version restore remains possible and the version remains unavailable for
+reuse. Exceptional permanent removal requires NuGet support. See NuGet's
+[deletion and unlisting policy][nuget-delete] and
+[deprecation guidance][nuget-deprecate]. Ownership transfer or owner removal is
+also a separate external mutation and is never part of release rollback.
+
+## GitHub Actions trusted-publishing handoff
+
+No GitHub Actions workflow is supplied by this runbook. A later workflow needs
+separate approval and must remain a thin orchestration layer over the same
+tested Clojure boundaries:
+
+1. Check out `dripsharp/dripsharp` and its exact generated-product submodules,
+   install the approved Java, Clojure, and .NET toolchains, allocate the same 28
+   GiB heap and 22 workers, and invoke `nuget-release-prepare all` exactly as
+   above.
+2. Retain `target/nuget-release/all` as one hash-bound artifact and invoke the
+   same offline `nuget-release-preflight` and default
+   `nuget-release-publish` dry-run. YAML must not discover packages, rebuild the
+   dependency graph, enumerate eight pushes, inspect archives, or implement
+   retry/skip logic.
+3. Put the live job behind a protected release environment and explicit human
+   approval. Grant only `contents: read` and `id-token: write` as needed for
+   that job. Configure a nuget.org trusted-publishing policy owned by the
+   `DripSharp` organization and bound to the exact `dripsharp/dripsharp`
+   repository, workflow filename, and release environment.
+4. Immediately before publication, use the official `NuGet/login` action to
+   exchange GitHub's OIDC token for a short-lived NuGet API key. Bind the policy
+   to the non-secret `isaksky` NuGet profile name. NuGet documents a one-hour
+   temporary-key lifetime, so do not obtain it during the long preparation
+   job. Pin and review the action version under the repository's normal supply-
+   chain policy.
+5. Expose the action output as `NUGET_API_KEY` only in the environment of one
+   invocation of the existing live driver. Do not interpolate it into the
+   command line, echo it, persist it, upload it, or duplicate the driver's
+   symbol, ordering, availability, authorization, or failure logic in YAML.
+   The command remains:
+
+   ```sh
+   clojure -M:run nuget-release-publish target/nuget-release/all/release-manifest.edn --live --authorize-publish --source https://api.nuget.org/v3/index.json
+   ```
+
+6. Run the same isolated nuget.org-only restore verification after indexing.
+   Workflow retries must follow the immutable-version and partial-failure
+   procedure above; the workflow must never turn a collision into success.
+
+NuGet's [trusted-publishing contract][nuget-trusted-publishing] explains the
+OIDC policy and short-lived key exchange. GitHub's
+[OIDC permission contract][github-oidc] explains why `id-token: write` is
+required. If trusted publishing is unavailable, automation must stop unless a
+different short-lived credential mechanism is explicitly approved. A
+long-lived repository secret is not the default migration contract.
+
+[github-oidc]: https://docs.github.com/en/actions/reference/security/oidc
+[nuget-delete]: https://learn.microsoft.com/en-us/nuget/nuget-org/policies/deleting-packages
+[nuget-deprecate]: https://learn.microsoft.com/en-us/nuget/nuget-org/deprecate-packages
+[nuget-environment]: https://learn.microsoft.com/en-us/nuget/reference/cli-reference/cli-ref-environment-variables
+[nuget-organizations]: https://learn.microsoft.com/en-us/nuget/nuget-org/organizations-on-nuget-org
+[nuget-publish]: https://learn.microsoft.com/en-us/nuget/nuget-org/publish-a-package
+[nuget-symbols]: https://learn.microsoft.com/en-us/nuget/create-packages/symbol-packages-snupkg
+[nuget-trusted-publishing]: https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing

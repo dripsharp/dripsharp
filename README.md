@@ -221,6 +221,11 @@ never accepted as an argument, printed, or written to release evidence. Remote
 collisions and push-time conflicts are hard failures; the command never uses
 skip-duplicate behavior.
 
+The [local NuGet release runbook](doc/nuget-release-runbook.md) gives the exact
+operator commands, expected evidence, nuget.org ownership boundary,
+immutable-version recovery rules, isolated post-publish restore, and the
+contract for a later GitHub Actions trusted-publishing handoff.
+
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.
 `proof <target>` runs every required ladder in the target's schema-version 3

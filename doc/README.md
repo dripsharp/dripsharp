@@ -18,6 +18,10 @@ These documents apply to every Java-to-C# target:
   profiles, mappings, runtime assets, baselines, and validation evidence.
 * [Product Repository Contract](product-repositories.md) defines the GitHub
   repository, Git submodule, staging, and generated-publication model.
+* [Local NuGet Release Runbook](nuget-release-runbook.md) defines the
+  credential-free preparation and inspection flow, the separately authorized
+  local publication boundary, recovery rules, and the later trusted-publishing
+  handoff.
 * [Conversion Concerns](conversion-concerns.md) records Java-to-.NET semantic
   differences that every target must address deliberately.
 
