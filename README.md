@@ -200,6 +200,15 @@ fresh-feed, and isolated-consumer gates. It writes byte-stable `.nupkg` and
 credential and performs no tag, release, upload, ownership, or network
 mutation.
 
+`nuget-release-publish <manifest>` revalidates that proved manifest, its exact
+target-owned package graph, every package and symbol digest, and the package
+metadata before printing the ordered push plan. Dry-run is the default and
+performs no network operation. Live publication additionally requires
+`--live --authorize-publish --source <https-source>`; the source must equal the
+target-owned HTTPS source and the key must be injected through `NUGET_API_KEY`
+(and is forwarded to the symbol push as `NUGET_SYMBOL_API_KEY`). The key is
+never accepted as an argument, printed, or written to release evidence.
+
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.
 `proof <target>` runs every required ladder in the target's schema-version 3
