@@ -190,6 +190,16 @@ exercises the public parser package; `pkl-core-value-model`
 exercises the packed evaluator and value-model surface plus its exact package
 dependency on `DripSharp.Brine.Parser`.
 
+`nuget-release-prepare <pkl|pdfcube|sqltrellis|all>` is the credential-free
+local NuGet release entry point. It discovers only target-owned production
+package inventories, runs the selected targets' complete proof ladders, and
+passes every package closure through the clean twice-pack, exact inspection,
+fresh-feed, and isolated-consumer gates. It writes byte-stable `.nupkg` and
+`.snupkg` files plus `release-manifest.edn` under
+`target/nuget-release/<selection>`. The command accepts no publication
+credential and performs no tag, release, upload, ownership, or network
+mutation.
+
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.
 `proof <target>` runs every required ladder in the target's schema-version 3

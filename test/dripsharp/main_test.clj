@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.main :as main]
+            [dripsharp.nuget-release-preparation :as nuget-release-preparation]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
             [dripsharp.rebaseline :as rebaseline]
@@ -40,6 +41,10 @@
                   target-execution/prepare-alpha-release!
                   (fn [options]
                     (swap! calls conj [:alpha-release-prepare options])
+                    :ok)
+                  nuget-release-preparation/prepare!
+                  (fn [options]
+                    (swap! calls conj [:nuget-release-prepare options])
                     :ok)
                   java-compat-differential/verify!
                   (fn []
@@ -81,6 +86,8 @@
                "0123456789abcdef0123456789abcdef01234567"
                "osx-x64,osx-arm64"])))
       (is (= :ok
+             (main/dispatch! ["nuget-release-prepare" "all"])))
+      (is (= :ok
              (main/dispatch! ["java-compat-differential"])))
       (is (= :ok
              (main/dispatch!
@@ -107,6 +114,7 @@
                 :product-commit
                 "0123456789abcdef0123456789abcdef01234567"
                 :platform-ids ["osx-x64" "osx-arm64"]}]
+              [:nuget-release-prepare {:selection "all"}]
               [:java-compat-differential]
               [:pdfcube-family-host-matrix "evidence" "output"]
               [:rebaseline
@@ -131,6 +139,8 @@
                 ["alpha-release-prepare" "pkl" "v0.1.0-alpha.1"
                  "0123456789abcdef0123456789abcdef01234567"
                  "osx-x64,osx-arm64" "extra"]
+                ["nuget-release-prepare"]
+                ["nuget-release-prepare" "all" "extra"]
                 ["java-compat-differential" "pkl"]
                 ["pdfcube-family-host-matrix"]
                 ["pdfcube-family-host-matrix" "evidence"]

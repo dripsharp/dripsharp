@@ -1,6 +1,7 @@
 (ns dripsharp.main
   (:require [clojure.string :as str]
             [dripsharp.java-compat-differential :as java-compat-differential]
+            [dripsharp.nuget-release-preparation :as nuget-release-preparation]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
             [dripsharp.rebaseline :as rebaseline]
@@ -17,6 +18,7 @@
    "|product-prepare <target> <branch> <commit-message>"
    "|alpha-release-prepare <target> <authorized-alpha-tag> <product-commit> "
    "[platform-id,...]"
+   "|nuget-release-prepare <pkl|pdfcube|sqltrellis|all>"
    "|java-compat-differential"
    "|pdfcube-family-host-matrix <evidence-root> <output-root>"
    "|rebaseline <pkl|pdfcube|rawhttp> [--approve <token>]"))
@@ -78,6 +80,12 @@
          (= 2 (count extra))
          (assoc :platform-ids
                 (str/split (second extra) #"," -1))))
+
+      (and (= "nuget-release-prepare" command)
+           target
+           (nil? selector)
+           (empty? extra))
+      (nuget-release-preparation/prepare! {:selection target})
 
       (and (= "java-compat-differential" command)
            (nil? target)
