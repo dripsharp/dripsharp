@@ -2161,6 +2161,66 @@
                  argument))))
          (remove nil? references))))))
 
+(defn- generic-inference-reference
+  [^CtExpression expression]
+  (let [cast-reference (some-> expression .getTypeCasts last)]
+    (if (and cast-reference
+             (not (wildcard-generic-reference? cast-reference)))
+      cast-reference
+      (.getType expression))))
+
+(defn- formal-reference-path
+  [^CtTypeReference reference ^CtTypeParameter formal]
+  (cond
+    (and (instance? CtTypeParameterReference reference)
+         (= formal
+            (type-parameter-declaration
+             ^CtTypeParameterReference reference)))
+    []
+
+    (instance? CtArrayTypeReference reference)
+    (when-let [path
+               (formal-reference-path
+                (.getComponentType ^CtArrayTypeReference reference)
+                formal)]
+      (into [:component] path))
+
+    :else
+    (some
+     (fn [[index ^CtTypeReference argument]]
+       (when-let [path (formal-reference-path argument formal)]
+         (into [index] path)))
+     (map-indexed vector (.getActualTypeArguments reference)))))
+
+(defn- reference-at-path
+  [^CtTypeReference reference path]
+  (reduce
+   (fn [^CtTypeReference current step]
+     (when current
+       (if (= :component step)
+         (when (instance? CtArrayTypeReference current)
+           (.getComponentType ^CtArrayTypeReference current))
+         (nth (vec (.getActualTypeArguments current)) step nil))))
+   reference
+   path))
+
+(defn- invocation-formal-result-overrides
+  [ctx ^CtInvocation invocation ^CtMethod declaration]
+  (let [declared-result (.getType declaration)
+        inferred-result (.getType invocation)]
+    (when (and declared-result
+               inferred-result
+               (not (statement-expression? invocation)))
+      (into
+       {}
+       (keep-indexed
+        (fn [formal-index ^CtTypeParameter formal]
+          (when-let [path (formal-reference-path declared-result formal)]
+            (when (seq path)
+              (when-let [reference (reference-at-path inferred-result path)]
+                [formal-index (type-node ctx reference)]))))
+        (.getFormalCtTypeParameters declaration))))))
+
 (defn- invocation-formal-argument-overrides
   [ctx ^CtInvocation invocation ^CtMethod declaration]
   (let [arguments (vec (.getArguments invocation))
@@ -2173,7 +2233,8 @@
          (fn [[parameter-index ^CtParameter parameter]]
            (let [parameter-reference (.getType parameter)
                  argument (nth arguments parameter-index nil)
-                 argument-reference (some-> argument .getType)]
+                 argument-reference
+                 (some-> argument generic-inference-reference)]
              (when (and argument-reference
                         (type-reference-contains-formal?
                          parameter-reference formal))
@@ -2227,7 +2288,8 @@
           formal-overrides
           (merge
            (invocation-formal-argument-overrides ctx invocation declaration)
-           (invocation-formal-wildcard-overrides invocation declaration))
+           (invocation-formal-wildcard-overrides invocation declaration)
+           (invocation-formal-result-overrides ctx invocation declaration))
           inferable? (inferable-formal-type-arguments? declaration actual)
           inferred
           (cond

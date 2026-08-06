@@ -8,6 +8,7 @@
             [dripsharp.java-translate :as java]
             [dripsharp.java-types :as java-types]
             [dripsharp.paths :as paths]
+            [dripsharp.pkl.java-project :as pkl-project]
             [dripsharp.process :as process]
             [dripsharp.spoon :as spoon])
   (:import [java.nio.file Files OpenOption]
@@ -7327,6 +7328,96 @@
                                :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest target-typed-generic-map-inference-preserves-result-and-receiver-types
+  (let [fixture
+        (model!
+         {"example/Key.java"
+          "package example; public final class Key {}"
+          "example/Box.java"
+          "package example; public interface Box<K, V> {}"
+          "example/Boxes.java"
+          (str "package example; public final class Boxes { "
+               "public static <K, V> Box<K, V> of(K key, V value) { "
+               "return null; } "
+               "public static <K, V> V put(Box<K, V> box, K key, V value) { "
+               "return value; } }")
+          "example/Holder.java"
+          (str "package example; public final class Holder { "
+               "public Holder(Box<Object, String> value) {} }")
+          "example/Use.java"
+          (str "package example; public final class Use { "
+               "public Holder create(Key key, String value) { "
+               "Box<Object, String> result = Boxes.of(key, value); "
+               "Boxes.put((Box<Object, String>) result, key, value); "
+               "return new Holder(Boxes.of(key, value)); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Use.cs")))]
+    (is (= 2 (count (re-seq #"Boxes\.of<object, string>" source))))
+    (is (str/includes?
+         source
+         "Boxes.put<object, string>((global::Example.Java.Library.Box<object, string>)"))
+    (is (not (str/includes? source "Boxes.of<global::Example.Java.Library.Key")))
+    (is (not (str/includes? source "Boxes.put<global::Example.Java.Library.Key")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest pkl-internal-idiomatic-byte-array-flows-through-generic-lambda
+  (let [fixture
+        (model!
+         {"org/pkl/core/runtime/VmTyped.java"
+          "package org.pkl.core.runtime; public final class VmTyped {}"
+          "org/pkl/core/runtime/VmBytes.java"
+          (str "package org.pkl.core.runtime; public final class VmBytes { "
+               "public byte[] export() { return new byte[0]; } }")
+          "org/pkl/core/runtime/VmUtils.java"
+          (str "package org.pkl.core.runtime; public final class VmUtils { "
+               "public static VmBytes readBytesProperty(VmTyped value) { "
+               "return new VmBytes(); } }")
+          "org/pkl/core/EvaluatorImpl.java"
+          (str "package org.pkl.core; import java.util.function.Supplier; "
+               "import org.pkl.core.runtime.VmBytes; "
+               "import org.pkl.core.runtime.VmTyped; "
+               "import org.pkl.core.runtime.VmUtils; "
+               "public final class EvaluatorImpl { "
+               "private <T> T doEvaluate(Supplier<T> action) { "
+               "return action.get(); } "
+               "byte[] evaluateOutputBytes(VmTyped fileOutput) { "
+               "return doEvaluate(() -> "
+               "VmUtils.readBytesProperty(fileOutput).export()); } }")})
+        configuration
+        (-> (configuration #{:java-compat})
+            (assoc :product-family :brine
+                   :destination-bundle
+                   'dripsharp.pkl.java-project/rule-bundle
+                   :mechanical-source
+                   {:repository "https://github.com/apple/pkl.git"
+                    :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+                    :notice-reference "NOTICE.txt"}
+                   :namespaces {"org.pkl.core" "DripSharp.Brine"}
+                   :namespace-prefixes
+                   {"org.pkl.core" "DripSharp.Brine"}))
+        emission
+        (concurrency/call-with-executor
+         {:worker-count 1}
+         #(project-emission/emit-project!
+           {:workspace-root (paths/workspace-root)
+            :target (temp-directory)
+            :project-input (:discovery fixture)
+            :resolved-model (:model fixture)
+            :configuration configuration
+            :rule-bundle (pkl-project/rule-bundle)}))
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/DripSharp/Brine/EvaluatorImpl.cs")))]
+    (is (str/includes? source "internal byte[] EvaluateOutputBytes("))
+    (is (str/includes? source "this.DoEvaluate<byte[]>(() =>"))
+    (is (not (str/includes? source "DoEvaluate<sbyte[]>(() =>")))))
 
 (deftest raw-generic-visitor-inference-uses-java-erasure
   (let [fixture

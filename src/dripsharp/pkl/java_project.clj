@@ -1436,9 +1436,11 @@
             definitions)
       (some #(product-signature-collection-adaptation ctx (.getType ^CtMethod %))
             definitions)
-      (some #(and (primitive-byte-array? (.getType ^CtMethod %))
-                  (exported-product-signature-reference? ctx (.getType ^CtMethod %)))
-            definitions)
+      (or (idiomatic-byte-array-reference? (.getType method))
+          (some #(and (primitive-byte-array? (.getType ^CtMethod %))
+                      (exported-product-signature-reference?
+                       ctx (.getType ^CtMethod %)))
+                definitions))
       :idiomatic-byte-array
       :else nil)))
 
