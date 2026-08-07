@@ -197,6 +197,25 @@
            packages))
     (is (not-any? #{:rawhttp} ids))))
 
+(deftest repository-stability-is-bound-to-the-clean-product-commit
+  (let [initial {:target :pdfcube
+                 :repository-url "https://github.com/dripsharp/pdfcarton.git"
+                 :repository-commit (target-commit :pdfcube)
+                 :source-sha256 "full-target"
+                 :inventory [[:file "src/Complete.cs" "full"]]}
+        profile (assoc initial
+                       :source-sha256 "profile-only"
+                       :inventory [[:file "src/Profile.cs" "profile"]])]
+    (is (= profile
+           (#'preparation/exact-stable-repository! initial profile)))
+    (is (= :nuget-release-preparation-failed
+           (:kind
+            (failure-data
+             #(#'preparation/exact-stable-repository!
+               initial
+               (assoc profile :repository-commit
+                      (apply str (repeat 40 "f"))))))))))
+
 (deftest aggregate-preparation-is-deterministic-and-credential-free
   (let [root (Files/createTempDirectory
               "dripsharp-nuget-release-preparation-test-"

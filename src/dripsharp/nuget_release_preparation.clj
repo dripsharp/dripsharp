@@ -494,18 +494,14 @@
 (defn- exact-stable-repository!
   [initial final]
   (when-not (= (select-keys initial
-                            [:target :repository-url :repository-commit
-                             :source-sha256 :inventory])
+                            [:target :repository-url :repository-commit])
                (select-keys final
-                            [:target :repository-url :repository-commit
-                             :source-sha256 :inventory]))
+                            [:target :repository-url :repository-commit]))
     (fail! "Generated product state changed during NuGet release preparation"
            {:before (select-keys initial
-                                 [:target :repository-url :repository-commit
-                                  :source-sha256])
+                                 [:target :repository-url :repository-commit])
             :after (select-keys final
-                                [:target :repository-url :repository-commit
-                                 :source-sha256])}))
+                                [:target :repository-url :repository-commit])}))
   final)
 
 (defn- topological-publish-order!
