@@ -163,6 +163,27 @@
 
 (def ^:private sha256-file util/sha256-file)
 
+(defn- package-readme-file!
+  [{:keys [destination emission]}]
+  (let [package-id (get-in destination [:package :id])
+        package-path (get-in destination [:package :readme])
+        source-relative (:package-readme-source destination)
+        project-root (:project-root emission)
+        source (when (and project-root source-relative)
+                 (paths/resolve-path project-root source-relative))]
+    (when-not (and (= "README.md" package-path)
+                   (string? source-relative)
+                   source
+                   (paths/regular-file? source))
+      (fail! "PdfCarton package README source is missing or inconsistent"
+             {:id package-id
+              :package-path package-path
+              :source-relative source-relative
+              :source (some-> source str)}))
+    {:kind :readme
+     :path package-path
+     :sha256 (sha256-file source)}))
+
 (defn- regular-files
   [^Path directory]
   (if-not (paths/directory? directory)
@@ -330,7 +351,8 @@
             :dependency-assemblies (:assembly-dependencies expected)}
            :dependencies (:dependencies expected)
            :resources (:resources expected)
-           :package-files (:package-files expected)
+           :package-files
+           (conj (:package-files expected) (package-readme-file! package))
            :metadata
            {:id id
             :version (package-version id)

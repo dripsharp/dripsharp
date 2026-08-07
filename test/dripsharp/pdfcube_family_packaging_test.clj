@@ -92,6 +92,8 @@
               "pdfcube-family-package-" (make-array FileAttribute 0))
         feed (doto (paths/resolve-path root "feed")
                (Files/createDirectories (make-array FileAttribute 0)))
+        readme (write-file! (paths/resolve-path root "README.md")
+                            "# PdfCarton\n")
         contracts @#'family-packaging/package-contract
         packages
         (mapv
@@ -107,8 +109,10 @@
                  pdb-hash (apply str (repeat 64 "a"))]
              {:profile (:profile contract)
               :primary? (:primary? contract)
+              :emission {:project-root root}
               :destination
-              {:project {:target-framework "net10.0"}
+              {:package-readme-source "README.md"
+               :project {:target-framework "net10.0"}
                :package
                {:id id
                 :version version
@@ -117,7 +121,8 @@
                 :symbols :snupkg
                 :repository-url "https://github.com/dripsharp/pdfcarton.git"
                 :repository-type "git"
-                :repository-commit revision}}
+                :repository-commit revision
+                :readme "README.md"}}
               :artifact package-artifact
               :identity
               {:id id :version version :file package-file
@@ -129,7 +134,11 @@
                :pdb-sha256 pdb-hash}
               :inspection
               {:dependencies (:dependencies contract)
-               :package-files (:package-files contract)}
+               :package-files
+               (conj (:package-files contract)
+                     {:kind :readme
+                      :path "README.md"
+                      :sha256 (sha256 readme)})}
               :resource-proof
               {:assembly-identity
                {:name id
@@ -188,6 +197,12 @@
                 vals
                 (map #(get-in % [:metadata :authors]))
                 set)))
+    (is (every?
+         #(some (fn [file]
+                  (= [:readme "README.md"]
+                     ((juxt :kind :path) file)))
+                (:package-files %))
+         (vals (:packages evidence))))
     (is (= 17 (get-in evidence [:feed :artifacts])))
     (is (= ["x64" "arm64"]
            (get-in evidence
@@ -217,6 +232,29 @@
           error (caught #(family-packaging/validate-package-family! proof))]
       (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
       (is (= ["stale.0.0.0.nupkg"] (:stale (ex-data error))))))
+  (testing "missing packaged README evidence is blocking"
+    (let [proof (package-proof)
+          altered
+          (update-in proof [:packages 0 :inspection :package-files]
+                     (fn [files]
+                       (filterv #(not= :readme (:kind %)) files)))
+          error (caught #(family-packaging/validate-package-family! altered))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (contains? (ex-data error) :expected))
+      (is (contains? (ex-data error) :actual))))
+  (testing "mismatched packaged README digest is blocking"
+    (let [proof (package-proof)
+          altered
+          (update-in proof [:packages 0 :inspection :package-files]
+                     (fn [files]
+                       (mapv #(if (= :readme (:kind %))
+                                (assoc % :sha256 (apply str (repeat 64 "0")))
+                                %)
+                             files)))
+          error (caught #(family-packaging/validate-package-family! altered))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (contains? (ex-data error) :expected))
+      (is (contains? (ex-data error) :actual))))
   (testing "a missing supported-host native payload is blocking"
     (let [proof (package-proof)
           linux (first (filter #(= "SkiaSharp.NativeAssets.Linux" (:id %))
