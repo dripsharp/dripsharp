@@ -1676,6 +1676,7 @@
                                  :destination destination})))]
                         {:profile profile :primary? primary? :artifact artifact
                          :destination destination
+                         :expected-package-files expected-package-files
                          :identity {:id id :version version :sha256 first-hash
                                     :file (str (.getFileName ^Path artifact))}
                          :symbol-artifact symbol-artifact

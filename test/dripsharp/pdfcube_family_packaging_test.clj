@@ -132,6 +132,11 @@
               {:id id :version version :file symbol-file
                :sha256 (sha256 symbol-artifact)
                :pdb-sha256 pdb-hash}
+              :expected-package-files
+              (conj (:package-files contract)
+                    {:kind :readme
+                     :path "README.md"
+                     :sha256 (sha256 readme)})
               :inspection
               {:dependencies (:dependencies contract)
                :package-files

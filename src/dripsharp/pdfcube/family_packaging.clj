@@ -164,25 +164,21 @@
 (def ^:private sha256-file util/sha256-file)
 
 (defn- package-readme-file!
-  [{:keys [destination emission]}]
-  (let [package-id (get-in destination [:package :id])
-        package-path (get-in destination [:package :readme])
-        source-relative (:package-readme-source destination)
-        project-root (:project-root emission)
-        source (when (and project-root source-relative)
-                 (paths/resolve-path project-root source-relative))]
-    (when-not (and (= "README.md" package-path)
-                   (string? source-relative)
-                   source
-                   (paths/regular-file? source))
-      (fail! "PdfCarton package README source is missing or inconsistent"
-             {:id package-id
-              :package-path package-path
-              :source-relative source-relative
-              :source (some-> source str)}))
-    {:kind :readme
-     :path package-path
-     :sha256 (sha256-file source)}))
+  [package]
+  (let [package-id (get-in package [:destination :package :id])
+        expected
+        (filterv #(= :readme (:kind %)) (:expected-package-files package))
+        actual
+        (filterv #(= :readme (:kind %))
+                 (get-in package [:inspection :package-files]))
+        readme (first expected)]
+    (when-not (and (= 1 (count expected))
+                   (= expected actual)
+                   (= "README.md" (:path readme))
+                   (re-matches #"[0-9a-f]{64}" (or (:sha256 readme) "")))
+      (fail! "PdfCarton package README evidence is missing or inconsistent"
+             {:id package-id :expected expected :actual actual}))
+    readme))
 
 (defn- regular-files
   [^Path directory]
