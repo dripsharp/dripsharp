@@ -1,0 +1,250 @@
+grid-columns: 1
+
+classes: {
+  exploration: {
+    style: {
+      fill: "#E8F3F5"
+      stroke: "#2A6F74"
+      font-color: "#15383B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  anchor: {
+    style: {
+      fill: "#FFF3D9"
+      stroke: "#B67B24"
+      font-color: "#5A390B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  discarded: {
+    style: {
+      fill: "#FBE9E7"
+      stroke: "#B64B42"
+      font-color: "#5A211D"
+      stroke-width: 2
+      stroke-dash: 6
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  correction: {
+    shape: diamond
+    style: {
+      fill: "#FFF3D9"
+      stroke: "#B67B24"
+      font-color: "#5A390B"
+      stroke-width: 2
+      font-size: 20
+    }
+  }
+  platform: {
+    style: {
+      fill: "#F2ECFA"
+      stroke: "#76549B"
+      font-color: "#35234B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  product: {
+    style: {
+      fill: "#E9F4E8"
+      stroke: "#4F7D4B"
+      font-color: "#233B21"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+}
+
+title: {
+  label: "DRIPSHARP — FROM RESEARCH LOOP TO MULTI-PRODUCT PLATFORM"
+  shape: text
+  style: {
+    font-color: "#17233A"
+    font-size: 27
+  }
+}
+
+false_start: {
+  label: "1 · EXPLORE, THEN OUTGROW THE MODEL · JUN 23–JUL 9"
+  grid-columns: 4
+  style: {
+    fill: "#F7F9FC"
+    stroke: "#AAB7C8"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#4B5A70"
+    font-size: 18
+  }
+
+  early: "Early Vibeformer\n167 commits\nSpoon · Kotlin · Datomic" {
+    class: exploration
+  }
+  scope: "Pkl scope anchor\n1d09c0da · Jun 27\nlast trusted product boundary" {
+    class: anchor
+  }
+  old_line: "First continuation\n1,118 commits in 12 days\nslices · retries · stubs" {
+    class: discarded
+  }
+  rewind: "MAJOR REWIND\nmaster reset to scope anchor\nmaster-old-2 preserved" {
+    class: correction
+  }
+
+  early -> scope
+  scope -> old_line
+  old_line -> rewind: {
+    style.stroke: "#B64B42"
+    style.stroke-width: 2
+  }
+}
+
+rebuild: {
+  label: "2 · REBUILD VERTICALLY, CUT PROOF DETOURS · JUL 9–22"
+  label.near: top-left
+  grid-columns: 2
+  style: {
+    fill: "#FBF8FD"
+    stroke: "#BEABD0"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#66507D"
+    font-size: 18
+  }
+
+  retained: {
+    label: "RETAINED LINE"
+    grid-columns: 2
+    style: {
+      fill: "#FCFAFD"
+      stroke: "#D7CBE2"
+      stroke-width: 1
+      border-radius: 10
+      font-color: "#766588"
+      font-size: 15
+    }
+
+    direct: "Direct typed-AST restart\nresolved model → recursive translation\ndisposable C# → behavior comparison" {
+      class: platform
+    }
+    behavior: "Return to product behavior\nPkl APIs · loading · schema\nRawHTTP package equivalence" {
+      class: platform
+    }
+
+    direct -> behavior: {
+      style.stroke: "#76549B"
+      style.stroke-width: 2
+    }
+  }
+
+  detours: {
+    label: "PRESERVED DETOURS"
+    grid-columns: 2
+    style: {
+      fill: "#FCF8F7"
+      stroke: "#E4BBB7"
+      stroke-width: 1
+      border-radius: 10
+      font-color: "#8A504B"
+      font-size: 15
+    }
+
+    nuget_loop: "NuGet fingerprint branch\n46 commits · rewound to package gate\nnuget-madness preserved" {
+      class: discarded
+    }
+    schema_loop: "Row-exact schema evidence\n23 commits · archived\nfocused verification restored" {
+      class: discarded
+    }
+  }
+}
+
+converge: {
+  label: "3 · GENERALIZE AND CONVERGE ON PRODUCTS & DELIVERY · JUL 20–AUG 6"
+  label.near: top-left
+  grid-columns: 2
+  style: {
+    fill: "#F8FBF7"
+    stroke: "#AAC4A7"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#557153"
+    font-size: 18
+  }
+
+  drivers: {
+    label: "GENERALIZATION DRIVERS"
+    grid-columns: 2
+    style: {
+      fill: "#F6FBFB"
+      stroke: "#B8D2D4"
+      stroke-width: 1
+      border-radius: 10
+      font-color: "#54797D"
+      font-size: 15
+    }
+
+    forcing_targets: {
+      label: "FORCING TARGETS"
+      grid-columns: 2
+      style: {
+        fill: "#F8FCFC"
+        stroke: "#CAE0E1"
+        stroke-width: 1
+        border-radius: 10
+        font-color: "#66898C"
+        font-size: 14
+      }
+
+      rawhttp: "RawHTTP conformance target\nsmall independent Java library\nproves reuse outside Pkl" {
+        class: exploration
+      }
+      pdfbox: "PDFBox second target\nmulti-module package family\nforces broader generality" {
+        class: exploration
+      }
+    }
+
+    platform: "DripSharp multi-target platform\nshared lowering · target contracts\ndeclarative mappings · test adaptation" {
+      class: platform
+    }
+
+    forcing_targets -> platform
+  }
+
+  products: {
+    label: "PUBLISHED PRODUCT FAMILIES · GENERATED REPOSITORIES · UPSTREAM SUITES · RELEASE PROOFS · NUGET"
+    grid-columns: 3
+    style: {
+      fill: "#F8FBF7"
+      stroke: "#C4D8C1"
+      stroke-width: 1
+      border-radius: 10
+      font-color: "#5E795B"
+      font-size: 15
+    }
+
+    brine: "BRINE\nPkl for .NET\nfirst product family" {
+      class: product
+    }
+    pdfcarton: "PDFCARTON\nApache PDFBox for .NET\nsecond product family" {
+      class: product
+    }
+    sqltrellis: "SQLTRELLIS\nJSqlParser for .NET\nthird product family" {
+      class: product
+    }
+  }
+
+  drivers.platform -> products
+}
+
+false_start.rewind -> rebuild.retained.direct: {
+  style.stroke: "#B67B24"
+  style.stroke-width: 3
+}
+rebuild.retained.behavior -> converge.drivers.platform

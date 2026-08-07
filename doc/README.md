@@ -22,6 +22,9 @@ These documents apply to every Java-to-C# target:
   credential-free preparation and inspection flow, the separately authorized
   local publication boundary, recovery rules, and the later trusted-publishing
   handoff.
+* [Repository Work History](repository-history.md) reconstructs the project's
+  major development phases, rewinds, progress loops, product expansion, and
+  recent stabilization from the Git history.
 * [Conversion Concerns](conversion-concerns.md) records Java-to-.NET semantic
   differences that every target must address deliberately.
 
