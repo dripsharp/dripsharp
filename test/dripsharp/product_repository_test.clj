@@ -253,6 +253,43 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest synchronized-proof-allows-only-declared-unstaged-profile-projects
+  (let [{:keys [workspace brine contract] :as fixture} (fixture!)
+        contract
+        (assoc-in contract [:publication :profile-projects]
+                  {"pkl-core" "src/DripSharp.Brine"
+                   "pkl-parser" "src/DripSharp.Brine.Parser"})]
+    (try
+      (product-repository/synchronize!
+       {:workspace-root workspace :target-contract contract})
+      (commit-synchronization! fixture)
+      (write! brine "src/DripSharp.Brine.Parser/Parser.cs"
+              "namespace DripSharp.Brine.Parser;\n")
+      (git! brine "add" "--all")
+      (git! brine "commit" "-m" "Add declared sibling profile")
+      (git! workspace "add" "products/brine")
+      (git! workspace "commit" "-m" "Advance sibling profile")
+      (let [proof
+            (product-repository/verify-synchronized!
+             {:workspace-root workspace :target-contract contract})]
+        (is (= (git-output brine "rev-parse" "HEAD")
+               (:repository-commit proof)))
+        (is (not-any? #(str/starts-with?
+                        (second %) "src/DripSharp.Brine.Parser")
+                      (:inventory proof))))
+      (write! workspace
+              "target/generated/brine/src/DripSharp.Brine/Generated.cs"
+              "namespace Stale.Core;\n")
+      (let [result
+            (failure
+             #(product-repository/verify-synchronized!
+               {:workspace-root workspace :target-contract contract}))]
+        (is (= :stale-generated-product-commit (:reason result)))
+        (is (= ["src/DripSharp.Brine.Parser"]
+               (:unstaged-profile-projects result))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest synchronization-rejects-dirty-and-cross-product-checkouts-before-copy
   (testing "unrelated changes in the intended product are rejected"
     (let [{:keys [workspace brine contract]} (fixture!)]

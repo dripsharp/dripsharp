@@ -364,6 +364,28 @@
            (str (name kind) "\t" path "\t" (or digest "")))
          inventory))))
 
+(defn- unstaged-profile-projects
+  [publication inventory]
+  (->> (:profile-projects publication)
+       vals
+       distinct
+       (filter
+        (fn [project-path]
+          (not-any?
+           (fn [[_kind path _digest]]
+             (or (= project-path path)
+                 (relative-under? project-path path)))
+           inventory)))
+       sort
+       vec))
+
+(defn- exclude-project-inventory
+  [inventory project-paths]
+  (filterv
+   (fn [[_kind path _digest]]
+     (not-any? #(or (= % path) (relative-under? % path)) project-paths))
+   inventory))
+
 (defn- gitmodule-entries
   [workspace-root run-command!]
   (let [output
@@ -561,8 +583,10 @@
 
 (defn verify-synchronized!
   "Proves that clean generated-product HEAD contains exactly the managed staged
-  files that will be packed. Returns the exact commit and repository identity
-  without modifying either repository."
+  files that will be packed. Declared sibling profile projects absent from this
+  generation remain outside this profile-scoped comparison; every staged path
+  and every other managed path is still exact. Returns the exact commit and
+  repository identity without modifying either repository."
   [{:keys [run-command!] :as options
     :or {run-command! process/run!}}]
   (let [{:keys [publication product inventory base-commit source-sha256]
@@ -573,13 +597,18 @@
         product-inventory
         (managed-inventory product (:managed-paths publication)
                            (:excluded-paths publication) true)]
-    (when-not (= inventory product-inventory)
-      (fail! "Generated product HEAD differs from proved package staging"
-             {:reason :stale-generated-product-commit
-              :repository (:repository-url publication)
-              :commit base-commit
-              :staging inventory
-              :product product-inventory}))
+    (let [unstaged-projects
+          (unstaged-profile-projects publication inventory)
+          comparable-product-inventory
+          (exclude-project-inventory product-inventory unstaged-projects)]
+      (when-not (= inventory comparable-product-inventory)
+        (fail! "Generated product HEAD differs from proved package staging"
+               {:reason :stale-generated-product-commit
+                :repository (:repository-url publication)
+                :commit base-commit
+                :unstaged-profile-projects unstaged-projects
+                :staging inventory
+                :product comparable-product-inventory})))
     {:target (get-in preflight [:target-contract :target])
      :repository-url (:repository-url publication)
      :repository-commit base-commit
