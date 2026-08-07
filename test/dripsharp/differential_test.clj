@@ -226,3 +226,11 @@
                              [:expected :version])))
       (is (= "drift" (get-in (ex-data error)
                              [:actual :version]))))))
+
+(deftest differential-package-file-projection-excludes-packed-readme
+  (is (= [{:kind :license :path "LICENSE.txt" :sha256 "license"}
+          {:kind :notice :path "NOTICE.txt" :sha256 "notice"}]
+         (differential/legal-package-files
+          [{:kind :license :path "LICENSE.txt" :sha256 "license"}
+           {:kind :notice :path "NOTICE.txt" :sha256 "notice"}
+           {:kind :readme :path "README.md" :sha256 "readme"}]))))

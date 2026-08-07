@@ -209,7 +209,9 @@
                      :assembly (:assembly-identity resource-proof)
                      :dependencies (:dependencies inspection)
                      :resources (count resources)
-                     :package-files (:package-files inspection)
+                     :package-files
+                     (differential/legal-package-files
+                      (:package-files inspection))
                      :contract-members (:contract-members audit)}])))
               (:packages package-proof))
         public-stubs

@@ -152,7 +152,8 @@
          :assembly (get-in primary [:resource-proof :assembly-identity])
          :dependencies (:dependencies inspection)
          :resource-count (count (:resources primary))
-         :package-files (:package-files inspection)
+         :package-files
+         (differential/legal-package-files (:package-files inspection))
          :public-contract
          {:strategy (:strategy compiled-surface)
           :required-rows (:required-rows public-metadata)

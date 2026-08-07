@@ -511,6 +511,13 @@
     (:version
      (baseline/package workspace-root target (:baseline-package value)))))
 
+(defn legal-package-files
+  "Projects the exact license and notice evidence owned by differential target
+  contracts. Generic packing separately validates the complete package payload,
+  including its README."
+  [package-files]
+  (filterv #(contains? #{:license :notice} (:kind %)) package-files))
+
 (defn- expected-package-contract [contract workspace-root]
   (let [target (:target contract)
         profile
@@ -585,8 +592,7 @@
      :dependencies (:dependencies inspection)
      :resource-count (:resources resource-proof)
      :package-files
-     (filterv #(contains? #{:license :notice} (:kind %))
-              (:package-files inspection))
+     (legal-package-files (:package-files inspection))
      :public-contract
      {:strategy (:strategy compiled-surface)
       :required-rows (:required-rows public-metadata)
