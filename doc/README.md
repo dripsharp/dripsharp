@@ -28,6 +28,13 @@ These documents apply to every Java-to-C# target:
 * [Conversion Concerns](conversion-concerns.md) records Java-to-.NET semantic
   differences that every target must address deliberately.
 
+## Reference Material
+
+* [IKVM Comparison and Ecosystem Assessment](ikvm-comparison.md) records the
+  dated architectural comparison, distribution guidance, adoption evidence,
+  Java-version boundary, commercial examples, and generic-erasure implications
+  established during the 2026-08-06 assessment.
+
 Shared documents must not acquire the source identities, public API decisions,
 runtime semantics, or exclusions of a particular product target.
 
