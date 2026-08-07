@@ -312,9 +312,11 @@
          :resources (count (:resources package))
          :package-files (get-in package [:inspection :package-files])
          :metadata
-         (select-keys (:package destination)
-                      [:id :version :authors :copyright :symbols
-                       :repository-url :repository-type :repository-commit])
+         (assoc
+          (select-keys (:package destination)
+                       [:id :version :authors :copyright :symbols
+                        :repository-url :repository-type])
+          :repository-commit repository-commit)
          :symbol
          {:id (:id symbol)
           :version (:version symbol)

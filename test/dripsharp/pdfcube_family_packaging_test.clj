@@ -121,7 +121,6 @@
                 :symbols :snupkg
                 :repository-url "https://github.com/dripsharp/pdfcarton.git"
                 :repository-type "git"
-                :repository-commit revision
                 :readme "README.md"}}
               :artifact package-artifact
               :identity
@@ -201,6 +200,11 @@
            (->> (:packages evidence)
                 vals
                 (map #(get-in % [:metadata :authors]))
+                set)))
+    (is (= #{revision}
+           (->> (:packages evidence)
+                vals
+                (map #(get-in % [:metadata :repository-commit]))
                 set)))
     (is (every?
          #(some (fn [file]
