@@ -584,7 +584,9 @@
      :assembly (:assembly-identity resource-proof)
      :dependencies (:dependencies inspection)
      :resource-count (:resources resource-proof)
-     :package-files (:package-files inspection)
+     :package-files
+     (filterv #(contains? #{:license :notice} (:kind %))
+              (:package-files inspection))
      :public-contract
      {:strategy (:strategy compiled-surface)
       :required-rows (:required-rows public-metadata)

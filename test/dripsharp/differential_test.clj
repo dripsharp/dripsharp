@@ -151,9 +151,13 @@
          :identity {:id "DripSharp.PdfCarton.IO" :version version}
          :inspection
          {:dependencies
-          [{:id "Microsoft.Extensions.Logging.Abstractions"
+         [{:id "Microsoft.Extensions.Logging.Abstractions"
             :version "10.0.0"}]
-          :package-files legal}
+          :package-files
+          (conj legal
+                {:kind :readme
+                 :path "README.md"
+                 :sha256 (apply str (repeat 64 "a"))})}
          :packages
          [{:primary? true
            :resource-proof
@@ -171,6 +175,7 @@
             :generated (:generated-production-sources actual)}))
     (is (= rows (get-in actual
                         [:public-contract :compiled-contract-members])))
+    (is (= legal (:package-files actual)))
     (let [assembly-version "99.0.0.0"
           required-rows (inc rows)
           compiled-members (+ 2 rows)
