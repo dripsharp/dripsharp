@@ -1,0 +1,150 @@
+grid-columns: 1
+
+classes: {
+  input: {
+    style: {
+      fill: "#E8F3F5"
+      stroke: "#2A6F74"
+      font-color: "#15383B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  process: {
+    style: {
+      fill: "#F2ECFA"
+      stroke: "#76549B"
+      font-color: "#35234B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  decision: {
+    shape: diamond
+    style: {
+      fill: "#FFF3D9"
+      stroke: "#B67B24"
+      font-color: "#5A390B"
+      stroke-width: 2
+      font-size: 20
+    }
+  }
+  success: {
+    style: {
+      fill: "#E9F4E8"
+      stroke: "#4F7D4B"
+      font-color: "#233B21"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  failure: {
+    style: {
+      fill: "#FBE9E7"
+      stroke: "#B64B42"
+      font-color: "#5A211D"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+}
+
+traverse: {
+  label: "1 · WALK THE TYPED AST"
+  direction: right
+  style: {
+    fill: "#F6FBFB"
+    stroke: "#9ABFC2"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#456B70"
+    font-size: 18
+  }
+
+  source: "One node in the Java AST\nresolved references + source location" {
+    class: input
+  }
+  recurse: "Translate direct children first\nretain each structured result" {
+    class: process
+  }
+  select: "Choose one translation rule\nfor this AST node" {
+    class: decision
+  }
+
+  source -> recurse: "visit"
+  recurse -> select: "plan parent"
+}
+
+dispatch: {
+  label: "2 · CHOOSE ONE TRANSLATION PATH"
+  label.near: top-left
+  grid-columns: 3
+  style: {
+    fill: "#FBF8FD"
+    stroke: "#BEABD0"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#66507D"
+    font-size: 18
+  }
+
+  semantic: "API mapping\nresolved type, method, constructor,\nfield, or annotation" {
+    class: process
+  }
+  structural: "Syntax translation\nfirst matching rule for a declaration,\nstatement, or expression" {
+    class: process
+  }
+  blocked: "Clear translation error\nunresolved reference or missing rule" {
+    class: failure
+  }
+}
+
+result: {
+  label: "3 · RENDER ONLY COMPLETE TRANSLATIONS"
+  direction: right
+  style: {
+    fill: "#F8FBF7"
+    stroke: "#AAC4A7"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#557153"
+    font-size: 18
+  }
+
+  aggregate: "Combine the result\nC# syntax · imports · helpers\nerrors · source link" {
+    class: process
+  }
+  coverage: "Every AST node and\nreference translated?" {
+    class: decision
+  }
+  render: "Render C# once\nsource text + source mappings" {
+    class: success
+  }
+  fail: "Stop at the original\nJava source location" {
+    class: failure
+  }
+}
+
+traverse.select -> dispatch.semantic
+traverse.select -> dispatch.structural
+traverse.select -> dispatch.blocked: "no match" {
+  style.stroke: "#B64B42"
+}
+
+dispatch.semantic -> result.aggregate
+dispatch.structural -> result.aggregate
+
+result.aggregate -> result.coverage: "complete tree"
+dispatch.blocked -> result.coverage
+result.coverage -> result.render: "yes" {
+  style.stroke: "#4F7D4B"
+  style.stroke-width: 2
+}
+result.coverage -> result.fail: "no" {
+  style.stroke: "#B64B42"
+  style.stroke-width: 2
+}

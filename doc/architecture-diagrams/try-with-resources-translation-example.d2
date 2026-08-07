@@ -1,0 +1,123 @@
+grid-columns: 1
+
+classes: {
+  input: {
+    style: {
+      fill: "#E8F3F5"
+      stroke: "#2A6F74"
+      font-color: "#15383B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 20
+    }
+  }
+  process: {
+    style: {
+      fill: "#F2ECFA"
+      stroke: "#76549B"
+      font-color: "#35234B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 20
+    }
+  }
+  decision: {
+    shape: diamond
+    style: {
+      fill: "#FFF3D9"
+      stroke: "#B67B24"
+      font-color: "#5A390B"
+      stroke-width: 2
+      font-size: 18
+    }
+  }
+  success: {
+    style: {
+      fill: "#E9F4E8"
+      stroke: "#4F7D4B"
+      font-color: "#233B21"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 20
+    }
+  }
+}
+
+input: {
+  label: "1 · READ THE JAVA STATEMENT"
+  label.near: top-left
+  direction: right
+  style: {
+    fill: "#F6FBFB"
+    stroke: "#9ABFC2"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#456B70"
+    font-size: 18
+  }
+
+  java: "Java\ntry (InputStream resource = stream) {\n  return 1;\n}" {
+    class: input
+  }
+  facts: "Typed AST facts\ntry statement + one resource\nbody contains an early return" {
+    class: process
+  }
+
+  java -> facts: "recognize structure"
+}
+
+translation: {
+  label: "2 · TRANSLATE CHILDREN, THEN BUILD THE LIFETIME GUARD"
+  label.near: top-left
+  direction: right
+  style: {
+    fill: "#FBF8FD"
+    stroke: "#BEABD0"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#66507D"
+    font-size: 18
+  }
+
+  recurse: "Translate the parts first\nInputStream → System.IO.Stream\nresource declaration + body" {
+    class: process
+  }
+  resource: "Resources present?" {
+    class: decision
+  }
+  wrap: "Wrap the body in C# using\nMultiple resources become nested guards\nin the same declaration order" {
+    class: process
+  }
+
+  recurse -> resource: "assemble parent"
+  resource -> wrap: "yes" {
+    style.stroke: "#4F7D4B"
+    style.stroke-width: 2
+  }
+}
+
+output: {
+  label: "3 · EMIT C# WITH DETERMINISTIC CLEANUP"
+  label.near: top-left
+  direction: right
+  style: {
+    fill: "#F8FBF7"
+    stroke: "#AAC4A7"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#557153"
+    font-size: 18
+  }
+
+  csharp: "Generated C#\nusing (System.IO.Stream resource = stream) {\n  return 1;\n}" {
+    class: success
+  }
+  lifetime: "Lifetime behavior\nDispose runs on normal exit, return, or throw\nMultiple resources dispose last-created first\n\nWith catch or finally, try remains outside\nthe nested using guards" {
+    class: success
+  }
+
+  csharp -> lifetime: "scope exits"
+}
+
+input.facts -> translation.recurse: "children-first walk"
+translation.wrap -> output.csharp: "structured C# node"

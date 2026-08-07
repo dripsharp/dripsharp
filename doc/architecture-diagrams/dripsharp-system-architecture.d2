@@ -1,0 +1,158 @@
+grid-columns: 1
+
+classes: {
+  control: {
+    style: {
+      fill: "#E8EEF8"
+      stroke: "#355070"
+      font-color: "#17233A"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  input: {
+    style: {
+      fill: "#E8F3F5"
+      stroke: "#2A6F74"
+      font-color: "#15383B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  core: {
+    style: {
+      fill: "#F2ECFA"
+      stroke: "#76549B"
+      font-color: "#35234B"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+  output: {
+    style: {
+      fill: "#E9F4E8"
+      stroke: "#4F7D4B"
+      font-color: "#233B21"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 21
+    }
+  }
+}
+
+control_plane: {
+  label: "CONTROL & CONFIGURATION"
+  direction: right
+  style: {
+    fill: "#F7F9FC"
+    stroke: "#AAB7C8"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#4B5A70"
+    font-size: 18
+  }
+
+  cli: "Command orchestrator\nchooses product + verification" {
+    class: control
+  }
+  contract: "Product configuration\nsource · scope · output" {
+    class: control
+  }
+
+  cli -> contract: "loads" {
+    style.stroke: "#60738E"
+    style.stroke-width: 2
+  }
+}
+
+semantic_input: {
+  label: "UNDERSTAND THE JAVA PROJECT"
+  direction: right
+  style: {
+    fill: "#F6FBFB"
+    stroke: "#9ABFC2"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#456B70"
+    font-size: 18
+  }
+
+  java_build: "Real Java build\nGradle or Maven" {
+    class: input
+  }
+  project_input: "Normalized Java project\nsource · dependencies · resources" {
+    class: input
+  }
+  spoon: "Resolved Java model\ntyped AST + resolved references" {
+    class: input
+  }
+
+  java_build -> project_input: "discovers"
+  project_input -> spoon: "resolves"
+}
+
+translation_core: {
+  label: "TRANSLATE AND GENERATE"
+  direction: right
+  style: {
+    fill: "#FBF8FD"
+    stroke: "#BEABD0"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#66507D"
+    font-size: 18
+  }
+
+  bundle: "Product translation rules\nsyntax · APIs · output policy" {
+    class: core
+  }
+  kernel: "Recursive translator\nwalks the AST and produces C#" {
+    class: core
+  }
+  generated: "Disposable .NET repository\nC# · .csproj · source maps" {
+    class: output
+  }
+
+  bundle -> kernel: "supplies rules"
+  kernel -> generated: "emits deterministically"
+}
+
+proof: {
+  label: "VERIFY INDEPENDENTLY"
+  direction: right
+  style: {
+    fill: "#F8FBF7"
+    stroke: "#AAC4A7"
+    stroke-width: 2
+    border-radius: 14
+    font-color: "#557153"
+    font-size: 18
+  }
+
+  oracle: "Reference Java behavior\nruns the original code" {
+    class: input
+  }
+  gates: "Independent verification\ncompile → package → clean consumer → compare" {
+    class: output
+  }
+  release: "Verified product output\nproduct repository · NuGet packages" {
+    class: output
+  }
+
+  oracle -> gates: "expected behavior"
+  gates -> release: "accepts"
+}
+
+control_plane.cli -> semantic_input.java_build: "orchestrates" {
+  style.stroke: "#60738E"
+  style.stroke-width: 2
+}
+control_plane.contract -> semantic_input.project_input: {
+  style.stroke: "#60738E"
+  style.stroke-width: 2
+}
+semantic_input.spoon -> translation_core.kernel: "live model"
+translation_core.generated -> proof.gates: "fresh output"
