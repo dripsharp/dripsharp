@@ -19,6 +19,7 @@
    "|product-prepare <target> <branch> <commit-message>"
    "|alpha-release-prepare <target> <authorized-alpha-tag> <product-commit> "
    "[platform-id,...]"
+   "|authorship-report <pkl|pdfcube|sqltrellis|all>"
    "|nuget-release-prepare <pkl|pdfcube|sqltrellis|all>"
    "|nuget-release-preflight <manifest> [--check-nuget-org]"
    "|nuget-release-publish <manifest> "
@@ -86,6 +87,12 @@
                 (str/split (second extra) #"," -1))))
 
       (and (= "nuget-release-prepare" command)
+           target
+           (nil? selector)
+           (empty? extra))
+      (nuget-release-preparation/prepare! {:selection target})
+
+      (and (= "authorship-report" command)
            target
            (nil? selector)
            (empty? extra))

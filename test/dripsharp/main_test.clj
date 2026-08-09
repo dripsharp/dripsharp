@@ -98,6 +98,8 @@
       (is (= :ok
              (main/dispatch! ["nuget-release-prepare" "all"])))
       (is (= :ok
+             (main/dispatch! ["authorship-report" "all"])))
+      (is (= :ok
              (main/dispatch!
               ["nuget-release-preflight" "release-manifest.edn"])))
       (is (= :ok
@@ -140,6 +142,7 @@
                 "0123456789abcdef0123456789abcdef01234567"
                 :platform-ids ["osx-x64" "osx-arm64"]}]
               [:nuget-release-prepare {:selection "all"}]
+              [:nuget-release-prepare {:selection "all"}]
               [:nuget-release-preflight
                {:manifest "release-manifest.edn"}]
               [:nuget-release-preflight
@@ -178,6 +181,8 @@
                  "osx-x64,osx-arm64" "extra"]
                 ["nuget-release-prepare"]
                 ["nuget-release-prepare" "all" "extra"]
+                ["authorship-report"]
+                ["authorship-report" "all" "extra"]
                 ["nuget-release-preflight"]
                 ["nuget-release-preflight" "release-manifest.edn" "--live"]
                 ["nuget-release-preflight" "release-manifest.edn"

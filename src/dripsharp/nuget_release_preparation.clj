@@ -8,6 +8,7 @@
   tagging, upload, ownership, or remote-mutation operation."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.authorship-report :as authorship-report]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
             [dripsharp.product-repository :as product-repository]
@@ -449,6 +450,56 @@
                 :second record}))
       (assoc packages package-id record))))
 
+(defn- boundary-package
+  [package]
+  {:profile (:profile package)
+   :identity (:identity package)
+   :ledger (:authorship package)
+   :verification (get-in package [:inspection :authorship])})
+
+(defn- merge-boundary-package!
+  [packages package]
+  (let [package-id (get-in package [:identity :id])
+        record (boundary-package package)]
+    (if-let [existing (get packages package-id)]
+      (if (= existing record)
+        packages
+        (fail! "Repeated package closures produced inconsistent authorship evidence"
+               {:package package-id}))
+      (assoc packages package-id record))))
+
+(defn- portfolio-products!
+  [product-records boundary-packages]
+  (mapv
+   (fn [{:keys [target product-family product-commit package-ids]}]
+     (let [packages (mapv boundary-packages package-ids)]
+       (when (some nil? packages)
+         (fail! "Aggregate authorship report is missing a production package"
+                {:target target
+                 :expected package-ids
+                 :available (vec (sort (keys boundary-packages)))}))
+       {:target target
+        :product-family product-family
+        :repository-commit product-commit
+        :packages packages}))
+   product-records))
+
+(defn- authorship-output-root
+  [workspace-root selection]
+  (let [base (paths/absolute
+              (paths/resolve-path workspace-root "target" "authorship-report"))
+        output (paths/absolute (paths/resolve-path base selection))]
+    (when-not (and (.startsWith output base) (not= output base))
+      (fail! "Authorship report directory is outside its deterministic target path"
+             {:output (str output)}))
+    (doseq [^Path candidate
+            (take-while #(and % (.startsWith ^Path % workspace-root))
+                        (iterate #(.getParent ^Path %) output))]
+      (when (Files/isSymbolicLink candidate)
+        (fail! "Authorship report path contains a symbolic link"
+               {:path (str candidate) :output (str output)})))
+    output))
+
 (defn- exact-package-result!
   [plan profile-record repository-proof result]
   (let [profile (:profile profile-record)
@@ -657,17 +708,32 @@
                    {:expected expected-files :actual actual-files})))))
     output))
 
+(defn- publish-authorship-report!
+  [staged output]
+  (harness/clean-directory! output)
+  (let [edn (paths/resolve-path output "product-authorship-report.edn")
+        markdown (paths/resolve-path output "product-authorship-report.md")]
+    (Files/copy (:edn staged) edn (make-array StandardCopyOption 0))
+    (Files/copy (:markdown staged) markdown (make-array StandardCopyOption 0))
+    (when-not (and (= (:edn-sha256 staged) (util/sha256-file edn))
+                   (= (:markdown-sha256 staged)
+                      (util/sha256-file markdown)))
+      (fail! "Published authorship report differs from its verified staging bytes"
+             {:output (str output)}))
+    (assoc staged :edn edn :markdown markdown)))
+
 (defn prepare!
   "Runs aggregate credential-free NuGet release preparation for one target or
   `all`. The CLI supplies only `selection`; dependency injection options exist
   for focused verification and do not add publication operations."
   ([] (prepare! {}))
   ([{:keys [workspace-root selection output-root read-target-fn proof-fn
-            package-fn repository-proof-fn run-command!]
+            package-fn repository-proof-fn run-command! test-suite-report-fn]
      :or {read-target-fn target-directory/read-target
           proof-fn target-execution/proof!
           package-fn target-execution/package!
-          repository-proof-fn product-repository/verify-synchronized!}
+          repository-proof-fn product-repository/verify-synchronized!
+          test-suite-report-fn authorship-report/test-suite-report!}
      :as options}]
    (let [credential-options (set/intersection forbidden-option-keys
                                               (set (keys options)))]
@@ -688,9 +754,9 @@
           "dripsharp-nuget-release-preparation-"
           (make-array FileAttribute 0))]
      (try
-       (let [{:keys [packages product-records]}
+       (let [{:keys [packages product-records boundary-packages]}
              (reduce
-              (fn [{:keys [packages product-records]} plan]
+              (fn [{:keys [packages product-records boundary-packages]} plan]
                 (let [contract (:contract plan)
                       target (name (:target contract))
                       invoke
@@ -709,9 +775,10 @@
                        (invoke repository-proof-fn
                                {:workspace-root root
                                 :target-contract contract}))
-                      packages
+                      prepared
                       (reduce
-                       (fn [package-records profile-record]
+                       (fn [{:keys [package-records boundary-records]}
+                            profile-record]
                          (let [result
                                (exact-package-result!
                                 plan profile-record initial-repository
@@ -728,18 +795,25 @@
                                _ (exact-stable-repository!
                                   initial-repository final-repository)]
                            (reduce
-                            (fn [records package]
+                            (fn [{:keys [package-records boundary-records]}
+                                 package]
                               (let [{:keys [record artifacts]}
                                     (package-record! plan final-repository package)]
                                 (doseq [artifact artifacts]
                                   (copy-artifact! staging artifact))
-                                (merge-package! records record)))
-                            package-records
+                                {:package-records
+                                 (merge-package! package-records record)
+                                 :boundary-records
+                                 (merge-boundary-package! boundary-records
+                                                          package)}))
+                            {:package-records package-records
+                             :boundary-records boundary-records}
                             (:packages result))))
-                       packages
+                       {:package-records packages
+                        :boundary-records boundary-packages}
                        (:profiles plan))]
                   (when-not (= (:package-ids plan)
-                               (set (for [[_ package] packages
+                               (set (for [[_ package] (:package-records prepared)
                                           :when (= (:target contract)
                                                    (:target package))]
                                       (:id package))))
@@ -749,21 +823,46 @@
                             :actual
                             (vec
                              (sort
-                              (for [[_ package] packages
+                              (for [[_ package] (:package-records prepared)
                                     :when (= (:target contract)
                                              (:target package))]
                                 (:id package))))}))
-                  {:packages packages
+                  {:packages (:package-records prepared)
+                   :boundary-packages (:boundary-records prepared)
                    :product-records
                    (conj product-records
                          (product-record plan initial-repository))}))
-              {:packages (sorted-map) :product-records []}
+              {:packages (sorted-map)
+               :boundary-packages (sorted-map)
+               :product-records []}
               plans)
              manifest
              (deterministic-manifest selection product-records packages)
              manifest-file (paths/resolve-path staging "release-manifest.edn")
              _ (util/write-text! manifest-file (str (pr-str manifest) "\n"))
+             test-suites
+             (mapv
+              (fn [plan]
+                (let [contract (:contract plan)
+                      product
+                      (first (filter #(= (:target contract) (:target %))
+                                     product-records))]
+                  (test-suite-report-fn root contract
+                                        (:product-commit product))))
+              plans)
+             authorship-root (authorship-output-root root selection)
+             staged-authorship-result
+             (authorship-report/write-portfolio-report!
+              {:workspace-root root
+               :output-root (paths/resolve-path staging "authorship-report")
+               :link-root authorship-root
+               :products (portfolio-products! product-records
+                                              boundary-packages)
+               :test-suites test-suites})
              _ (publish-staging! staging output manifest)
+             authorship-result
+             (publish-authorship-report! staged-authorship-result
+                                         authorship-root)
              published-manifest
              (paths/resolve-path output "release-manifest.edn")
              manifest-sha256 (util/sha256-file published-manifest)
@@ -771,6 +870,8 @@
              {:artifact-directory (str output)
               :manifest (str published-manifest)
               :manifest-sha256 manifest-sha256
+              :authorship-report (str (:markdown authorship-result))
+              :authorship-report-sha256 (:markdown-sha256 authorship-result)
               :products (:product-count manifest)
               :packages (:package-count manifest)
               :publish-order (:publish-order manifest)}]
@@ -779,6 +880,7 @@
          {:artifact-directory output
           :manifest-file published-manifest
           :manifest-sha256 manifest-sha256
+          :authorship-report authorship-result
           :manifest manifest})
        (finally
          (delete-tree! staging))))))

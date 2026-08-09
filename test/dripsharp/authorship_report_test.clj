@@ -140,3 +140,44 @@
           (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :invalid-authorship-boundary-report
            (:kind (ex-data error))))))
+
+(deftest portfolio-report-deduplicates-shared-authored-inputs
+  (let [first-package (fixture-package)
+        second-package
+        (-> (fixture-package)
+            (assoc-in [:identity :id] "Acme.Extra")
+            (assoc-in [:identity :file] "Acme.Extra.1.2.3.nupkg")
+            (assoc-in [:ledger :policy :package-id] "Acme.Extra")
+            (assoc-in [:verification :policy :package-id] "Acme.Extra"))
+        test-suite
+        {:target :acme
+         :product-family :acme
+         :repository-commit commit
+         :upstream-revision commit
+         :mechanical-upstream-inputs 4
+         :cases 12
+         :fixtures 2
+         :authored-files
+         [{:path "targets/acme/Tests.cs"
+           :lines 5
+           :sha256 (apply str (repeat 64 "e"))
+           :role :authored-test-adapter}]
+         :authored-lines 5
+         :evidence [:acme-complete-proof]}
+        report
+        (report/build-portfolio-report
+         [{:target :acme
+           :product-family :acme
+           :repository-commit commit
+           :packages [first-package second-package]}]
+         [test-suite])
+        markdown (report/render-portfolio-markdown "." "target/report" report)]
+    (is (= 20 (get-in report [:package-footprint :authored-lines])))
+    (is (= 10 (:unique-authored-lines report)))
+    (is (= 2 (count (:unique-authored-inputs report))))
+    (is (= ["Acme.Core" "Acme.Extra"]
+           (get-in report [:unique-authored-inputs 0 :packages])))
+    (is (str/includes? markdown "does not distinguish LLM typing"))
+    (is (str/includes? markdown "Mechanically adapted upstream test inputs: 4"))
+    (is (str/includes? markdown "Shared compatibility files are counted"))
+    (is (str/includes? markdown "../../targets/acme/target.edn"))))

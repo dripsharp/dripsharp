@@ -80,6 +80,7 @@ clojure -J-Xmx8g -M:run differential rawhttp
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof rawhttp
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pdfcube
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run authorship-report all
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pdfcube
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline rawhttp
@@ -199,7 +200,21 @@ fresh-feed, and isolated-consumer gates. It writes byte-stable `.nupkg` and
 `target/nuget-release/<selection>`. The command accepts no publication
 credential and performs no tag, release, upload, ownership, or network
 mutation. Its deterministic manifest records remote availability as
-`:not-checked`.
+`:not-checked`. The same run writes `product-authorship-report.edn` and
+`product-authorship-report.md` under `target/authorship-report/<selection>`.
+Those reports aggregate the package-inspected mechanical, shared authored,
+product-authored, and vendored source classes, deduplicate shared authored
+inputs, list their durable provenance and linked proofs, and report generated
+test-suite provenance separately from production percentages.
+
+`authorship-report <pkl|pdfcube|sqltrellis|all>` is the explicit reporting
+entry point. Because an exact report requires reconciled package inputs, it
+runs the same credential-free proof and package preparation as
+`nuget-release-prepare`; it is not a shortcut over stale generated files.
+"Authored" in the report means reviewed non-mechanical DripSharp source. It
+does not attempt to infer whether an LLM or a human typed an individual line,
+and deterministic source-mapped adaptations performed by the translator remain
+classified as mechanical.
 
 `nuget-release-preflight <manifest> [--check-nuget-org]` requires the complete
 eight-package `all` release set and revalidates exact target-owned identities,

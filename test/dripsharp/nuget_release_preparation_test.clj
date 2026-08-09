@@ -1,5 +1,6 @@
 (ns dripsharp.nuget-release-preparation-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.nuget-release-preparation :as preparation]
             [dripsharp.paths :as paths]
             [dripsharp.target-directory :as target-directory]
@@ -93,14 +94,60 @@
         package-sha256 (util/sha256-file artifact)
         symbol-sha256 (some-> symbol-artifact util/sha256-file)
         pdb-entry (str "lib/net10.0/" id ".pdb")
-        pdb-sha256 (util/sha256-text (str id "|pdb"))]
+        pdb-sha256 (util/sha256-text (str id "|pdb"))
+        source-path (str "src/" id "/Mechanical.cs")
+        source-paths [source-path]
+        totals
+        {:files 1
+         :mechanical-lines 10
+         :authored-compat-lines 0
+         :authored-destination-runtime-lines 0
+         :vendored-third-party-lines 0
+         :authored-lines 0
+         :total-lines 10
+         :authored-fraction 0.0}
+        policy
+        {:schema-version 2
+         :target (:target contract)
+         :profile profile
+         :package-id id
+         :review "fixture-review"
+         :evidence [(first (map :id (get-in contract [:proof :ladders])))]
+         :budget {:authored-lines 0 :total-lines 10 :authored-fraction 0.0}
+         :guarded-compatibility-sources 0
+         :sources []}
+        ledger
+        {:schema-version 3
+         :files [{:path source-path
+                  :class :mechanical
+                  :source {:file (str "upstream/" id ".java")
+                           :revision (get-in contract
+                                             [:baseline :record :upstream
+                                              :revision])}
+                  :lines 10}]
+         :totals totals
+         :policy policy}
+        verification
+        {:schema-version 3
+         :verified-files 1
+         :source-paths source-paths
+         :source-inventory-sha256
+         (util/sha256-text (str/join "\n" source-paths))
+         :totals totals
+         :policy policy
+         :assembly-input
+         {:include "src/**/*.cs"
+          :source-inventory-sha256
+          (util/sha256-text (str/join "\n" source-paths))}}]
     (cond->
      {:profile profile
       :artifact artifact
       :destination destination
       :identity {:id id :version version
                  :file package-file :sha256 package-sha256}
-      :inspection {:dependencies (package-dependencies contract profile)}}
+      :authorship ledger
+      :inspection {:dependencies (package-dependencies contract profile)
+                   :authorship verification}}
       symbols?
       (assoc
        :symbol-artifact symbol-artifact
@@ -176,6 +223,19 @@
                  (get contracts (keyword target)))
                :proof-fn proof-fn
                :package-fn package-fn
+               :test-suite-report-fn
+               (fn [_ contract repository-commit]
+                 {:target (:target contract)
+                  :product-family (:product-family contract)
+                  :repository-commit repository-commit
+                  :upstream-revision
+                  (get-in contract [:baseline :record :upstream :revision])
+                  :mechanical-upstream-inputs 1
+                  :cases 1
+                  :fixtures 0
+                  :authored-files []
+                  :authored-lines 0
+                  :evidence (mapv :id (get-in contract [:proof :ladders]))})
                :repository-proof-fn repository-proof-fn}}))
 
 (deftest discovery-selects-only-complete-production-package-catalogs
@@ -259,6 +319,13 @@
     (is (= (:manifest first-result)
            (util/read-single-edn-string!
             (Files/readString ^Path (:manifest-file first-result)))))
+    (is (paths/regular-file?
+         (get-in first-result [:authorship-report :markdown])))
+    (is (= 8
+           (count
+            (mapcat :packages
+                    (get-in first-result
+                            [:authorship-report :report :products])))))
     (is (= (+ 1 8 (get expected-symbol-statuses :paired 0))
            (count first-artifact-hashes)))
     (is (= expected-symbol-statuses
@@ -298,7 +365,9 @@
       (is (= (seq first-manifest-bytes) (seq second-manifest-bytes)))
       (is (= first-artifact-hashes second-artifact-hashes))
       (is (= (:manifest-sha256 first-result)
-             (:manifest-sha256 second-result))))
+             (:manifest-sha256 second-result)))
+      (is (= (get-in first-result [:authorship-report :markdown-sha256])
+             (get-in second-result [:authorship-report :markdown-sha256]))))
     (testing "identical inputs reject mutation of a retained artifact"
       (let [package-file
             (get-in first-result [:manifest :packages 0 :files :package
