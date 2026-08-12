@@ -124,7 +124,9 @@
           {:packages [support core]
            :external-packages
            [{:id "Example.Logging" :version "9.0.0"
-             :sha256 (util/sha256-text "external")}]
+             :sha256 (util/sha256-text "external")}
+            {:id "Example.Transitive" :version "8.0.0"
+             :sha256 (util/sha256-text "transitive")}]
            :feed feed
            :proof-root (paths/resolve-path root "proof")}
           :consumer-fn
@@ -152,5 +154,6 @@
     (is (= [{:id "Example.Core" :version "1.2.3-alpha.1"}]
            (:selected-packages @consumer-call)))
     (is (= #{{:id "Example.Core" :version "1.2.3-alpha.1"}
-             {:id "Example.Logging" :version "9.0.0"}}
+             {:id "Example.Logging" :version "9.0.0"}
+             {:id "Example.Transitive" :version "8.0.0"}}
            (set (:expected-packages @consumer-call))))))

@@ -166,17 +166,24 @@
 
 (defn- exact-external-packages!
   [dependencies package-result]
-  (let [available
+  (let [packages (vec (:external-packages package-result))
+        identities (mapv (fn [{:keys [id version]}]
+                           [(lower id) version])
+                         packages)
+        _
+        (when-not (= (count identities) (count (distinct identities)))
+          (fail! "NuGet bundle feed contains duplicate external package identities"
+                 {:identities identities}))
+        available
         (into {}
               (map (juxt (fn [{:keys [id version]}] [(lower id) version])
                          identity))
-              (:external-packages package-result))]
-    (mapv
-     (fn [{:keys [id version]}]
-       (or (get available [(lower id) version])
-           (fail! "NuGet bundle feed is missing an external dependency artifact"
-                  {:dependency [id version]})))
-     dependencies)))
+              packages)]
+    (doseq [{:keys [id version]} dependencies]
+      (when-not (get available [(lower id) version])
+        (fail! "NuGet bundle feed is missing an external dependency artifact"
+               {:dependency [id version]})))
+    (vec (sort-by (juxt (comp lower :id) :version) packages))))
 
 (defn bundle!
   "Builds and independently consumes the one-package public surface declared by
