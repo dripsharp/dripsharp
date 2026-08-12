@@ -163,6 +163,17 @@ The last command is a credential-free dry run. The separately authorized live
 form is documented under **Authorized live push** below; use the same
 `pdfcube/release-manifest.edn` path.
 
+For the complete PdfCarton-only flow, including the hidden API-key prompt and
+authorized live push, run:
+
+```sh
+./scripts/publish-pdfcarton-alpha.sh
+```
+
+The script performs the three credential-free steps above before prompting. It
+passes the key only through the live publisher's environment and clears it on
+exit.
+
 ## Inspect the bundle
 
 List the deterministic artifact boundary:
