@@ -45,7 +45,7 @@
   (with-open [output
               (ZipOutputStream.
                (Files/newOutputStream file (make-array OpenOption 0)))]
-    (doseq [[name value] entries]
+    (doseq [[name value] (sort-by key entries)]
       (.putNextEntry output (ZipEntry. name))
       (.write output (.getBytes (str value) StandardCharsets/UTF_8))
       (.closeEntry output)))
@@ -79,6 +79,7 @@
 (defn- contract-package-specs
   [contract]
   (let [profiles (:profiles contract)
+        bundle (get-in contract [:publication :nuget :bundle])
         selected (set (keys (get-in contract [:publication :profile-projects])))
         records
         (for [profile selected]
@@ -86,43 +87,76 @@
            (get-in profiles [profile :configuration :dependency-profiles])
            :profile profile})
         profile-order
-        (topological-order records :profile :dependency-profiles)]
+        (topological-order records :profile :dependency-profiles)
+        components
+        (mapv
+         (fn [profile]
+           (let [destination
+                 (get-in profiles [profile :destination :configuration])
+                 id (get-in destination [:package :id])
+                 dependencies
+                 (->> (concat
+                       (for [dependency-profile
+                             (get-in profiles
+                                     [profile :configuration
+                                      :dependency-profiles])]
+                         (let [dependency-id
+                               (get-in profiles
+                                       [dependency-profile :destination
+                                        :configuration :package :id])]
+                           {:id dependency-id
+                            :version
+                            (get-in contract
+                                    [:publication :nuget :packages dependency-id
+                                     :version])}))
+                       (map #(select-keys % [:id :version])
+                            (:runtime-packages destination)))
+                      (sort-by (juxt :id :version))
+                      (mapv #(sorted-map :id (:id %) :version (:version %))))]
+             {:dependencies dependencies
+              :id id
+              :pdb-entries
+              [(str "lib/" (get-in destination [:project :target-framework])
+                    "/" id ".pdb")]
+              :product-family (:product-family contract)
+              :profile profile
+              :source-commit
+              (get-in contract [:baseline :record :upstream :revision])
+              :symbols? (= :snupkg (get-in destination [:package :symbols]))
+              :target (:target contract)
+              :target-framework (get-in destination [:project :target-framework])
+              :version
+              (get-in contract [:publication :nuget :packages id :version])}))
+         profile-order)]
+    (if bundle
+      (let [component-ids (set (:component-package-ids bundle))
+            package-id (:package-id bundle)
+            base (first (filter #(= package-id (:id %)) components))
+            dependencies
+            (->> components
+                 (mapcat :dependencies)
+                 (remove #(contains? component-ids (:id %)))
+                 distinct
+                 (sort-by (juxt :id :version))
+                 vec)]
+        [(assoc base
+                :dependencies dependencies
+                :pdb-entries (vec (sort (mapcat :pdb-entries components)))
+                :profile (:profile bundle))])
+      components)))
+
+(defn- contract-component-package-ids
+  [contract]
+  (let [profiles (:profiles contract)
+        selected (set (keys (get-in contract [:publication :profile-projects])))
+        records
+        (for [profile selected]
+          {:dependency-profiles
+           (get-in profiles [profile :configuration :dependency-profiles])
+           :profile profile})]
     (mapv
-     (fn [profile]
-       (let [destination
-             (get-in profiles [profile :destination :configuration])
-             id (get-in destination [:package :id])
-             dependencies
-             (->> (concat
-                   (for [dependency-profile
-                         (get-in profiles
-                                 [profile :configuration
-                                  :dependency-profiles])]
-                     (let [dependency-id
-                           (get-in profiles
-                                   [dependency-profile :destination
-                                    :configuration :package :id])]
-                       {:id dependency-id
-                        :version
-                        (get-in contract
-                                [:publication :nuget :packages dependency-id
-                                 :version])}))
-                   (map #(select-keys % [:id :version])
-                        (:runtime-packages destination)))
-                  (sort-by (juxt :id :version))
-                  (mapv #(sorted-map :id (:id %) :version (:version %))))]
-         {:dependencies dependencies
-          :id id
-          :product-family (:product-family contract)
-          :profile profile
-          :source-commit
-          (get-in contract [:baseline :record :upstream :revision])
-          :symbols? (= :snupkg (get-in destination [:package :symbols]))
-          :target (:target contract)
-          :target-framework (get-in destination [:project :target-framework])
-          :version
-          (get-in contract [:publication :nuget :packages id :version])}))
-     profile-order)))
+     #(get-in profiles [% :destination :configuration :package :id])
+     (topological-order records :profile :dependency-profiles))))
 
 (defn- product-commit
   [target]
@@ -130,8 +164,8 @@
 
 (defn- package-record!
   [^Path directory publish-order
-   {:keys [dependencies id product-family profile source-commit symbols? target
-           target-framework version]}]
+   {:keys [dependencies id pdb-entries product-family profile source-commit
+           symbols? target target-framework version]}]
   (let [product-commit (product-commit target)
         package-filename (str id "." version ".nupkg")
         symbol-filename (str id "." version ".snupkg")
@@ -140,14 +174,19 @@
         (zip-file!
          (paths/resolve-path directory package-filename)
          {nuspec-entry (nuspec id version target-framework dependencies)})
-        pdb-entry (str "lib/" target-framework "/" id ".pdb")
-        pdb-bytes (str id "|portable-pdb")
+        pdbs
+        (mapv (fn [entry]
+                {:entry entry
+                 :bytes (str entry "|portable-pdb")})
+              pdb-entries)
         symbol-path
         (when symbols?
           (zip-file!
            (paths/resolve-path directory symbol-filename)
-           {nuspec-entry (nuspec id version target-framework dependencies)
-            pdb-entry pdb-bytes}))]
+           (into
+            {nuspec-entry (nuspec id version target-framework dependencies)}
+            (map (juxt :entry :bytes))
+            pdbs)))]
     (sorted-map
      :dependencies dependencies
      :files
@@ -169,8 +208,11 @@
      :symbol-pairing
      (if symbols?
        (sorted-map :package-filename package-filename
-                   :pdb-entry pdb-entry
-                   :pdb-sha256 (util/sha256-text pdb-bytes)
+                   :pdbs
+                   (mapv (fn [{:keys [entry bytes]}]
+                           (sorted-map :entry entry
+                                       :sha256 (util/sha256-text bytes)))
+                         pdbs)
                    :status :paired
                    :symbol-filename symbol-filename)
        (sorted-map :status :absent))
@@ -181,6 +223,7 @@
 (defn- product-record
   [contract]
   (sorted-map
+   :component-package-ids (contract-component-package-ids contract)
    :package-ids (mapv :id (contract-package-specs contract))
    :product-commit (product-commit (:target contract))
    :product-family (:product-family contract)
@@ -228,14 +271,14 @@
          :configuration "Release"
          :kind :credential-free-nuget-release-preparation
          :network-mutations []
-         :package-count 8
+         :package-count 4
          :packages packages
          :product-count 3
          :products (mapv product-record contracts)
          :publication-credentials-accepted false
          :publish-order publish-order
          :remote-availability :not-checked
-         :schema-version 2
+         :schema-version 3
          :selection "all")
         manifest-file (paths/resolve-path directory "release-manifest.edn")
         write-manifest!
@@ -289,7 +332,7 @@
                      (throw (ex-info "credential must not be read" {})))
                    :push-fn #(swap! push-calls conj %)))))]
     (is (= :dry-run (:mode @plan)))
-    (is (= 8 (count (:steps @plan))))
+    (is (= 4 (count (:steps @plan))))
     (is (= (set publisher/release-package-ids)
            (set (map :id (:steps @plan)))))
     (is (every? #(= :paired (get-in % [:symbols :status])) (:steps @plan)))
@@ -302,6 +345,25 @@
     (is (empty? @push-calls))
     (is (str/includes? output "NuGet publication dry-run plan:"))
     (is (str/includes? output "DripSharp.Brine.Parser"))))
+
+(deftest one-product-manifest-is-a-complete-selected-release
+  (let [{:keys [contracts manifest]} (fixture!)
+        contract (first (filter #(= :pdfcube (:target %)) contracts))
+        package (first (filter #(= "DripSharp.PdfCarton" (:id %))
+                               (:packages manifest)))
+        selected (assoc manifest
+                        :selection "pdfcube"
+                        :package-count 1
+                        :packages [package]
+                        :publish-order ["DripSharp.PdfCarton"])]
+    (is (= [package]
+           (#'publisher/complete-release-set! selected [contract] [package])))
+    (is (= :nuget-release-publish-failed
+           (:kind
+            (ex-data
+             (failure
+              #(#'publisher/complete-release-set!
+                selected [contract] [(first (:packages manifest))]))))))))
 
 (deftest every-manifest-boundary-is-revalidated-before-planning
   (let [{:keys [manifest options write-manifest!]} (fixture!)
@@ -431,13 +493,13 @@
     (is (= @first-report @second-report))
     (is (= :not-checked
            (get-in @first-report [:remote-availability :status])))
-    (is (= 8 (get-in @first-report
+    (is (= 4 (get-in @first-report
                      [:remote-availability :package-count])))
     (is (every? #(= :not-checked (:status %))
                 (get-in @first-report [:remote-availability :packages])))
     (is (empty? @remote-calls))))
 
-(deftest remote-preflight-reports-all-eight-exact-id-version-states-with-get-only-fakes
+(deftest remote-preflight-reports-all-four-exact-id-version-states-with-get-only-fakes
   (let [{:keys [manifest options]} (fixture!)
         calls (atom [])
         first-version (get-in manifest [:packages 0 :version])
@@ -462,13 +524,13 @@
                :remote-request-fn request-fn
                :remote-timeout-seconds 1))))
     (is (= :checked (get-in @report [:remote-availability :status])))
-    (is (= 8 (get-in @report [:remote-availability :package-count])))
+    (is (= 4 (get-in @report [:remote-availability :package-count])))
     (is (= (mapv #(select-keys % [:id :version]) (:packages manifest))
            (mapv #(select-keys % [:id :version])
                  (get-in @report [:remote-availability :packages]))))
     (is (every? #(= :available (:status %))
                 (get-in @report [:remote-availability :packages])))
-    (is (= 9 (count @calls)))
+    (is (= 5 (count @calls)))
     (is (every? #(= :get (:method %)) @calls))
     (is (every? #(= #{:headers :method :timeout-ms :uri}
                     (set (keys %)))
@@ -513,9 +575,9 @@
     (is (= :remote-version-conflict (:reason (ex-data error))))
     (is (= [{:id (:id first-package) :version (:version first-package)}]
            (:conflicts (ex-data error))))
-    (is (= 8 (get-in (ex-data error)
+    (is (= 4 (get-in (ex-data error)
                      [:remote-availability :package-count])))
-    (is (= 9 (count @calls)))
+    (is (= 5 (count @calls)))
     (is (empty? @credential-reads))
     (is (empty? @push-calls))))
 
@@ -539,12 +601,12 @@
                       :remote-timeout-seconds 1)))]
         (is (= :remote-availability-indeterminate
                (:reason (ex-data error))))
-        (is (= 8 (get-in (ex-data error)
+        (is (= 4 (get-in (ex-data error)
                          [:remote-availability :package-count])))
         (is (every? #(= :indeterminate (:status %))
                     (get-in (ex-data error)
                             [:remote-availability :packages])))
-        (is (= 9 (count @calls)))
+        (is (= 5 (count @calls)))
         (is (every? #(= :get (:method %)) @calls))))))
 
 (deftest live-mode-fails-closed-before-any-request

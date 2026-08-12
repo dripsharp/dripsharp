@@ -172,7 +172,15 @@
              vec)
         source-url "https://github.com/dripsharp/dripsharp"
         upstream-url (str/replace (:repository upstream) #"[.]git$" "")
-        revision (:revision upstream)]
+        revision (:revision upstream)
+        bundle (get-in publication [:nuget :bundle])
+        install-records
+        (if bundle
+          [{:package-id (:package-id bundle)
+            :package-version
+            (get-in publication
+                    [:nuget :packages (:package-id bundle) :version])}]
+          records)]
     (str "# " (:package-title primary) "\n\n"
          (:package-description primary) "\n\n"
          "This is a generated publication repository. Durable source, "
@@ -184,12 +192,11 @@
          (apply str (map project-line
                          (sort-by :assembly-name records)))
          "\n## Install\n\n"
-         "The first public packages are prereleases. Install the package you "
-         "need from nuget.org:\n\n"
+         "The first public release is a prerelease. Install from nuget.org:\n\n"
          (apply
           str
           (for [{:keys [package-id package-version]}
-                (sort-by :package-id records)]
+                (sort-by :package-id install-records)]
             (str "```sh\n"
                  "dotnet add package " package-id
                  " --version " package-version "\n"

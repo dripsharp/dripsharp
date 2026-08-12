@@ -180,7 +180,16 @@
     "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.1"}
     "DripSharp.PdfCarton.Xmp" {:version "3.0.8-alpha.1"}
     "DripSharp.PdfCarton" {:version "3.0.8-alpha.1"}
-    "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.1"}}}
+    "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.1"}}
+   :bundle
+   {:package-id "DripSharp.PdfCarton"
+    :profile "pdfcube-preflight"
+    :component-package-ids
+    ["DripSharp.PdfCarton.IO"
+     "DripSharp.PdfCarton.Fonts"
+     "DripSharp.PdfCarton.Xmp"
+     "DripSharp.PdfCarton"
+     "DripSharp.PdfCarton.Preflight"]}}
   :publication-mode :pull-request}
  :proof
  {:role :product

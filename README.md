@@ -217,7 +217,7 @@ and deterministic source-mapped adaptations performed by the translator remain
 classified as mechanical.
 
 `nuget-release-preflight <manifest> [--check-nuget-org]` requires the complete
-eight-package `all` release set and revalidates exact target-owned identities,
+target-selected release set and revalidates exact target-owned identities,
 versions, dependency closure and order, hashes, symbol pairing, and the
 configured 250 MiB nuget.org artifact limit. Offline mode performs no network
 request and reports every ID/version as not checked. The optional nuget.org
@@ -225,7 +225,7 @@ check uses bounded credential-free GET requests and fails the release on an
 existing exact ID/version or an indeterminate response.
 
 `nuget-release-publish <manifest>` revalidates that proved manifest, its exact
-eight-package target-owned package graph, every package and symbol digest, and
+target-selected package graph, every package and symbol digest, and
 the package metadata before printing the ordered push plan. Dry-run is the
 default and performs no network operation. Live publication first requires a
 successful remote availability preflight and additionally requires

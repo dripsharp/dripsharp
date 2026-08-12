@@ -16,11 +16,12 @@ usage must be re-audited whenever PdfCarton advances to a greater stable upstrea
 release under the monotonic version-selection policy in the
 [authoritative product goal](product-goal.md).
 
-## PdfCarton Package Dependencies
+## PdfCarton Assembly Dependencies
 
-The selected upstream libraries become separately packaged PdfCarton libraries:
+The selected upstream libraries become separate PdfCarton assemblies inside
+the single public `DripSharp.PdfCarton` NuGet package:
 
-| Source module | Destination package | PdfCarton dependencies |
+| Source module | Destination assembly | PdfCarton dependencies |
 | --- | --- | --- |
 | `pdfbox-io` | `DripSharp.PdfCarton.IO` | None. |
 | `fontbox` | `DripSharp.PdfCarton.Fonts` | `DripSharp.PdfCarton.IO`. |
@@ -28,8 +29,9 @@ The selected upstream libraries become separately packaged PdfCarton libraries:
 | `pdfbox` | `DripSharp.PdfCarton` | `DripSharp.PdfCarton.IO`, `DripSharp.PdfCarton.Fonts`. |
 | `preflight` | `DripSharp.PdfCarton.Preflight` | `DripSharp.PdfCarton`, `DripSharp.PdfCarton.Xmp`. |
 
-These are project/package references, not compatibility helpers. Their public
-types and behavior are mechanically translated with their owning modules.
+These are project and assembly references, not separate public NuGet package
+dependencies or compatibility helpers. Their public types and behavior are
+mechanically translated with their owning modules.
 
 ## Resolved Production Dependency Mappings
 

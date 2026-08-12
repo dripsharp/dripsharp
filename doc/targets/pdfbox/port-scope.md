@@ -23,7 +23,7 @@ evidence, but they are not the product baseline while a stable release exists.
 | `pdfbox` | `DripSharp.PdfCarton` | The complete core PDF object model, parsing, writing, document APIs, content processing, rendering, extraction, manipulation, forms, security, signing, printing, and related behavior. |
 | `preflight` | `DripSharp.PdfCarton.Preflight` | PDF/A validation behavior supplied by Apache Preflight. |
 
-The package dependency graph mirrors the source modules:
+The project and assembly dependency graph mirrors the source modules:
 
 ```text
 DripSharp.PdfCarton.IO
@@ -39,12 +39,14 @@ DripSharp.PdfCarton.Preflight -> DripSharp.PdfCarton
                               -> DripSharp.PdfCarton.Xmp
 ```
 
-These five packages are the complete public package family. Reusable
+These five assemblies ship together in the single public
+`DripSharp.PdfCarton` NuGet package. Reusable
 compatibility code maps to BCL or SkiaSharp types where appropriate and is
-otherwise internalized into the owning packages. It does not become a sixth
-public compatibility package without explicit approval.
+otherwise internalized into the owning assemblies. It does not become a sixth
+public compatibility assembly without explicit approval.
 
-The module boundary controls packaging, not behavioral completeness. Every
+The module boundary controls project and assembly ownership, not behavioral
+completeness. Every
 production type and behavior in each selected module remains in scope unless
 the authoritative product goal explicitly excludes it.
 

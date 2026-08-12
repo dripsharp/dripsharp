@@ -211,7 +211,42 @@
              :packages packages
              :feed feed
              :dependency-proof {:packages (mapv :identity packages)}
-             :run {:exit 0}}))]
+             :run {:exit 0}}))
+        bundle-fn
+        (fn [{:keys [plan package-result]}]
+          (let [bundle (:bundle plan)
+                components (:packages package-result)
+                component-ids (set (:component-package-ids bundle))
+                base (first (filter #(= (:package-id bundle)
+                                        (get-in % [:identity :id]))
+                                    components))
+                dependencies
+                (->> components
+                     (mapcat #(get-in % [:inspection :dependencies]))
+                     (remove #(contains? component-ids (:id %)))
+                     distinct
+                     (sort-by (juxt :id :version))
+                     vec)
+                pdbs
+                (->> components
+                     (map (fn [package]
+                            (sorted-map
+                             :entry (get-in package
+                                            [:symbol-inspection :pdb-entry])
+                             :sha256 (get-in package
+                                             [:symbol-inspection :pdb-sha256]))))
+                     (sort-by :entry)
+                     vec)]
+            {:packages
+             [(-> base
+                  (assoc :profile (:profile bundle)
+                         :destination
+                         (get-in plan
+                                 [:contract :profiles (:profile bundle)
+                                  :destination :configuration])
+                         :inspection (assoc (:inspection base)
+                                            :dependencies dependencies)
+                         :symbol-inspection {:pdbs pdbs}))]}))]
     {:proof-calls proof-calls
      :package-calls package-calls
      :repository-calls repository-calls
@@ -222,6 +257,7 @@
                (fn [_ target]
                  (get contracts (keyword target)))
                :proof-fn proof-fn
+               :bundle-fn bundle-fn
                :package-fn package-fn
                :test-suite-report-fn
                (fn [_ contract repository-commit]
@@ -276,6 +312,20 @@
                (assoc profile :repository-commit
                       (apply str (repeat 40 "f"))))))))))
 
+(deftest one-product-preparation-emits-one-public-pdfcarton-package
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-preparation-pdfcarton-test-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        result (preparation/prepare!
+                (assoc (:options fixture) :selection "pdfcube"))]
+    (is (= 1 (get-in result [:manifest :product-count])))
+    (is (= 1 (get-in result [:manifest :package-count])))
+    (is (= ["DripSharp.PdfCarton"]
+           (get-in result [:manifest :publish-order])))
+    (is (= [["pdfcube" "pdfcube-preflight"]]
+           @(:package-calls fixture)))))
+
 (deftest aggregate-preparation-is-deterministic-and-credential-free
   (let [root (Files/createTempDirectory
               "dripsharp-nuget-release-preparation-test-"
@@ -307,9 +357,9 @@
              :absent)))]
     (is (= {:paired 8} expected-symbol-statuses))
     (is (= ["pdfcube" "pkl" "sqltrellis"] @(:proof-calls fixture)))
-    (is (= 8 (count @(:package-calls fixture))))
-    (is (= 11 (count @(:repository-calls fixture))))
-    (is (= 8 (get-in first-result [:manifest :package-count])))
+    (is (= 4 (count @(:package-calls fixture))))
+    (is (= 7 (count @(:repository-calls fixture))))
+    (is (= 4 (get-in first-result [:manifest :package-count])))
     (is (= 3 (get-in first-result [:manifest :product-count])))
     (is (= [] (get-in first-result [:manifest :network-mutations])))
     (is (= :not-checked
@@ -326,9 +376,9 @@
             (mapcat :packages
                     (get-in first-result
                             [:authorship-report :report :products])))))
-    (is (= (+ 1 8 (get expected-symbol-statuses :paired 0))
+    (is (= 9
            (count first-artifact-hashes)))
-    (is (= expected-symbol-statuses
+    (is (= {:paired 4}
            (frequencies
             (map #(get-in % [:symbol-pairing :status])
                  (get-in first-result [:manifest :packages])))))
@@ -336,14 +386,7 @@
                         (range))]
       (is (< (order "DripSharp.Brine.Parser")
              (order "DripSharp.Brine")))
-      (is (< (order "DripSharp.PdfCarton.IO")
-             (order "DripSharp.PdfCarton.Fonts")))
-      (is (< (order "DripSharp.PdfCarton.Fonts")
-             (order "DripSharp.PdfCarton")))
-      (is (< (order "DripSharp.PdfCarton.Xmp")
-             (order "DripSharp.PdfCarton.Preflight")))
-      (is (< (order "DripSharp.PdfCarton")
-             (order "DripSharp.PdfCarton.Preflight"))))
+      (is (contains? order "DripSharp.PdfCarton")))
     (reset! (:proof-calls fixture) [])
     (reset! (:package-calls fixture) [])
     (reset! (:repository-calls fixture) [])

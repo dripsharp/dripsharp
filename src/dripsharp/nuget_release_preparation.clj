@@ -10,6 +10,7 @@
             [clojure.string :as str]
             [dripsharp.authorship-report :as authorship-report]
             [dripsharp.harness :as harness]
+            [dripsharp.nuget-package-bundle :as nuget-package-bundle]
             [dripsharp.paths :as paths]
             [dripsharp.product-repository :as product-repository]
             [dripsharp.target-directory :as target-directory]
@@ -19,7 +20,7 @@
            [java.nio.file FileVisitOption Files Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]))
 
-(def schema-version 2)
+(def schema-version 3)
 
 (def ^:private commit-pattern #"[0-9a-f]{40}|[0-9a-f]{64}")
 (def ^:private sha256-pattern #"[0-9a-f]{64}")
@@ -217,6 +218,7 @@
   (let [publication (:publication contract)
         profile-projects (:profile-projects publication)
         catalog (get-in publication [:nuget :packages])
+        bundle (get-in publication [:nuget :bundle])
         records (mapv #(package-profile! contract %)
                       (sort (keys profile-projects)))
         actual-ids (set (map :package-id records))
@@ -239,9 +241,18 @@
               :profiles (vec (sort actual-ids))
               :missing (vec (sort (set/difference catalog-ids actual-ids)))
               :unexpected (vec (sort (set/difference actual-ids catalog-ids)))}))
-    {:contract contract
+    {:bundle bundle
+     :component-package-ids catalog-ids
+     :contract contract
      :profiles (mapv by-profile order)
-     :package-ids catalog-ids}))
+     :release-profiles
+     (if bundle
+       [(or (get by-profile (:profile bundle))
+            (fail! "NuGet bundle selects an unavailable release profile"
+                   {:target (:target contract)
+                    :profile (:profile bundle)}))]
+       (mapv by-profile order))
+     :package-ids (if bundle #{(:package-id bundle)} catalog-ids)}))
 
 (defn- profile-closure
   [profiles profile-id]
@@ -362,6 +373,11 @@
         (get-in package [:destination :project :target-framework])
         pdb-entry (get-in package [:symbol-inspection :pdb-entry])
         pdb-sha256 (get-in package [:symbol-inspection :pdb-sha256])
+        pdbs
+        (when symbols?
+          (or (get-in package [:symbol-inspection :pdbs])
+              (when (and pdb-entry pdb-sha256)
+                [(sorted-map :entry pdb-entry :sha256 pdb-sha256)])))
         dependencies
         (exact-dependencies! package-id
                              (get-in package [:inspection :dependencies]))
@@ -377,9 +393,16 @@
     (when-not (and (or (not symbols?)
                        (and (= package-id (:id symbol))
                             (= version (:version symbol))
-                            (string? pdb-entry)
-                            (str/ends-with? (str/lower-case pdb-entry) ".pdb")
-                            (re-matches sha256-pattern (or pdb-sha256 ""))))
+                            (vector? pdbs)
+                            (seq pdbs)
+                            (= (count pdbs)
+                               (count (distinct (map :entry pdbs))))
+                            (every?
+                             (fn [{:keys [entry sha256]}]
+                               (and (string? entry)
+                                    (str/ends-with? (str/lower-case entry) ".pdb")
+                                    (re-matches sha256-pattern (or sha256 ""))))
+                             pdbs)))
                    (string? target-framework)
                    (re-matches #"net[1-9][0-9]*[.]0" target-framework)
                    (re-matches commit-pattern (or source-commit "")))
@@ -387,8 +410,7 @@
              {:target target :package package-id
               :symbol (select-keys symbol [:id :version :file :sha256])
               :target-framework target-framework
-              :pdb-entry pdb-entry
-              :pdb-sha256 pdb-sha256
+              :pdbs pdbs
               :source-commit source-commit}))
     {:record
      (sorted-map
@@ -408,8 +430,7 @@
       :symbol-pairing
       (if symbols?
         (sorted-map :package-filename package-file
-                    :pdb-entry pdb-entry
-                    :pdb-sha256 pdb-sha256
+                    :pdbs (vec (sort-by :entry pdbs))
                     :status :paired
                     :symbol-filename symbol-file)
         (sorted-map :status :absent))
@@ -471,12 +492,12 @@
 (defn- portfolio-products!
   [product-records boundary-packages]
   (mapv
-   (fn [{:keys [target product-family product-commit package-ids]}]
-     (let [packages (mapv boundary-packages package-ids)]
+   (fn [{:keys [target product-family product-commit component-package-ids]}]
+     (let [packages (mapv boundary-packages component-package-ids)]
        (when (some nil? packages)
          (fail! "Aggregate authorship report is missing a production package"
                 {:target target
-                 :expected package-ids
+                 :expected component-package-ids
                  :available (vec (sort (keys boundary-packages)))}))
        {:target target
         :product-family product-family
@@ -603,7 +624,11 @@
   [plan repository-proof]
   (let [contract (:contract plan)]
     (sorted-map
-     :package-ids (mapv :package-id (:profiles plan))
+     :component-package-ids (mapv :package-id (:profiles plan))
+     :package-ids
+     (if-let [bundle (:bundle plan)]
+       [(:package-id bundle)]
+       (mapv :package-id (:release-profiles plan)))
      :product-commit (:repository-commit repository-proof)
      :product-family (:product-family contract)
      :proof-ladders (mapv :id (get-in contract [:proof :ladders]))
@@ -728,8 +753,10 @@
   for focused verification and do not add publication operations."
   ([] (prepare! {}))
   ([{:keys [workspace-root selection output-root read-target-fn proof-fn
-            package-fn repository-proof-fn run-command! test-suite-report-fn]
+            bundle-fn package-fn repository-proof-fn run-command!
+            test-suite-report-fn]
      :or {read-target-fn target-directory/read-target
+          bundle-fn nuget-package-bundle/bundle!
           proof-fn target-execution/proof!
           package-fn target-execution/package!
           repository-proof-fn product-repository/verify-synchronized!
@@ -793,7 +820,18 @@
                                         {:workspace-root root
                                          :target-contract contract}))
                                _ (exact-stable-repository!
-                                  initial-repository final-repository)]
+                                  initial-repository final-repository)
+                               public-result
+                               (if (:bundle plan)
+                                 (invoke bundle-fn
+                                         {:workspace-root root
+                                          :plan plan
+                                          :package-result result})
+                                 {:packages (:packages result)})
+                               boundary-records
+                               (reduce merge-boundary-package!
+                                       boundary-records
+                                       (:packages result))]
                            (reduce
                             (fn [{:keys [package-records boundary-records]}
                                  package]
@@ -803,15 +841,13 @@
                                   (copy-artifact! staging artifact))
                                 {:package-records
                                  (merge-package! package-records record)
-                                 :boundary-records
-                                 (merge-boundary-package! boundary-records
-                                                          package)}))
+                                 :boundary-records boundary-records}))
                             {:package-records package-records
                              :boundary-records boundary-records}
-                            (:packages result))))
+                            (:packages public-result))))
                        {:package-records packages
                         :boundary-records boundary-packages}
-                       (:profiles plan))]
+                       (:release-profiles plan))]
                   (when-not (= (:package-ids plan)
                                (set (for [[_ package] (:package-records prepared)
                                           :when (= (:target contract)

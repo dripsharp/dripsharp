@@ -33,11 +33,7 @@
 (def release-package-ids
   ["DripSharp.Brine.Parser"
    "DripSharp.Brine"
-   "DripSharp.PdfCarton.IO"
-   "DripSharp.PdfCarton.Fonts"
-   "DripSharp.PdfCarton.Xmp"
    "DripSharp.PdfCarton"
-   "DripSharp.PdfCarton.Preflight"
    "DripSharp.SqlTrellis"])
 
 (def ^:private nuget-org-source
@@ -50,7 +46,7 @@
     :product-count :products :publication-credentials-accepted :publish-order
     :remote-availability :schema-version :selection})
 (def ^:private product-keys
-  #{:package-ids :product-commit :product-family :proof-ladders
+  #{:component-package-ids :package-ids :product-commit :product-family :proof-ladders
     :repository-url :source-commit :source-repository :target})
 (def ^:private package-keys
   #{:dependencies :files :id :product-commit :product-family :profile
@@ -60,7 +56,8 @@
 (def ^:private artifact-keys #{:filename :sha256})
 (def ^:private absent-symbol-keys #{:status})
 (def ^:private paired-symbol-keys
-  #{:package-filename :pdb-entry :pdb-sha256 :status :symbol-filename})
+  #{:package-filename :pdbs :status :symbol-filename})
+(def ^:private pdb-keys #{:entry :sha256})
 (def ^:private forbidden-option-keys
   #{:api-key :credential :credentials :nuget-api-key :password :secret :token})
 (def ^:private sha256-pattern #"[0-9a-f]{64}")
@@ -168,8 +165,9 @@
   [contract]
   (let [profiles (:profiles contract)
         catalog (get-in contract [:publication :nuget :packages])
+        bundle (get-in contract [:publication :nuget :bundle])
         profile-order (topological-profile-order! contract)
-        records
+        component-records
         (mapv
          (fn [profile-id]
            (let [profile (get profiles profile-id)
@@ -203,6 +201,10 @@
              (exact-dependencies! package-id dependencies)
              {:dependencies dependencies
               :id package-id
+              :pdb-entries
+              [(str "lib/"
+                    (get-in destination [:project :target-framework]) "/"
+                    package-id ".pdb")]
               :product-family (:product-family contract)
               :profile profile-id
               :source-commit
@@ -212,6 +214,31 @@
               :target-framework (get-in destination [:project :target-framework])
               :version version}))
          profile-order)
+        records
+        (if bundle
+          (let [component-ids (set (:component-package-ids bundle))
+                package-id (:package-id bundle)
+                base (first (filter #(= package-id (:id %)) component-records))
+                dependencies
+                (->> component-records
+                     (mapcat :dependencies)
+                     (remove #(contains? component-ids (:id %)))
+                     distinct
+                     (sort-by (juxt :id :version))
+                     (mapv #(sorted-map :id (:id %) :version (:version %))))]
+            (when-not (and base
+                           (every? :symbols? component-records)
+                           (= 1 (count (set (map :target-framework
+                                                 component-records)))))
+              (fail! "Target NuGet bundle components are not release-compatible"
+                     {:target (:target contract)}))
+            (exact-dependencies! package-id dependencies)
+            [(assoc base
+                    :dependencies dependencies
+                    :pdb-entries (vec (sort (mapcat :pdb-entries
+                                                    component-records)))
+                    :profile (:profile bundle))])
+          component-records)
         ids (mapv (comp str/lower-case :id) records)]
     (when-not (= (count ids) (count (distinct ids)))
       (fail! "Selected target catalogs contain duplicate NuGet identities"
@@ -249,8 +276,14 @@
     (doseq [[product contract] (map vector products contracts)]
       (exact-keys! "NuGet release product" product-keys product)
       (let [profile-records (expected-profile-records! contract)
+            component-package-ids
+            (mapv
+             #(get-in contract
+                      [:profiles % :destination :configuration :package :id])
+             (topological-profile-order! contract))
             expected
-            {:package-ids (mapv :id profile-records)
+            {:component-package-ids component-package-ids
+             :package-ids (mapv :id profile-records)
              :product-family (:product-family contract)
              :proof-ladders (mapv :id (get-in contract [:proof :ladders]))
              :repository-url (get-in contract [:publication :repository-url])
@@ -519,27 +552,27 @@
                 names (validate-zip-entry-layout! package-id entries)
                 nuspecs
                 (filterv #(str/ends-with? (str/lower-case %) ".nuspec") names)
-                pdb-entry (get-in package [:symbol-pairing :pdb-entry])
+                pdbs (get-in package [:symbol-pairing :pdbs])
                 pdb-entries
                 (filterv #(str/ends-with? (str/lower-case %) ".pdb") names)]
             (when-not (and (= [nuspec-entry] nuspecs)
-                           (= [pdb-entry] pdb-entries))
+                           (= (mapv :entry pdbs) pdb-entries))
               (fail! "NuGet symbol package has an inexact nuspec or PDB pairing"
                      {:package package-id
                       :nuspec-count (count nuspecs)
                       :pdb-count (count pdb-entries)}))
             (inspect-nuspec! package-id archive nuspec-entry package)
-            (let [entry (.getEntry archive pdb-entry)
-                  actual
-                  (with-open [input (.getInputStream archive entry)]
-                    (util/digest-input "SHA-256" input))]
-              (when-not (= (get-in package [:symbol-pairing :pdb-sha256]) actual)
-                (fail! "NuGet symbol PDB differs from the proved manifest"
-                       {:package package-id
-                        :pdb-entry pdb-entry
-                        :expected
-                        (get-in package [:symbol-pairing :pdb-sha256])
-                        :actual actual})))))
+            (doseq [{:keys [entry sha256]} pdbs]
+              (let [zip-entry (.getEntry archive entry)
+                    actual
+                    (with-open [input (.getInputStream archive zip-entry)]
+                      (util/digest-input "SHA-256" input))]
+                (when-not (= sha256 actual)
+                  (fail! "NuGet symbol PDB differs from the proved manifest"
+                         {:package package-id
+                          :pdb-entry entry
+                          :expected sha256
+                          :actual actual}))))))
         (catch clojure.lang.ExceptionInfo error
           (throw error))
         (catch Exception _
@@ -556,7 +589,7 @@
         expected-file-keys (cond-> #{:package} symbols? (conj :symbols))]
     (exact-keys! "NuGet release package files" expected-file-keys
                  (:files package))
-    (when-not (and (= (dissoc expected :symbols? :product-commit)
+    (when-not (and (= (dissoc expected :pdb-entries :symbols? :product-commit)
                       (select-keys package
                                    [:dependencies :id :product-family :profile
                                     :source-commit :target :target-framework
@@ -582,21 +615,23 @@
         (do
           (exact-keys! "NuGet symbol pairing" paired-symbol-keys
                        (:symbol-pairing package))
-          (when-not
-           (and (= expected-symbol-filename (:filename symbol-file))
-                (= :paired (get-in package [:symbol-pairing :status]))
-                (= expected-package-filename
-                   (get-in package [:symbol-pairing :package-filename]))
-                (= expected-symbol-filename
-                   (get-in package [:symbol-pairing :symbol-filename]))
-                (= (str "lib/" (:target-framework expected) "/"
-                        package-id ".pdb")
-                   (get-in package [:symbol-pairing :pdb-entry]))
-                (re-matches
-                 sha256-pattern
-                 (or (get-in package [:symbol-pairing :pdb-sha256]) "")))
-            (fail! "NuGet release symbol pairing is inconsistent"
-                   {:package package-id})))
+          (let [pdbs (get-in package [:symbol-pairing :pdbs])]
+            (when-not
+             (and (= expected-symbol-filename (:filename symbol-file))
+                  (= :paired (get-in package [:symbol-pairing :status]))
+                  (= expected-package-filename
+                     (get-in package [:symbol-pairing :package-filename]))
+                  (= expected-symbol-filename
+                     (get-in package [:symbol-pairing :symbol-filename]))
+                  (vector? pdbs)
+                  (= (:pdb-entries expected) (mapv :entry pdbs))
+                  (every?
+                   (fn [pdb]
+                     (and (= pdb-keys (set (keys pdb)))
+                          (re-matches sha256-pattern (or (:sha256 pdb) ""))))
+                   pdbs))
+              (fail! "NuGet release symbol pairing is inconsistent"
+                     {:package package-id}))))
         (do
           (exact-keys! "NuGet absent symbol record" absent-symbol-keys
                        (:symbol-pairing package))
@@ -689,23 +724,19 @@
   (let [ids (mapv :id packages)
         normalized-ids (mapv #(.toLowerCase ^String % Locale/ROOT) ids)
         package-by-id (into {} (map (juxt :id identity)) packages)
-        expected-ids (set release-package-ids)
+        expected-ids
+        (set (mapcat #(map :id (expected-profile-records! %)) contracts))
         actual-ids (set ids)
-        targets (set (map :target contracts))]
-    (when-not (= "all" (:selection manifest))
-      (fail! "NuGet release preflight requires the complete all-products manifest"
-             {:selection (:selection manifest)}))
-    (when-not (= #{:pdfcube :pkl :sqltrellis} targets)
-      (fail! "NuGet release preflight target inventory is incomplete"
-             {:expected-targets [:pdfcube :pkl :sqltrellis]
-              :actual-targets (vec (sort targets))}))
+        approved-ids (set release-package-ids)]
+    (when-not (set/subset? expected-ids approved-ids)
+      (fail! "NuGet release preflight target selects an unapproved public package"
+             {:expected (vec (sort expected-ids))}))
     (when-not (= (count ids) (count (distinct normalized-ids)))
       (fail! "NuGet release preflight found duplicate package IDs"
              {:package-count (count ids)
               :distinct-package-count (count (distinct normalized-ids))}))
-    (when-not (and (= 8 (count ids))
-                   (= expected-ids actual-ids))
-      (fail! "NuGet release preflight package inventory is not the exact eight-package release set"
+    (when-not (= expected-ids actual-ids)
+      (fail! "NuGet release preflight package inventory is not the exact selected release set"
              {:expected (vec (sort expected-ids))
               :actual (vec (sort actual-ids))}))
     (doseq [{package-id :id package-version :version
@@ -1081,7 +1112,7 @@
      :source source}))
 
 (defn preflight!
-  "Validates the exact eight-package release set. Remote nuget.org availability
+  "Validates the exact target-selected release set. Remote nuget.org availability
   is optional and uses bounded credential-free GET requests only."
   ([] (preflight! {}))
   ([options]
@@ -1119,8 +1150,7 @@
        :symbols
        (if-let [symbol-path (:symbol-path package)]
          {:path (str symbol-path)
-          :pdb-entry (get-in package [:symbol-pairing :pdb-entry])
-          :pdb-sha256 (get-in package [:symbol-pairing :pdb-sha256])
+          :pdbs (get-in package [:symbol-pairing :pdbs])
           :sha256 (get-in package [:files :symbols :sha256])
           :status :paired}
          {:status :absent})

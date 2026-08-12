@@ -156,6 +156,20 @@ every destination configuration. The package repository is the generated
 DripSharp product repository, while upstream repository and revision evidence
 remain in the baseline, legal, and provenance contracts.
 
+A multi-project target may add `:bundle` to its NuGet contract:
+
+```clojure
+{:package-id "Example.Core"
+ :profile "example-complete"
+ :component-package-ids ["Example.Support" "Example.Core"]}
+```
+
+The component IDs must be the exact production package catalog and the selected
+profile's dependency closure. Component packages remain deterministic internal
+proof artifacts; release preparation emits only `:package-id`, containing every
+component assembly and portable PDB, and proves an isolated consumer with that
+single package reference.
+
 `:exact-clean-generated-product-commit` is resolved only during packaging. The
 packager proves that the product checkout is clean, its origin is the declared
 repository, its parent gitlink is exact, and its managed inventory is identical

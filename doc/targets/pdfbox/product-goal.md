@@ -25,7 +25,7 @@ in the user-approved exclusion list below.
 
 ## Product Target
 
-PdfCarton is a family of five separately packaged reusable .NET libraries for
+PdfCarton is a family of five reusable .NET assemblies in one public package for
 ordinary .NET developers who need the capabilities of Apache PDFBox. It is a
 mechanical Java-to-C# port, not a feature-selected reimplementation or a
 redesigned PDF API.
@@ -50,7 +50,7 @@ The selected reusable upstream libraries are:
 * `pdfbox`.
 * `preflight`.
 
-Their approved .NET package family is:
+Their approved .NET assembly family is:
 
 * `DripSharp.PdfCarton.IO`.
 * `DripSharp.PdfCarton.Fonts`.
@@ -58,8 +58,10 @@ Their approved .NET package family is:
 * `DripSharp.PdfCarton`.
 * `DripSharp.PdfCarton.Preflight`.
 
-Each library is packaged separately with dependency relationships corresponding
-to the upstream module graph.
+The five assemblies ship together in one public NuGet package,
+`DripSharp.PdfCarton`. Project and assembly references retain dependency
+relationships corresponding to the upstream module graph; those internal
+boundaries do not require separate public package identities.
 
 ## Supported Destination Platforms
 

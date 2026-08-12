@@ -6,22 +6,24 @@ This runbook is the durable operator contract for preparing, inspecting, and,
 after separate authorization, publishing the production NuGet release set. Run
 every command from the root of `dripsharp/dripsharp`.
 
-The release set contains exactly these eight production packages:
+The release set contains exactly these four production packages:
 
 | Position | Package | First approved version | Internal dependencies |
 | ---: | --- | --- | --- |
 | 0 | `DripSharp.Brine.Parser` | `0.32.0-alpha.1` | none |
-| 1 | `DripSharp.PdfCarton.IO` | `3.0.8-alpha.1` | none |
-| 2 | `DripSharp.PdfCarton.Xmp` | `3.0.8-alpha.1` | none |
-| 3 | `DripSharp.SqlTrellis` | `5.3.0-alpha.1` | none |
-| 4 | `DripSharp.Brine` | `0.32.0-alpha.1` | `DripSharp.Brine.Parser` at the exact version |
-| 5 | `DripSharp.PdfCarton.Fonts` | `3.0.8-alpha.1` | `DripSharp.PdfCarton.IO` at the exact version |
-| 6 | `DripSharp.PdfCarton` | `3.0.8-alpha.1` | `DripSharp.PdfCarton.IO` and `DripSharp.PdfCarton.Fonts` at the exact version |
-| 7 | `DripSharp.PdfCarton.Preflight` | `3.0.8-alpha.1` | `DripSharp.PdfCarton` and `DripSharp.PdfCarton.Xmp` at the exact version |
+| 1 | `DripSharp.PdfCarton` | `3.0.8-alpha.1` | none within DripSharp; contains the IO, Fonts, XMP, PDFBox, and Preflight assemblies |
+| 2 | `DripSharp.SqlTrellis` | `5.3.0-alpha.1` | none |
+| 3 | `DripSharp.Brine` | `0.32.0-alpha.1` | `DripSharp.Brine.Parser` at the exact version |
 
 The preparation manifest computes this deterministic dependency-first order;
 operators and automation must not reconstruct or reorder it. Exact external
 dependencies are also recorded and inspected in each package entry.
+
+A target-specific manifest is also a complete release boundary for that target.
+For PdfCarton, `nuget-release-prepare pdfcube` emits exactly one `.nupkg` and
+one `.snupkg`, both named `DripSharp.PdfCarton.3.0.8-alpha.1`, and the same
+preflight and publisher accept that one-package manifest without requiring a
+simultaneous Brine or SqlTrellis release.
 
 Brine, PdfCarton, and SqlTrellis remain governed by their respective
 [Pkl](targets/pkl/product-goal.md),
@@ -30,7 +32,7 @@ Brine, PdfCarton, and SqlTrellis remain governed by their respective
 remains [conformance-only](targets/rawhttp/product-goal.md). The complete
 adapted test projects and fixtures required by the target contracts remain
 runnable, shipped repository evidence but are non-packable and are not part of
-the eight-package inventory. A successful release is not product completion
+the four-package inventory. A successful release is not product completion
 and does not change any product scope, exclusion, synchronization rule, or
 shipped-test policy.
 
@@ -81,7 +83,7 @@ The approved metadata decision does **not** authorize a live push. Immediately
 before a future live step, a human must separately approve this exact release:
 
 * the manifest path and SHA-256;
-* all eight ID/version pairs and the printed publish order;
+* every ID/version pair in the selected manifest and its printed publish order;
 * the `DripSharp` organization owner and `isaksky` publishing account;
 * the exact nuget.org source; and
 * the intended external mutation.
@@ -101,20 +103,12 @@ temporary local API key is explicitly approved, create it under the
 covers `DripSharp.*`. Do not paste its value into a shell command, file,
 NuGet.Config, log, GitHub secret, issue, chat, or release artifact.
 
-The local driver relies on NuGet's environment-only `NUGET_API_KEY` and
-`NUGET_SYMBOL_API_KEY` support. Current NuGet
-[environment-variable guidance][nuget-environment] associates this support
-with .NET SDK 10.0.300. Check the live host:
+The local driver reads `NUGET_API_KEY` and `NUGET_SYMBOL_API_KEY` from its
+environment and does not persist or print them.
 
-```sh
-dotnet --version
-```
-
-Expected output for a live release is `10.0.300` or a later approved SDK. If
-the host reports an older SDK, stop and upgrade the toolchain. Do not fall back
-to `--api-key`, `--symbol-api-key`, `nuget setApiKey`, or a persisted
-NuGet.Config. The local preparation, inspection, remote check, and dry-run do
-not require a publication credential.
+The release contract imposes no minimum .NET SDK patch version. The local
+preparation, inspection, remote check, and dry-run do not require a
+publication credential.
 
 ## Prepare the complete release
 
@@ -141,7 +135,7 @@ DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run nuget-release-prepare all
 The command must exit zero. Its final line has this shape:
 
 ```text
-Credential-free NuGet release preparation passed: {:artifact-directory ".../target/nuget-release/all", :manifest ".../target/nuget-release/all/release-manifest.edn", :manifest-sha256 "<64 lowercase hexadecimal characters>", :products 3, :packages 8, :publish-order ["DripSharp.Brine.Parser" "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp" "DripSharp.SqlTrellis" "DripSharp.Brine" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"]}
+Credential-free NuGet release preparation passed: {:artifact-directory ".../target/nuget-release/all", :manifest ".../target/nuget-release/all/release-manifest.edn", :manifest-sha256 "<64 lowercase hexadecimal characters>", :products 3, :packages 4, :publish-order ["DripSharp.Brine.Parser" "DripSharp.PdfCarton" "DripSharp.SqlTrellis" "DripSharp.Brine"]}
 ```
 
 Set local path variables only after that success:
@@ -157,6 +151,18 @@ The preparation entry point accepts no credential and records
 `:remote-availability :not-checked`. It does not reserve an ID and it makes no
 network mutation.
 
+To prepare and validate only PdfCarton instead, use:
+
+```sh
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run nuget-release-prepare pdfcube
+clojure -M:run nuget-release-preflight target/nuget-release/pdfcube/release-manifest.edn --check-nuget-org
+clojure -M:run nuget-release-publish target/nuget-release/pdfcube/release-manifest.edn
+```
+
+The last command is a credential-free dry run. The separately authorized live
+form is documented under **Authorized live push** below; use the same
+`pdfcube/release-manifest.edn` path.
+
 ## Inspect the bundle
 
 List the deterministic artifact boundary:
@@ -165,7 +171,7 @@ List the deterministic artifact boundary:
 find "$RELEASE_DIRECTORY" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort
 ```
 
-Expected file output is exactly these 17 names. The local preflight below also
+Expected file output is exactly these 9 names. The local preflight below also
 rejects any extra entry, including a directory or symbolic link:
 
 ```text
@@ -175,14 +181,6 @@ DripSharp.Brine.Parser.0.32.0-alpha.1.nupkg
 DripSharp.Brine.Parser.0.32.0-alpha.1.snupkg
 DripSharp.PdfCarton.3.0.8-alpha.1.nupkg
 DripSharp.PdfCarton.3.0.8-alpha.1.snupkg
-DripSharp.PdfCarton.Fonts.3.0.8-alpha.1.nupkg
-DripSharp.PdfCarton.Fonts.3.0.8-alpha.1.snupkg
-DripSharp.PdfCarton.IO.3.0.8-alpha.1.nupkg
-DripSharp.PdfCarton.IO.3.0.8-alpha.1.snupkg
-DripSharp.PdfCarton.Preflight.3.0.8-alpha.1.nupkg
-DripSharp.PdfCarton.Preflight.3.0.8-alpha.1.snupkg
-DripSharp.PdfCarton.Xmp.3.0.8-alpha.1.nupkg
-DripSharp.PdfCarton.Xmp.3.0.8-alpha.1.snupkg
 DripSharp.SqlTrellis.5.3.0-alpha.1.nupkg
 DripSharp.SqlTrellis.5.3.0-alpha.1.snupkg
 release-manifest.edn
@@ -212,7 +210,7 @@ NuGet release preflight passed:
 ```
 
 Its EDN report must contain `:kind :nuget-release-preflight`,
-`:package-count 8`, `:duplicate-version-policy :fail-closed`, the exact
+`:package-count 4`, `:duplicate-version-policy :fail-closed`, the exact
 publish order above, `:size-limit-bytes 262144000`, and
 `:remote-availability {:status :not-checked ...}`. The report contains a size
 record for each `.nupkg` and `.snupkg`. Preflight also reopens every archive and
@@ -237,7 +235,7 @@ NuGet publication dry-run plan:
 The plan must report `:mode :dry-run`,
 `:credential-channel "NUGET_API_KEY"`,
 `:duplicate-version-policy :fail-closed`, the exact manifest digest and source,
-and eight ordered steps matching the table above. Every step must show
+and four ordered steps matching the table above. Every step must show
 `:symbols {:status :paired ...}`. Its command vectors contain `dotnet nuget
 push`, the exact `.nupkg` path, the exact source, a 300-second timeout, and
 `--force-english-output`; they contain neither `--api-key` nor
@@ -256,7 +254,7 @@ clojure -M:run nuget-release-preflight "$RELEASE_MANIFEST" --check-nuget-org
 It makes only HTTPS GET requests: one nuget.org service-index request and one
 version-inventory request for each package. Expected success is exit zero and
 a `NuGet release preflight passed:` report with
-`:remote-availability {:status :checked, :package-count 8, ...}` and each exact
+`:remote-availability {:status :checked, :package-count 4, ...}` and each exact
 ID/version marked `:status :available`.
 
 An existing exact ID/version produces exit 1 and:
@@ -313,7 +311,7 @@ Success is exit zero and a final line beginning with:
 NuGet publication completed:
 ```
 
-The result must have `:mode :live` and eight `:completed` records in the exact
+The result must have `:mode :live` and four `:completed` records in the exact
 manifest order. A successful push response means the upload was accepted; it
 does not mean gallery or symbol indexing is complete. Do not run a second push
 to compensate for normal indexing delay.
@@ -326,8 +324,8 @@ normal validation and indexing usually complete within 15 minutes; if a
 package is still processing after an hour, check
 [status.nuget.org](https://status.nuget.org/) and then use the package page's
 authenticated Contact Support link. Symbol validation is separate, so confirm
-all eight `.snupkg` results in the owner view as well as all eight primary
-packages. See NuGet's [validation and indexing guidance][nuget-publish] and
+all four `.snupkg` results and all four primary packages in the owner view. See
+NuGet's [validation and indexing guidance][nuget-publish] and
 [symbol indexing guidance][nuget-symbols].
 
 After indexing, prove a clean remote dependency restore from nuget.org only.
@@ -339,7 +337,7 @@ NUGET_VERIFY_PROJECT="$NUGET_VERIFY_ROOT/ReleaseConsumer/ReleaseConsumer.csproj"
 export NUGET_VERIFY_ROOT NUGET_VERIFY_PROJECT
 dotnet new classlib --name ReleaseConsumer --framework net10.0 --output "$NUGET_VERIFY_ROOT/ReleaseConsumer"
 dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.Brine --version 0.32.0-alpha.1 --no-restore
-dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.PdfCarton.Preflight --version 3.0.8-alpha.1 --no-restore
+dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.PdfCarton --version 3.0.8-alpha.1 --no-restore
 dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.SqlTrellis --version 5.3.0-alpha.1 --no-restore
 printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<configuration>' '  <packageSources>' '    <clear />' '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />' '  </packageSources>' '</configuration>' > "$NUGET_VERIFY_ROOT/NuGet.Config"
 NUGET_PACKAGES="$NUGET_VERIFY_ROOT/packages" NUGET_HTTP_CACHE_PATH="$NUGET_VERIFY_ROOT/http-cache" NUGET_PLUGINS_CACHE_PATH="$NUGET_VERIFY_ROOT/plugins-cache" NUGET_SCRATCH="$NUGET_VERIFY_ROOT/scratch" dotnet restore "$NUGET_VERIFY_PROJECT" --configfile "$NUGET_VERIFY_ROOT/NuGet.Config" --packages "$NUGET_VERIFY_ROOT/packages" --no-http-cache --force --verbosity normal
@@ -350,17 +348,13 @@ dotnet list "$NUGET_VERIFY_PROJECT" package --include-transitive
 The three `dotnet add` commands must report that exact-version references were
 added. Restore must report `Restored ...ReleaseConsumer.csproj` and exit zero;
 build must report `Build succeeded.` with zero errors. The final package list
-must include these exact eight internal ID/version pairs, either directly or
+must include these exact four internal ID/version pairs, either directly or
 transitively:
 
 ```text
 DripSharp.Brine.Parser 0.32.0-alpha.1
 DripSharp.Brine 0.32.0-alpha.1
-DripSharp.PdfCarton.IO 3.0.8-alpha.1
-DripSharp.PdfCarton.Fonts 3.0.8-alpha.1
-DripSharp.PdfCarton.Xmp 3.0.8-alpha.1
 DripSharp.PdfCarton 3.0.8-alpha.1
-DripSharp.PdfCarton.Preflight 3.0.8-alpha.1
 DripSharp.SqlTrellis 5.3.0-alpha.1
 ```
 
@@ -397,15 +391,15 @@ credential-free preflight boundary to print the complete remote state:
 clojure -M -e '(require (quote [dripsharp.nuget-release-publisher :as publisher])) (try (publisher/preflight! {:manifest "target/nuget-release/all/release-manifest.edn" :check-nuget-org? true}) (catch clojure.lang.ExceptionInfo error (binding [*out* *err*] (prn (select-keys (ex-data error) [:reason :conflicts :indeterminate :remote-availability]))) (System/exit 1)))'
 ```
 
-Expected recovery output is either a passing checked report with all eight
+Expected recovery output is either a passing checked report with all four
 versions `:available`, or a failing map with
 `:reason :remote-version-conflict`, exact `:conflicts`, and a
-`:remote-availability` record for all eight packages. Indeterminate remote
+`:remote-availability` record for all four packages. Indeterminate remote
 state remains a stop condition.
 
 Recover according to the observed state:
 
-1. If all eight exact versions remain available, nuget.org accepted none of
+1. If all four exact versions remain available, nuget.org accepted none of
    them. Resolve the transient cause, obtain fresh authorization and a fresh
    credential, repeat the normal remote check, and rerun the same live driver.
 2. If any exact version is a conflict, the release is irreversibly partial.
@@ -414,7 +408,7 @@ Recover according to the observed state:
    ID/version set, check each primary and symbol validation state, and obtain a
    new version decision. Increment the target-owned translator revision for
    every affected product family so all packages in that family move together,
-   regenerate the complete eight-package manifest, and restart this runbook.
+   regenerate the complete four-package manifest, and restart this runbook.
    Exact dependency versions and the driver determine which new package bytes
    are valid; never patch an existing archive.
 
@@ -441,7 +435,7 @@ tested Clojure boundaries:
 2. Retain `target/nuget-release/all` as one hash-bound artifact and invoke the
    same offline `nuget-release-preflight` and default
    `nuget-release-publish` dry-run. YAML must not discover packages, rebuild the
-   dependency graph, enumerate eight pushes, inspect archives, or implement
+   dependency graph, enumerate four pushes, inspect archives, or implement
    retry/skip logic.
 3. Put the live job behind a protected release environment and explicit human
    approval. Grant only `contents: read` and `id-token: write` as needed for
@@ -478,7 +472,6 @@ long-lived repository secret is not the default migration contract.
 [github-oidc]: https://docs.github.com/en/actions/reference/security/oidc
 [nuget-delete]: https://learn.microsoft.com/en-us/nuget/nuget-org/policies/deleting-packages
 [nuget-deprecate]: https://learn.microsoft.com/en-us/nuget/nuget-org/deprecate-packages
-[nuget-environment]: https://learn.microsoft.com/en-us/nuget/reference/cli-reference/cli-ref-environment-variables
 [nuget-organizations]: https://learn.microsoft.com/en-us/nuget/nuget-org/organizations-on-nuget-org
 [nuget-publish]: https://learn.microsoft.com/en-us/nuget/nuget-org/publish-a-package
 [nuget-symbols]: https://learn.microsoft.com/en-us/nuget/create-packages/symbol-packages-snupkg

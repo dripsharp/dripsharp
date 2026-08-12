@@ -96,6 +96,9 @@
     :project-url :repository-url :repository-type :repository-commit-policy
     :symbols :version-policy :readme :icon :packages})
 
+(def ^:private nuget-bundle-keys
+  #{:package-id :profile :component-package-ids})
+
 (def ^:private nuget-symbol-policy-keys
   #{:debug-type :package-format :source-link})
 
@@ -1857,7 +1860,9 @@
              "-alpha." revision)]
     (exact-keys! "Target NuGet publication contract"
                  [:publication :nuget]
-                 nuget-publication-keys nuget)
+                 (cond-> nuget-publication-keys
+                   (:bundle nuget) (conj :bundle))
+                 nuget)
     (doseq [field [:decision :authors :owner-organization
                    :publishing-account]]
       (validation/check! context [:publication :nuget field]
@@ -1951,6 +1956,60 @@
        (get-in baseline-packages [package-id :version])
        [:publication :nuget :packages package-id :version]
        (:version package)))
+    (when-let [bundle (:bundle nuget)]
+      (exact-keys! "Target NuGet bundle contract"
+                   [:publication :nuget :bundle]
+                   nuget-bundle-keys bundle)
+      (let [bundle-profile (:profile bundle)
+            bundle-package-id (:package-id bundle)
+            component-package-ids (:component-package-ids bundle)
+            component-set (set component-package-ids)
+            profile-closure
+            (loop [pending [bundle-profile] result #{}]
+              (if-let [profile-id (peek pending)]
+                (if (contains? result profile-id)
+                  (recur (pop pending) result)
+                  (let [profile-record (get profiles profile-id)]
+                    (if profile-record
+                      (recur
+                       (into (pop pending)
+                             (get-in profile-record
+                                     [:configuration :dependency-profiles]))
+                       (conj result profile-id))
+                      (fail! "Target NuGet bundle selects an unavailable profile"
+                             {:target target
+                              :bundle-profile bundle-profile
+                              :missing-profile profile-id}))))
+                result))
+            closure-package-ids
+            (set
+             (map #(get-in profiles
+                           [% :destination :configuration :package :id])
+                  profile-closure))]
+        (validation/check! context [:publication :nuget :bundle :package-id]
+                           bundle-package-id
+                           "a package ID from the component catalog"
+                           package-ids)
+        (validation/check! context [:publication :nuget :bundle :profile]
+                           bundle-profile
+                           "a production profile whose closure contains every component"
+                           #(contains? profiles %))
+        (when-not (and (vector? component-package-ids)
+                       (= (count component-package-ids)
+                          (count component-set))
+                       (= package-ids component-set)
+                       (= closure-package-ids component-set))
+          (fail! "Target NuGet bundle must contain the exact production component closure"
+                 {:target target
+                  :bundle-profile bundle-profile
+                  :expected (vec (sort package-ids))
+                  :components component-package-ids
+                  :closure (vec (sort closure-package-ids))}))
+        (when-not (contains? closure-package-ids bundle-package-id)
+          (fail! "Target NuGet bundle identity is outside its component closure"
+                 {:target target
+                  :bundle-profile bundle-profile
+                  :package-id bundle-package-id}))))
     (doseq [[package-id {:keys [profile destination]}] package-profiles]
       (let [package (:package destination)
             project-path (get-in publication [:profile-projects profile])
