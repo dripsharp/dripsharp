@@ -177,6 +177,21 @@ passes the key through the live publisher's environment and clears it on exit;
 the publisher then invokes NuGet with the required API-key options and redacts
 their values from diagnostics.
 
+After a failed push, use the fast retry only when the checked remote state says
+the exact version is still available and the proved manifest and artifacts are
+unchanged:
+
+```sh
+./scripts/publish-pdfcarton-alpha.sh --retry
+```
+
+This skips clean generation, packing, package-consumer proofs, and the redundant
+dry-run plan. It still runs the credential-free nuget.org availability check
+before prompting. The live publisher then validates the manifest, artifact
+digests, package metadata, and remote availability again before it reads the
+key or pushes anything. If the existing manifest is absent or invalid, the
+retry fails closed; run the full command without `--retry` to rebuild it.
+
 ## Inspect the bundle
 
 List the deterministic artifact boundary:
