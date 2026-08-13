@@ -103,8 +103,10 @@ temporary local API key is explicitly approved, create it under the
 covers `DripSharp.*`. Do not paste its value into a shell command, file,
 NuGet.Config, log, GitHub secret, issue, chat, or release artifact.
 
-The local driver reads `NUGET_API_KEY` and `NUGET_SYMBOL_API_KEY` from its
-environment and does not persist or print them.
+The local driver reads `NUGET_API_KEY` from its environment and does not persist
+or print it. It supplies that value to NuGet's supported `--api-key` and
+`--symbol-api-key` options while exposing only a redacted display command in
+results and failures.
 
 The release contract imposes no minimum .NET SDK patch version. The local
 preparation, inspection, remote check, and dry-run do not require a
@@ -171,8 +173,9 @@ authorized live push, run:
 ```
 
 The script performs the three credential-free steps above before prompting. It
-passes the key only through the live publisher's environment and clears it on
-exit.
+passes the key through the live publisher's environment and clears it on exit;
+the publisher then invokes NuGet with the required API-key options and redacts
+their values from diagnostics.
 
 ## Inspect the bundle
 
@@ -309,12 +312,14 @@ test "$NUGET_PUBLISH_STATUS" -eq 0
 
 The driver validates the complete bundle again, repeats the read-only
 availability check, and only then reads `NUGET_API_KEY`. For each dependency-
-ordered `.nupkg` push it passes the key to the NuGet child process through its
-environment and forwards the same value as `NUGET_SYMBOL_API_KEY`. Because the
-proved, paired `.snupkg` is in the same directory and the plan does not use
-`--no-symbols`, NuGet publishes the primary package first and then its symbol
-package. NuGet.org accepts portable-PDB `.snupkg` files through the V3 source;
-see the [symbol-package contract][nuget-symbols].
+ordered `.nupkg` push it supplies the same key through NuGet's `--api-key` and
+`--symbol-api-key` options. The executed process necessarily receives those
+arguments, but the driver uses a redacted display command so plans, results,
+and errors do not contain the value. Because the proved, paired `.snupkg` is in
+the same directory and the plan does not use `--no-symbols`, NuGet publishes
+the primary package first and then its symbol package. NuGet.org accepts
+portable-PDB `.snupkg` files through the V3 source; see the [symbol-package
+contract][nuget-symbols].
 
 Success is exit zero and a final line beginning with:
 
@@ -461,7 +466,7 @@ tested Clojure boundaries:
    chain policy.
 5. Expose the action output as `NUGET_API_KEY` only in the environment of one
    invocation of the existing live driver. Do not interpolate it into the
-   command line, echo it, persist it, upload it, or duplicate the driver's
+   driver command line, echo it, persist it, upload it, or duplicate the driver's
    symbol, ordering, availability, authorization, or failure logic in YAML.
    The command remains:
 

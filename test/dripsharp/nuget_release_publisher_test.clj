@@ -660,6 +660,7 @@
 (deftest live-mode-reports-duplicate-conflict-and-partial-failure-without-a-leak
   (let [{:keys [manifest options]} (fixture!)
         credential (str "fixture-" (UUID/randomUUID))
+        redacted "<redacted>"
         calls (atom [])
         caught (atom nil)
         output
@@ -701,16 +702,31 @@
            (:remaining (ex-data @caught))))
     (is (= 2 (count @calls)))
     (is (every?
-         #(= credential
-             (get-in % [:environment
-                        publisher/credential-environment-variable]))
+         #(and (= credential
+                  (second (drop-while (complement #{"--api-key"})
+                                      (:command %))))
+               (= credential
+                  (second (drop-while (complement #{"--symbol-api-key"})
+                                      (:command %)))))
          @calls))
-    (is (not-any? #(some #{credential "--api-key" "-k"} (:command %))
-                  @calls))
+    (is (every?
+         #(and (= redacted
+                  (second (drop-while (complement #{"--api-key"})
+                                      (:display-command %))))
+               (= redacted
+                  (second (drop-while (complement #{"--symbol-api-key"})
+                                      (:display-command %)))))
+         @calls))
+    (is (every? #(= #{publisher/credential-environment-variable
+                      publisher/symbol-credential-environment-variable}
+                    (:unset-environment %))
+                @calls))
     (is (not-any? #(some #{"--skip-duplicate"} (:command %)) @calls))
     (is (not (str/includes? (str (ex-message @caught) (ex-data @caught))
                             credential)))
-    (is (not (str/includes? output credential)))))
+    (is (not (str/includes? output credential)))
+    (is (str/includes? (:output (ex-data @caught)) "409 Conflict"))
+    (is (str/includes? (:output (ex-data @caught)) redacted))))
 
 (deftest live-mode-classifies-timeout-and-generic-errors
   (doseq [[expected push-fn]
@@ -733,6 +749,7 @@
                     "https://api.nuget.org/v3/index.json"
                     :timeout-seconds 1)))]
       (is (= expected (:failure (ex-data error))))
+      (is (string? (:output (ex-data error))))
       (is (= [] (:completed (ex-data error))))
       (is (= (get-in manifest [:packages 0 :id])
              (get-in (ex-data error) [:failed :id])))

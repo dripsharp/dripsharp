@@ -2,8 +2,9 @@
   "Fail-closed local publication of a proved NuGet release manifest.
 
   Dry-run is the default. Live publication requires independent authorization,
-  a target-approved HTTPS source, and an API key supplied through the process
-  environment. Neither plans nor results contain credential values."
+  a target-approved HTTPS source, and an API key supplied to the publisher
+  through the process environment. NuGet receives the key through its supported
+  command options; display commands and results redact credential values."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.nuget-release-preparation :as preparation]
@@ -29,6 +30,8 @@
 (def default-timeout-seconds 300)
 (def default-remote-timeout-seconds 10)
 (def nuget-org-max-package-bytes (* 250 1024 1024))
+(def ^:private redacted-credential "<redacted>")
+(def ^:private max-push-diagnostic-characters 4096)
 
 (def release-package-ids
   ["DripSharp.Brine.Parser"
@@ -1183,22 +1186,45 @@
          (re-find #"(?i)(?:\b409\b|conflict|already exists|already been pushed)"
                   output)))))
 
+(defn- sanitized-push-diagnostic
+  [credential & values]
+  (let [diagnostic
+        (->> values
+             (remove nil?)
+             (map str)
+             (remove str/blank?)
+             (str/join "\n")
+             (#(str/replace % credential redacted-credential)))]
+    (subs diagnostic 0 (min (count diagnostic)
+                            max-push-diagnostic-characters))))
+
 (defn- push-outcome
-  [push-fn request]
+  [push-fn request credential]
   (try
     (let [result (push-fn request)]
       (if (and (map? result) (zero? (:exit result)))
         {:status :published}
-        {:status (if (re-find #"(?i)(?:\b409\b|conflict|already exists|already been pushed)"
-                              (str (:output result)))
-                   :duplicate-version-conflict
-                   :error)}))
+        (let [diagnostic
+              (sanitized-push-diagnostic credential (:output result))]
+          (cond->
+           {:status
+            (if (re-find #"(?i)(?:\b409\b|conflict|already exists|already been pushed)"
+                         (str (:output result)))
+              :duplicate-version-conflict
+              :error)}
+            (seq diagnostic) (assoc :output diagnostic)))))
     (catch Throwable error
-      {:status
-       (cond
-         (= :command-timeout (:kind (ex-data error))) :timeout
-         (duplicate-conflict? error) :duplicate-version-conflict
-         :else :error)})))
+      (let [diagnostic
+            (sanitized-push-diagnostic credential
+                                       (:output (ex-data error))
+                                       (ex-message error))]
+        (cond->
+         {:status
+          (cond
+            (= :command-timeout (:kind (ex-data error))) :timeout
+            (duplicate-conflict? error) :duplicate-version-conflict
+            :else :error)}
+          (seq diagnostic) (assoc :output diagnostic))))))
 
 (defn- step-summary
   [step]
@@ -1209,19 +1235,27 @@
   (loop [remaining (:steps plan) completed []]
     (if-let [step (first remaining)]
       (let [request
-            {:command (:command step)
+            {:command
+             (into (:command step)
+                   ["--api-key" credential
+                    "--symbol-api-key" credential])
+             :display-command
+             (into (:command step)
+                   ["--api-key" redacted-credential
+                    "--symbol-api-key" redacted-credential])
              :directory directory
-             :environment
-             {credential-environment-variable credential
-              symbol-credential-environment-variable credential}
+             :unset-environment
+             #{credential-environment-variable
+               symbol-credential-environment-variable}
              :timeout-ms (* 1000 (+ 30 (:timeout-seconds plan)))}
-            outcome (push-outcome push-fn request)]
+            outcome (push-outcome push-fn request credential)]
         (if (= :published (:status outcome))
           (recur (next remaining) (conj completed (step-summary step)))
           (fail! "NuGet publication stopped after a package push failure"
                  {:completed completed
                   :failed (assoc (step-summary step) :remote-state :unknown)
                   :failure (:status outcome)
+                  :output (:output outcome)
                   :remaining (mapv step-summary (next remaining))
                   :source (:source plan)})))
       (let [result

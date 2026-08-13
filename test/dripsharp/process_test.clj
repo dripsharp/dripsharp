@@ -1,5 +1,6 @@
 (ns dripsharp.process-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.process :as process]))
 
 (deftest command-failure-is-explicit
@@ -13,6 +14,31 @@
       (is (= :command-failed (:kind (ex-data error))))
       (is (= 17 (:exit (ex-data error))))
       (is (= "harness-failure" (:output (ex-data error)))))))
+
+(deftest display-command-redacts-secret-arguments-from-failures
+  (let [secret "process-test-secret"
+        display-command ["sh" "-c" "exit 17" "<redacted>"]
+        error
+        (try
+          (process/run! {:command ["sh" "-c" "exit 17" secret]
+                         :display-command display-command
+                         :directory "."})
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :command-failed (:kind (ex-data error))))
+    (is (= display-command (:command (ex-data error))))
+    (is (not (str/includes? (str (ex-message error) (ex-data error))
+                            secret)))))
+
+(deftest invalid-display-command-is-explicit
+  (let [error
+        (try
+          (process/run! {:command ["true"]
+                         :display-command ["true" "extra"]
+                         :directory "."})
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :invalid-display-command (:kind (ex-data error))))))
 
 (deftest command-timeout-is-explicit-and-terminates-the-process
   (let [error (try

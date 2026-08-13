@@ -24,15 +24,24 @@
 
 (defn run!
   "Runs a command and returns its merged output. Throws on start, timeout, or
-  exit failure. `timeout-ms` is optional and must be a positive integer."
-  [{:keys [command directory timeout-ms environment unset-environment]}]
+  exit failure. `timeout-ms` is optional and must be a positive integer.
+  `display-command` may provide a same-length redacted command for results and
+  errors when the executed command necessarily contains a secret argument."
+  [{:keys [command display-command directory timeout-ms environment
+           unset-environment]}]
   (when-not (seq command)
     (throw (ex-info "Cannot run an empty command" {:kind :empty-command})))
   (when (and (some? timeout-ms)
              (not (and (integer? timeout-ms) (pos? timeout-ms))))
     (throw (ex-info "Command timeout must be a positive integer"
                     {:kind :invalid-command-timeout :timeout-ms timeout-ms})))
+  (when (and display-command
+             (not (and (sequential? display-command)
+                       (= (count command) (count display-command)))))
+    (throw (ex-info "Redacted display command must match the executed command"
+                    {:kind :invalid-display-command})))
   (let [command (mapv str command)
+        display-command (mapv str (or display-command command))
         builder (doto (ProcessBuilder. command)
                   (.directory (File. (str directory)))
                   (.redirectErrorStream true))]
@@ -69,18 +78,20 @@
             _ (when-not finished?
                 (throw (ex-info
                         (str "Command timed out after " timeout-ms " ms: "
-                             (str/join " " command))
-                        {:kind :command-timeout :command command
+                             (str/join " " display-command))
+                        {:kind :command-timeout :command display-command
                          :timeout-ms timeout-ms :output output})))
             exit (.exitValue process)
-            result {:command command :exit exit :output output}]
+            result {:command display-command :exit exit :output output}]
         (when-not (zero? exit)
           (throw (ex-info
-                  (str "Command failed with exit " exit ": " (str/join " " command))
+                  (str "Command failed with exit " exit ": "
+                       (str/join " " display-command))
                   (assoc result :kind :command-failed))))
         result)
       (catch IOException error
         (throw (ex-info
-                (str "Could not start command: " (str/join " " command))
-                {:kind :command-start-failed :command command}
+                (str "Could not start command: "
+                     (str/join " " display-command))
+                {:kind :command-start-failed :command display-command}
                 error))))))
