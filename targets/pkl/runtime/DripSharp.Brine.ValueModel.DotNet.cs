@@ -49,10 +49,10 @@ internal static class DotNetCollections
             ? new ReadOnlyDictionary<TKey, TValue>(mutable)
             : values;
 
-    internal static ISet<T> ReadOnly<T>(ISet<T> values) =>
+    internal static IReadOnlyCollection<T> ReadOnly<T>(ISet<T> values) =>
         new ReadOnlySet<T>(values);
 
-    private sealed class ReadOnlySet<T> : ISet<T>
+    private sealed class ReadOnlySet<T> : IReadOnlyCollection<T>
     {
         private readonly HashSet<T> values;
 
@@ -66,16 +66,6 @@ internal static class DotNetCollections
         public bool IsSupersetOf(IEnumerable<T> other) => values.IsSupersetOf(other);
         public bool Overlaps(IEnumerable<T> other) => values.Overlaps(other);
         public bool SetEquals(IEnumerable<T> other) => values.SetEquals(other);
-        bool ISet<T>.Add(T item) => throw new NotSupportedException();
-        void ICollection<T>.Add(T item) => throw new NotSupportedException();
-        public void ExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
-        public void IntersectWith(IEnumerable<T> other) => throw new NotSupportedException();
-        public void SymmetricExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
-        public void UnionWith(IEnumerable<T> other) => throw new NotSupportedException();
-        public void Clear() => throw new NotSupportedException();
-        public bool IsReadOnly => true;
-        public bool Remove(T item) => throw new NotSupportedException();
-        public void CopyTo(T[] array, int arrayIndex) => values.CopyTo(array, arrayIndex);
         public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
@@ -750,7 +740,7 @@ public abstract partial class Member
     public string ModuleName => GetModuleName();
     public string? DocComment => GetDocComment();
     public SourceLocation Location => GetSourceLocation();
-    public ISet<Modifier> Modifiers => DotNetCollections.ReadOnly(GetModifiers());
+    public IReadOnlyCollection<Modifier> Modifiers => DotNetCollections.ReadOnly(GetModifiers());
     public IReadOnlyList<PObject> Annotations => DotNetCollections.ReadOnly(GetAnnotations());
     public string SimpleName => GetSimpleName();
     public bool IsExternalMember => IsExternal();

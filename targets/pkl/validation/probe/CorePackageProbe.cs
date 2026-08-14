@@ -71,6 +71,7 @@ static class CorePackageProbe
         Write(writer, "@value-equality-order", "VALUE", ObserveValueEqualityAndOrder());
         Write(writer, "@value-formatter", "FORMAT", ObserveValueFormatter());
         Write(writer, "@value-renderers", "RENDER", ObserveValueRenderers());
+        Write(writer, "@member-modifiers-facade", "DOTNET", ObserveMemberModifiersFacade());
         Write(writer, "@idiomatic-data-api", "DOTNET", ObserveIdiomaticDataApi());
     }
 
@@ -232,7 +233,7 @@ static class CorePackageProbe
             RejectsMutation(() => ((IDictionary<string, PClass>)schema.Classes).Clear()) &&
             RejectsMutation(() => ((IDictionary<string, FileOutput>)files).Clear()) &&
             RejectsMutation(() => ((IList<Composite>)reference.Path).Add(obj)) &&
-            schema.ModuleClass.Modifiers is not ISet<Modifier>;
+            InspectMemberModifiersFacade(schema.ModuleClass) is (true, false, true);
         bool facades = source.Contents == "value = 1" &&
             source.SourceUri == ModuleSource.Text("x").GetUri() && obj.Properties.Count == 1 &&
             schema.Classes.ContainsKey("Bird") && schema.TypeAliases.ContainsKey("Name") &&
@@ -240,6 +241,26 @@ static class CorePackageProbe
             reference.Path.Count == 1 && ReferenceEquals(reference.Domain, obj) && readOnly;
         bool nullable = ModuleSource.FromUri(new Uri("file:///nullable.pkl")).Contents is null;
         return $"bytes={Lower(bytes)}|facades={Lower(facades)}|nullable={Lower(nullable)}";
+    }
+
+    static string ObserveMemberModifiersFacade()
+    {
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        ModuleSchema schema = evaluator.EvaluateSchema(ModuleSource.FromText("class Bird {}\n"));
+        var observation = InspectMemberModifiersFacade(schema.ModuleClass);
+        return $"declared={Lower(observation.DeclaredReadOnly)}|iset={Lower(observation.IsSet)}" +
+            $"|mutation-rejected={Lower(observation.MutationRejected)}";
+    }
+
+    static (bool DeclaredReadOnly, bool IsSet, bool MutationRejected) InspectMemberModifiersFacade(
+        Member member)
+    {
+        IReadOnlyCollection<Modifier> modifiers = member.Modifiers;
+        bool declaredReadOnly = typeof(Member).GetProperty(nameof(Member.Modifiers))!.PropertyType ==
+            typeof(IReadOnlyCollection<Modifier>);
+        bool isSet = modifiers is ISet<Modifier>;
+        bool mutationRejected = RejectsMutation(() => ((ICollection<Modifier>)modifiers).Clear());
+        return (declaredReadOnly, isSet, mutationRejected);
     }
 
     static bool InvalidRenderer(ValueRenderer renderer)

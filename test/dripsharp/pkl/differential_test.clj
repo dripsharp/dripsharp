@@ -162,6 +162,69 @@
                (thrown-kind
                 #(#'differential/verify-core-package-probe-adapters! stale-root))))))))
 
+(deftest core-package-probe-isolates-the-member-modifiers-facade
+  (let [root (paths/workspace-root)
+        runtime (Files/readString
+                 (paths/resolve-path root "targets" "pkl" "runtime"
+                                     "DripSharp.Brine.ValueModel.DotNet.cs"))
+        probe (Files/readString
+               (paths/resolve-path root "targets" "pkl" "validation" "probe"
+                                   "CorePackageProbe.cs"))
+        oracle (Files/readString
+                (paths/resolve-path root "targets" "pkl" "validation" "oracle"
+                                    "CoreUpstreamOracle.java"))
+        expected (Files/createTempFile "idiomatic-facade-expected" ".tsv"
+                                       (make-array FileAttribute 0))
+        actual (Files/createTempFile "idiomatic-facade-actual" ".tsv"
+                                     (make-array FileAttribute 0))
+        row (fn [id value]
+              (str id "\tDOTNET\t" (#'differential/b64 value) "\n"))
+        focused-row (row "@member-modifiers-facade"
+                         "declared=true|iset=false|mutation-rejected=true")
+        composite-row (row "@idiomatic-data-api"
+                           "bytes=true|facades=true|nullable=true")]
+    (testing "the netstandard facade is declared and implemented as read-only"
+      (is (str/includes? runtime
+                         "internal static IReadOnlyCollection<T> ReadOnly<T>(ISet<T> values)"))
+      (is (str/includes? runtime
+                         "private sealed class ReadOnlySet<T> : IReadOnlyCollection<T>"))
+      (is (str/includes? runtime
+                         "public IReadOnlyCollection<Modifier> Modifiers =>"))
+      (is (not (str/includes? runtime "public ISet<Modifier> Modifiers =>"))))
+    (testing "the focused observation names declaration, runtime shape, and mutation behavior"
+      (doseq [required ["@member-modifiers-facade"
+                        "typeof(IReadOnlyCollection<Modifier>)"
+                        "bool isSet = modifiers is ISet<Modifier>;"
+                        "bool mutationRejected = RejectsMutation"
+                        "declared=true|iset=false|mutation-rejected=true"]]
+        (is (or (str/includes? probe required)
+                (str/includes? oracle required))
+            required)))
+    (testing "the complete composite retains byte and nullable facade coverage"
+      (is (str/includes? probe
+                         "bytes={Lower(bytes)}|facades={Lower(facades)}|nullable={Lower(nullable)}"))
+      (is (str/includes? oracle "bytes=true|facades=true|nullable=true")))
+    (testing "a focused facade recurrence fails closed even when the composite stays green"
+      (Files/writeString expected (str focused-row composite-row)
+                         (make-array OpenOption 0))
+      (Files/writeString actual (str focused-row composite-row)
+                         (make-array OpenOption 0))
+      (is (= 2 (:matched (#'differential/assert-equal!
+                          "focused facade regression" expected actual))))
+      (Files/writeString
+       actual
+       (str (row "@member-modifiers-facade"
+                 "declared=false|iset=true|mutation-rejected=true")
+            composite-row)
+       (make-array OpenOption 0))
+      (let [error (try
+                    (#'differential/assert-equal!
+                     "focused facade regression" expected actual)
+                    nil
+                    (catch clojure.lang.ExceptionInfo value value))]
+        (is (= :differential-validation-failed (:kind (ex-data error))))
+        (is (= 1 (get-in (ex-data error) [:mismatch :line])))))))
+
 (deftest packed-assembly-manifest-pins-exact-runtime-hashes
   (let [output (Files/createTempFile "dripsharp-packed-assemblies" ".tsv"
                                      (make-array FileAttribute 0))

@@ -1794,7 +1794,7 @@
           summary {:upstream-revision revision
                    :package (:identity package-proof)
                    :cases (count core-cases)
-                   :value-model-observations 12
+                   :value-model-observations 13
                    :evaluation-cases 15
                    :output-cases 4
                    :value-export-cases 2

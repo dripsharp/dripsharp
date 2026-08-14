@@ -511,7 +511,7 @@ DripSharp.Brine	DripSharp.Brine.Member	property	IsHiddenMember	0	System.Boolean 
 DripSharp.Brine	DripSharp.Brine.Member	property	IsOpenMember	0	System.Boolean IsOpenMember {get}	-	value=non-null	-	-	-
 DripSharp.Brine	DripSharp.Brine.Member	property	IsStandardLibrary	0	System.Boolean IsStandardLibrary {get}	-	value=non-null	-	-	-
 DripSharp.Brine	DripSharp.Brine.Member	property	Location	0	DripSharp.Brine.Member$SourceLocation Location {get}	-	value=non-null	-	-	-
-DripSharp.Brine	DripSharp.Brine.Member	property	Modifiers	0	System.Collections.Generic.ISet<DripSharp.Brine.Modifier> Modifiers {get}	-	value=non-null	-	-	-
+DripSharp.Brine	DripSharp.Brine.Member	property	Modifiers	0	System.Collections.Generic.IReadOnlyCollection<DripSharp.Brine.Modifier> Modifiers {get}	-	value=non-null	-	-	-
 DripSharp.Brine	DripSharp.Brine.Member	property	ModuleName	0	System.String ModuleName {get}	-	value=non-null	-	-	-
 DripSharp.Brine	DripSharp.Brine.Member	property	SimpleName	0	System.String SimpleName {get}	-	value=non-null	-	-	-
 DripSharp.Brine	DripSharp.Brine.Member	type	Member	0	class Member	-	type=oblivious	-	-	-

@@ -134,6 +134,11 @@ public final class CoreUpstreamOracle {
     write(writer, "@value-equality-order", "VALUE", observeValueEqualityAndOrder());
     write(writer, "@value-formatter", "FORMAT", observeValueFormatter());
     write(writer, "@value-renderers", "RENDER", observeValueRenderers());
+    write(
+        writer,
+        "@member-modifiers-facade",
+        "DOTNET",
+        "declared=true|iset=false|mutation-rejected=true");
     write(writer, "@idiomatic-data-api", "DOTNET", "bytes=true|facades=true|nullable=true");
   }
 
