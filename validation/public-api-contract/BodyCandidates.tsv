@@ -1,12 +1,5 @@
 # DRIPSHARP_PUBLIC_BODY_AUDIT_V1
 assembly	owner	member	signature	finding
-DripSharp.Brine	DripSharp.Brine.Logger	Trace	System.Void Trace(System.String,DripSharp.Brine.StackFrame)	empty-no-op
-DripSharp.Brine	DripSharp.Brine.Logger	Warn	System.Void Warn(System.String,DripSharp.Brine.StackFrame)	empty-no-op
-DripSharp.Brine	DripSharp.Brine.Module.ModuleKey	GetFileCacheLocation	System.String GetFileCacheLocation()	constant-null
-DripSharp.Brine	DripSharp.Brine.Module.ModuleKey	HasElement	System.Boolean HasElement(DripSharp.Brine.SecurityManager,System.Uri)	unconditional-unsupported
-DripSharp.Brine	DripSharp.Brine.Module.ModuleKey	HasFragmentPaths	System.Boolean HasFragmentPaths()	constant-zero
-DripSharp.Brine	DripSharp.Brine.Module.ModuleKey	IsLocal	System.Boolean IsLocal()	constant-zero
-DripSharp.Brine	DripSharp.Brine.Module.ModuleKey	ListElements	System.Collections.Generic.IReadOnlyList<DripSharp.Brine.Module.PathElement> ListElements(DripSharp.Brine.SecurityManager,System.Uri)	unconditional-unsupported
 DripSharp.Brine	DripSharp.Brine.Module.ModuleKeyFactory	Close	System.Void Close()	empty-no-op
 DripSharp.Brine	DripSharp.Brine.Module.ModuleKeys$ExternalResolver	GetFileCacheLocation	System.String GetFileCacheLocation()	constant-null
 DripSharp.Brine	DripSharp.Brine.Module.ModuleKeys$ExternalResolver	HasFragmentPaths	System.Boolean HasFragmentPaths()	constant-zero
@@ -15,5 +8,3 @@ DripSharp.Brine	DripSharp.Brine.Resource.ResourceReader	Close	System.Void Close(
 DripSharp.Brine	DripSharp.Brine.Resource.ResourceReader	HasElement	System.Boolean HasElement(DripSharp.Brine.SecurityManager,System.Uri)	unconditional-unsupported
 DripSharp.Brine	DripSharp.Brine.Resource.ResourceReader	HasFragmentPaths	System.Boolean HasFragmentPaths()	constant-zero
 DripSharp.Brine	DripSharp.Brine.Resource.ResourceReader	ListElements	System.Collections.Generic.IReadOnlyList<DripSharp.Brine.Module.PathElement> ListElements(DripSharp.Brine.SecurityManager,System.Uri)	unconditional-unsupported
-DripSharp.Brine	DripSharp.Brine.SecurityManager	ResolveSecurePath	System.String ResolveSecurePath(System.Uri,System.Boolean)	constant-null
-DripSharp.Brine	DripSharp.Brine.ValueVisitor	VisitDefault	System.Void VisitDefault(System.Object)	empty-no-op

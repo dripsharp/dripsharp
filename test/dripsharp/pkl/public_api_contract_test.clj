@@ -347,25 +347,72 @@
                    source)))))
 
 (deftest whole-public-body-audit-is-reviewed-and-perturbation-sensitive
-  (let [rows @body-candidates]
-    (is (= 17 (count rows)))
-    (is (= {"constant-zero" 4
-            "constant-null" 3
+  (let [rows @body-candidates
+        expected
+        #{["DripSharp.Brine" "DripSharp.Brine.Module.ModuleKeyFactory"
+           "Close" "System.Void Close()" "empty-no-op"]
+          ["DripSharp.Brine" "DripSharp.Brine.Module.ModuleKeys$ExternalResolver"
+           "GetFileCacheLocation" "System.String GetFileCacheLocation()" "constant-null"]
+          ["DripSharp.Brine" "DripSharp.Brine.Module.ModuleKeys$ExternalResolver"
+           "HasFragmentPaths" "System.Boolean HasFragmentPaths()" "constant-zero"]
+          ["DripSharp.Brine" "DripSharp.Brine.PType" "GetTypeArguments"
+           "System.Collections.Generic.IReadOnlyList<DripSharp.Brine.PType> GetTypeArguments()"
+           "constant-empty"]
+          ["DripSharp.Brine" "DripSharp.Brine.Resource.ResourceReader"
+           "Close" "System.Void Close()" "empty-no-op"]
+          ["DripSharp.Brine" "DripSharp.Brine.Resource.ResourceReader"
+           "HasElement"
+           "System.Boolean HasElement(DripSharp.Brine.SecurityManager,System.Uri)"
+           "unconditional-unsupported"]
+          ["DripSharp.Brine" "DripSharp.Brine.Resource.ResourceReader"
+           "HasFragmentPaths" "System.Boolean HasFragmentPaths()" "constant-zero"]
+          ["DripSharp.Brine" "DripSharp.Brine.Resource.ResourceReader"
+           "ListElements"
+           "System.Collections.Generic.IReadOnlyList<DripSharp.Brine.Module.PathElement> ListElements(DripSharp.Brine.SecurityManager,System.Uri)"
+           "unconditional-unsupported"]}
+        actual (set (map #(mapv % (map keyword contract/body-audit-columns)) rows))
+        missing (contract/compare-body-audit rows (pop rows))
+        unexpected (contract/compare-body-audit
+                    rows (conj rows (assoc (first rows) :member "Unexpected")))
+        perturbed (contract/compare-body-audit
+                   rows (assoc-in rows [0 :finding] "constant-null"))
+        policy (temp-file "body-review-policy.tsv")]
+    (is (= 8 (count rows)))
+    (is (= expected actual))
+    (is (= {"constant-zero" 2
+            "constant-null" 1
             "constant-empty" 1
-            "empty-no-op" 5
-            "unconditional-unsupported" 4}
+            "empty-no-op" 2
+            "unconditional-unsupported" 2}
            (frequencies (map :finding rows))))
-    (is (= {:matched 17} (contract/compare-body-audit rows rows)))
+    (is (= {:matched 8} (contract/compare-body-audit rows rows)))
     (is (= :public-body-audit-drift
-           (get-in (contract/compare-body-audit rows (pop rows))
-                   [:mismatch :kind])))
+           (get-in missing [:mismatch :kind])))
+    (is (= [1 0]
+           ((juxt :missing-count :unexpected-count) (:mismatch missing))))
+    (is (= :public-body-audit-drift
+           (get-in unexpected [:mismatch :kind])))
+    (is (= [0 1]
+           ((juxt :missing-count :unexpected-count) (:mismatch unexpected))))
     (is (= :duplicate-public-body-audit-rows
            (get-in (contract/compare-body-audit rows (conj rows (first rows)))
                    [:mismatch :kind])))
     (is (= :public-body-audit-drift
-           (get-in (contract/compare-body-audit
-                    rows (assoc-in rows [0 :finding] "constant-null"))
-                   [:mismatch :kind])))))
+           (get-in perturbed [:mismatch :kind])))
+    (is (= [1 1]
+           ((juxt :missing-count :unexpected-count) (:mismatch perturbed))))
+    (Files/writeString
+     policy
+     (str "rule-id\tpriority\towner-regex\tmember-regex\tfinding-regex\t"
+          "disposition\tevidence\trationale\n"
+          "nonmatching\t100\tNo[.]Such[.]Owner\t.*\t.*\t"
+          "source-semantic-default\tvalidation/public-api-contract/UpstreamSurface.tsv\t"
+          "Deliberately does not review the candidate.\n")
+     (make-array OpenOption 0))
+    (is (= :unreviewed-public-body-candidate
+           (thrown-kind
+            #(#'contract/review-public-body-candidates!
+              @workspace [(first rows)] policy))))))
 
 (deftest strongly-typed-contract-key-generation-covers-product-and-native-apis
   (let [output (temp-file "strong-keys.tsv")
