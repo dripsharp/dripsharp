@@ -990,7 +990,8 @@ public sealed class ConfigBinder
         var definitions = new[] { typeof(IEnumerable<>), typeof(ICollection<>), typeof(IList<>),
             typeof(ISet<>), typeof(IReadOnlyList<>), typeof(IReadOnlyCollection<>) };
         var match = type.GetInterfaces().Concat(new[] { type }).FirstOrDefault(candidate =>
-            candidate.IsGenericType && definitions.Contains(candidate.GetGenericTypeDefinition()));
+            candidate.IsGenericType && candidate.GetGenericTypeDefinition() is var definition &&
+            (definitions.Contains(definition) || IsReadOnlySetDefinition(definition)));
         if (match is null) { element = null!; return false; }
         element = match.GetGenericArguments()[0];
         return true;
@@ -1041,7 +1042,9 @@ public sealed class ConfigBinder
 
     private static bool IsSetType(Type type) => type.GetInterfaces().Concat(new[] { type }).Any(candidate =>
         candidate.IsGenericType && candidate.GetGenericTypeDefinition() is var definition &&
-        definition == typeof(ISet<>));
+        (definition == typeof(ISet<>) || IsReadOnlySetDefinition(definition)));
+    private static bool IsReadOnlySetDefinition(Type definition) =>
+        definition.FullName == "System.Collections.Generic.IReadOnlySet`1";
     private static bool RequiresRecursiveBinding(Type type) =>
         type != typeof(byte[]) && type != typeof(sbyte[]) &&
         (TryGetPairTypes(type, out _, out _) || TryGetDictionaryTypes(type, out _, out _) ||

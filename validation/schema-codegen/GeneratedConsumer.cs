@@ -370,6 +370,8 @@ static class GeneratedConsumer
         var array = binder.Bind<int[]>(new List<object?> { 1L, 2L, 3L });
         var list = binder.Bind<IReadOnlyList<float>>(new List<object?> { 1.0d, 2.0d, 3.25d });
         var set = binder.Bind<IReadOnlySet<string>>(new List<object?> { "beta", "alpha", "beta" });
+        Check(set.Count == 2 && set.SetEquals(new[] { "alpha", "beta" }),
+            "List<T> to IReadOnlySet<T> binding preserves set semantics");
         var map = binder.Bind<IReadOnlyDictionary<int, double>>(new Dictionary<object, object?>
         {
             [1L] = 2L,
