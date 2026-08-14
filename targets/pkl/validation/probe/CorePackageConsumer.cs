@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -321,13 +321,18 @@ static class PackageConsumer
             new Uri(projectFile),
             null);
         EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+        var modules = new List<Regex>(builder.GetAllowedModules())
+        {
+            new("^http://127[.]0[.]0[.]1:")
+        };
         var resources = new List<Regex>(builder.GetAllowedResources()) { new("context:") };
         Evaluator evaluator = builder
+            .SetAllowedModules(modules)
             .SetAllowedResources(resources)
             .SetRootDir(root)
             .SetEnvironmentVariables(new Dictionary<string, string> { ["CONTEXT_ID"] = identity })
             .SetExternalProperties(new Dictionary<string, string> { ["context.id"] = identity })
-            .SetHttpClient(httpClient)
+            .SetHttpClient(httpClient.Client)
             .AddResourceReader(reader)
             .SetProjectDependencies(dependencies)
             .Build();
@@ -361,69 +366,128 @@ static class PackageConsumer
     {
         public Action? NestedAction { get; set; }
 
-        public string GetUriScheme() => "context";
-        public bool HasHierarchicalUris() => false;
-        public bool IsGlobbable() => false;
+        public override string GetUriScheme() => "context";
+        public override bool HasHierarchicalUris() => false;
+        public override bool IsGlobbable() => false;
 
-        public object? Read(Uri uri)
+        public override object? Read(Uri uri)
         {
             NestedAction?.Invoke();
             return identity;
         }
 
-        public void Close() { }
-        public void Dispose() { }
+        public override void Close() { }
     }
 
-    sealed class FixedHttpClient(string identity) : PklHttpClient
+    sealed class FixedHttpClient : IDisposable
     {
+        readonly System.Threading.CancellationTokenSource cancellation = new();
+        readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        readonly Task serverTask;
         bool disposed;
 
-        public HttpResponseMessage Send(
-            HttpRequestMessage request,
-            PklHttpClient.HttpRequestChecker requestChecker)
+        public FixedHttpClient(string identity)
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            Uri uri = request.RequestUri ?? throw new InvalidOperationException("request URI missing");
-            requestChecker(uri);
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                RequestMessage = request,
-                Content = new StringContent($"value = \"{identity}\"\n", Encoding.UTF8)
-            };
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            Client = PklHttpClient.CreateBuilder()
+                .AddRewrite(new Uri("https://context.test/"),
+                    new Uri($"http://127.0.0.1:{port}/"))
+                .Build();
+            serverTask = Task.Run(() => Serve(identity));
         }
 
-        public void Close() => Dispose();
-        public void Dispose() => disposed = true;
+        public PklHttpClient Client { get; }
+
+        async Task Serve(string identity)
+        {
+            try
+            {
+                while (!cancellation.IsCancellationRequested)
+                {
+                    using TcpClient connection = await listener.AcceptTcpClientAsync(cancellation.Token);
+                    using NetworkStream stream = connection.GetStream();
+                    byte[] request = new byte[4096];
+                    int length = 0;
+                    while (length < request.Length)
+                    {
+                        int read = await stream.ReadAsync(
+                            request.AsMemory(length, request.Length - length), cancellation.Token);
+                        if (read == 0) break;
+                        length += read;
+                        if (Encoding.ASCII.GetString(request, 0, length).Contains("\r\n\r\n",
+                                StringComparison.Ordinal))
+                            break;
+                    }
+
+                    byte[] body = Encoding.UTF8.GetBytes($"value = \"{identity}\"\n");
+                    byte[] headers = Encoding.ASCII.GetBytes(
+                        "HTTP/1.1 200 OK\r\n" +
+                        $"Content-Length: {body.Length}\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "Connection: close\r\n\r\n");
+                    await stream.WriteAsync(headers, cancellation.Token);
+                    await stream.WriteAsync(body, cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (SocketException) when (cancellation.IsCancellationRequested) { }
+        }
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            Client.Dispose();
+            cancellation.Cancel();
+            listener.Stop();
+            serverTask.GetAwaiter().GetResult();
+            cancellation.Dispose();
+        }
     }
 
     sealed class TextModuleKeyFactory : ModuleKeyFactory
     {
         bool disposed;
 
-        public ModuleKey? Create(Uri uri)
+        public override ModuleKey? Create(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             return uri.Scheme == "consumer" ? new TextModuleKey(uri) : null;
         }
 
-        public void Close() => disposed = true;
-        public void Dispose() => Close();
+        public override void Close() => disposed = true;
     }
 
     sealed class TextModuleKey(Uri uri) : ModuleKey
     {
         public Uri GetUri() => uri;
+        public Uri Uri => GetUri();
+        public bool Cached => IsCached();
+        public bool Local => IsLocal();
+        public string? FileCachePath => GetFileCacheLocation();
         public ResolvedModuleKey Resolve(DripSharp.Brine.SecurityManager securityManager) =>
             new TextResolvedModuleKey(this);
         public bool HasHierarchicalUris() => false;
         public bool IsGlobbable() => false;
+        public bool IsCached() => false;
+        public bool IsLocal() => false;
+        public string? GetFileCacheLocation() => null;
+        public bool HasElement(DripSharp.Brine.SecurityManager securityManager, Uri elementUri) => false;
+        public IReadOnlyList<PathElement> ListElements(
+            DripSharp.Brine.SecurityManager securityManager, Uri baseUri) => Array.Empty<PathElement>();
+        public bool HasFragmentPaths() => false;
+        public Uri ResolveUri(Uri value) => ResolveUri(uri, value);
+        public Uri ResolveUri(Uri baseUri, Uri value) => value;
     }
 
     sealed class TextResolvedModuleKey(ModuleKey original) : ResolvedModuleKey
     {
         public ModuleKey GetOriginal() => original;
         public Uri GetUri() => original.GetUri();
+        public ModuleKey Original => GetOriginal();
+        public Uri Uri => GetUri();
         public string LoadSource() => "value = 42\n";
+        public string Source => LoadSource();
     }
 }

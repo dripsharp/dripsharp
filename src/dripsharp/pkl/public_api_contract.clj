@@ -942,12 +942,44 @@
       (fail! "The package-only consumer imports implementation or Java compatibility APIs"
              {:kind :package-consumer-implementation-api-leak
               :source (str source)}))
-    (doseq [contract [": ModuleKeyFactory" ": ResourceReader" ": PklHttpClient"]]
+    (doseq [contract [": ModuleKeyFactory" ": ResourceReader"
+                      "PklHttpClient.CreateBuilder()"]]
       (when-not (str/includes? text contract)
         (fail! "The package-only consumer does not implement every extension boundary"
                {:kind :missing-package-consumer-extension-contract
                 :contract contract :source (str source)})))
-    {:source (str source) :extension-contracts 3}))
+    (let [required-members
+          ["public override string GetUriScheme()"
+           "public override bool HasHierarchicalUris()"
+           "public override bool IsGlobbable()"
+           "public override object? Read(Uri uri)"
+           "public override void Close()"
+           "public override ModuleKey? Create(Uri uri)"
+           "public Uri Uri => GetUri();"
+           "public bool Cached => IsCached();"
+           "public bool Local => IsLocal();"
+           "public string? FileCachePath => GetFileCacheLocation();"
+           "public bool IsCached()"
+           "public bool IsLocal()"
+           "public string? GetFileCacheLocation()"
+           "public bool HasElement("
+           "public IReadOnlyList<PathElement> ListElements("
+           "public bool HasFragmentPaths()"
+           "public Uri ResolveUri(Uri value)"
+           "public Uri ResolveUri(Uri baseUri, Uri value)"
+           "public ModuleKey Original => GetOriginal();"
+           "public string Source => LoadSource();"
+           ".AddRewrite(new Uri(\"https://context.test/\")"
+           ".SetAllowedModules(modules)"
+           "public PklHttpClient Client { get; }"]]
+      (doseq [member required-members]
+        (when-not (str/includes? text member)
+          (fail! "The package-only consumer test doubles do not match the generated API"
+                 {:kind :missing-package-consumer-api-member
+                  :member member :source (str source)})))
+      {:source (str source)
+       :extension-contracts 3
+       :required-api-members (count required-members)})))
 
 (defn write-strong-contract-keys!
   "Writes the deterministic package-member key set whose exact signatures must

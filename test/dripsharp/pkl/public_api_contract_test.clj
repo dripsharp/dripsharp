@@ -230,6 +230,27 @@
               [mutable-row]
               [(assoc mutable-row :classification "product-api-current")]))))))
 
+(deftest core-package-consumer-test-doubles-track-generated-extension-api
+  (let [summary (#'contract/validate-package-consumer-boundary! @workspace)
+        fixture (paths/resolve-path @workspace "targets" "pkl" "validation" "probe"
+                                    "CorePackageConsumer.cs")
+        stale-root (Files/createTempDirectory "stale-core-package-consumer"
+                                              (make-array FileAttribute 0))
+        stale-fixture (paths/resolve-path stale-root "targets" "pkl" "validation" "probe"
+                                          "CorePackageConsumer.cs")]
+    (is (= 3 (:extension-contracts summary)))
+    (is (= 23 (:required-api-members summary)))
+    (Files/createDirectories (.getParent stale-fixture) (make-array FileAttribute 0))
+    (Files/writeString
+     stale-fixture
+     (str/replace-first (Files/readString fixture)
+                        "public override string GetUriScheme()"
+                        "public string GetUriScheme()")
+     (make-array OpenOption 0))
+    (is (= :missing-package-consumer-api-member
+           (thrown-kind
+            #(#'contract/validate-package-consumer-boundary! stale-root))))))
+
 (deftest behavior-comparator-detects-coverage-execution-and-observation-drift
   (let [results (mapv (fn [row]
                         {:case-id (:case-id row)
