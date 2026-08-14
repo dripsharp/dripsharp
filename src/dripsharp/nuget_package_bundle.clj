@@ -327,9 +327,6 @@
            :consumer-name "public-bundle"
            :consumer-profile (:package-consumer profile-destination)
            :selected-packages [{:id package-id :version version}]
-           :expected-packages
-           (into [{:id package-id :version version}]
-                 (map #(select-keys % [:id :version]) external-packages))
            :target-framework
            (or (get-in contract [:frameworks :execution]) target-framework)}
            run-command! (assoc :run-command! run-command!)))]

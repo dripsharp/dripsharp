@@ -153,7 +153,4 @@
                             "<dependency id=\"Example.Support\"")))
     (is (= [{:id "Example.Core" :version "1.2.3-alpha.1"}]
            (:selected-packages @consumer-call)))
-    (is (= #{{:id "Example.Core" :version "1.2.3-alpha.1"}
-             {:id "Example.Logging" :version "9.0.0"}
-             {:id "Example.Transitive" :version "8.0.0"}}
-           (set (:expected-packages @consumer-call))))))
+    (is (not (contains? @consumer-call :expected-packages)))))

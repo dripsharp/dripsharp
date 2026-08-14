@@ -6,7 +6,8 @@
             [dripsharp.java-project :as java-project]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [com.fasterxml.jackson.databind ObjectMapper]
+           [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path Paths StandardCopyOption]
            [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]
@@ -156,6 +157,42 @@
   (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
   (Files/writeString file contents (make-array OpenOption 0))
   file)
+
+(def ^:private test-json-mapper (ObjectMapper.))
+
+(defn- consumer-assets-map
+  [^Path packages resolved packages-to-prune]
+  (let [target-framework "net10.0"
+        package-entries
+        (into {}
+              (for [{:keys [id version]} resolved]
+                [(str id "/" version)
+                 {"type" "package"
+                  "compile" {(str "lib/netstandard2.0/" id ".dll") {}}}]))
+        libraries
+        (into {}
+              (for [{:keys [id version]} resolved]
+                [(str id "/" version)
+                 {"type" "package"
+                  "path" (str (str/lower-case id) "/" version)}]))
+        packages-path (str (paths/absolute packages))]
+    {"version" 3
+     "targets" {target-framework package-entries}
+     "libraries" libraries
+     "packageFolders" {packages-path {}}
+     "project"
+     {"restore"
+      {"packagesPath" packages-path
+       "originalTargetFrameworks" [target-framework]
+       "frameworks" {target-framework {"targetAlias" target-framework}}}
+      "frameworks"
+      {target-framework
+       {"targetAlias" target-framework
+        "packagesToPrune" packages-to-prune}}}}))
+
+(defn- write-consumer-assets!
+  [^Path file assets]
+  (write-file! file (.writeValueAsString test-json-mapper assets)))
 
 (defn- symbol-package-fixture! [symbol-metadata]
   (let [pdb "BSJBportable-pdb"
@@ -1184,15 +1221,13 @@
 (deftest independent-consumer-dependency-proof-pins-package-only-closure
   (let [root (Files/createTempDirectory "dripsharp-consumer-proof"
                                         (make-array FileAttribute 0))
+        packages (.resolve root "packages")
         project (write-file!
                  (.resolve root "Consumer.csproj")
-                 (str "<Project><ItemGroup>"
+                 (str "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+                      "</PropertyGroup><ItemGroup>"
                       "<PackageReference Include=\"DripSharp.Brine\" Version=\"0.0.0-development\" />"
                       "</ItemGroup></Project>"))
-        assets (write-file!
-                (.resolve root "obj/project.assets.json")
-                "{\"libraries\":{\"DripSharp.Brine/0.0.0-development\":{\"type\":\"package\"},\"DripSharp.Brine.Parser/0.0.0-development\":{\"type\":\"package\"}}}")
-        packages (.resolve root "packages")
         package-files (into {}
                             (for [id ["DripSharp.Brine.Parser" "DripSharp.Brine"]
                                   :let [version "0.0.0-development"
@@ -1207,47 +1242,207 @@
                            {:id id :version "0.0.0-development"
                             :sha256 (sha256 (get package-files id))})
                          ["DripSharp.Brine.Parser" "DripSharp.Brine"])
+        assets (write-consumer-assets!
+                (.resolve root "obj/project.assets.json")
+                (consumer-assets-map packages identities {}))
         proof (packaging/inspect-consumer-dependencies!
                project assets packages (second identities) identities)]
     (is (= ["DripSharp.Brine" "0.0.0-development"] (:package-reference proof)))
-    (is (= identities (:packages proof)))))
+    (is (= (set identities) (set (:packages proof))))
+    (is (= (set identities) (set (:resolved-packages proof))))
+    (is (empty? (:pruned-packages proof)))
+    (is (= "net10.0" (:target-framework proof)))))
 
-(deftest independent-consumer-dependency-proof-rejects-project-reference
+(deftest production-dependency-graph-separates-consumer-closure-from-extra-feed-artifacts
+  (let [root (Files/createTempDirectory "dripsharp-production-assets"
+                                        (make-array FileAttribute 0))
+        assets-file (.resolve root "project.assets.json")
+        external
+        [{:id "Microsoft.CSharp" :version "4.7.0" :dependencies []}
+         {:id "System.Memory" :version "4.6.3"
+          :dependencies [{:id "System.Buffers" :version "4.6.1"}]}
+         {:id "System.Buffers" :version "4.6.1" :dependencies []}
+         {:id "NETStandard.Library" :version "2.0.3"
+          :dependencies [{:id "Microsoft.NETCore.Platforms" :version "1.1.0"}]}
+         {:id "Microsoft.NETCore.Platforms" :version "1.1.0" :dependencies []}]
+        target-framework ".NETStandard,Version=v2.0"
+        targets
+        (into {}
+              (for [{:keys [id version dependencies]} external]
+                [(str id "/" version)
+                 (cond-> {"type" "package"}
+                   (seq dependencies)
+                   (assoc "dependencies"
+                          (into {} (map (juxt :id :version)) dependencies)))]))
+        libraries
+        (into {}
+              (for [{:keys [id version]} external]
+                [(str id "/" version)
+                 {"type" "package"
+                  "path" (str (str/lower-case id) "/" version)}]))
+        _ (write-consumer-assets!
+           assets-file
+           {"targets"
+            {target-framework
+             (assoc targets "Example.Project/1.0.0" {"type" "project"})}
+            "libraries"
+            (assoc libraries "Example.Project/1.0.0" {"type" "project"})})
+        restored (#'packaging/restored-package-assets assets-file)
+        product {:id "Example.Portable" :version "1.0.0"
+                 :dependencies [{:id "Microsoft.CSharp" :version "4.7.0"}
+                                {:id "System.Memory" :version "4.6.3"}]}
+        closure (#'packaging/dependency-closure!
+                 (into [product] restored) [product])]
+    (is (= (set (map #(select-keys % [:id :version :dependencies]) external))
+           (set (map #(select-keys % [:id :version :dependencies]) restored))))
+    (is (= #{["Example.Portable" "1.0.0"]
+             ["Microsoft.CSharp" "4.7.0"]
+             ["System.Memory" "4.6.3"]
+             ["System.Buffers" "4.6.1"]}
+           (set (map (juxt :id :version) closure))))))
+
+(deftest independent-net10-consumer-accepts-only-assets-proved-framework-pruning
+  (let [root (Files/createTempDirectory "dripsharp-consumer-pruning"
+                                        (make-array FileAttribute 0))
+        packages (.resolve root "packages")
+        selected-artifact
+        (write-file!
+         (.resolve packages "example.portable/1.0.0/example.portable.1.0.0.nupkg")
+         "netstandard2.0 product package")
+        selected {:id "Example.Portable" :version "1.0.0"
+                  :sha256 (sha256 selected-artifact)}
+        dependency {:id "System.Memory" :version "4.6.3"
+                    :sha256 (apply str (repeat 64 "a"))}
+        identities [selected dependency]
+        project
+        (write-file!
+         (.resolve root "Consumer.csproj")
+         (str "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+              "</PropertyGroup><ItemGroup>"
+              "<PackageReference Include=\"Example.Portable\" Version=\"1.0.0\" />"
+              "</ItemGroup></Project>"))
+        assets
+        (write-consumer-assets!
+         (.resolve root "obj/project.assets.json")
+         (consumer-assets-map packages [selected]
+                              {"System.Memory" "(,5.0.32767]"}))
+        proof
+        (packaging/inspect-consumer-dependencies!
+         project assets packages selected identities)]
+    (is (= [selected] (:resolved-packages proof)))
+    (is (= [(assoc dependency :prune-range "(,5.0.32767]")]
+           (:pruned-packages proof)))
+    (is (= [selected] (:packages proof)))
+    (is (= identities (:expected-packages proof)))))
+
+(deftest independent-consumer-dependency-proof-rejects-project-or-source-reference
   (let [root (Files/createTempDirectory "dripsharp-consumer-leak"
                                         (make-array FileAttribute 0))
-        project (write-file!
-                 (.resolve root "Consumer.csproj")
-                 (str "<Project><ItemGroup>"
-                      "<PackageReference Include=\"DripSharp.Brine\" Version=\"0.0.0-development\" />"
-                      "<ProjectReference Include=\"../generated/DripSharp.Brine.csproj\" />"
-                      "</ItemGroup></Project>"))
-        error (try
+        identity {:id "DripSharp.Brine" :version "0.0.0-development"}]
+    (doseq [[label escape]
+            [["project reference"
+              "<ProjectReference Include=\"../generated/DripSharp.Brine.csproj\" />"]
+             ["source include" "<Compile Include=\"../generated/Escape.cs\" />"]]]
+      (testing label
+        (let [project
+              (write-file!
+               (.resolve root "Consumer.csproj")
+               (str "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+                    "</PropertyGroup><ItemGroup>"
+                    "<PackageReference Include=\"DripSharp.Brine\" Version=\"0.0.0-development\" />"
+                    escape "</ItemGroup></Project>"))
+              error
+              (try
                 (packaging/inspect-consumer-dependencies!
                  project (.resolve root "obj/project.assets.json") (.resolve root "packages")
-                 {:id "DripSharp.Brine" :version "0.0.0-development"} [])
+                 identity [identity])
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
-    (is (= :package-consumption-failed (:kind (ex-data error))))
-    (is (seq (:forbidden (ex-data error))))))
+          (is (= :package-consumption-failed (:kind (ex-data error))))
+          (is (seq (:forbidden (ex-data error)))))))))
+
+(deftest independent-consumer-dependency-proof-rejects-unproved-pruning-and-graph-substitution
+  (let [root (Files/createTempDirectory "dripsharp-consumer-graph"
+                                        (make-array FileAttribute 0))
+        packages (.resolve root "packages")
+        selected {:id "Example.Portable" :version "1.0.0"
+                  :sha256 (apply str (repeat 64 "a"))}
+        dependency {:id "System.Memory" :version "4.6.3"
+                    :sha256 (apply str (repeat 64 "b"))}
+        project
+        (write-file!
+         (.resolve root "Consumer.csproj")
+         (str "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+              "</PropertyGroup><ItemGroup>"
+              "<PackageReference Include=\"Example.Portable\" Version=\"1.0.0\" />"
+              "</ItemGroup></Project>"))
+        assets-file (.resolve root "obj/project.assets.json")
+        inspect-error
+        (fn [resolved pruned]
+          (write-consumer-assets!
+           assets-file (consumer-assets-map packages resolved pruned))
+          (try
+            (packaging/inspect-consumer-dependencies!
+             project assets-file packages selected [selected dependency])
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught)))]
+    (testing "a selected package cannot be explained away by packagesToPrune"
+      (let [error (inspect-error [] {"Example.Portable" "(,2.0.0]"
+                                     "System.Memory" "(,5.0.32767]"})]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (seq (:missing (ex-data error))))))
+    (testing "an absent dependency requires an applicable pruning range"
+      (doseq [pruned [{} {"System.Memory" "(,4.6.2]"}]]
+        (let [error (inspect-error [selected] pruned)]
+          (is (= :package-consumption-failed (:kind (ex-data error))))
+          (is (= "System.Memory/4.6.3" (:identity (ex-data error)))))))
+    (testing "the resolved graph cannot substitute a dependency version"
+      (let [substitution (assoc dependency :version "4.6.2")
+            error (inspect-error [selected substitution] {})]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (seq (:unexpected (ex-data error))))))
+    (testing "the resolved graph cannot add a package outside the closure"
+      (let [unexpected {:id "Injected.Package" :version "9.0.0"
+                        :sha256 (apply str (repeat 64 "c"))}
+            error (inspect-error [selected dependency unexpected] {})]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (seq (:unexpected (ex-data error))))))))
 
 (deftest independent-consumer-dependency-proof-rejects-wrong-artifact-or-extra-version
   (let [root (Files/createTempDirectory "dripsharp-consumer-identity"
                                         (make-array FileAttribute 0))
+        packages (.resolve root "packages")
         project (write-file!
                  (.resolve root "Consumer.csproj")
-                 (str "<Project><ItemGroup>"
+                 (str "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+                      "</PropertyGroup><ItemGroup>"
                       "<PackageReference Include=\"DripSharp.Brine\" Version=\"0.0.0-development\" />"
                       "</ItemGroup></Project>"))
-        assets (write-file!
-                (.resolve root "obj/project.assets.json")
-                "{\"libraries\":{\"DripSharp.Brine/0.0.0-development\":{\"type\":\"package\"}}}")
-        packages (.resolve root "packages")
         artifact (write-file!
                   (.resolve packages
                             "dripsharp.brine/0.0.0-development/dripsharp.brine.0.0.0-development.nupkg")
                   "restored package")
         identity {:id "DripSharp.Brine" :version "0.0.0-development"
-                  :sha256 (sha256 artifact)}]
+                  :sha256 (sha256 artifact)}
+        assets (write-consumer-assets!
+                (.resolve root "obj/project.assets.json")
+                (consumer-assets-map packages [identity] {}))]
+    (write-file! (.resolve packages
+                           "unexpected.package/1.0.0/unexpected.package.1.0.0.nupkg")
+                 "unexpected package")
+    (let [root-error (try
+                       (packaging/inspect-consumer-dependencies!
+                        project assets packages identity [identity])
+                       nil
+                       (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data root-error))))
+      (is (= ["dripsharp.brine"] (:expected (ex-data root-error))))
+      (is (= ["dripsharp.brine" "unexpected.package"]
+             (:actual (ex-data root-error)))))
+    (Files/delete (.resolve packages
+                            "unexpected.package/1.0.0/unexpected.package.1.0.0.nupkg"))
+    (Files/delete (.resolve packages "unexpected.package/1.0.0"))
+    (Files/delete (.resolve packages "unexpected.package"))
     (write-file! (.resolve packages
                            "dripsharp.brine/0.0.1/dripsharp.brine.0.0.1.nupkg")
                  "unexpected version")

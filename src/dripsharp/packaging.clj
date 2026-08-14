@@ -11,9 +11,11 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.util :as util])
-  (:import [java.io ByteArrayInputStream PushbackReader StringReader]
+  (:import [com.fasterxml.jackson.databind ObjectMapper]
+           [java.io ByteArrayInputStream PushbackReader StringReader]
            [java.nio.charset StandardCharsets]
            [java.nio.file FileVisitOption Files Path StandardCopyOption]
+           [java.util LinkedHashMap Map]
            [java.util.zip ZipEntry ZipFile ZipOutputStream]
            [javax.xml.parsers DocumentBuilderFactory]
            [org.w3c.dom Element Node]))
@@ -52,6 +54,8 @@
 (def ^:private xml-escape util/xml-escape)
 
 (def ^:private write-text! util/write-text!)
+
+(def ^:private json-mapper (ObjectMapper.))
 
 (defn- regular-files [^Path directory]
   (if-not (paths/directory? directory)
@@ -856,10 +860,227 @@
        "    }\n"
        "}\n"))
 
+(defn- read-json-object!
+  [^Path file]
+  (let [value
+        (try
+          (.readValue json-mapper (Files/readString file) LinkedHashMap)
+          (catch Exception error
+            (throw
+             (ex-info "Restore assets are not valid JSON"
+                      {:kind :package-consumption-failed
+                       :assets-file (str file)}
+                      error))))]
+    (when-not (instance? Map value)
+      (fail! "Restore assets root is not a JSON object"
+             {:assets-file (str file)}))
+    value))
+
+(defn- json-object!
+  [value location ^Path assets-file]
+  (when-not (instance? Map value)
+    (fail! "Restore assets field is not a JSON object"
+           {:assets-file (str assets-file) :location location}))
+  value)
+
+(defn- consumer-target-framework!
+  [project ^Path project-file]
+  (let [frameworks
+        (mapv (comp str/trim second)
+              (re-seq #"<TargetFramework>\s*([^<]+?)\s*</TargetFramework>" project))]
+    (when-not (and (= 1 (count frameworks))
+                   (not (str/blank? (first frameworks))))
+      (fail! "Independent consumer does not declare exactly one target framework"
+             {:project-file (str project-file) :actual frameworks}))
+    (first frameworks)))
+
+(defn- package-key!
+  [value location ^Path assets-file]
+  (if-let [[_ id version] (re-matches #"([^/]+)/([^/]+)" (str value))]
+    [(str/lower-case id) version]
+    (fail! "Restore assets contain an invalid package identity"
+           {:assets-file (str assets-file) :location location
+            :identity (str value)})))
+
+(defn- exact-identity-map!
+  [identities location ^Path assets-file]
+  (reduce
+   (fn [result {:keys [id version] :as identity}]
+     (let [key [(str/lower-case id) version]
+           same-id (some #(when (= (first %) (first key)) %) (keys result))]
+       (when (or (contains? result key) same-id)
+         (fail! "Expected package closure contains duplicate package identities"
+                {:assets-file (str assets-file) :location location
+                 :identity [id version]
+                 :existing (some-> (get result (or same-id key))
+                                   (select-keys [:id :version]))}))
+       (assoc result key identity)))
+   (sorted-map)
+   identities))
+
+(defn- restored-identity-map!
+  [entries location ^Path assets-file]
+  (reduce
+   (fn [result [identity entry]]
+     (let [entry (json-object! entry (str location "." identity) assets-file)
+           key (package-key! identity location assets-file)
+           type (get entry "type")]
+       (when (= "project" type)
+         (fail! "Restored package graph leaked a project dependency"
+                {:assets-file (str assets-file) :location location
+                 :identity identity}))
+       (when-not (= "package" type)
+         (fail! "Restored package graph contains a non-package dependency"
+                {:assets-file (str assets-file) :location location
+                 :identity identity :type type}))
+       (when (contains? result key)
+         (fail! "Restore assets contain duplicate package identities"
+                {:assets-file (str assets-file) :location location
+                 :identity identity}))
+       (assoc result key {:id (subs (str identity) 0
+                                    (- (count (str identity))
+                                       (inc (count (second key)))))
+                          :version (second key)
+                          :entry entry})))
+   (sorted-map)
+   entries))
+
+(defn- package-entries-with-projects!
+  [entries location ^Path assets-file]
+  (reduce
+   (fn [packages [identity entry]]
+     (let [entry (json-object! entry (str location "." identity) assets-file)]
+       (case (get entry "type")
+         "package" (assoc packages identity entry)
+         "project" packages
+         (fail! "Restore assets contain an unsupported dependency type"
+                {:assets-file (str assets-file) :location location
+                 :identity identity :type (get entry "type")}))))
+   (sorted-map)
+   entries))
+
+(defn- numeric-version-component!
+  [component version]
+  (or (parse-long component)
+      (fail! "NuGet pruning contract contains an invalid numeric version component"
+             {:version version :component component})))
+
+(defn- parse-nuget-version!
+  [version]
+  (let [version (str/trim (str version))
+        [_ core prerelease]
+        (or (re-matches
+             #"(?i)^([0-9]+(?:\.[0-9]+){0,3})(?:-([0-9a-z.-]+))?(?:\+[0-9a-z.-]+)?$"
+             version)
+            (fail! "NuGet pruning contract contains an invalid version"
+                   {:version version}))
+        core (->> (str/split core #"\.")
+                  (mapv #(numeric-version-component! % version)))
+        core (into core (repeat (- 4 (count core)) 0))
+        prerelease
+        (when prerelease
+          (mapv (fn [component]
+                  (if (re-matches #"[0-9]+" component)
+                    [:number (numeric-version-component! component version)]
+                    [:string (str/lower-case component)]))
+                (str/split prerelease #"\.")))]
+    {:core core :prerelease prerelease}))
+
+(defn- compare-prerelease-components
+  [[left-kind left-value] [right-kind right-value]]
+  (cond
+    (= [left-kind right-kind] [:number :string]) -1
+    (= [left-kind right-kind] [:string :number]) 1
+    :else (compare left-value right-value)))
+
+(defn- compare-prerelease
+  [left right]
+  (cond
+    (and (nil? left) (nil? right)) 0
+    (nil? left) 1
+    (nil? right) -1
+    :else
+    (loop [left left right right]
+      (cond
+        (and (empty? left) (empty? right)) 0
+        (empty? left) -1
+        (empty? right) 1
+        :else
+        (let [component-comparison
+              (compare-prerelease-components (first left) (first right))]
+          (if (zero? component-comparison)
+            (recur (rest left) (rest right))
+            component-comparison))))))
+
+(defn- compare-nuget-versions
+  [left right]
+  (let [left (parse-nuget-version! left)
+        right (parse-nuget-version! right)
+        core-comparison (compare (:core left) (:core right))]
+    (if (zero? core-comparison)
+      (compare-prerelease (:prerelease left) (:prerelease right))
+      core-comparison)))
+
+(defn- nuget-version-in-range?
+  [version range]
+  (let [range (str/trim (str range))]
+    (cond
+      (re-matches #"^\[[^,\]]+\]$" range)
+      (zero? (compare-nuget-versions version (subs range 1 (dec (count range)))))
+
+      (re-matches #"^[\[(][^,]*,[^,]*[\])]$" range)
+      (let [lower-inclusive? (= \[ (first range))
+            upper-inclusive? (= \] (last range))
+            [lower upper] (str/split (subs range 1 (dec (count range))) #"," -1)
+            lower (str/trim lower)
+            upper (str/trim upper)
+            lower-comparison (when-not (str/blank? lower)
+                               (compare-nuget-versions version lower))
+            upper-comparison (when-not (str/blank? upper)
+                               (compare-nuget-versions version upper))]
+        (and (or (nil? lower-comparison)
+                 (pos? lower-comparison)
+                 (and lower-inclusive? (zero? lower-comparison)))
+             (or (nil? upper-comparison)
+                 (neg? upper-comparison)
+                 (and upper-inclusive? (zero? upper-comparison)))))
+
+      (re-matches
+       #"(?i)^[0-9]+(?:\.[0-9]+){0,3}(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?$"
+       range)
+      (not (neg? (compare-nuget-versions version range)))
+
+      :else
+      (fail! "NuGet pruning contract contains an invalid version range"
+             {:version version :range range}))))
+
+(defn- pruning-ranges!
+  [framework ^Path assets-file]
+  (let [ranges (or (get framework "packagesToPrune") {})]
+    (json-object! ranges "project.frameworks.packagesToPrune" assets-file)
+    (reduce
+     (fn [result [id range]]
+       (let [key (str/lower-case (str id))]
+         (when (contains? result key)
+           (fail! "NuGet pruning contract contains duplicate package identifiers"
+                  {:assets-file (str assets-file) :identity id}))
+         (when-not (string? range)
+           (fail! "NuGet pruning contract contains a non-string version range"
+                  {:assets-file (str assets-file) :identity id :range range}))
+         (assoc result key range)))
+     (sorted-map)
+     ranges)))
+
+(defn- normalized-package-folder
+  [value]
+  (str (paths/absolute value)))
+
 (defn inspect-consumer-dependencies!
-  "Proves that the generated consumer project has one package reference, no
-  source/project reference escape hatch, and that restore populated only the
-  exact dependency-closed package identities in its isolated cache."
+  "Proves that the generated consumer project has only its selected package
+  references and no source/project escape hatch. Partitions the complete
+  published dependency closure into the exact execution-framework restore
+  graph and dependencies demonstrably removed by NuGet framework pruning, then
+  verifies every resolved package artifact in the isolated cache."
   [^Path project-file ^Path assets-file ^Path packages primary-identity identities]
   (let [project (Files/readString project-file)
         package-references (re-seq #"<PackageReference\s+Include=\"([^\"]+)\"\s+Version=\"([^\"]+)\"\s*/>"
@@ -869,6 +1090,7 @@
                              (vec primary-identity))
         expected-references
         (mapv (juxt :id :version) (sort-by :id primary-identities))
+        target-framework (consumer-target-framework! project project-file)
         forbidden-project (->> [#"<ProjectReference\b" #"<Compile\b"
                                 #"<Reference\b" #"(?i)target/generated"
                                 #"(?i)\.\./.*\.csproj"]
@@ -885,16 +1107,98 @@
     (when-not (paths/regular-file? assets-file)
       (fail! "Independent consumer restore did not produce a dependency graph"
              {:assets-file (str assets-file)}))
-    (let [assets (Files/readString assets-file)
-          project-libraries (re-seq #"\"type\"\s*:\s*\"project\"" assets)
-          expected-cache-roots (->> identities (map :id) (map str/lower-case) sort vec)
+    (let [assets (read-json-object! assets-file)
+          targets (json-object! (get assets "targets") "targets" assets-file)
+          libraries (json-object! (get assets "libraries") "libraries" assets-file)
+          project (json-object! (get assets "project") "project" assets-file)
+          restore (json-object! (get project "restore") "project.restore" assets-file)
+          restore-frameworks
+          (json-object! (get restore "frameworks") "project.restore.frameworks" assets-file)
+          project-frameworks
+          (json-object! (get project "frameworks") "project.frameworks" assets-file)
+          target-frameworks (-> targets keys sort vec)
+          restore-target-frameworks (-> restore-frameworks keys sort vec)
+          project-target-frameworks (-> project-frameworks keys sort vec)
+          original-target-frameworks (vec (get restore "originalTargetFrameworks"))
+          _ (when-not (every? #(= [target-framework] %)
+                              [target-frameworks restore-target-frameworks
+                               project-target-frameworks original-target-frameworks])
+              (fail! "Restore assets do not describe exactly the consumer target framework"
+                     {:assets-file (str assets-file)
+                      :expected [target-framework]
+                      :targets target-frameworks
+                      :restore-frameworks restore-target-frameworks
+                      :project-frameworks project-target-frameworks
+                      :original-target-frameworks original-target-frameworks}))
+          target-entries
+          (json-object! (get targets target-framework)
+                        (str "targets." target-framework) assets-file)
+          expected-by-key (exact-identity-map! identities "expected" assets-file)
+          selected-by-key (exact-identity-map! primary-identities "selected" assets-file)
+          library-by-key (restored-identity-map! libraries "libraries" assets-file)
+          target-by-key (restored-identity-map! target-entries "targets" assets-file)
+          expected-keys (set (keys expected-by-key))
+          selected-keys (set (keys selected-by-key))
+          resolved-keys (set (keys library-by-key))
+          unexpected-keys (set/difference resolved-keys expected-keys)
+          missing-selected (set/difference selected-keys resolved-keys)
+          _ (when-not (= resolved-keys (set (keys target-by-key)))
+              (fail! "Restore assets target graph and package libraries disagree"
+                     {:assets-file (str assets-file)
+                      :target-packages (vec (sort (keys target-by-key)))
+                      :libraries (vec (sort (keys library-by-key)))}))
+          _ (when (seq unexpected-keys)
+              (fail! "Restored package graph contains packages outside the published closure"
+                     {:assets-file (str assets-file)
+                      :unexpected (vec (sort unexpected-keys))
+                      :expected (vec (sort expected-keys))}))
+          _ (when (seq missing-selected)
+              (fail! "Restored package graph is missing a selected package identity"
+                     {:assets-file (str assets-file)
+                      :missing (vec (sort missing-selected))}))
+          pruning-ranges
+          (pruning-ranges! (get project-frameworks target-framework) assets-file)
+          missing-keys (set/difference expected-keys resolved-keys)
+          pruned
+          (mapv
+           (fn [key]
+             (let [{:keys [id version] :as identity} (get expected-by-key key)
+                   range (get pruning-ranges (str/lower-case id))]
+               (when-not (and range (nuget-version-in-range? version range))
+                 (fail! "Restored package graph is missing an exact package identity"
+                        {:identity (str id "/" version)
+                         :assets-file (str assets-file)
+                         :packages-to-prune range}))
+               (assoc (select-keys identity [:id :version :sha256])
+                      :prune-range range)))
+           (sort missing-keys))
+          resolved (mapv expected-by-key (sort resolved-keys))
+          _ (doseq [[key {:strs [path]}] libraries]
+              (let [[id version] (package-key! key "libraries" assets-file)
+                    expected-path (str id "/" version)]
+                (when-not (= expected-path path)
+                  (fail! "Restore assets package cache path does not match its identity"
+                         {:assets-file (str assets-file) :identity key
+                          :expected expected-path :actual path}))))
+          package-folders
+          (json-object! (get assets "packageFolders") "packageFolders" assets-file)
+          expected-package-folder (normalized-package-folder packages)
+          actual-package-folders
+          (->> (keys package-folders) (map normalized-package-folder) sort vec)
+          restore-package-folder
+          (some-> (get restore "packagesPath") normalized-package-folder)
+          _ (when-not (and (= [expected-package-folder] actual-package-folders)
+                           (= expected-package-folder restore-package-folder))
+              (fail! "Restore assets escaped the isolated package cache"
+                     {:assets-file (str assets-file)
+                      :expected expected-package-folder
+                      :package-folders actual-package-folders
+                      :restore-packages-path restore-package-folder}))
+          expected-cache-roots (->> resolved (map :id) (map str/lower-case) sort vec)
           actual-cache-roots (->> (child-directories packages)
                                   (map #(str/lower-case (str (.getFileName ^Path %))))
                                   sort vec)]
-      (when (seq project-libraries)
-        (fail! "Restored package graph leaked a project dependency"
-               {:assets-file (str assets-file) :project-library-count (count project-libraries)}))
-      (doseq [{:keys [id version] :as identity} identities]
+      (doseq [{:keys [id version] :as identity} resolved]
         (let [package-root (paths/resolve-path packages (str/lower-case id))
               actual-versions (->> (child-directories package-root)
                                    (map #(str (.getFileName ^Path %)))
@@ -903,9 +1207,6 @@
               key (str id "/" version)
               artifact (paths/resolve-path package-root version
                                            (str (str/lower-case id) "." version ".nupkg"))]
-          (when-not (str/includes? assets (str "\"" key "\""))
-            (fail! "Restored package graph is missing an exact package identity"
-                   {:identity key :assets-file (str assets-file)}))
           (when-not (= [version] actual-versions)
             (fail! "Isolated package cache contains versions outside the packed dependency closure"
                    {:identity key :expected [version] :actual actual-versions
@@ -927,7 +1228,14 @@
       {:package-reference (when (= 1 (count expected-references))
                             (first expected-references))
        :package-references expected-references
-       :packages (mapv #(select-keys % [:id :version :sha256]) identities)
+       :packages (mapv #(select-keys % [:id :version :sha256]) resolved)
+       :expected-packages
+       (mapv #(select-keys % [:id :version :sha256]) identities)
+       :target-framework target-framework
+       :resolved-packages
+       (mapv #(select-keys % [:id :version :sha256]) resolved)
+       :pruned-packages pruned
+       :package-folders actual-package-folders
        :assets-file (str assets-file)})))
 
 (defn- nuget-config [^Path feed package-ids]
@@ -949,28 +1257,77 @@
   (when-not (paths/regular-file? assets-file)
     (fail! "Verified project restore assets are missing"
            {:assets-file (str assets-file)}))
-  (let [assets (Files/readString assets-file)
-        libraries-start (.indexOf assets "\"libraries\": {")
-        libraries-end (.indexOf assets "\"projectFileDependencyGroups\": {")
-        _ (when-not (and (<= 0 libraries-start)
-                         (< libraries-start libraries-end))
-            (fail! "Restore assets do not contain a bounded package library section"
-                   {:assets-file (str assets-file)}))
-        libraries (subs assets libraries-start libraries-end)
-        package-count (count (re-seq #"\"type\"\s*:\s*\"package\"" libraries))
+  (let [assets (read-json-object! assets-file)
+        targets (json-object! (get assets "targets") "targets" assets-file)
+        libraries (json-object! (get assets "libraries") "libraries" assets-file)
+        target-frameworks (vec (keys targets))
+        _ (when-not (= 1 (count target-frameworks))
+            (fail! "Verified project restore assets do not have exactly one target graph"
+                   {:assets-file (str assets-file)
+                    :targets (vec (sort target-frameworks))}))
+        target-entries
+        (json-object! (get targets (first target-frameworks))
+                      (str "targets." (first target-frameworks)) assets-file)
+        package-libraries
+        (package-entries-with-projects! libraries "libraries" assets-file)
+        package-targets
+        (package-entries-with-projects! target-entries "targets" assets-file)
+        library-by-key
+        (restored-identity-map! package-libraries "libraries" assets-file)
+        target-by-key
+        (restored-identity-map! package-targets "targets" assets-file)
+        _ (when-not (= (set (keys library-by-key)) (set (keys target-by-key)))
+            (fail! "Verified project target graph and package libraries disagree"
+                   {:assets-file (str assets-file)
+                    :targets (vec (sort (keys target-by-key)))
+                    :libraries (vec (sort (keys library-by-key)))}))
         packages
-        (->> (re-seq
-              #"(?m)^    \"([^\"/]+)/([^\"/]+)\": \{\r?\n      \"sha512\": \"[^\"]+\",\r?\n      \"type\": \"package\",\r?\n      \"path\": \"([^\"]+)\""
-              libraries)
-             (map (fn [[_ id version path]]
-                    {:id id :version version :cache-path path}))
-             (sort-by (juxt #(str/lower-case (:id %)) :version))
-             vec)]
-    (when-not (= package-count (count packages))
-      (fail! "Could not recover the exact external package closure from restore assets"
-             {:assets-file (str assets-file)
-              :expected package-count :actual (count packages)}))
-    packages))
+        (reduce
+         (fn [result [identity entry]]
+           (let [[_ id version]
+                 (or (re-matches #"([^/]+)/([^/]+)" (str identity))
+                     (fail! "Restore assets contain an invalid package identity"
+                            {:assets-file (str assets-file) :identity identity}))
+                 key [(str/lower-case id) version]
+                 path (get entry "path")
+                 expected-path (str (str/lower-case id) "/" version)]
+             (when-not (= expected-path path)
+               (fail! "Restore assets package cache path does not match its identity"
+                      {:assets-file (str assets-file) :identity identity
+                       :expected expected-path :actual path}))
+             (assoc result key {:id id :version version :cache-path path})))
+         (sorted-map)
+         package-libraries)
+        packages-by-id
+        (reduce
+         (fn [result [[id _] package]]
+           (when (contains? result id)
+             (fail! "Verified project restore resolved multiple versions of one package"
+                    {:assets-file (str assets-file) :identity id}))
+           (assoc result id package))
+         {}
+         packages)]
+    (mapv
+     (fn [[key package]]
+       (let [target-entry (:entry (get target-by-key key))
+             dependencies (or (get target-entry "dependencies") {})]
+         (json-object! dependencies
+                       (str "targets." (first target-frameworks) ".dependencies")
+                       assets-file)
+         (assoc package :dependencies
+                (->> (keys dependencies)
+                     (mapv
+                      (fn [dependency-id]
+                        (or (some-> (get packages-by-id
+                                         (str/lower-case (str dependency-id)))
+                                    (select-keys [:id :version]))
+                            (fail! "Verified project dependency is missing from restore libraries"
+                                   {:assets-file (str assets-file)
+                                    :identity [(:id package) (:version package)]
+                                    :dependency dependency-id}))))
+                     (sort-by (juxt #(str/lower-case (:id %)) :version))
+                     vec))))
+     packages)))
 
 (defn- global-packages-root! [run-command! root]
   (let [result (run-command! {:command ["dotnet" "nuget" "locals"
@@ -1010,7 +1367,7 @@
       []
       (let [global-packages (global-packages-root! run-command! root)]
         (mapv
-         (fn [{:keys [id version cache-path]}]
+         (fn [{:keys [id version cache-path dependencies]}]
            (let [lower-id (str/lower-case id)
                  filename (str lower-id "." version ".nupkg")
                  source (paths/resolve-path global-packages cache-path filename)
@@ -1023,7 +1380,8 @@
                           StandardCopyOption
                           [StandardCopyOption/REPLACE_EXISTING]))
              {:id id :version version :sha256 (sha256 artifact)
-              :file filename :external? true}))
+              :file filename :external? true
+              :dependencies dependencies}))
          packages)))))
 
 (defn- installed-runtime-target! [run-command! root library-target]
@@ -1779,7 +2137,9 @@
 
 (defn- available-identities
   [package-proof]
-  (into (mapv :identity (:packages package-proof))
+  (into (mapv (fn [{:keys [identity inspection]}]
+                (assoc identity :dependencies (:dependencies inspection)))
+              (:packages package-proof))
         (:external-packages package-proof)))
 
 (defn- exact-identities!
@@ -1806,6 +2166,44 @@
              {:expected expected}))
     selected))
 
+(defn- identity-key
+  [{:keys [id version]}]
+  [(str/lower-case id) version])
+
+(defn- dependency-closure!
+  [available selected]
+  (let [by-key
+        (reduce
+         (fn [result identity]
+           (let [key (identity-key identity)]
+             (when (contains? result key)
+               (fail! "Fresh feed contains duplicate package identities"
+                      {:identity key}))
+             (assoc result key identity)))
+         (sorted-map)
+         available)]
+    (loop [pending (vec (map identity-key selected))
+           visited #{}]
+      (if-let [key (first pending)]
+        (if (contains? visited key)
+          (recur (subvec pending 1) visited)
+          (let [identity
+                (or (get by-key key)
+                    (fail! "Published package dependency is absent from the fresh feed"
+                           {:identity key}))
+                dependency-keys
+                (mapv
+                 (fn [dependency]
+                   (let [dependency-key (identity-key dependency)]
+                     (when-not (contains? by-key dependency-key)
+                       (fail! "Published package dependency is absent from the fresh feed"
+                              {:identity key :dependency dependency-key}))
+                     dependency-key))
+                 (:dependencies identity))]
+            (recur (into (subvec pending 1) dependency-keys)
+                   (conj visited key))))
+        (mapv by-key (sort visited))))))
+
 (defn- consumer-fixture-source
   [root consumer-profile]
   (when (= :source-file (:strategy consumer-profile))
@@ -1817,7 +2215,9 @@
 (defn verify-packed-consumer!
   "Restores and executes one fresh package-reference-only consumer against an
   already packed local feed. `selected-packages` are direct PackageReferences;
-  `expected-packages` is the exact dependency-closed restore result."
+  the exact production dependency closure is derived from the proved package
+  metadata. When supplied, `expected-packages` is an additional exact-closure
+  assertion used by target-specific family contracts."
   [{:keys [workspace-root package-proof consumer-name consumer-profile
            selected-packages expected-packages target-framework run-command!]
     :or {run-command! process/run!}}]
@@ -1828,7 +2228,16 @@
                    {:consumer-name consumer-name}))
         available (available-identities package-proof)
         selected (exact-identities! available selected-packages)
-        identities (exact-identities! available expected-packages)
+        identities (dependency-closure! available selected)
+        asserted-identities
+        (when expected-packages
+          (exact-identities! available expected-packages))
+        _ (when (and asserted-identities
+                     (not= (set (map identity-key identities))
+                           (set (map identity-key asserted-identities))))
+            (fail! "Target-specific consumer closure disagrees with published package metadata"
+                   {:derived (vec (sort (map identity-key identities)))
+                    :asserted (vec (sort (map identity-key asserted-identities)))}))
         expected-set (set (map (juxt :id :version) identities))
         selected-set (set (map (juxt :id :version) selected))
         _ (when-not (set/subset? selected-set expected-set)
@@ -1905,10 +2314,13 @@
       :directory consumer
       :environment environment})
     (let [dependency-proof
-          (inspect-consumer-dependencies!
-           consumer-project-file
-           (paths/resolve-path consumer "obj" "project.assets.json")
-           packages selected identities)]
+          (assoc
+           (inspect-consumer-dependencies!
+            consumer-project-file
+            (paths/resolve-path consumer "obj" "project.assets.json")
+            packages selected identities)
+           :published-packages
+           (mapv #(select-keys % [:id :version :sha256]) available))]
       (run-command!
        {:command ["dotnet" "build" (str consumer-project-file)
                   "--nologo" "--verbosity:minimal" "--no-restore"
@@ -1961,7 +2373,6 @@
          target-framework
          (or (get-in target-contract [:frameworks :execution])
              (get-in configuration [:project :target-framework]))
-         identities (available-identities package-proof)
          consumer-proof
          (verify-packed-consumer!
           {:workspace-root root
@@ -1969,8 +2380,6 @@
            :consumer-name "primary"
            :consumer-profile consumer-profile
            :selected-packages [{:id id :version version}]
-           :expected-packages
-           (mapv #(select-keys % [:id :version]) identities)
            :target-framework target-framework
            :run-command! run-command!})
          artifact (:artifact package-proof)
