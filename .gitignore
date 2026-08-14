@@ -8,6 +8,8 @@
 /validation-output/
 /validation/**/bin/
 /validation/**/obj/
+/targets/**/validation/**/bin/
+/targets/**/validation/**/obj/
 *.class
 
 # Preserve generated output left by the pre-root project layout.
