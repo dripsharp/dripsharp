@@ -200,6 +200,8 @@ static class SchemaGeneratorProbe
             "public enum Direction",
             "public readonly partial record struct Email(string Value)",
             "public readonly partial record struct Transform<Input, Output>(global::System.Delegate Value)",
+            "public global::System.Collections.Generic.IReadOnlySet<string> Names { get; }",
+            "[global::DripSharp.Brine.PklName(\"names\")] global::System.Collections.Generic.IReadOnlySet<string> pklNames",
             "global::System.Collections.Generic.IReadOnlyDictionary<string, long>",
             "global::DripSharp.Brine.Pair<string, long>",
             "[global::System.Obsolete(\"Use contract.next.\")]",
@@ -208,10 +210,13 @@ static class SchemaGeneratorProbe
             "[global::DripSharp.Brine.PklName(\"first-name\")]",
             "[global::DripSharp.Brine.PklQualifiedName(\"contract.main#Service\")]",
             "IPklGeneratedLoader<Main>",
+            "definition == typeof(global::System.Collections.Generic.IReadOnlySet<>)",
             "public override bool Equals(object? obj)",
             "public override int GetHashCode()",
             "public override string ToString()"
         }) Check(source.Contains(expected, StringComparison.Ordinal), "missing generated contract: " + expected);
+        Check(!source.Contains("global::System.Collections.Generic.ISet<string>", StringComparison.Ordinal),
+            "generated Set property or constructor regressed to ISet<string>");
         Check(!source.Contains("default!", StringComparison.Ordinal),
             "generated contract contains an unsafe default placeholder");
     }

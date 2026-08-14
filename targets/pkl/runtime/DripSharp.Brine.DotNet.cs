@@ -1626,7 +1626,7 @@ file static class PklGeneratedModelSemantics
             if (!implemented.IsGenericType) continue;
             var definition = implemented.GetGenericTypeDefinition();
             if (definition == typeof(global::System.Collections.Generic.ISet<>) ||
-                definition == typeof(global::System.Collections.Generic.ISet<>)) return true;
+                definition == typeof(global::System.Collections.Generic.IReadOnlySet<>)) return true;
         }
         return false;
     }
@@ -1993,7 +1993,7 @@ file static class PklGeneratedModelSemantics
             "pkl.base#Collection" => $"global::System.Collections.Generic.IReadOnlyCollection<{Argument(arguments, 0)}>",
             "pkl.base#List" or "pkl.base#Listing" =>
                 $"global::System.Collections.Generic.IReadOnlyList<{Argument(arguments, 0)}>",
-            "pkl.base#Set" => $"global::System.Collections.Generic.ISet<{Argument(arguments, 0)}>",
+            "pkl.base#Set" => $"global::System.Collections.Generic.IReadOnlySet<{Argument(arguments, 0)}>",
             "pkl.base#Map" or "pkl.base#Mapping" =>
                 $"global::System.Collections.Generic.IReadOnlyDictionary<{Argument(arguments, 0)}, {Argument(arguments, 1)}>",
             "pkl.base#Pair" => $"global::DripSharp.Brine.Pair<{Argument(arguments, 0)}, {Argument(arguments, 1)}>",

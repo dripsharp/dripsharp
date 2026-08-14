@@ -1343,6 +1343,7 @@
                       binding-report (Files/readString binding-diagnostics)
                       expected-binding-report
                       (str "constructor-and-members=passed\n"
+                           "generated-readonly-set=passed\n"
                            "metadata-options=passed\n"
                            "custom-loader=passed\n"
                            "custom-conversion=passed\n"
@@ -1372,7 +1373,7 @@
                   {:summary {:schemas 9
                              :generated-files (count generated-files)
                              :observations (:matched comparison)
-                             :generated-contract-observations 1
+                             :generated-contract-observations 2
                              :codegen-failure-observations 6
                              :binding-observations 2
                              :independent-binding-failure-observations 14

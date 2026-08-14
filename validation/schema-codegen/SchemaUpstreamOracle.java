@@ -71,6 +71,8 @@ public final class SchemaUpstreamOracle {
       writeSchemaFailures(writer, evaluator, fixtures);
       writeCodegenFailures(writer, evaluator, fixtures);
       write(writer, "generated/contract", "GENERATED_CONTRACT", generatedContract(schemas));
+      write(writer, "generated/set-contract", "GENERATED_SET_CONTRACT",
+          generatedSetContract(schemas.get(2)));
       var module = evaluator.evaluate(ModuleSource.path(fixtures.resolve("ContractMain.pkl")));
       write(writer, "values/ContractMain.pkl", "VALUES", values(module));
       var polymorphic = evaluator.evaluate(
@@ -227,6 +229,17 @@ public final class SchemaUpstreamOracle {
     var start = "type(clr=".length();
     var end = contract.indexOf(';', start);
     return contract.substring(start, end);
+  }
+
+  private static String generatedSetContract(ModuleSchema schema) {
+    var service = schema.getClasses().get("Service");
+    check(service != null, "contract.main#Service is missing from the generated contract");
+    var names = service.getProperties().get("names");
+    check(names != null, "contract.main#Service.names is missing from the generated contract");
+    var type = clrType(names.getType());
+    check(type.equals("System.Collections.Generic.IReadOnlySet<System.String>"),
+        "contract.main#Service.names is not an IReadOnlySet");
+    return "contract.main#Service.names(property=" + type + ";constructor=" + type + ")";
   }
 
   private static String generatedAlias(TypeAlias alias) {

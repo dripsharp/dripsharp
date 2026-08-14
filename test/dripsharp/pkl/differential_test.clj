@@ -41,6 +41,59 @@
     (is (some #{"schema.methods-generic-classes"} (:families summary)))
     (is (some #{"schema.amends-recursive-aliases"} (:families summary)))))
 
+(deftest schema-generator-read-only-set-contract-is-focused-and-fail-closed
+  (let [root (paths/workspace-root)
+        runtime (Files/readString
+                 (paths/resolve-path root "targets" "pkl" "runtime"
+                                     "DripSharp.Brine.DotNet.cs"))
+        probe (Files/readString
+               (paths/resolve-path root "validation" "schema-codegen"
+                                   "SchemaGeneratorProbe.cs"))
+        consumer (Files/readString
+                  (paths/resolve-path root "validation" "schema-codegen"
+                                      "GeneratedConsumer.cs"))
+        oracle (Files/readString
+                (paths/resolve-path root "validation" "schema-codegen"
+                                    "SchemaUpstreamOracle.java"))
+        expected (Files/createTempFile "generated-set-contract-expected" ".tsv"
+                                       (make-array FileAttribute 0))
+        actual (Files/createTempFile "generated-set-contract-actual" ".tsv"
+                                     (make-array FileAttribute 0))
+        read-only-contract
+        "contract.main#Service.names(property=System.Collections.Generic.IReadOnlySet<System.String>;constructor=System.Collections.Generic.IReadOnlySet<System.String>)"
+        mutable-contract
+        "contract.main#Service.names(property=System.Collections.Generic.ISet<System.String>;constructor=System.Collections.Generic.ISet<System.String>)"
+        row (fn [value]
+              (str "generated/set-contract\tGENERATED_SET_CONTRACT\t"
+                   (#'differential/b64 value) "\n"))]
+    (testing "the packed generator emits read-only Set APIs and read-only set semantics"
+      (doseq [[source required]
+              [[runtime
+                "\"pkl.base#Set\" => $\"global::System.Collections.Generic.IReadOnlySet<"]
+               [runtime
+                "definition == typeof(global::System.Collections.Generic.IReadOnlySet<>)"]
+               [probe
+                "public global::System.Collections.Generic.IReadOnlySet<string> Names { get; }"]
+               [probe
+                "generated Set property or constructor regressed to ISet<string>"]
+               [consumer "sealed class ReadOnlySetOnly<T> : IReadOnlySet<T>"]
+               [consumer "generated models treat IReadOnlySet values as order-independent sets"]
+               [oracle "generated/set-contract"]]]
+        (is (str/includes? source required) required)))
+    (testing "the focused oracle row detects an IReadOnlySet-to-ISet recurrence"
+      (Files/writeString expected (row read-only-contract) (make-array OpenOption 0))
+      (Files/writeString actual (row read-only-contract) (make-array OpenOption 0))
+      (is (= 1 (:matched (#'differential/assert-equal!
+                          "generated set contract" expected actual))))
+      (Files/writeString actual (row mutable-contract) (make-array OpenOption 0))
+      (let [error (try
+                    (#'differential/assert-equal!
+                     "generated set contract" expected actual)
+                    nil
+                    (catch clojure.lang.ExceptionInfo value value))]
+        (is (= :differential-validation-failed (:kind (ex-data error))))
+        (is (= 1 (get-in (ex-data error) [:mismatch :line])))))))
+
 (deftest loading-contract-is-source-backed-executable-and-retains-pending-scope
   (let [root (paths/workspace-root)
         fixtures (paths/resolve-path root "validation" "loading-contract")

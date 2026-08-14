@@ -92,6 +92,29 @@ static class GeneratedConsumer
         public required IReadOnlyDictionary<string, string> Values { get; init; }
     }
 
+    sealed class ReadOnlySetOnly<T> : IReadOnlySet<T> where T : notnull
+    {
+        readonly List<T> order = new();
+        readonly HashSet<T> values = new();
+
+        public ReadOnlySetOnly(IEnumerable<T> items)
+        {
+            foreach (T item in items)
+                if (values.Add(item)) order.Add(item);
+        }
+
+        public int Count => values.Count;
+        public bool Contains(T item) => values.Contains(item);
+        public bool IsProperSubsetOf(IEnumerable<T> other) => values.IsProperSubsetOf(other);
+        public bool IsProperSupersetOf(IEnumerable<T> other) => values.IsProperSupersetOf(other);
+        public bool IsSubsetOf(IEnumerable<T> other) => values.IsSubsetOf(other);
+        public bool IsSupersetOf(IEnumerable<T> other) => values.IsSupersetOf(other);
+        public bool Overlaps(IEnumerable<T> other) => values.Overlaps(other);
+        public bool SetEquals(IEnumerable<T> other) => values.SetEquals(other);
+        public IEnumerator<T> GetEnumerator() => order.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     abstract class ManualDessert { }
 
     sealed class ManualStrudel : ManualDessert
@@ -133,6 +156,13 @@ static class GeneratedConsumer
               generated.Service.Bytes.SequenceEqual(equivalentGenerated.Service.Bytes) &&
               generated.Service.Pattern.ToString() == equivalentGenerated.Service.Pattern.ToString(),
             "nested generated models compare bytes, regex, and collections by value");
+        var readOnlySetFirst = WithNames(generated.Service,
+            new ReadOnlySetOnly<string>(new[] { "alpha", "beta" }));
+        var readOnlySetSecond = WithNames(generated.Service,
+            new ReadOnlySetOnly<string>(new[] { "beta", "alpha" }));
+        Check(readOnlySetFirst.Equals(readOnlySetSecond) &&
+              readOnlySetFirst.GetHashCode() == readOnlySetSecond.GetHashCode(),
+            "generated models treat IReadOnlySet values as order-independent sets");
         Check(generated.ToString().Contains("service =", StringComparison.Ordinal) &&
               generated.Service.ToString().Contains("bytes =", StringComparison.Ordinal),
             "generated models expose stable property-oriented string representations");
@@ -154,6 +184,7 @@ static class GeneratedConsumer
         using (var writer = new StreamWriter(args[1], append: true, Utf8))
         {
             Write(writer, "generated/contract", "GENERATED_CONTRACT", GeneratedContract());
+            Write(writer, "generated/set-contract", "GENERATED_SET_CONTRACT", GeneratedSetContract());
             Write(writer, "values/ContractMain.pkl", "VALUES", Values(generated));
             Write(writer, "values/PolymorphicModuleTest.pkl", "VALUES", PolymorphicValues(polymorphic));
             Write(writer, "values/OverriddenProperty.pkl", "VALUES", OverriddenValues(overridden));
@@ -166,6 +197,11 @@ static class GeneratedConsumer
         Console.WriteLine("Independently compiled generated C# binding consumer passed.");
     }
 
+    static Service WithNames(Service value, IReadOnlySet<string> names) => new(
+        value.Id, value.Name, value.Endpoint, value.Direction, value.Email, value.Maybe,
+        value.Constrained, value.Choice, value.Tags, value.Listing, names, value.Weights,
+        value.Mapping, value.Pair, value.Bytes, value.Pattern, value.Duration, value.Size);
+
     static string GeneratedContract()
     {
         var generatedTypes = typeof(global::Contract.Main.Main).Assembly.GetTypes()
@@ -173,6 +209,19 @@ static class GeneratedConsumer
                 type.GetCustomAttribute<PklQualifiedNameAttribute>() is not null)
             .OrderBy(type => CanonicalType(type, null), StringComparer.Ordinal);
         return "types=[" + string.Join(";", generatedTypes.Select(GeneratedType)) + "]";
+    }
+
+    static string GeneratedSetContract()
+    {
+        var nullability = new NullabilityInfoContext();
+        var property = typeof(Service).GetProperty(nameof(Service.Names)) ??
+            throw new InvalidOperationException("contract.main#Service.Names is missing");
+        var parameter = typeof(Service).GetConstructors().Single().GetParameters().Single(item =>
+            item.GetCustomAttribute<PklNameAttribute>()?.Name == "names");
+        string propertyType = CanonicalType(property.PropertyType, nullability.Create(property));
+        string parameterType = CanonicalType(parameter.ParameterType, nullability.Create(parameter));
+        return "contract.main#Service.names(property=" + propertyType +
+            ";constructor=" + parameterType + ")";
     }
 
     static string GeneratedType(Type type)
@@ -671,6 +720,7 @@ static class GeneratedConsumer
 
         File.WriteAllText(diagnosticsFile,
             "constructor-and-members=passed\n" +
+            "generated-readonly-set=passed\n" +
             "metadata-options=passed\n" +
             "custom-loader=passed\n" +
             "custom-conversion=passed\n" +
