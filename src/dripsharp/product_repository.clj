@@ -183,6 +183,23 @@
   [run-command! directory command]
   (nul-paths (:output (command-result run-command! directory command))))
 
+(defn- transient-build-path?
+  [relative]
+  (some #{"bin" "obj"}
+        (map str/lower-case (str/split (portable relative) #"/"))))
+
+(defn- reject-tracked-build-artifacts!
+  [run-command! product]
+  (let [tracked
+        (->> (git-nul-paths run-command! product ["git" "ls-files" "-z"])
+             (filter transient-build-path?)
+             sort
+             vec)]
+    (when (seq tracked)
+      (fail! "Product repository tracks transient build outputs"
+             {:reason :tracked-build-artifacts
+              :paths tracked}))))
+
 (defn- existing-no-follow?
   [path]
   (Files/exists (paths/path path) no-follow))
@@ -261,9 +278,8 @@
 
 (defn- transient-build-entry?
   [root entry]
-  (some #{"bin" "obj"}
-        (map str (iterator-seq (.iterator (.relativize ^Path root
-                                                       ^Path entry))))))
+  (transient-build-path?
+   (portable (.relativize ^Path root ^Path entry))))
 
 (defn- validate-managed-sources!
   [staging managed-paths allow-transient-build-artifacts?]
@@ -552,6 +568,7 @@
                    {:reason :product-origin-mismatch
                     :expected repository-url
                     :actual origin}))
+        _ (reject-tracked-build-artifacts! run-command! product)
         expected-head (gitlink workspace-root run-command! submodule-path)
         actual-head
         (command-output run-command! product ["git" "rev-parse" "HEAD"])

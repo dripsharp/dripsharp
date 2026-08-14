@@ -103,7 +103,8 @@
         brine-commit
         (init-repository!
          brine "https://github.com/dripsharp/brine.git"
-         [["README.md" "old readme\n"]
+         [[".gitignore" "[Bb]in/\n[Oo]bj/\n"]
+          ["README.md" "old readme\n"]
           ["src/DripSharp.Brine/source-map.edn" "old map\n"]
           ["CONTRIBUTING.md" "preserve me\n"]])
         pdfcarton-commit
@@ -287,6 +288,36 @@
         (is (= :stale-generated-product-commit (:reason result)))
         (is (= ["src/DripSharp.Brine.Parser"]
                (:unstaged-profile-projects result))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest tracked-build-artifacts-are-rejected-even-when-ignored
+  (let [{:keys [workspace brine contract] :as fixture} (fixture!)]
+    (try
+      (product-repository/synchronize!
+       {:workspace-root workspace :target-contract contract})
+      (commit-synchronization! fixture)
+      (let [artifact
+            "src/DripSharp.Brine/bin/Release/netstandard2.0/DripSharp.Brine.dll"]
+        (write! brine artifact "compiled output\n")
+        (git! brine "add" "--force" "--" artifact)
+        (let [result
+              (failure
+               #(product-repository/synchronize!
+                 {:workspace-root workspace :target-contract contract}))]
+          (is (= :tracked-build-artifacts (:reason result)))
+          (is (= [artifact] (:paths result))))
+        (git! brine "commit" "-m" "Accidentally track build output")
+        (git! workspace "add" "products/brine")
+        (git! workspace "commit" "-m" "Advance to contaminated product")
+        (doseq [operation [product-repository/synchronize!
+                           product-repository/verify-synchronized!]]
+          (let [result
+                (failure
+                 #(operation {:workspace-root workspace
+                              :target-contract contract}))]
+            (is (= :tracked-build-artifacts (:reason result)))
+            (is (= [artifact] (:paths result))))))
       (finally
         (delete-tree! workspace)))))
 
