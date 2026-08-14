@@ -264,6 +264,7 @@ static class CorePackageProbe
     sealed class RecordingVisitor : ValueVisitor
     {
         public string Observation { get; private set; } = "none";
+        public void VisitDefault(object? value) { }
         public void VisitNull() => Observation = "null";
         public void VisitString(string value) => Observation = "string";
         public void VisitBoolean(bool value) => Observation = "boolean";
@@ -282,6 +283,25 @@ static class CorePackageProbe
         public void VisitTypeAlias(TypeAlias value) => Observation = "alias";
         public void VisitRegex(Regex value) => Observation = "regex";
         public void VisitReference(Reference value) => Observation = "reference";
+        public void Visit(object value)
+        {
+            switch (value)
+            {
+                case Value pklValue: pklValue.Accept(this); break;
+                case string text: VisitString(text); break;
+                case bool boolean: VisitBoolean(boolean); break;
+                case long integer: VisitInt(integer); break;
+                case double floating: VisitFloat(floating); break;
+                case IReadOnlyList<object> list: VisitList(list); break;
+                case ISet<object> set: VisitSet(set); break;
+                case IReadOnlyDictionary<object, object> map: VisitMap(map); break;
+                case Regex regex: VisitRegex(regex); break;
+                case byte[] bytes: VisitBytes(bytes); break;
+                default:
+                    throw new ArgumentException(
+                        "Cannot visit value with unexpected type: " + value);
+            }
+        }
     }
 
     sealed class RecordingConverter : ValueConverter<string>
@@ -304,6 +324,23 @@ static class CorePackageProbe
         public string ConvertTypeAlias(TypeAlias value) => "alias";
         public string ConvertRegex(Regex value) => "regex";
         public string ConvertReference(Reference value) => "reference";
+        public string Convert(object value)
+        {
+            return value switch
+            {
+                Value pklValue => pklValue.Accept(this),
+                string text => ConvertString(text),
+                bool boolean => ConvertBoolean(boolean),
+                long integer => ConvertInt(integer),
+                double floating => ConvertFloat(floating),
+                IReadOnlyList<object> list => ConvertList(list),
+                ISet<object> set => ConvertSet(set),
+                IReadOnlyDictionary<object, object> map => ConvertMap(map),
+                Regex regex => ConvertRegex(regex),
+                _ => throw new ArgumentException(
+                    "Cannot convert value with unexpected type: " + value),
+            };
+        }
     }
 
     static string Observe(Evaluator evaluator, string operation, string module, string argument)

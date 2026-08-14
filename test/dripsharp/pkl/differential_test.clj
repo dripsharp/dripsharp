@@ -1,5 +1,6 @@
 (ns dripsharp.pkl.differential-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.package-provenance :as provenance]
             [dripsharp.pkl.differential :as differential]
@@ -107,6 +108,59 @@
                (count (re-seq (re-pattern (java.util.regex.Pattern/quote required))
                               probe)))
             required)))))
+
+(deftest core-package-probe-value-adapters-track-generated-contract
+  (let [root (paths/workspace-root)
+        stale-root (Files/createTempDirectory "stale-core-package-probe"
+                                              (make-array FileAttribute 0))
+        relative-paths
+        [["products" "brine" "src" "DripSharp.Brine" "src" "DripSharp" "Brine"
+          "ValueVisitor.cs"]
+         ["products" "brine" "src" "DripSharp.Brine" "src" "DripSharp" "Brine"
+          "ValueConverter.cs"]
+         ["targets" "pkl" "validation" "probe" "CorePackageProbe.cs"]]
+        probe-path (apply paths/resolve-path stale-root (last relative-paths))]
+    (doseq [relative relative-paths]
+      (let [source (apply paths/resolve-path root relative)
+            target (apply paths/resolve-path stale-root relative)]
+        (Files/createDirectories (.getParent target) (make-array FileAttribute 0))
+        (Files/writeString target (Files/readString source) (make-array OpenOption 0))))
+    (is (= {:visitor-members 20 :converter-members 19}
+           (#'differential/verify-core-package-probe-adapters! stale-root)))
+    (letfn [(thrown-kind [f]
+              (try
+                (f)
+                nil
+                (catch clojure.lang.ExceptionInfo error
+                  (:kind (ex-data error)))))]
+      (let [valid-probe (Files/readString probe-path)]
+        (Files/writeString
+         probe-path
+         (str/replace-first valid-probe
+                            "public void VisitDefault(object? value)"
+                            "public void VisitDefault(object value)")
+         (make-array OpenOption 0))
+        (is (= :differential-validation-failed
+               (thrown-kind
+                #(#'differential/verify-core-package-probe-adapters! stale-root))))
+        (Files/writeString
+         probe-path
+         (str/replace-first valid-probe
+                            "public void Visit(object value)"
+                            "public void VisitUnexpected(object value)")
+         (make-array OpenOption 0))
+        (is (= :differential-validation-failed
+               (thrown-kind
+                #(#'differential/verify-core-package-probe-adapters! stale-root))))
+        (Files/writeString
+         probe-path
+         (str/replace-first valid-probe
+                            "public string Convert(object value)"
+                            "public string ConvertUnexpected(object value)")
+         (make-array OpenOption 0))
+        (is (= :differential-validation-failed
+               (thrown-kind
+                #(#'differential/verify-core-package-probe-adapters! stale-root))))))))
 
 (deftest packed-assembly-manifest-pins-exact-runtime-hashes
   (let [output (Files/createTempFile "dripsharp-packed-assemblies" ".tsv"

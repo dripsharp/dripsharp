@@ -1586,12 +1586,118 @@
       {:summary summary :manifest manifest :oracle-output oracle-first
        :package-output package-first :quantified-astral-captures astral-captures})))
 
+(defn- csharp-method-signatures
+  [source]
+  (->> (str/split-lines source)
+       (keep (fn [line]
+               (when-let [[_ signature]
+                          (re-matches
+                           #"^\s*(public (?:void|T|string) \w+\([^)]*\))(?:;|\s*=>.*|\s*\{.*\})?\s*$"
+                           line)]
+                 (-> signature
+                     (str/replace "public T " "public string ")
+                     (str/replace "global::DripSharp.Brine." "")
+                     (str/replace "global::System.Collections.Generic." "")
+                     (str/replace "global::System.Text.RegularExpressions." "")))))
+       set))
+
+(defn- csharp-section!
+  [source start-marker end-marker path]
+  (let [start (str/index-of source start-marker)
+        end (some->> start (str/index-of source end-marker))]
+    (when-not (and start end (< start end))
+      (fail! "The core package probe adapter section is missing"
+             {:contract :core-package-probe-adapter
+              :source (str path)
+              :start-marker start-marker
+              :end-marker end-marker}))
+    (subs source start end)))
+
+(defn- verify-ordered-dispatch!
+  [source fragments adapter path]
+  (let [indexes (mapv #(str/index-of source %) fragments)]
+    (when-not (and (every? some? indexes) (apply < indexes))
+      (fail! "The core package probe adapter no longer preserves upstream dispatch"
+             {:contract :core-package-probe-adapter
+              :adapter adapter
+              :source (str path)
+              :required-order fragments
+              :indexes indexes}))))
+
+(defn- verify-core-package-probe-adapters!
+  [root]
+  (let [interface-root (paths/resolve-path
+                        root "products" "brine" "src" "DripSharp.Brine" "src"
+                        "DripSharp" "Brine")
+        visitor-path (paths/resolve-path interface-root "ValueVisitor.cs")
+        converter-path (paths/resolve-path interface-root "ValueConverter.cs")
+        probe-path (paths/resolve-path root "targets" "pkl" "validation" "probe"
+                                       "CorePackageProbe.cs")
+        visitor-contract (csharp-method-signatures (Files/readString visitor-path))
+        converter-contract (csharp-method-signatures (Files/readString converter-path))
+        probe-source (Files/readString probe-path)
+        visitor-source (csharp-section! probe-source
+                                        "sealed class RecordingVisitor"
+                                        "sealed class RecordingConverter"
+                                        probe-path)
+        converter-source (csharp-section! probe-source
+                                          "sealed class RecordingConverter"
+                                          "static string Observe("
+                                          probe-path)
+        visitor-adapter (csharp-method-signatures visitor-source)
+        converter-adapter (csharp-method-signatures converter-source)]
+    (doseq [[adapter contract actual]
+            [[:visitor visitor-contract visitor-adapter]
+             [:converter converter-contract converter-adapter]]]
+      (when-not (= contract actual)
+        (fail! "The core package probe adapter does not match the generated interface"
+               {:contract :core-package-probe-adapter
+                :adapter adapter
+                :source (str probe-path)
+                :missing (sort (remove actual contract))
+                :unexpected (sort (remove contract actual))})))
+    (verify-ordered-dispatch!
+     visitor-source
+     ["case Value pklValue: pklValue.Accept(this); break;"
+      "case string text: VisitString(text); break;"
+      "case bool boolean: VisitBoolean(boolean); break;"
+      "case long integer: VisitInt(integer); break;"
+      "case double floating: VisitFloat(floating); break;"
+      "case IReadOnlyList<object> list: VisitList(list); break;"
+      "case ISet<object> set: VisitSet(set); break;"
+      "case IReadOnlyDictionary<object, object> map: VisitMap(map); break;"
+      "case Regex regex: VisitRegex(regex); break;"
+      "case byte[] bytes: VisitBytes(bytes); break;"
+      "Cannot visit value with unexpected type: "]
+     :visitor probe-path)
+    (verify-ordered-dispatch!
+     converter-source
+     ["Value pklValue => pklValue.Accept(this),"
+      "string text => ConvertString(text),"
+      "bool boolean => ConvertBoolean(boolean),"
+      "long integer => ConvertInt(integer),"
+      "double floating => ConvertFloat(floating),"
+      "IReadOnlyList<object> list => ConvertList(list),"
+      "ISet<object> set => ConvertSet(set),"
+      "IReadOnlyDictionary<object, object> map => ConvertMap(map),"
+      "Regex regex => ConvertRegex(regex),"
+      "Cannot convert value with unexpected type: "]
+     :converter probe-path)
+    (when (str/includes? converter-source "byte[] bytes =>")
+      (fail! "The core package probe converter accepts bytes outside upstream default dispatch"
+             {:contract :core-package-probe-adapter
+              :adapter :converter
+              :source (str probe-path)}))
+    {:visitor-members (count visitor-contract)
+     :converter-members (count converter-contract)}))
+
 (defn- verify-core-differential!
   "Runs representative evaluator/value-model cases in isolated upstream and package processes."
   [{:keys [workspace-root core-package-fn run-command!]
     :or {core-package-fn packaging/verify-package-consumption!
          run-command! process/run!}}]
   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+        _ (verify-core-package-probe-adapters! root)
         package-proof (core-package-fn {:workspace-root root
                                         :profile "pkl-core-value-model"
                                         :run-command! run-command!})
