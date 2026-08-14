@@ -1833,6 +1833,9 @@ static class LoadingContractDotNetProbe
     {
         ModuleKeyFactory factory = ModuleKeyFactories.CreateAssembly(
             Assembly.GetExecutingAssembly(), "Contract.Modules");
+        ModuleKey key = factory.Create(new Uri("assembly:/main.pkl"))
+            ?? throw new InvalidOperationException("assembly module URI was not recognized");
+        Require(key.Cached && key.Local, "assembly module must be cached and local");
         using (Evaluator evaluator = EvaluatorBuilder.Unconfigured()
             .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
             .SetAllowedModules(new List<Regex> { new("assembly:"), new("pkl:") })

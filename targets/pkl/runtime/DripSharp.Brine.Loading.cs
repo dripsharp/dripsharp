@@ -353,7 +353,7 @@ namespace DripSharp.Brine.Module
         public string? FileCachePath => GetFileCacheLocation();
         public bool HasHierarchicalUris() => true;
         public bool IsGlobbable() => true;
-        public bool IsCached() => false;
+        public bool IsCached() => true;
         public bool IsLocal() => true;
         public string? GetFileCacheLocation() => null;
         public bool HasFragmentPaths() => false;

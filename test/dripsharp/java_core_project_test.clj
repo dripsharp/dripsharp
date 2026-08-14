@@ -501,6 +501,7 @@
             (is (str/includes? file-system-manager
                                "JavaFileSystemAlreadyExistsException"))
             (is (str/includes? loading-runtime "CreateAssembly"))
+            (is (str/includes? loading-runtime "public bool IsCached() => true;"))
             (is (str/includes? loading-runtime "CreateEmbeddedResources"))
             (is (str/includes? loading-runtime
                                "is missing a `/` after its scheme"))
