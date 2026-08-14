@@ -458,6 +458,71 @@
                              :command ["dotnet" "run" "--project" project
                                        "--configuration" "Release" "--no-build"]})))))
 
+(defn- compile-and-run-netstandard-rune-probe! []
+  (let [root (Files/createTempDirectory "dripsharp-netstandard-rune"
+                                        (make-array FileAttribute 0))
+        library-root (paths/resolve-path root "library")
+        consumer-root (paths/resolve-path root "consumer")
+        library-project
+        (write-string!
+         (paths/resolve-path library-root "RuntimeProbe.csproj")
+         (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+              "  <PropertyGroup>\n"
+              "    <TargetFramework>netstandard2.0</TargetFramework>\n"
+              "    <LangVersion>latest</LangVersion>\n"
+              "    <Nullable>enable</Nullable>\n"
+              "    <ImplicitUsings>disable</ImplicitUsings>\n"
+              "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n"
+              "  </PropertyGroup>\n"
+              "</Project>\n"))
+        _ (write-string!
+           (paths/resolve-path library-root "DripSharp.JavaCompat.NetStandard.cs")
+           (slurp "runtime/DripSharp.JavaCompat.NetStandard.cs"))
+        _ (write-string!
+           (paths/resolve-path library-root "RuneProbe.cs")
+           (str "using System.Linq;\n"
+                "namespace DripSharp.Runtime\n"
+                "{\n"
+                "    public static class RuneProbe\n"
+                "    {\n"
+                "        public static string Convert()\n"
+                "        {\n"
+                "            var scalar = new Rune(0x1f642).ToString();\n"
+                "            var sequence = string.Concat(\"A\\U0001f642\".EnumerateRunes()\n"
+                "                .Select(rune => rune.ToString()));\n"
+                "            return scalar + \"|\" + sequence;\n"
+                "        }\n"
+                "    }\n"
+                "}\n"))
+        consumer-project
+        (write-string!
+         (paths/resolve-path consumer-root "Consumer.csproj")
+         (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+              "  <PropertyGroup>\n"
+              "    <OutputType>Exe</OutputType>\n"
+              "    <TargetFramework>net10.0</TargetFramework>\n"
+              "    <Nullable>enable</Nullable>\n"
+              "    <ImplicitUsings>disable</ImplicitUsings>\n"
+              "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n"
+              "  </PropertyGroup>\n"
+              "  <ItemGroup>\n"
+              "    <ProjectReference Include=\"../library/RuntimeProbe.csproj\" />\n"
+              "  </ItemGroup>\n"
+              "</Project>\n"))
+        _ (write-string!
+           (paths/resolve-path consumer-root "Program.cs")
+           (str "using System;\n"
+                "using DripSharp.Runtime;\n"
+                "Console.Write(RuneProbe.Convert());\n"))
+        build (process/run! {:directory root
+                             :command ["dotnet" "build" consumer-project
+                                       "--nologo" "--configuration" "Release"
+                                       "--verbosity:quiet" "-warnaserror"]})
+        run (process/run! {:directory root
+                           :command ["dotnet" "run" "--project" consumer-project
+                                     "--configuration" "Release" "--no-build"]})]
+    {:build build :run run :output (str/trim (:output run))}))
+
 (deftest reusable-translation-kernel-is-product-neutral
   (let [kernel (source "java_translate")
         frontend (source "spoon")]
@@ -495,6 +560,12 @@
       (is (= "OK" (compile-and-run-generic-runtime! assets false))))
     (testing "Pkl products can keep the reusable runtime internal"
       (is (= "OK" (compile-and-run-generic-runtime! assets true))))))
+
+(deftest netstandard-runes-convert-to-scalar-and-sequence-text
+  (let [{:keys [build run output]} (compile-and-run-netstandard-rune-probe!)]
+    (is (zero? (:exit build)) (:output build))
+    (is (zero? (:exit run)) (:output run))
+    (is (= "🙂|A🙂" output))))
 
 (deftest product-bundles-select-java-compatibility-visibility-explicitly
   (let [runtime (java-compat-runtime)

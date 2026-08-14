@@ -388,7 +388,7 @@ namespace DripSharp.Runtime
         }
 
         internal int Value { get; }
-
+        public override string ToString() => char.ConvertFromUtf32(Value);
         internal static bool IsValid(int value) =>
             value >= 0 && value <= 0x10ffff && (value < 0xd800 || value > 0xdfff);
 
