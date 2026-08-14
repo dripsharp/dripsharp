@@ -28,6 +28,7 @@ using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
+using Microsoft.Win32.SafeHandles;
 
 namespace DripSharp.Runtime;
 
@@ -43,7 +44,7 @@ internal static class JavaStandardCharsets
     internal static readonly Encoding UTF16BE = Encoding.BigEndianUnicode;
     internal static readonly Encoding UTF16LE = Encoding.Unicode;
     internal static readonly Encoding USASCII = Encoding.ASCII;
-    internal static readonly Encoding ISO88591 = Encoding.Latin1;
+    internal static readonly Encoding ISO88591 = Encoding.GetEncoding(28591);
 }
 
 // java.nio.file.NoSuchFileException carries the missing path as its message.
@@ -358,10 +359,10 @@ sealed class JavaPath : IEquatable<JavaPath>
         Value = value ?? throw new ArgumentNullException(nameof(value));
     public bool Equals(JavaPath? other) =>
         other is not null && string.Equals(Value, other.Value,
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            JavaCompat.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     public override bool Equals(object? obj) => Equals(obj as JavaPath);
     public override int GetHashCode() =>
-        (OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+        (JavaCompat.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
             .GetHashCode(Value);
     public override string ToString() => Value;
     public static implicit operator string(JavaPath? path) => path?.Value!;
@@ -370,6 +371,20 @@ sealed class JavaPath : IEquatable<JavaPath>
 
 internal enum JavaFileChannelMapMode { READ_ONLY }
 internal enum JavaStandardOpenOption { READ }
+
+[Flags]
+internal enum JavaUnixFileMode : uint
+{
+    OtherExecute = 0x001,
+    OtherWrite = 0x002,
+    OtherRead = 0x004,
+    GroupExecute = 0x008,
+    GroupWrite = 0x010,
+    GroupRead = 0x020,
+    UserExecute = 0x040,
+    UserWrite = 0x080,
+    UserRead = 0x100
+}
 
 internal sealed class JavaFileChannel : IDisposable
 {
@@ -457,7 +472,7 @@ internal sealed class JavaFileSystem : IDisposable
     public void Dispose() => Close();
 
     internal ISet<string> SupportedFileAttributeViews() =>
-        OperatingSystem.IsWindows()
+        JavaCompat.IsWindows()
             ? new HashSet<string>(StringComparer.Ordinal)
             : new HashSet<string>(new[] { "posix" }, StringComparer.Ordinal);
 }
@@ -613,7 +628,7 @@ internal static partial class JavaCompat
         var root = Path.GetFullPath(basePath);
         return new JavaStream<string>(Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
             .Where(path => maxDepth == int.MaxValue ||
-                Path.GetRelativePath(root, path).Count(character =>
+                RelativePath(root, path).Count(character =>
                     character == Path.DirectorySeparatorChar || character == Path.AltDirectorySeparatorChar) < maxDepth)
             .Where(path => predicate(path, Directory.Exists(path)
                 ? new DirectoryInfo(path)
@@ -741,8 +756,8 @@ internal static partial class JavaCompat
         // their intended root.
         var result = first;
         foreach (var value in more)
-            result = Path.Join(result, value.TrimStart(Path.DirectorySeparatorChar,
-                                                       Path.AltDirectorySeparatorChar));
+            result = Path.Combine(result, value.TrimStart(Path.DirectorySeparatorChar,
+                                                          Path.AltDirectorySeparatorChar));
         return result;
     }
     internal static string PathOfUri(Uri uri) =>
@@ -754,7 +769,7 @@ internal static partial class JavaCompat
         var parent = Path.GetDirectoryName(path);
         return parent is null ? null : new JavaPath(parent);
     }
-    internal static string PathRelativize(string basis, string path) => Path.GetRelativePath(basis, path);
+    internal static string PathRelativize(string basis, string path) => RelativePath(basis, path);
     internal static string PathResolve(string basis, string value) => Path.Combine(basis, value);
     internal static string PathResolveSibling(string basis, string value) =>
         Path.Combine(Path.GetDirectoryName(basis) ?? string.Empty, value);
@@ -763,41 +778,64 @@ internal static partial class JavaCompat
         var fullPath = Path.GetFullPath(path);
         return Path.IsPathRooted(path)
             ? fullPath
-            : Path.GetRelativePath(Environment.CurrentDirectory, fullPath);
+            : RelativePath(Environment.CurrentDirectory, fullPath);
     }
     internal static string RealPath(string path)
     {
         var fullPath = Path.GetFullPath(path);
-        var root = Path.GetPathRoot(fullPath) ??
-            throw new IOException($"Path `{path}` has no filesystem root.");
-        var current = root;
-        var remainder = fullPath[root.Length..];
-        foreach (var segment in remainder.Split(
-                     new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
-                     StringSplitOptions.RemoveEmptyEntries))
+        if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+            throw new NoSuchFileException(path);
+        if (!IsWindows())
         {
-            current = Path.Combine(current, segment);
-            FileSystemInfo info = Directory.Exists(current)
-                ? new DirectoryInfo(current)
-                : new FileInfo(current);
-            if (!info.Exists)
-                throw new NoSuchFileException(path);
-            if ((info.Attributes & FileAttributes.ReparsePoint) == 0) continue;
-            var target = info.ResolveLinkTarget(returnFinalTarget: true) ??
-                throw new IOException($"Cannot resolve symbolic link `{current}`.");
-            current = Path.GetFullPath(target.FullName);
+            var pointer = RealPathNative(fullPath, IntPtr.Zero);
+            if (pointer == IntPtr.Zero)
+                throw new IOException(
+                    $"realpath failed for `{path}` with native error {Marshal.GetLastWin32Error()}.");
+            try
+            {
+                return Marshal.PtrToStringAnsi(pointer) ??
+                    throw new IOException($"realpath returned no value for `{path}`.");
+            }
+            finally
+            {
+                FreeNative(pointer);
+            }
         }
-        return Path.GetFullPath(current);
+        using var handle = CreateFileNative(
+            fullPath,
+            0,
+            FileShare.ReadWrite | FileShare.Delete,
+            IntPtr.Zero,
+            FileMode.Open,
+            0x02000000,
+            IntPtr.Zero);
+        if (handle.IsInvalid)
+            throw new IOException(
+                $"CreateFile failed for `{path}` with native error {Marshal.GetLastWin32Error()}.");
+        var capacity = 512;
+        while (true)
+        {
+            var resolved = new StringBuilder(capacity);
+            var length = GetFinalPathNameByHandleNative(handle, resolved, resolved.Capacity, 0);
+            if (length == 0)
+                throw new IOException(
+                    $"GetFinalPathNameByHandle failed for `{path}` with native error {Marshal.GetLastWin32Error()}.");
+            if (length < resolved.Capacity)
+                return resolved.ToString().StartsWith("\\\\?\\", StringComparison.Ordinal)
+                    ? resolved.ToString().Substring(4)
+                    : resolved.ToString();
+            capacity = checked((int)length + 1);
+        }
     }
     internal static bool PathStartsWith(string path, string basis)
     {
         var candidate = Path.GetFullPath(path);
         var root = Path.GetFullPath(basis);
-        var comparison = OperatingSystem.IsWindows()
+        var comparison = IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
         if (string.Equals(candidate, root, comparison)) return true;
-        var relative = Path.GetRelativePath(root, candidate);
+        var relative = RelativePath(root, candidate);
         return !Path.IsPathRooted(relative) &&
                !string.Equals(relative, "..", comparison) &&
                !relative.StartsWith(".." + Path.DirectorySeparatorChar, comparison) &&
@@ -805,7 +843,7 @@ internal static partial class JavaCompat
     }
     internal static bool PathEndsWith(string path, string suffix)
     {
-        var comparison = OperatingSystem.IsWindows()
+        var comparison = IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
         if (Path.IsPathRooted(suffix))
@@ -901,7 +939,8 @@ internal static partial class JavaCompat
     }
     internal static string Move(string source, string destination, params object?[] _)
     {
-        File.Move(source, destination, true);
+        if (File.Exists(destination)) File.Delete(destination);
+        File.Move(source, destination);
         return destination;
     }
     internal static string Copy(string source, string destination, params object?[] _)
@@ -950,25 +989,79 @@ internal static partial class JavaCompat
         return writer;
     }
     internal static void WriterAppend(TextWriter writer, object? value, int start, int end) =>
-        writer.Write(StringValueOf(value).AsSpan(start, end - start));
-    internal static void SetPosixFilePermissions(string path, ISet<UnixFileMode> permissions)
+        writer.Write(StringValueOf(value).Substring(start, end - start));
+
+    [DllImport("libc", EntryPoint = "chmod", SetLastError = true)]
+    private static extern int Chmod(string path, uint mode);
+
+    [DllImport("libc", EntryPoint = "realpath", SetLastError = true)]
+    private static extern IntPtr RealPathNative(string path, IntPtr buffer);
+
+    [DllImport("libc", EntryPoint = "free")]
+    private static extern void FreeNative(IntPtr pointer);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    private static extern SafeFileHandle CreateFileNative(
+        string path,
+        uint desiredAccess,
+        FileShare shareMode,
+        IntPtr securityAttributes,
+        FileMode creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleNative(
+        SafeFileHandle handle,
+        StringBuilder path,
+        int pathLength,
+        uint flags);
+
+    private static string RelativePath(string basis, string path)
     {
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(path, permissions.Aggregate((UnixFileMode)0, (mode, permission) => mode | permission));
+        var basisFull = Path.GetFullPath(basis);
+        var pathFull = Path.GetFullPath(path);
+        var basisRoot = Path.GetPathRoot(basisFull);
+        var pathRoot = Path.GetPathRoot(pathFull);
+        if (!string.Equals(
+                basisRoot,
+                pathRoot,
+                IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            return pathFull;
+        if (!basisFull.EndsWith(Path.DirectorySeparatorChar))
+            basisFull += Path.DirectorySeparatorChar;
+        var relative = new Uri(basisFull).MakeRelativeUri(new Uri(pathFull)).ToString();
+        relative = Uri.UnescapeDataString(relative)
+            .Replace('/', Path.DirectorySeparatorChar);
+        return relative.Length == 0 ? "." : relative;
     }
-    internal static void setPosixFilePermissions(string path, ISet<UnixFileMode> permissions) =>
+
+    internal static void SetPosixFilePermissions(string path, ISet<JavaUnixFileMode> permissions)
+    {
+        if (!IsWindows())
+        {
+            var mode = permissions.Aggregate(
+                (JavaUnixFileMode)0, (value, permission) => value | permission);
+            if (Chmod(path, (uint)mode) != 0)
+                throw new IOException(
+                    $"chmod failed for `{path}` with native error {Marshal.GetLastWin32Error()}.");
+        }
+    }
+    internal static void setPosixFilePermissions(string path, ISet<JavaUnixFileMode> permissions) =>
         SetPosixFilePermissions(path, permissions);
-    internal static ISet<UnixFileMode> fromString(string permissions)
+    internal static ISet<JavaUnixFileMode> fromString(string permissions)
     {
         if (permissions.Length != 9)
             throw new ArgumentException("POSIX permissions must contain exactly nine characters.",
                 nameof(permissions));
-        var result = new HashSet<UnixFileMode>();
+        var result = new HashSet<JavaUnixFileMode>();
         var modes = new[]
         {
-            UnixFileMode.UserRead, UnixFileMode.UserWrite, UnixFileMode.UserExecute,
-            UnixFileMode.GroupRead, UnixFileMode.GroupWrite, UnixFileMode.GroupExecute,
-            UnixFileMode.OtherRead, UnixFileMode.OtherWrite, UnixFileMode.OtherExecute
+            JavaUnixFileMode.UserRead, JavaUnixFileMode.UserWrite, JavaUnixFileMode.UserExecute,
+            JavaUnixFileMode.GroupRead, JavaUnixFileMode.GroupWrite, JavaUnixFileMode.GroupExecute,
+            JavaUnixFileMode.OtherRead, JavaUnixFileMode.OtherWrite, JavaUnixFileMode.OtherExecute
         };
         for (var index = 0; index < permissions.Length; index++)
         {
@@ -980,10 +1073,10 @@ internal static partial class JavaCompat
         }
         return result;
     }
-    internal static JavaFileAttribute<ISet<UnixFileMode>> asFileAttribute(
-        ISet<UnixFileMode> permissions) => new(permissions);
+    internal static JavaFileAttribute<ISet<JavaUnixFileMode>> asFileAttribute(
+        ISet<JavaUnixFileMode> permissions) => new(permissions);
     internal static string createTempDirectory(
-        string prefix, params JavaFileAttribute<ISet<UnixFileMode>>[] attributes)
+        string prefix, params JavaFileAttribute<ISet<JavaUnixFileMode>>[] attributes)
     {
         var path = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
@@ -992,11 +1085,11 @@ internal static partial class JavaCompat
     }
     internal static string createTempFile(
         string prefix, string suffix,
-        params JavaFileAttribute<ISet<UnixFileMode>>[] attributes) =>
+        params JavaFileAttribute<ISet<JavaUnixFileMode>>[] attributes) =>
         createTempFile(Path.GetTempPath(), prefix, suffix, attributes);
     internal static string createTempFile(
         string directory, string prefix, string suffix,
-        params JavaFileAttribute<ISet<UnixFileMode>>[] attributes)
+        params JavaFileAttribute<ISet<JavaUnixFileMode>>[] attributes)
     {
         var path = Path.Combine(directory, prefix + Guid.NewGuid().ToString("N") + suffix);
         using (File.Create(path)) { }
@@ -1005,7 +1098,7 @@ internal static partial class JavaCompat
     }
     internal static JavaAclFileAttributeView? getFileAttributeView(
         string _, Type __, params object?[] ___) =>
-        OperatingSystem.IsWindows() ? new JavaAclFileAttributeView() : null;
+        IsWindows() ? new JavaAclFileAttributeView() : null;
     internal static bool FileDelete(FileInfo file)
     {
         try

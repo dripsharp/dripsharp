@@ -320,7 +320,7 @@
             [profile :source-revision]
             (:revision contract) (get-in emission [:source-project :revision]))
     (exact! "PdfCarton project targets the wrong framework"
-            [profile :target-framework] "net10.0"
+            [profile :target-framework] "netstandard2.0"
             (get-in destination [:project :target-framework]))
     (exact! "PdfCarton project must compile with warnings as errors"
             [profile :warnings-as-errors] true

@@ -69,6 +69,25 @@ sealed class JavaUnrecoverableKeyException : CryptographicException
         : base(message, cause) { }
 }
 
+internal sealed class JavaNonClosingStream : Stream
+{
+    private readonly Stream inner;
+
+    internal JavaNonClosingStream(Stream inner) => this.inner = inner;
+
+    public override bool CanRead => inner.CanRead;
+    public override bool CanSeek => inner.CanSeek;
+    public override bool CanWrite => inner.CanWrite;
+    public override long Length => inner.Length;
+    public override long Position { get => inner.Position; set => inner.Position = value; }
+    public override void Flush() => inner.Flush();
+    public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+    public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+    public override void SetLength(long value) => inner.SetLength(value);
+    public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+    protected override void Dispose(bool disposing) { }
+}
+
 internal sealed class JavaMessageDigest
 {
     private readonly IncrementalHash digest;
@@ -112,10 +131,7 @@ internal sealed class JavaMessageDigest
     }
 
     internal static bool IsEqual(sbyte[] left, sbyte[] right) =>
-        left.Length == right.Length &&
-        CryptographicOperations.FixedTimeEquals(
-            left.Select(item => unchecked((byte)item)).ToArray(),
-            right.Select(item => unchecked((byte)item)).ToArray());
+        JavaCompat.FixedTimeEquals(left, right);
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -193,15 +209,18 @@ sealed class JavaAlgorithmParameterGenerator
     {
         _ = algorithm;
         var iv = new byte[8];
-        RandomNumberGenerator.Fill(iv);
-        var writer = new System.Formats.Asn1.AsnWriter(
-            System.Formats.Asn1.AsnEncodingRules.DER);
-        writer.PushSequence();
-        writer.WriteInteger(58);
-        writer.WriteOctetString(iv);
-        writer.PopSequence();
+        JavaCompat.FillRandom(iv);
+        var encoded = new byte[15];
+        encoded[0] = 0x30;
+        encoded[1] = 0x0d;
+        encoded[2] = 0x02;
+        encoded[3] = 0x01;
+        encoded[4] = 58;
+        encoded[5] = 0x04;
+        encoded[6] = 0x08;
+        Array.Copy(iv, 0, encoded, 7, iv.Length);
         return new JavaAlgorithmParameters(
-            JavaCompat.ToSignedBytes(writer.Encode()),
+            JavaCompat.ToSignedBytes(encoded),
             JavaCompat.ToSignedBytes(iv));
     }
 }
@@ -247,7 +266,7 @@ sealed class JavaKeyGenerator
     public JavaSecretKey GenerateKey()
     {
         var key = new byte[keySize / 8];
-        RandomNumberGenerator.Fill(key);
+        JavaCompat.FillRandom(key);
         return new JavaSecretKeySpec(
             JavaCompat.ToSignedBytes(key),
             string.Equals(algorithm, "1.2.840.113549.3.2", StringComparison.Ordinal)
@@ -510,7 +529,7 @@ sealed class JavaCipher : IDisposable
         var current = transform ??
             throw new InvalidOperationException("Cipher has not been initialized.");
         transform = null;
-        return new CryptoStream(input, current, CryptoStreamMode.Read, leaveOpen: true);
+        return new CryptoStream(new JavaNonClosingStream(input), current, CryptoStreamMode.Read);
     }
 
     private ICryptoTransform RequireTransform() =>
@@ -571,17 +590,6 @@ sealed class JavaCipherInputStream : Stream
         }
     }
 
-    public override int Read(Span<byte> buffer)
-    {
-        try
-        {
-            return stream.Read(buffer);
-        }
-        catch (CryptographicException exception)
-        {
-            throw new IOException(null, exception);
-        }
-    }
     public override long Seek(long offset, SeekOrigin origin) =>
         throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -639,9 +647,10 @@ sealed class JavaKeyStore
         using var contents = new MemoryStream();
         input.CopyTo(contents);
         certificates.Clear();
-        var flags =
-            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet |
-            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable;
+        var flags = System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable;
+#if !NETSTANDARD2_0
+        flags |= System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet;
+#endif
 #if NET9_0_OR_GREATER
         certificates.AddRange(
             System.Security.Cryptography.X509Certificates.X509CertificateLoader
@@ -695,9 +704,11 @@ sealed class JavaKeyStore
             return null;
         try
         {
-            return (object?)certificate.GetRSAPrivateKey() ??
-                (object?)certificate.GetECDsaPrivateKey() ??
-                (object?)certificate.GetDSAPrivateKey();
+            var key = (object?)certificate.GetRSAPrivateKey() ??
+                certificate.GetECDsaPrivateKey();
+#pragma warning disable CS0618, SYSLIB0028
+            return key ?? certificate.PrivateKey;
+#pragma warning restore CS0618, SYSLIB0028
         }
         catch (CryptographicException error)
         {
@@ -779,7 +790,16 @@ sealed class JavaCertificateFactory
         var text = Encoding.UTF8.GetString(encoded);
         if (text.Contains("-----BEGIN CERTIFICATE-----", StringComparison.Ordinal))
         {
-            result.ImportFromPem(text);
+            foreach (Match match in Regex.Matches(
+                         text,
+                         "-----BEGIN CERTIFICATE-----\\s*(?<data>[A-Za-z0-9+/=\\s]+?)\\s*-----END CERTIFICATE-----",
+                         RegexOptions.CultureInvariant))
+            {
+                var der = Convert.FromBase64String(
+                    Regex.Replace(match.Groups["data"].Value, @"\s", string.Empty));
+                result.Add(
+                    new System.Security.Cryptography.X509Certificates.X509Certificate2(der));
+            }
         }
         else
         {
@@ -887,4 +907,22 @@ internal sealed class JavaTrustManagerFactory
     internal object[] GetTrustManagers() => manager is null
         ? throw new InvalidOperationException("TrustManagerFactory is not initialized.")
         : new object[] { manager };
+}
+
+internal static partial class JavaCompat
+{
+    internal static void FillRandom(byte[] values)
+    {
+        using var generator = RandomNumberGenerator.Create();
+        generator.GetBytes(values);
+    }
+
+    internal static bool FixedTimeEquals(sbyte[] left, sbyte[] right)
+    {
+        if (left.Length != right.Length) return false;
+        var difference = 0;
+        for (var index = 0; index < left.Length; index++)
+            difference |= left[index] ^ right[index];
+        return difference == 0;
+    }
 }

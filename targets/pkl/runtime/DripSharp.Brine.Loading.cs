@@ -126,9 +126,9 @@ namespace DripSharp.Brine
         {
             var assemblyVersion = typeof(Platform).Assembly.GetName().Version?.ToString() ?? "unknown";
             var runtime = global::System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
-            var osName = global::System.OperatingSystem.IsWindows() ? "Windows" :
-                global::System.OperatingSystem.IsMacOS() ? "macOS" :
-                global::System.OperatingSystem.IsLinux() ? "Linux" :
+            var osName = global::DripSharp.Runtime.JavaCompat.IsWindows() ? "Windows" :
+                global::DripSharp.Runtime.JavaCompat.IsMacOS() ? "macOS" :
+                global::DripSharp.Runtime.JavaCompat.IsLinux() ? "Linux" :
                 global::System.Runtime.InteropServices.RuntimeInformation.OSDescription;
             CURRENT = new Platform(
                 new Language(assemblyVersion),
@@ -214,34 +214,30 @@ namespace DripSharp.Brine.Module
 {
     public partial interface ModuleKey
     {
-        public Uri Uri => GetUri();
-        public bool Cached => IsCached();
-        public bool Local => IsLocal();
-        public string? FileCachePath => GetFileCacheLocation();
+        public Uri Uri { get; }
+        public bool Cached { get; }
+        public bool Local { get; }
+        public string? FileCachePath { get; }
         public bool HasHierarchicalUris();
         public bool IsGlobbable();
-        public bool HasElement(SecurityManager securityManager, Uri elementUri) =>
-            throw new NotSupportedException();
-        public IReadOnlyList<PathElement> ListElements(
-            SecurityManager securityManager, Uri baseUri) =>
-            throw new NotSupportedException();
-        public bool HasFragmentPaths() => false;
-        public Uri ResolveUri(Uri baseUri, Uri uri) =>
-            DripSharp.Brine.Util.IoUtils.Resolve(this, baseUri, uri);
+        public bool HasElement(SecurityManager securityManager, Uri elementUri);
+        public IReadOnlyList<PathElement> ListElements(SecurityManager securityManager, Uri baseUri);
+        public bool HasFragmentPaths();
+        public Uri ResolveUri(Uri baseUri, Uri uri);
     }
 
     public partial interface ResolvedModuleKey
     {
-        public ModuleKey Original => GetOriginal();
-        public Uri Uri => GetUri();
-        public string Source => LoadSource();
+        public ModuleKey Original { get; }
+        public Uri Uri { get; }
+        public string Source { get; }
     }
 
-    public partial interface ModuleKeyFactory
+    public abstract partial class ModuleKeyFactory
     {
         public ModuleKey? TryCreate(Uri uri)
         {
-            ArgumentNullException.ThrowIfNull(uri);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
             return Create(uri);
         }
     }
@@ -322,22 +318,21 @@ namespace DripSharp.Brine.Module
             string resourcePrefix = "",
             string uriScheme = "assembly")
         {
-            ArgumentNullException.ThrowIfNull(assembly);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(assembly);
             this.uriScheme = DotNetLoading.ValidateScheme(uriScheme, nameof(uriScheme));
             resources = new DotNetLoading.AssemblyResourceIndex(assembly, resourcePrefix);
         }
 
-        public ModuleKey? Create(Uri uri)
+        public override ModuleKey? Create(Uri uri)
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            ArgumentNullException.ThrowIfNull(uri);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(disposed, this);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
             if (!string.Equals(uri.Scheme, uriScheme, StringComparison.OrdinalIgnoreCase))
                 return null;
             return new AssemblyModuleKey(uri, resources);
         }
 
-        public void Close() => disposed = true;
-        public void Dispose() => Close();
+        public override void Close() => disposed = true;
     }
 
     internal sealed class AssemblyModuleKey : ModuleKey
@@ -352,27 +347,38 @@ namespace DripSharp.Brine.Module
         }
 
         public Uri GetUri() => uri;
+        public Uri Uri => GetUri();
+        public bool Cached => IsCached();
+        public bool Local => IsLocal();
+        public string? FileCachePath => GetFileCacheLocation();
         public bool HasHierarchicalUris() => true;
         public bool IsGlobbable() => true;
+        public bool IsCached() => false;
         public bool IsLocal() => true;
+        public string? GetFileCacheLocation() => null;
+        public bool HasFragmentPaths() => false;
+        public Uri ResolveUri(Uri value) =>
+            DripSharp.Brine.Util.IoUtils.Resolve(this, uri, value);
+        public Uri ResolveUri(Uri baseUri, Uri value) =>
+            DripSharp.Brine.Util.IoUtils.Resolve(this, baseUri, value);
 
         public bool HasElement(SecurityManager securityManager, Uri elementUri)
         {
-            ArgumentNullException.ThrowIfNull(securityManager);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(securityManager);
             securityManager.CheckResolveModule(elementUri);
             return resources.HasElement(elementUri);
         }
 
         public IReadOnlyList<PathElement> ListElements(SecurityManager securityManager, Uri baseUri)
         {
-            ArgumentNullException.ThrowIfNull(securityManager);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(securityManager);
             securityManager.CheckResolveModule(baseUri);
             return new List<PathElement>(resources.ListElements(baseUri));
         }
 
         public ResolvedModuleKey Resolve(SecurityManager securityManager)
         {
-            ArgumentNullException.ThrowIfNull(securityManager);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(securityManager);
             securityManager.CheckResolveModule(uri);
             if (!resources.TryRead(uri, out var bytes))
                 throw new FileNotFoundException($"Cannot find assembly module `{uri}`.");
@@ -395,9 +401,12 @@ namespace DripSharp.Brine.Module
 
         public ModuleKey GetOriginal() => original;
         public Uri GetUri() => uri;
+        public ModuleKey Original => GetOriginal();
+        public Uri Uri => GetUri();
         public string LoadSource() =>
             global::DripSharp.Runtime.JavaCompat.NewString(
                 bytes, global::System.Text.Encoding.UTF8);
+        public string Source => LoadSource();
     }
 }
 
@@ -411,23 +420,23 @@ namespace DripSharp.Brine.Resource
         public string Base64 => GetBase64();
     }
 
-    public partial interface ResourceReader
+    public abstract partial class ResourceReader
     {
-        public bool HasHierarchicalUris();
-        public bool IsGlobbable();
+        public abstract bool HasHierarchicalUris();
+        public abstract bool IsGlobbable();
         public object? TryRead(Uri uri)
         {
-            ArgumentNullException.ThrowIfNull(uri);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
             return Read(uri);
         }
 
-        public bool HasElement(SecurityManager securityManager, Uri elementUri) =>
+        public virtual bool HasElement(SecurityManager securityManager, Uri elementUri) =>
             throw new NotSupportedException();
-        public IReadOnlyList<Module.PathElement> ListElements(
+        public virtual IReadOnlyList<Module.PathElement> ListElements(
             SecurityManager securityManager, Uri baseUri) =>
             throw new NotSupportedException();
-        public bool HasFragmentPaths() => false;
-        public Uri ResolveUri(Uri baseUri, Uri uri) =>
+        public virtual bool HasFragmentPaths() => false;
+        public virtual Uri ResolveUri(Uri baseUri, Uri uri) =>
             DripSharp.Brine.Util.IoUtils.Resolve(this, baseUri, uri);
     }
 
@@ -462,56 +471,55 @@ namespace DripSharp.Brine.Resource
             string resourcePrefix = "",
             string uriScheme = "embedded")
         {
-            ArgumentNullException.ThrowIfNull(assembly);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(assembly);
             this.uriScheme = DotNetLoading.ValidateScheme(uriScheme, nameof(uriScheme));
             resources = new DotNetLoading.AssemblyResourceIndex(assembly, resourcePrefix);
         }
 
-        public string GetUriScheme() => uriScheme;
-        public bool HasHierarchicalUris() => true;
-        public bool IsGlobbable() => true;
+        public override string GetUriScheme() => uriScheme;
+        public override bool HasHierarchicalUris() => true;
+        public override bool IsGlobbable() => true;
 
-        public object? Read(Uri uri)
+        public override object? Read(Uri uri)
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(disposed, this);
             if (!string.Equals(uri.Scheme, uriScheme, StringComparison.OrdinalIgnoreCase) ||
                 !resources.TryRead(uri, out var bytes))
                 return null;
             return new Resource(uri, bytes);
         }
 
-        public bool HasElement(SecurityManager securityManager, Uri elementUri)
+        public override bool HasElement(SecurityManager securityManager, Uri elementUri)
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            ArgumentNullException.ThrowIfNull(securityManager);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(disposed, this);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(securityManager);
             securityManager.CheckResolveResource(elementUri);
             return resources.HasElement(elementUri);
         }
 
-        public IReadOnlyList<Module.PathElement> ListElements(
+        public override IReadOnlyList<Module.PathElement> ListElements(
             SecurityManager securityManager, Uri baseUri)
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            ArgumentNullException.ThrowIfNull(securityManager);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(disposed, this);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(securityManager);
             securityManager.CheckResolveResource(baseUri);
             return new List<Module.PathElement>(resources.ListElements(baseUri));
         }
 
-        public void Close() => disposed = true;
-        public void Dispose() => Close();
+        public override void Close() => disposed = true;
     }
 }
 
 namespace DripSharp.Brine.Http
 {
-    public partial interface HttpClient
+    public abstract partial class HttpClient
     {
         public HttpResponseMessage Send(
             HttpRequestMessage request,
             HttpRequestChecker requestChecker)
         {
-            ArgumentNullException.ThrowIfNull(request);
-            ArgumentNullException.ThrowIfNull(requestChecker);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(request);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(requestChecker);
             return HttpClientCompatibility.SendMessage(this, request, requestChecker);
         }
 
@@ -519,12 +527,13 @@ namespace DripSharp.Brine.Http
             HttpRequestMessage request,
             HttpRequestChecker requestChecker)
         {
-            ArgumentNullException.ThrowIfNull(request);
-            ArgumentNullException.ThrowIfNull(requestChecker);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(request);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(requestChecker);
             return HttpClientCompatibility.Send(
                 this,
                 new Runtime.JavaHttpRequest(request),
-                response => response.Content.ReadAsByteArrayAsync(
+                response => global::DripSharp.Runtime.JavaCompat.ReadAsByteArrayAsync(
+                    response.Content,
                     global::DripSharp.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult(),
                 requestChecker).Body();
         }
@@ -533,12 +542,12 @@ namespace DripSharp.Brine.Http
             HttpRequestMessage request,
             HttpRequestChecker requestChecker)
         {
-            ArgumentNullException.ThrowIfNull(request);
-            ArgumentNullException.ThrowIfNull(requestChecker);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(request);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(requestChecker);
             return new MemoryStream(GetBytes(request, requestChecker), writable: false);
         }
 
-        public partial interface Builder
+        public abstract partial class Builder
         {
             public Builder AddCertificate(byte[] certificateBytes) =>
                 AddCertificates(certificateBytes);
@@ -555,7 +564,7 @@ namespace DripSharp.Brine.Http
             Runtime.JavaHttpBodyHandler<T> responseBodyHandler,
             HttpClient.HttpRequestChecker requestChecker)
         {
-            ArgumentNullException.ThrowIfNull(client);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(client);
             var compatibilityMethod = client.GetType().GetMethods(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .SingleOrDefault(method =>
@@ -597,15 +606,16 @@ namespace DripSharp.Brine.Http
                 ReasonPhrase = response.ReasonPhrase,
                 RequestMessage = response.RequestMessage,
                 Version = response.Version,
-                Content = new ByteArrayContent(response.Content.ReadAsByteArrayAsync(
+                Content = new ByteArrayContent(
+                    global::DripSharp.Runtime.JavaCompat.ReadAsByteArrayAsync(
+                    response.Content,
                     global::DripSharp.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult())
             };
             foreach (var header in response.Headers)
                 clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
             foreach (var header in response.Content.Headers)
                 clone.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            foreach (var header in response.TrailingHeaders)
-                clone.TrailingHeaders.TryAddWithoutValidation(header.Key, header.Value);
+            global::DripSharp.Runtime.JavaCompat.CopyTrailingHeaders(response, clone);
             return clone;
         }
     }
@@ -667,7 +677,7 @@ namespace DripSharp.Brine.Packages
             : null;
     }
 
-    public partial interface PackageResolver
+    public abstract partial class PackageResolver
     {
         public byte[] GetAssetBytes(
             PackageAssetUri uri, bool allowDirectories = false, Checksums? checksums = null) =>
@@ -794,18 +804,18 @@ namespace DripSharp.Brine.Settings
 
 namespace DripSharp.Brine.Externalreader
 {
-    public partial interface ExternalReaderProcess
+    public abstract partial class ExternalReaderProcess
     {
         public static ExternalReaderProcess Start(
             DripSharp.Brine.EvaluatorSettings.PklEvaluatorSettings.ExternalReader specification) =>
             Of(specification);
     }
 
-    public partial interface ExternalResourceResolver
+    public abstract partial class ExternalResourceResolver
     {
         public object? TryRead(Uri uri)
         {
-            ArgumentNullException.ThrowIfNull(uri);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
             return Read(uri);
         }
     }
@@ -845,7 +855,7 @@ namespace DripSharp.Brine
     {
         internal static string ValidateScheme(string value, string parameterName)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNullOrWhiteSpace(value, parameterName);
             if (!Uri.CheckSchemeName(value))
                 throw new ArgumentException($"Invalid URI scheme `{value}`.", parameterName);
             return value;
@@ -949,13 +959,13 @@ namespace DripSharp.Brine
                 if (relative.Contains('/')) yield break;
                 var parts = relative.Split('.');
                 if (parts.Length < 3) yield break;
-                yield return string.Join('/', parts[..^2]) + "/" +
+                yield return string.Join("/", parts.Take(parts.Length - 2)) + "/" +
                     parts[^2] + "." + parts[^1];
             }
 
             private static string UriPath(Uri uri)
             {
-                ArgumentNullException.ThrowIfNull(uri);
+                global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
                 if (!uri.IsAbsoluteUri)
                     throw new UriFormatException($"Expected an absolute resource URI, got `{uri}`.");
                 if (global::DripSharp.Runtime.JavaCompat.UriPath(uri) is null)
@@ -975,10 +985,10 @@ namespace DripSharp.Brine
             {
                 if (path.IndexOf('\0') >= 0 || path.IndexOf('\\') >= 0)
                     throw new UriFormatException("Resource paths cannot contain NUL or backslash characters.");
-                var segments = path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+                var segments = path.Trim('/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
                 if (segments.Any(segment => segment is "." or ".."))
                     throw new UriFormatException("Resource paths cannot contain traversal segments.");
-                return string.Join('/', segments);
+                return string.Join("/", segments);
             }
         }
     }

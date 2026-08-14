@@ -78,7 +78,7 @@ namespace DripSharp.Brine.Runtime
         {
             var bytes = new byte[value.Length];
             for (var index = 0; index < value.Length; index++) bytes[index] = unchecked((byte)value[index]);
-            ExternalReaderStream().Write(bytes);
+            global::DripSharp.Runtime.JavaCompat.WriteBytes(ExternalReaderStream(), bytes);
             return this;
         }
         public ExcludedMessagePackPacker AddPayload(sbyte[] value) => WritePayload(value);
@@ -93,7 +93,7 @@ namespace DripSharp.Brine.Runtime
             var bytes = System.Text.Encoding.UTF8.GetBytes(value);
             if (bytes.Length < 32) ExternalReaderStream().WriteByte((byte)(0xa0 | bytes.Length));
             else { ExternalReaderStream().WriteByte(0xdb); WriteUnsigned((uint)bytes.Length, 4); }
-            ExternalReaderStream().Write(bytes);
+            global::DripSharp.Runtime.JavaCompat.WriteBytes(ExternalReaderStream(), bytes);
             return this;
         }
         public ExcludedMessagePackPacker PackArrayHeader(int size) { WriteHeader(size, 0x90, 0xdd); return this; }
@@ -191,7 +191,7 @@ namespace DripSharp.Brine.Runtime
         private byte[] ReadBytes(int length)
         {
             var result = new byte[length];
-            ExternalReaderStream().ReadExactly(result);
+            global::DripSharp.Runtime.JavaCompat.ReadExactly(ExternalReaderStream(), result);
             return result;
         }
         private ExcludedMessagePackValue ReadString(int length) => new(System.Text.Encoding.UTF8.GetString(ReadBytes(length)));
@@ -351,7 +351,7 @@ namespace DripSharp.Brine.Runtime
 
         private readonly object lifecycleLock = new();
         private readonly Dictionary<object, ScheduledWork> pending =
-            new(ReferenceEqualityComparer.Instance);
+            new(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance);
         private bool shutdown;
 
         public System.Threading.Tasks.Task Schedule(Action action, long delay, object unit) =>
@@ -370,7 +370,7 @@ namespace DripSharp.Brine.Runtime
             var work = new ScheduledWork();
             lock (lifecycleLock)
             {
-                ObjectDisposedException.ThrowIf(shutdown, this);
+                global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(shutdown, this);
                 pending[key] = work;
                 work.Task = System.Threading.Tasks.Task.Run(async () =>
                 {
@@ -565,7 +565,8 @@ namespace DripSharp.Brine.Runtime
         {
             if (uri is null) throw new NotSupportedException();
             if (uri.IsFile) return System.IO.File.OpenRead(uri.LocalPath);
-            return new System.Net.Http.HttpClient().GetStreamAsync(
+            return global::DripSharp.Runtime.JavaCompat.GetStreamAsync(
+                new System.Net.Http.HttpClient(),
                 uri, global::DripSharp.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult();
         }
         public virtual void SetUseCaches(bool value) { }
@@ -659,7 +660,7 @@ namespace DripSharp.Brine.Runtime
                 foreach (var entry in archive.Entries)
                 {
                     var entryPath = entry.FullName.Replace('\\', '/');
-                    var segments = entryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    var segments = entryPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
                     if (System.IO.Path.IsPathRooted(entryPath) ||
                         segments.Any(segment => segment is "." or ".."))
                         throw new System.IO.IOException(
@@ -667,7 +668,7 @@ namespace DripSharp.Brine.Runtime
                     if (segments.Length == 0) continue;
                     var destination = System.IO.Path.GetFullPath(
                         System.IO.Path.Combine(new[] { root }.Concat(segments).ToArray()));
-                    var relative = System.IO.Path.GetRelativePath(root, destination);
+                    var relative = global::DripSharp.Runtime.JavaCompat.PortableRelativePath(root, destination);
                     if (System.IO.Path.IsPathRooted(relative) || relative == ".." ||
                         relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar,
                             StringComparison.Ordinal))
@@ -698,7 +699,7 @@ namespace DripSharp.Brine.Runtime
         {
             var candidate = System.IO.Path.GetFullPath(System.IO.Path.Combine(
                 new[] { root, first.TrimStart('/', '\\') }.Concat(more).ToArray()));
-            var relative = System.IO.Path.GetRelativePath(root, candidate);
+            var relative = global::DripSharp.Runtime.JavaCompat.PortableRelativePath(root, candidate);
             if (System.IO.Path.IsPathRooted(relative) || relative == ".." ||
                 relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar,
                     StringComparison.Ordinal) ||
@@ -762,7 +763,7 @@ namespace DripSharp.Brine.Runtime
             if (index >= archive.Entries.Count) return null;
             var entry = archive.Entries[index];
             var entryPath = entry.FullName.Replace('\\', '/');
-            var segments = entryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var segments = entryPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
             if (entryPath.IndexOf('\0') >= 0 || System.IO.Path.IsPathRooted(entryPath) ||
                 segments.Any(segment => segment is "." or ".."))
                 throw new System.IO.IOException(
@@ -779,7 +780,7 @@ namespace DripSharp.Brine.Runtime
         private readonly System.IO.Compression.ZipArchive archive; private System.IO.Stream? current;
         public JavaZipOutputStream(System.IO.Stream stream) => archive = new(stream, System.IO.Compression.ZipArchiveMode.Create, true);
         public void PutNextEntry(JavaZipEntry entry) { current?.Dispose(); var created = archive.CreateEntry(entry.GetName()); if (entry.TimeLocal is DateTime value) created.LastWriteTime = value; current = created.Open(); }
-        public void Write(byte[] bytes) => current!.Write(bytes);
+        public void Write(byte[] bytes) => current!.Write(bytes, 0, bytes.Length);
         public void CloseEntry() { current?.Dispose(); current = null; }
         public void Finish() => Dispose();
         public override bool CanRead => false; public override bool CanSeek => false; public override bool CanWrite => true;
@@ -799,8 +800,10 @@ namespace DripSharp.Brine.Runtime
         private JavaMessageDigest(System.Security.Cryptography.HashAlgorithmName algorithm) =>
             hash = System.Security.Cryptography.IncrementalHash.CreateHash(algorithm);
         public static JavaMessageDigest GetInstance(string name) =>
-            new(new System.Security.Cryptography.HashAlgorithmName(name.Replace("-", "", StringComparison.Ordinal)));
+            new(new System.Security.Cryptography.HashAlgorithmName(name.Replace("-", "")));
         public void Update(byte[] bytes) => hash.AppendData(bytes);
+        public void Update(byte[] bytes, int offset, int count) =>
+            hash.AppendData(bytes, offset, count);
         public void Update(sbyte[] bytes) => hash.AppendData(bytes.Select(value => unchecked((byte)value)).ToArray());
         public sbyte[] Digest() => hash.GetHashAndReset().Select(value => unchecked((sbyte)value)).ToArray();
         public sbyte[] Digest(sbyte[] bytes)
@@ -817,7 +820,7 @@ namespace DripSharp.Brine.Runtime
         public JavaDigestInputStream(System.IO.Stream stream, JavaMessageDigest digest)
         { this.stream = stream; this.digest = digest; }
         public override int Read(byte[] buffer, int offset, int count)
-        { var read = stream.Read(buffer, offset, count); digest.Update(buffer[offset..(offset + read)]); return read; }
+        { var read = stream.Read(buffer, offset, count); digest.Update(buffer, offset, read); return read; }
         public byte[] ReadAllBytes() { using var output = new System.IO.MemoryStream(); CopyTo(output); return output.ToArray(); }
         public JavaMessageDigest GetMessageDigest() => digest;
         public override bool CanRead => stream.CanRead; public override bool CanSeek => false; public override bool CanWrite => false;
@@ -835,7 +838,7 @@ namespace DripSharp.Brine.Runtime
     {
         private readonly System.IO.Stream stream; private readonly JavaMessageDigest digest;
         public JavaDigestOutputStream(System.IO.Stream stream, JavaMessageDigest digest) { this.stream = stream; this.digest = digest; }
-        public override void Write(byte[] buffer, int offset, int count) { stream.Write(buffer, offset, count); digest.Update(buffer[offset..(offset + count)]); }
+        public override void Write(byte[] buffer, int offset, int count) { stream.Write(buffer, offset, count); digest.Update(buffer, offset, count); }
         public JavaMessageDigest GetMessageDigest() => digest;
         public override bool CanRead => false; public override bool CanSeek => false; public override bool CanWrite => stream.CanWrite;
         public override long Length => stream.Length; public override long Position { get => stream.Position; set => throw new NotSupportedException(); }
@@ -866,7 +869,7 @@ namespace DripSharp.Brine.Runtime
             if (trustManagers is not IEnumerable<object> managers) return;
             trustAnchors.AddRange(managers.OfType<System.Security.Cryptography.X509Certificates.X509Certificate2>());
             foreach (var manager in managers.OfType<global::DripSharp.Runtime.JavaTrustManager>())
-                trustAnchors.AddRange(manager.Certificates);
+                trustAnchors.AddRange(manager.Certificates.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>());
         }
     }
     internal sealed class JavaTrustManagerFactory
@@ -941,9 +944,9 @@ namespace DripSharp.Brine.Runtime
             public Builder Version(JavaHttpVersion version)
             {
                 message.Version = version == JavaHttpVersion.HTTP_2
-                    ? System.Net.HttpVersion.Version20
+                    ? new System.Version(2, 0)
                     : System.Net.HttpVersion.Version11;
-                message.VersionPolicy = System.Net.Http.HttpVersionPolicy.RequestVersionOrLower;
+                global::DripSharp.Runtime.JavaCompat.SetRequestVersionOrLower(message);
                 return this;
             }
             public Builder Header(string name, string value) { message.Headers.TryAddWithoutValidation(name, value); return this; }
@@ -979,9 +982,11 @@ namespace DripSharp.Brine.Runtime
     internal static class JavaHttpBodyHandlers
     {
         public static JavaHttpBodyHandler<System.IO.Stream> OfInputStream() =>
-            response => new ResponseOwningStream(response.Content.ReadAsStream(), response);
+            response => new ResponseOwningStream(
+                global::DripSharp.Runtime.JavaCompat.ReadAsStream(response.Content), response);
         public static JavaHttpBodyHandler<sbyte[]> OfByteArray() =>
-            response => response.Content.ReadAsByteArrayAsync(
+            response => global::DripSharp.Runtime.JavaCompat.ReadAsByteArrayAsync(
+                    response.Content,
                     global::DripSharp.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult()
                 .Select(value => unchecked((sbyte)value)).ToArray();
 
@@ -998,8 +1003,9 @@ namespace DripSharp.Brine.Runtime
             public override long Position { get => stream.Position; set => stream.Position = value; }
             public override void Flush() => stream.Flush();
             public override int Read(byte[] buffer, int offset, int count) =>
-                stream.ReadAsync(buffer.AsMemory(offset, count),
-                    global::DripSharp.Runtime.JavaCancellation.CurrentToken).AsTask()
+                global::DripSharp.Runtime.JavaCompat.ReadAsync(
+                    stream, buffer, offset, count,
+                    global::DripSharp.Runtime.JavaCancellation.CurrentToken)
                     .GetAwaiter().GetResult();
             public override long Seek(long offset, System.IO.SeekOrigin origin) => stream.Seek(offset, origin);
             public override void SetLength(long value) => throw new NotSupportedException();
@@ -1031,16 +1037,16 @@ namespace DripSharp.Brine.Runtime
                 .Select(certificate => new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate.RawData))
                 .ToList();
 #pragma warning restore SYSLIB0057
-            var handler = new System.Net.Http.SocketsHttpHandler
+            var handler = new System.Net.Http.HttpClientHandler
             {
                 AllowAutoRedirect = false,
-                ConnectTimeout = connectTimeout,
                 Proxy = new SelectorWebProxy(proxySelector),
                 UseProxy = true
             };
+            global::DripSharp.Runtime.JavaCompat.SetConnectTimeout(handler, connectTimeout);
             if (trustAnchors.Count > 0)
             {
-                handler.SslOptions.RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
+                handler.ServerCertificateCustomValidationCallback = (_, certificate, _, errors) =>
                     ValidateServerCertificate(certificate, errors);
             }
             client = new System.Net.Http.HttpClient(handler, disposeHandler: true);
@@ -1048,7 +1054,7 @@ namespace DripSharp.Brine.Runtime
         public static Builder NewBuilder() => new();
         public JavaHttpResponse<T> Send<T>(JavaHttpRequest request, JavaHttpBodyHandler<T> handler)
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(disposed, this);
             var evaluationCancellation = global::DripSharp.Runtime.JavaCancellation.CurrentToken;
             using var cancellation = evaluationCancellation.CanBeCanceled
                 ? System.Threading.CancellationTokenSource.CreateLinkedTokenSource(evaluationCancellation)
@@ -1057,10 +1063,10 @@ namespace DripSharp.Brine.Runtime
             System.Net.Http.HttpResponseMessage response;
             try
             {
-                response = client.Send(
+                response = client.SendAsync(
                     request.Message,
                     System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
-                    cancellation.Token);
+                    cancellation.Token).GetAwaiter().GetResult();
             }
             catch (OperationCanceledException) when (evaluationCancellation.IsCancellationRequested)
             {
@@ -1107,10 +1113,17 @@ namespace DripSharp.Brine.Runtime
             using var serverCertificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate);
 #pragma warning restore SYSLIB0057
             using var chain = new System.Security.Cryptography.X509Certificates.X509Chain();
-            chain.ChainPolicy.TrustMode = System.Security.Cryptography.X509Certificates.X509ChainTrustMode.CustomRootTrust;
             chain.ChainPolicy.RevocationMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
-            foreach (var trustAnchor in trustAnchors) chain.ChainPolicy.CustomTrustStore.Add(trustAnchor);
-            return chain.Build(serverCertificate);
+            foreach (var trustAnchor in trustAnchors) chain.ChainPolicy.ExtraStore.Add(trustAnchor);
+            var built = chain.Build(serverCertificate);
+            var root = chain.ChainElements.Count == 0
+                ? serverCertificate
+                : chain.ChainElements[chain.ChainElements.Count - 1].Certificate;
+            var trustedRoot = trustAnchors.Any(anchor =>
+                string.Equals(anchor.Thumbprint, root.Thumbprint, StringComparison.OrdinalIgnoreCase));
+            return trustedRoot && (built || chain.ChainStatus.All(status =>
+                status.Status is System.Security.Cryptography.X509Certificates.X509ChainStatusFlags.UntrustedRoot or
+                    System.Security.Cryptography.X509Certificates.X509ChainStatusFlags.PartialChain));
         }
 
         private sealed class SelectorWebProxy : System.Net.IWebProxy
@@ -1187,24 +1200,32 @@ namespace DripSharp.Runtime
             if (scale is < 0 or > 28)
                 throw new global::System.ArithmeticException(
                     "Scale is outside System.Decimal range.");
+            var factor = DecimalScaleFactor(scale);
+            var scaled = value * factor;
             return roundingMode switch
             {
-                global::DripSharp.Runtime.JavaRoundingMode.Down => decimal.Round(
-                    value, scale, global::System.MidpointRounding.ToZero),
-                global::DripSharp.Runtime.JavaRoundingMode.Ceiling => decimal.Round(
-                    value, scale, global::System.MidpointRounding.ToPositiveInfinity),
-                global::DripSharp.Runtime.JavaRoundingMode.Floor => decimal.Round(
-                    value, scale, global::System.MidpointRounding.ToNegativeInfinity),
+                global::DripSharp.Runtime.JavaRoundingMode.Down =>
+                    decimal.Truncate(scaled) / factor,
+                global::DripSharp.Runtime.JavaRoundingMode.Ceiling =>
+                    decimal.Ceiling(scaled) / factor,
+                global::DripSharp.Runtime.JavaRoundingMode.Floor =>
+                    decimal.Floor(scaled) / factor,
                 global::DripSharp.Runtime.JavaRoundingMode.HalfUp => decimal.Round(
                     value, scale, global::System.MidpointRounding.AwayFromZero),
                 global::DripSharp.Runtime.JavaRoundingMode.HalfEven => decimal.Round(
                     value, scale, global::System.MidpointRounding.ToEven),
                 global::DripSharp.Runtime.JavaRoundingMode.Unnecessary
-                    when value == decimal.Round(
-                        value, scale, global::System.MidpointRounding.ToZero) => value,
+                    when value == decimal.Truncate(scaled) / factor => value,
                 _ => throw new global::System.ArgumentOutOfRangeException(
                     nameof(roundingMode))
             };
+        }
+
+        private static decimal DecimalScaleFactor(int scale)
+        {
+            decimal factor = 1;
+            for (var index = 0; index < scale; index++) factor *= 10;
+            return factor;
         }
 
         internal static int BigDecimalIntValue(decimal value) =>
@@ -1263,7 +1284,7 @@ namespace DripSharp.Brine.Runtime.Polyglot
         {
             lock (lifecycleLock)
             {
-                ObjectDisposedException.ThrowIf(closed, this);
+                global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(closed, this);
                 if (language != "pkl" || initialized) return;
                 var vmLanguage = new global::DripSharp.Brine.Runtime.VmLanguage();
                 vmContext = vmLanguage.CreateContext(
@@ -1278,7 +1299,7 @@ namespace DripSharp.Brine.Runtime.Polyglot
             var cancellationPushed = false;
             lock (lifecycleLock)
             {
-                ObjectDisposedException.ThrowIf(closed, this);
+                global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(closed, this);
                 context = initialized && vmContext is not null
                     ? vmContext
                     : throw new InvalidOperationException("Pkl context has not been initialized.");
@@ -1414,7 +1435,11 @@ namespace DripSharp.Brine.Runtime.GraalCollections
         }
         internal V? RemoveKey(K key)
         {
-            if (Values.Remove(key, out var previous)) return previous;
+            if (Values.TryGetValue(key, out var previous))
+            {
+                Values.Remove(key);
+                return previous;
+            }
             return default;
         }
         internal void Clear() => Values.Clear();
@@ -1451,7 +1476,7 @@ namespace DripSharp.Brine.Runtime.GraalCollections
 
     internal sealed class EconomicSet<T> : UnmodifiableEconomicSet<T> where T : notnull
     {
-        internal EconomicSet(int capacity = 0) : base(new HashSet<T>(capacity)) { }
+        internal EconomicSet(int capacity = 0) : base(new HashSet<T>()) { }
         internal bool Add(T value) => Values.Add(value);
         internal void AddAll(UnmodifiableEconomicSet<T> other) => Values.UnionWith(other.Items());
         internal void Clear() => Values.Clear();
@@ -1582,7 +1607,8 @@ namespace DripSharp.Brine.Runtime.Truffle.api.source
         private (int line, int column) GetPosition(int offset)
         {
             var characters = source.GetCharacters();
-            var boundedOffset = Math.Clamp(offset, 0, characters.Length);
+            var boundedOffset = global::DripSharp.Runtime.JavaCompat.Clamp(
+                offset, 0, characters.Length);
             var line = 1;
             var column = 1;
             for (var index = 0; index < boundedOffset; index++)
@@ -1726,7 +1752,7 @@ namespace DripSharp.Brine.Runtime.Truffle.api.nodes
             return current as RootNode;
         }
         internal void AdoptChildren() =>
-            AdoptChildren(new HashSet<Node>(ReferenceEqualityComparer.Instance));
+            AdoptChildren(new HashSet<Node>(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance));
 
         private void AdoptChildren(ISet<Node> visited)
         {
@@ -1777,7 +1803,7 @@ namespace DripSharp.Brine.Runtime.Truffle.api.nodes
                 candidate.GetGenericTypeDefinition() == typeof(IEnumerable<>) &&
                 typeof(Node).IsAssignableFrom(candidate.GetGenericArguments()[0]));
         }
-        internal Node DeepCopy() => DeepCopy(new Dictionary<Node, Node>(ReferenceEqualityComparer.Instance));
+        internal Node DeepCopy() => DeepCopy(new Dictionary<Node, Node>(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance));
 
         private Node DeepCopy(IDictionary<Node, Node> copies)
         {
@@ -1844,7 +1870,7 @@ namespace DripSharp.Brine.Runtime.Truffle.api.nodes
         }
 
         internal bool Accept(Func<Node, bool> visitor) =>
-            Accept(visitor, new HashSet<Node>(ReferenceEqualityComparer.Instance));
+            Accept(visitor, new HashSet<Node>(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance));
 
         private bool Accept(Func<Node, bool> visitor, ISet<Node> visited)
         {
@@ -1999,7 +2025,7 @@ namespace DripSharp.Brine.Runtime.Truffle.api.instrumentation
         private sealed class Registration
         {
             private readonly Dictionary<Node, ExecutionEventNode> eventNodes =
-                new(ReferenceEqualityComparer.Instance);
+                new(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance);
 
             internal Registration(SourceSectionFilter filter, ExecutionEventNodeFactory factory)
             {
@@ -2090,7 +2116,7 @@ namespace DripSharp.Brine.Runtime.Truffle.api.instrumentation
         private void InstrumentTree(RootNode? root)
         {
             if (root is null) return;
-            InstrumentChildren(root, new HashSet<Node>(ReferenceEqualityComparer.Instance));
+            InstrumentChildren(root, new HashSet<Node>(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance));
         }
 
         private void InstrumentChildren(Node parent, ISet<Node> visited)
@@ -2488,7 +2514,7 @@ namespace DripSharp.Brine.Runtime.Truffle.api
                     stack.Count == 0)
                     throw new InvalidOperationException("Pkl context has not been installed for this execution.");
                 var installed = stack[^1];
-                ObjectDisposedException.ThrowIf(installed.Owner.IsClosed, installed.Owner);
+                global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(installed.Owner.IsClosed, installed.Owner);
                 return (TContext)installed.Value;
             }
         }
@@ -2529,7 +2555,7 @@ namespace DripSharp.Brine.Runtime.SnakeYaml.api
     internal interface ConstructNode
     {
         object? Construct(Node node);
-        void ConstructRecursive(Node node, object? data) { }
+        void ConstructRecursive(Node node, object? data);
     }
 
     internal sealed class LoadSettings
@@ -2608,7 +2634,7 @@ namespace DripSharp.Brine.Runtime.SnakeYaml.nodes
         public Tag(string value) => this.value = value;
         public bool Equals(Tag? other) => other is not null && value == other.value;
         public override bool Equals(object? other) => Equals(other as Tag);
-        public override int GetHashCode() => value.GetHashCode(StringComparison.Ordinal);
+        public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(value);
         public override string ToString() => value;
     }
 

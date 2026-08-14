@@ -138,7 +138,7 @@
           (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
                "<PropertyGroup><TargetFramework>"
                (:target-framework inventory)
-               "</TargetFramework></PropertyGroup>"
+               "</TargetFramework><LangVersion>latest</LangVersion></PropertyGroup>"
                (when (seq project-references)
                  (str "<ItemGroup>"
                       (str/join "" project-references)
@@ -231,12 +231,18 @@
     (write! build-output "ignored.pdb" "symbols\n")
     (write! build-output "ignored.xml" "documentation\n")
     (write! build-output "ignored.nupkg" "package\n")
-    (let [target-name
-          (str ".NETCoreApp,Version=v"
-               (subs (:target-framework inventory) 3)
-               (when-let [runtime-identifier
-                          (:runtime-identifier platform)]
-                 (str "/" runtime-identifier)))
+    (let [target-framework (:target-framework inventory)
+          [runtime-name runtime-version]
+          (if (str/starts-with? target-framework "netstandard")
+            [".NETStandard" (subs target-framework (count "netstandard"))]
+            [".NETCoreApp" (subs target-framework (count "net"))])
+          target-name
+          (str runtime-name ",Version=v" runtime-version
+               (if-let [runtime-identifier
+                        (:runtime-identifier platform)]
+                 (str "/" runtime-identifier)
+                 (when (str/starts-with? target-framework "netstandard")
+                   "/")))
           managed
           (for [{:keys [file package-id version]}
                 (:managed-dependencies inventory)]
@@ -786,8 +792,8 @@
                 (slurp (:record-path first)))))
         (is (= 6 (count first-sha)))
         (is (= ["osx-x64" "osx-arm64"] (:platforms selected)))
-        (is (= #{"DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-x64.zip"
-                 "DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-arm64.zip"}
+        (is (= #{"DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-osx-x64.zip"
+                 "DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-osx-arm64.zip"}
                (set (map :filename (:assets selected)))))
         (is (= (set (map :filename (:assets selected)))
                (set
@@ -800,7 +806,7 @@
               (get-in selected [:github-release :notes]) "`win-x64`")))
         (is (contains?
              first-sha
-             "DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-arm64.zip"))
+             "DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-osx-arm64.zip"))
         (let [common
               #{"DripSharp.PdfCarton.dll"
                 "DripSharp.PdfCarton.IO.dll"
@@ -842,22 +848,22 @@
                 :notes
                 (str
                  "# DripSharp.PdfCarton 0.1.0-alpha.1\n\n"
-                 "This is an alpha DLL prerelease for net10.0.\n\n"
+                 "This is an alpha DLL prerelease for netstandard2.0.\n\n"
                  "- Product commit: `" commit "`\n"
                  "- NuGet publication: none; this release contains DLL ZIP assets only.\n"
                  "- Prepared platforms:\n"
                  "  - `win-x64` (runtime identifier `win-x64`): "
-                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-win-x64.zip`\n"
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-win-x64.zip`\n"
                  "  - `win-arm64` (runtime identifier `win-arm64`): "
-                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-win-arm64.zip`\n"
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-win-arm64.zip`\n"
                  "  - `linux-x64` (runtime identifier `linux-x64`): "
-                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-linux-x64.zip`\n"
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-linux-x64.zip`\n"
                  "  - `linux-arm64` (runtime identifier `linux-arm64`): "
-                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-linux-arm64.zip`\n"
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-linux-arm64.zip`\n"
                  "  - `osx-x64` (runtime identifier `osx-x64`): "
-                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-x64.zip`\n"
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-osx-x64.zip`\n"
                  "  - `osx-arm64` (runtime identifier `osx-arm64`): "
-                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-arm64.zip`\n")
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-netstandard2.0-osx-arm64.zip`\n")
                 :assets
                 (mapv #(select-keys % [:filename :sha256])
                       (:assets first))}
@@ -905,8 +911,8 @@
          {:name :ambiguous-managed-path
           :reason :release-dependency-evidence-mismatch
           :actual-paths
-          ["alternate/net10.0/SkiaSharp.dll"
-           "lib/net10.0/SkiaSharp.dll"]
+          ["alternate/netstandard2.0/SkiaSharp.dll"
+           "lib/netstandard2.0/SkiaSharp.dll"]
           :mutate!
           (fn [build-output]
             (let [file (paths/resolve-path build-output dependency-file)
@@ -918,7 +924,7 @@
                           ["targets" target-name
                            "SkiaSharp/4.150.1" "runtime"])]
               (.put ^java.util.Map runtime
-                    "alternate/net10.0/SkiaSharp.dll"
+                    "alternate/netstandard2.0/SkiaSharp.dll"
                     (java.util.HashMap.))
               (.writeValue json-mapper (.toFile file) document)))}
          {:name :native-path
@@ -976,7 +982,7 @@
                                 (:platforms inventory)))
         base-build! (fake-build! (atom []))
         managed-restored
-        "skiasharp/4.150.1/lib/net10.0/SkiaSharp.dll"
+        "skiasharp/4.150.1/lib/netstandard2.0/SkiaSharp.dll"
         cases
         [{:name :managed-byte-mismatch
           :reason :release-dependency-byte-mismatch
@@ -1083,7 +1089,7 @@
               :framework-assemblies #{"System.Runtime.dll"}})
             _ (is (= 1 (count (:assets prepared))))
             asset (first (:assets prepared))]
-        (is (= "DripSharp.Brine-0.1.0-alpha.2-net10.0-portable.zip"
+        (is (= "DripSharp.Brine-0.1.0-alpha.2-netstandard2.0-portable.zip"
                (:filename asset)))
         (is (= #{"DripSharp.Brine.dll"
                  "DripSharp.Brine.Parser.dll"}
@@ -1092,12 +1098,12 @@
         (is (=
              (str
               "# DripSharp.Brine 0.1.0-alpha.2\n\n"
-              "This is an alpha DLL prerelease for net10.0.\n\n"
+              "This is an alpha DLL prerelease for netstandard2.0.\n\n"
               "- Product commit: `" commit "`\n"
               "- NuGet publication: none; this release contains DLL ZIP assets only.\n"
               "- Prepared platforms:\n"
               "  - `portable` (portable; no runtime identifier): "
-              "`DripSharp.Brine-0.1.0-alpha.2-net10.0-portable.zip`\n")
+              "`DripSharp.Brine-0.1.0-alpha.2-netstandard2.0-portable.zip`\n")
              (get-in prepared [:github-release :notes]))))
       (finally
         (delete-tree! workspace)))))

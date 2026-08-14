@@ -1031,7 +1031,7 @@ internal sealed class JavaCcParser
         var expressions =
             new global::System.Collections.Generic.Dictionary<int, JavaCcRegularExpression>();
         string[] images =
-            global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstants.tokenImage;
+            global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstantsStatics.tokenImage;
         for (int index = 0; index < images.Length; index++)
         {
             string image = images[index];
@@ -1044,24 +1044,24 @@ internal sealed class JavaCcParser
         var dateTimeLiteral = new JavaCcRChoice();
         foreach (string image in new[] { "DATE", "DATETIME", "TIME", "TIMESTAMP", "TIMESTAMPTZ" })
             dateTimeLiteral.Choices.Add(new JavaCcRStringLiteral(image));
-        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstants.K_DATETIMELITERAL] =
+        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstantsStatics.K_DATETIMELITERAL] =
             dateTimeLiteral;
         var dateLiteral = new JavaCcRChoice();
         foreach (string image in new[] { "YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND" })
             dateLiteral.Choices.Add(new JavaCcRStringLiteral(image));
-        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstants.K_DATE_LITERAL] =
+        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstantsStatics.K_DATE_LITERAL] =
             dateLiteral;
         var selectLiteral = new JavaCcRChoice();
         foreach (string image in new[] { "SELECT", "SEL" })
             selectLiteral.Choices.Add(new JavaCcRStringLiteral(image));
-        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstants.K_SELECT] =
+        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstantsStatics.K_SELECT] =
             selectLiteral;
         var stringFunctionLiteral = new JavaCcRChoice();
         foreach (string image in new[] { "SUBSTR", "SUBSTRING", "TRIM", "POSITION", "OVERLAY" })
             stringFunctionLiteral.Choices.Add(new JavaCcRStringLiteral(image));
-        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstants.K_STRING_FUNCTION_NAME] =
+        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstantsStatics.K_STRING_FUNCTION_NAME] =
             stringFunctionLiteral;
-        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstants.K_NEXTVAL] =
+        expressions[global::DripSharp.SqlTrellis.Parser.CCJSqlParserConstantsStatics.K_NEXTVAL] =
             new JavaCcRStringLiteral("NEXTVAL");
 
         JavaCcGlobals.RexpsOfTokens = expressions;

@@ -419,7 +419,7 @@
 (defn- dag-package-destination
   [profile dependencies references]
   {:project {:assembly-name (str "Package." profile)
-             :target-framework "net10.0"}
+             :target-framework "netstandard2.0"}
    :package {:id (str "Package." profile)
              :version "1.0.0"}
    :package-dependencies (mapv #(str "Package." %) dependencies)

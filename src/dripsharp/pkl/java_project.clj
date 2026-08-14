@@ -380,7 +380,7 @@
    "java.nio.file.NotDirectoryException" ["global::System.IO.DirectoryNotFoundException" :dotnet.type/directory-not-found]
    "java.nio.file.FileSystemAlreadyExistsException" ["global::DripSharp.Brine.Runtime.JavaFileSystemAlreadyExistsException" :dotnet.type/file-system-already-exists]
    "java.nio.file.FileSystemNotFoundException" ["global::System.IO.IOException" :dotnet.type/io-exception]
-   "java.nio.file.attribute.PosixFilePermission" ["global::System.IO.UnixFileMode" :dotnet.type/unix-file-mode]
+   "java.nio.file.attribute.PosixFilePermission" ["global::DripSharp.Runtime.JavaUnixFileMode" :dotnet.type/unix-file-mode]
    "java.nio.file.attribute.UserPrincipalLookupService" ["object" :pkl-core.type/user-principal-lookup]
    "java.nio.file.spi.FileSystemProvider" ["global::DripSharp.Brine.Runtime.JavaFileSystemProvider" :pkl-core.type/file-system-provider]
    "java.nio.file.spi.FileTypeDetector" ["global::DripSharp.Brine.Runtime.JavaFileTypeDetector" :pkl-core.type/file-type-detector]
@@ -695,7 +695,7 @@
   {"java.util.Collection" "global::System.Collections.Generic.IReadOnlyCollection"
    "java.util.List" "global::System.Collections.Generic.IReadOnlyList"
    "java.util.Map" "global::System.Collections.Generic.IReadOnlyDictionary"
-   "java.util.Set" "global::System.Collections.Generic.IReadOnlySet"})
+   "java.util.Set" "global::System.Collections.Generic.ISet"})
 
 (def ^:private read-only-collection-adaptations
   {"java.util.Collection" :read-only-product-collection
@@ -880,14 +880,7 @@
     (and (= :project (:origin occurrence))
          (str/starts-with? (.getQualifiedName reference)
                            "org.pkl.core.util.paguro.RrbTree$")
-         (instance? CtType (:declaration occurrence))
-         (not
-          (and
-           (contains? #{"MutRrbt" "ImRrbt"}
-                      (.getSimpleName ^CtType (:declaration occurrence)))
-           (str/starts-with?
-            (or (some-> ^CtType (:current-type ctx) .getQualifiedName) "")
-            "org.pkl.core.util.paguro.RrbTree$"))))
+         (instance? CtType (:declaration occurrence)))
     (let [declaration ^CtType (:declaration occurrence)
           actuals (vec (.getActualTypeArguments reference))
           current-type ^CtType (:current-type ctx)
@@ -909,14 +902,30 @@
           (or current-leaf-parameter current-root-parameter)
           arguments
           (if (seq actuals)
-            (mapv recur-node actuals)
+            (mapv
+             (fn [^CtTypeReference actual]
+               (if (and current-leaf-parameter
+                        current-root-parameter
+                        (instance? CtTypeParameterReference actual)
+                        (= (.getSimpleName actual)
+                           (.getSimpleName current-root-parameter)))
+                 (raw (type-parameter-name current-leaf-parameter))
+                 (recur-node actual)))
+             actuals)
             (repeat
              (formal-type-arity declaration)
              (if current-parameter
                (raw (type-parameter-name current-parameter))
                (raw "object"))))
           owner-argument
-          (or (first arguments)
+          (or (when (and current-type
+                         (= "org.pkl.core.util.paguro.RrbTree$MutRrbt"
+                            (.getQualifiedName declaration))
+                         (= (.getQualifiedName declaration)
+                            (.getQualifiedName current-type))
+                         current-root-parameter)
+                (raw (type-parameter-name current-root-parameter)))
+              (first arguments)
               (when current-parameter
                 (raw (type-parameter-name current-parameter)))
               (raw "object"))]
@@ -1362,9 +1371,8 @@
         owner (.getDeclaringType method)
         owner-name (some-> owner .getQualifiedName)
         base-name (cond
-                    (and (= :http-send-compatibility
-                            (method-signature-adaptation ctx method))
-                         (not= "org.pkl.core.http.HttpClient" owner-name))
+                    (= :http-send-compatibility
+                       (method-signature-adaptation ctx method))
                     "SendCompatibility"
                     (and (= owner-name "org.pkl.core.module.ModuleKeys")
                          (= simple-name "synthetic"))
@@ -1444,12 +1452,95 @@
       :idiomatic-byte-array
       :else nil)))
 
+(def ^:private netstandard-abstract-interface-types
+  #{"org.pkl.core.Evaluator"
+    "org.pkl.core.FileOutput"
+    "org.pkl.core.externalreader.ExternalModuleResolver"
+    "org.pkl.core.externalreader.ExternalReaderProcess"
+    "org.pkl.core.externalreader.ExternalResourceResolver"
+    "org.pkl.core.http.HttpClient"
+    "org.pkl.core.http.HttpClient$Builder"
+    "org.pkl.core.module.ModuleKeyFactory"
+    "org.pkl.core.packages.PackageResolver"
+    "org.pkl.core.resource.ResourceReader"
+    "org.pkl.core.runtime.VmValueConverter"
+    "org.pkl.core.stdlib.VmObjectFactory$Property"})
+
+(defn- netstandard-abstract-interface? [^CtType type]
+  (and (instance? CtInterface type)
+       (contains? netstandard-abstract-interface-types (.getQualifiedName type))))
+
+(defn- interface-static-companion-member?
+  [^CtType owner member]
+  (and (instance? CtInterface owner)
+       (not (netstandard-abstract-interface? owner))
+       (or (instance? CtMethod member) (instance? CtField member))
+       (modifier? member ModifierKind/STATIC)))
+
+(defn- netstandard-abstract-contract? [^CtType owner-type ^CtMethod method]
+  (when (and (instance? CtClass owner-type)
+             (not (modifier? method ModifierKind/STATIC)))
+    (let [name (.getSimpleName method)
+          arity (count (.getParameters method))
+          mapped-interfaces
+          (loop [pending (concat
+                          (.getSuperInterfaces owner-type)
+                          [(some-> ^CtClass owner-type .getSuperclass)])
+                 seen #{}
+                 result []]
+            (if-let [^CtTypeReference reference (first pending)]
+              (let [qualified (.getQualifiedName reference)]
+                (if (or (nil? reference) (contains? seen qualified))
+                  (recur (next pending) seen result)
+                  (let [declaration (.getTypeDeclaration reference)]
+                    (recur
+                     (concat
+                      (next pending)
+                      (some-> declaration .getSuperInterfaces)
+                      (when (instance? CtClass declaration)
+                        [(some-> ^CtClass declaration .getSuperclass)]))
+                     (conj seen qualified)
+                     (cond-> result
+                       (netstandard-abstract-interface? declaration)
+                       (conj declaration))))))
+              result))]
+      (boolean
+       (and (seq mapped-interfaces)
+            (or (= "close" name)
+                (and (some #(= "org.pkl.core.resource.ResourceReader"
+                               (.getQualifiedName ^CtType %))
+                           mapped-interfaces)
+                     (contains? #{["hasHierarchicalUris" 0]
+                                  ["isGlobbable" 0]
+                                  ["hasElement" 2]
+                                  ["listElements" 2]
+                                  ["hasFragmentPaths" 0]
+                                  ["resolveUri" 2]}
+                                [name arity]))
+                (some (fn [^CtType contract]
+                        (some #(and (= name (.getSimpleName ^CtMethod %))
+                                    (= arity (count (.getParameters ^CtMethod %)))
+                                    (= (mapv (fn [^CtParameter parameter]
+                                               (.getQualifiedName (.getType parameter)))
+                                             (.getParameters method))
+                                       (mapv (fn [^CtParameter parameter]
+                                               (.getQualifiedName (.getType parameter)))
+                                             (.getParameters ^CtMethod %))))
+                              (.getMethods contract)))
+                      mapped-interfaces)))))))
+
 (defn- class-definition [ctx ^CtMethod method]
-  (some #(when-not (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
+  (some #(when (let [owner (.getDeclaringType ^CtMethod %)]
+                 (or (not (instance? CtInterface owner))
+                     (netstandard-abstract-interface? owner)))
+           %)
         (top-definitions ctx method)))
 
 (defn- interface-definition [ctx ^CtMethod method]
-  (some #(when (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
+  (some #(when (let [owner (.getDeclaringType ^CtMethod %)]
+                 (and (instance? CtInterface owner)
+                      (not (netstandard-abstract-interface? owner))))
+           %)
         (top-definitions ctx method)))
 
 (defn- superclass-method-definition [^CtType owner-type ^CtMethod method]
@@ -1551,7 +1642,9 @@
 (declare private-type-component?)
 
 (defn- method-modifiers [ctx ^CtType owner-type ^CtMethod method body name]
-  (let [interface? (instance? CtInterface owner-type)
+  (let [mapped-abstract-class? (netstandard-abstract-interface? owner-type)
+        interface? (and (instance? CtInterface owner-type)
+                        (not mapped-abstract-class?))
         superclass-definition (superclass-method-definition owner-type method)
         interface-contract-definition (interface-definition ctx method)
         base-definition (or superclass-definition
@@ -1567,12 +1660,14 @@
         static? (modifier? method ModifierKind/STATIC)
         private? (modifier? method ModifierKind/PRIVATE)
         final? (modifier? method ModifierKind/FINAL)
-        abstract? (and (not interface?) (nil? body))
+        abstract? (and (not interface?) (nil? body) (not static?))
         override? (and (not static?)
+                       (not (modifier? method ModifierKind/STATIC))
                        (not (false-destination-override? owner-type method))
                        (or (java-object-override? method)
                            overridable-base
                            (inherited-interface-contract? ctx owner-type method)
+                           (netstandard-abstract-contract? owner-type method)
                            (forced-anonymous-override? owner-type method)))
         base-owner (some-> overridable-base .getDeclaringType .getQualifiedName)
         base-member-visibility
@@ -1581,8 +1676,14 @@
             (cond
               ;; Apply the same interface-contract promotion used when the
               ;; base declaration itself is emitted.
-              (and base-type (interface-definition ctx overridable-base))
+              (and base-type
+                   (not (netstandard-abstract-interface? base-type))
+                   (interface-definition ctx overridable-base))
               "public"
+
+              (and base-type (netstandard-abstract-interface? base-type))
+              (cap-product-visibility
+               ctx overridable-base (visibility overridable-base "internal"))
 
               (and base-type
                    (not (.isTopLevel ^CtType base-type))
@@ -1611,6 +1712,17 @@
               :else
               (visibility overridable-base "internal"))))
         member-visibility (cond
+                            (and (= "org.pkl.core.packages.PackageResolvers$DiskCachedPackageResolver"
+                                    (.getQualifiedName owner-type))
+                                 (= "getDependencyMetadataAndComputeChecksum"
+                                    (.getSimpleName method)))
+                            "internal"
+
+                            (and (= "org.pkl.core.resource.ResourceReaders$FileResource"
+                                    (.getQualifiedName owner-type))
+                                 (= "read" (.getSimpleName method)))
+                            "public"
+
                             ;; Unlike Java, C# does not allow an override to
                             ;; widen accessibility.  Reproduce the visibility
                             ;; the base declaration receives after all of the
@@ -1654,7 +1766,11 @@
                               "protected"
                               (visibility (or overridable-base method)
                                           (if interface? "public" "internal"))))
-        member-visibility (cap-product-visibility ctx method member-visibility)
+        ;; An override must retain the accessibility of the emitted base
+        ;; member. Product-surface capping applies to new declarations only.
+        member-visibility (if override?
+                            member-visibility
+                            (cap-product-visibility ctx method member-visibility))
         destination-hiding? (and (= "GetType" name) (not override?))]
     [member-visibility
      (when destination-hiding? "new")
@@ -1726,6 +1842,11 @@
         declaration
         (sequence-node
          [(raw (cond
+                 (and (netstandard-abstract-contract? owner-type method)
+                      (nil? body))
+                 "public abstract override "
+                 (netstandard-abstract-contract? owner-type method)
+                 "public override "
                  (nil? body) "public abstract "
                  sealed-owner? "public "
                  :else "public virtual "))
@@ -1785,6 +1906,7 @@
            (filter #(selected-declaration? ctx %))
            (mapcat #(.getMethods ^CtType %))
            (filter #(selected-declaration? ctx %))
+           (remove #(modifier? % ModifierKind/STATIC))
            (reduce (fn [methods ^CtMethod method]
                      (if (some #(= (.getSignature ^CtMethod %)
                                    (.getSignature method))
@@ -1861,21 +1983,10 @@
         ;; cannot be emitted directly in the implementing owner.
         base-definition (or (superclass-method-definition owner-type method)
                             (class-definition ctx method))
-        covariant-class-return?
-        (when base-definition
-          (let [method-return (.getType method)
-                base-return (.getType ^CtMethod base-definition)]
-            (and (not (.isPrimitive method-return))
-                 (not (contains? #{"java.lang.Boolean" "java.lang.Byte"
-                                   "java.lang.Short" "java.lang.Integer"
-                                   "java.lang.Long" "java.lang.Character"
-                                   "java.lang.Float" "java.lang.Double"}
-                                 (.getQualifiedName method-return)))
-                 (or (instance? CtClass (.getTypeDeclaration method-return))
-                     (instance? CtInterface (.getTypeDeclaration method-return)))
-                 (or (= "java.lang.Object" (.getQualifiedName base-return))
-                     (try (.isSubtypeOf method-return base-return)
-                          (catch Exception _ false))))))
+        ;; netstandard2.0 metadata cannot encode covariant override returns.
+        ;; Always emit the inherited return contract and rely on the normal
+        ;; Java-compatible upcast/boxing conversion in the translated body.
+        covariant-class-return? false
         ;; Java permits covariant returns for primitives, invariant generic
         ;; instantiations, and other shapes that C# cannot use for an override.
         ;; Emit the inherited class contract's resolved return shape whenever
@@ -1907,8 +2018,21 @@
                        (= "java.lang.Object"
                           (.getQualifiedName (.getType definition))))))
               (top-definitions ctx method))
+        generic-base-return?
+        (and base-definition
+             (some #(= (.getSimpleName ^CtTypeParameter %)
+                       (.getSimpleName (.getType ^CtMethod base-definition)))
+                   (.getFormalCtTypeParameters method)))
         return-reference (cond
                            substituted-return substituted-return
+                           generic-base-return? (.getType method)
+                           (and base-definition
+                                (not (instance? CtTypeParameterReference
+                                                (.getType ^CtMethod base-definition)))
+                                (not= (destination-type-key (.getType method))
+                                      (destination-type-key
+                                       (.getType ^CtMethod base-definition))))
+                           (.getType ^CtMethod base-definition)
                            return-contract (.getType ^CtMethod return-contract)
                            :else (.getType method))
         forced-return
@@ -1924,8 +2048,43 @@
                (= "visitModifier" (.getSimpleName method)))
           (raw "object")
 
+          (= "org.pkl.core.ast.builder.ImportsAndReadsParser"
+             (.getQualifiedName owner-type))
+          (type-node ctx (.getType method))
+
+          (and (= "org.pkl.core.stdlib.PklConverter"
+                  (.getQualifiedName owner-type))
+               (= "convertProperty" (.getSimpleName method)))
+          (type-node ctx (.getType method))
+
+          (and (= "org.pkl.core.runtime.VmBytes" (.getQualifiedName owner-type))
+               (= "export" (.getSimpleName method)))
+          (raw "object")
+
+          (and (= "org.pkl.core.runtime.VmTyped" (.getQualifiedName owner-type))
+               (= "getParent" (.getSimpleName method)))
+          (raw "global::DripSharp.Brine.Runtime.VmObjectLike")
+
+          (and (str/starts-with? (.getQualifiedName owner-type)
+                                 "org.pkl.core.util.paguro.RrbTree$")
+               (contains? #{"makeNew" "append" "appendSome" "precat"
+                            "insert" "join" "replace" "without" "mt"}
+                          (.getSimpleName method))
+               base-definition)
+          (let [element-name (type-parameter-name
+                              (first (.getFormalCtTypeParameters owner-type)))]
+            (raw (str "global::DripSharp.Brine.Util.Paguro.RrbTree<"
+                      element-name ">")))
+
+          (and base-definition
+               (nil? substituted-return)
+               (instance? CtTypeParameterReference (.getType ^CtMethod base-definition))
+               (not generic-base-return?))
+          (raw "object")
+
           :else nil)
-        return-type (or (case signature-adaptation
+        return-type (or forced-return
+                        (case signature-adaptation
                           :nullable-module-key
                           (raw "global::DripSharp.Brine.Module.ModuleKey?")
                           :nullable-resource
@@ -1942,7 +2101,6 @@
                           (type-node ctx (.getType ^CtMethod
                                           (or product-contract method)))
                           nil)
-                        forced-return
                         (if (and external-object-interface-contract?
                                  (not= "java.lang.Object" (.getQualifiedName (.getType method))))
                           (raw "object")
@@ -1952,7 +2110,9 @@
                              (not (.isPrimitive (.getType method))))
                       (sequence-node [return-type (raw "?")])
                       return-type)
-        translated-body (when body
+        translated-body (when (and body
+                                   (or (not (instance? CtInterface owner-type))
+                                       (netstandard-abstract-interface? owner-type)))
                           (translated-node
                            (assoc ctx
                                   :signature-adaptation signature-adaptation
@@ -2172,14 +2332,15 @@
           (= "executable:org.pkl.core.runtime.VmList#repeat(long)"
              (spoon/declaration-key method))
           (raw
-           "{\nif (n == 0) return global::DripSharp.Brine.Runtime.VmList.EMPTY;\nif (n == 1) return this;\nglobal::DripSharp.Brine.Runtime.VmCollection.CheckPositive(n);\nvar remaining = n;\nvar result = global::DripSharp.Brine.Util.Paguro.RrbTree<object>.Empty<object>();\nvar factor = this.rrbt;\nwhile (remaining > 0) {\nif ((remaining & 1L) != 0) result = result.Join(factor);\nremaining >>= 1;\nif (remaining > 0) factor = factor.Join(factor);\n}\nreturn global::DripSharp.Brine.Runtime.VmList.Create(result);\n}")
+           "{\nif (n == 0) return global::DripSharp.Brine.Runtime.VmList.EMPTY;\nif (n == 1) return this;\nglobal::DripSharp.Brine.Runtime.VmCollection.CheckPositive(n);\nvar remaining = n;\nvar result = global::DripSharp.Brine.Util.Paguro.RrbTree<object>.Empty<object>();\nvar factor = this.rrbt;\nwhile (remaining > 0) {\nif ((remaining & 1L) != 0) result = (global::DripSharp.Brine.Util.Paguro.RrbTree<object>.ImRrbt<object>)result.Join(factor);\nremaining >>= 1;\nif (remaining > 0) factor = (global::DripSharp.Brine.Util.Paguro.RrbTree<object>.ImRrbt<object>)factor.Join(factor);\n}\nreturn global::DripSharp.Brine.Runtime.VmList.Create(result);\n}")
 
           :else translated-body)
         declaration
         (cond
           (and (= :http-send-compatibility signature-adaptation)
                (= "org.pkl.core.http.HttpClient"
-                  (.getQualifiedName owner-type)))
+                  (.getQualifiedName owner-type))
+               (not (netstandard-abstract-interface? owner-type)))
           (sequence-node
            [(raw "/* Java HttpClient.send") node (raw "(")
             (sequence-node params ", ")
@@ -2187,7 +2348,8 @@
 
           (and (= :http-proxy-selector-compatibility signature-adaptation)
                (= "org.pkl.core.http.HttpClient$Builder"
-                  (.getQualifiedName owner-type)))
+                  (.getQualifiedName owner-type))
+               (not (netstandard-abstract-interface? owner-type)))
           (sequence-node
            [(raw "/* Java ProxySelector configuration ") node (raw "(")
             (sequence-node params ", ")
@@ -2217,7 +2379,9 @@
             return-type (raw (str " " name)) node
             (raw "(") (sequence-node params ", ") (raw ")")
             (constraints-node ctx parameters)
-            (if body (sequence-node [(raw " ") translated-body]) (raw ";"))]))]
+            (if translated-body
+              (sequence-node [(raw " ") translated-body])
+              (raw ";"))]))]
     (attach-declaration ctx declaration method :method (.getQualifiedName owner-type)
                         name signature :java.declaration/method)))
 
@@ -2826,9 +2990,26 @@
                                            :class name
                                            :source (source-ref member :java.declaration/anonymous-member)}))))
                       raw-members)
+        anonymous-compatibility-members
+        (concat
+         (when (and (contains? #{"java.util.Iterator"
+                                 "java.util.PrimitiveIterator$OfLong"}
+                               base-name)
+                    (not (some #(and (instance? CtMethod %)
+                                     (= "remove" (.getSimpleName ^CtMethod %))
+                                     (empty? (.getParameters ^CtMethod %)))
+                               raw-members)))
+           [(raw "public void Remove() => throw new global::System.NotSupportedException();")])
+         (when (= "org.pkl.core.module.ResolvedModuleKey" base-name)
+           [(raw
+             (str
+              "global::DripSharp.Brine.Module.ModuleKey global::DripSharp.Brine.Module.ResolvedModuleKey.Original => this.GetOriginal();\n"
+              "global::System.Uri global::DripSharp.Brine.Module.ResolvedModuleKey.Uri => this.GetUri();\n"
+              "string global::DripSharp.Brine.Module.ResolvedModuleKey.Source => this.LoadSource();"))]))
         members (into (vec (or (iterator-bridge-members ctx anonymous-class)
                                (iterator-bridge-members-for-reference ctx base-reference)))
                       members)
+        members (into (vec anonymous-compatibility-members) members)
         constructor
         (sequence-node
          [(raw (str "public " name "("))
@@ -3003,9 +3184,18 @@
                          (some-> reference .getTypeDeclaration .getSuperInterfaces))
                  (conj seen qualified)))))))
 
+(defn- owns-method? [^CtType type method-name arity]
+  (some #(and (= method-name (.getSimpleName ^CtMethod %))
+              (= arity (count (.getParameters ^CtMethod %))))
+        (.getMethods type)))
+
 (defn- destination-bridge-members [ctx ^CtType type]
   (let [superclass (when (instance? CtClass type) (.getSuperclass ^CtClass type))
         disposable? (inherits-interface? type #{"java.lang.AutoCloseable" "java.io.Closeable"})
+        module-key? (inherits-interface? type #{"org.pkl.core.module.ModuleKey"})
+        resolved-module-key?
+        (inherits-interface? type #{"org.pkl.core.module.ResolvedModuleKey"})
+        java-iterator? (inherits-interface? type #{"java.util.Iterator"})
         wrapper? (inherits-interface?
                   type
                   #{"com.oracle.truffle.api.instrumentation.InstrumentableNode$WrapperNode"})]
@@ -3032,11 +3222,39 @@
                       (.getFields type)))
         [(raw "protected GetClass() { this.receiverClassNode = global::DripSharp.Brine.Ast.@Internal.GetClassNodeGen.Create(this.GetReceiverNode()); }")])
       (when disposable?
-        [(raw (if (and (instance? CtInterface type)
-                       (not (some #(= "close" (.getSimpleName ^CtMethod %))
-                                  (.getMethods type))))
-                "public void Close();\npublic void Dispose() => this.Close();"
+        [(raw (cond
+                (netstandard-abstract-interface? type)
+                (if (some #(= "close" (.getSimpleName ^CtMethod %))
+                          (.getMethods type))
+                  "public void Dispose() => this.Close();"
+                  "public abstract void Close();\npublic void Dispose() => this.Close();")
+
+                (instance? CtInterface type)
+                (if (some #(= "close" (.getSimpleName ^CtMethod %))
+                          (.getMethods type))
+                  "public void Dispose();"
+                  "public void Close();\npublic void Dispose();")
+
+                :else
                 "public void Dispose() => this.Close();"))])
+      (when module-key?
+        [(raw
+          (str
+           "global::System.Uri global::DripSharp.Brine.Module.ModuleKey.Uri => this.GetUri();\n"
+           "bool global::DripSharp.Brine.Module.ModuleKey.Cached => this.IsCached();\n"
+           "bool global::DripSharp.Brine.Module.ModuleKey.Local => this.IsLocal();\n"
+           "string? global::DripSharp.Brine.Module.ModuleKey.FileCachePath => this.GetFileCacheLocation();"))])
+      (when resolved-module-key?
+        [(raw
+          (str
+           "global::DripSharp.Brine.Module.ModuleKey global::DripSharp.Brine.Module.ResolvedModuleKey.Original => this.GetOriginal();\n"
+           "global::System.Uri global::DripSharp.Brine.Module.ResolvedModuleKey.Uri => this.GetUri();\n"
+           "string global::DripSharp.Brine.Module.ResolvedModuleKey.Source => this.LoadSource();"))])
+      (when (and java-iterator? (not (owns-method? type "remove" 0)))
+        [(raw "public void Remove() => throw new global::System.NotSupportedException();")])
+      (when (and (inherits-interface? type #{"org.snakeyaml.engine.v2.api.ConstructNode"})
+                 (not (owns-method? type "constructRecursive" 2)))
+        [(raw "public void ConstructRecursive(global::DripSharp.Brine.Runtime.SnakeYaml.nodes.Node node, object? data) { }")])
       (when wrapper?
         [(raw (str
                "global::DripSharp.Brine.Runtime.Truffle.api.nodes.Node global::DripSharp.Brine.Runtime.Truffle.api.instrumentation.InstrumentableNode.WrapperNode.GetDelegateNode() => this.GetDelegateNode();\n"
@@ -3053,12 +3271,16 @@
              ">.ImRrbt<" element-name
              "> SubList(int fromIndex, int toIndex) { var result = global::DripSharp.Brine.Util.Paguro.RrbTree<"
              element-name ">.Empty<" element-name
-             ">(); foreach (var value in global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex)) result = result.Append(value); return result; }\n"
+             ">(); foreach (var value in global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex)) result = (global::DripSharp.Brine.Util.Paguro.RrbTree<"
+             element-name ">.ImRrbt<" element-name
+             ">)result.Append(value); return result; }\n"
              "public global::DripSharp.Brine.Util.Paguro.RrbTree<" element-name
              ">.ImRrbt<" element-name
              "> Reverse() { var result = global::DripSharp.Brine.Util.Paguro.RrbTree<"
              element-name ">.Empty<" element-name
-             ">(); foreach (var value in global::System.Linq.Enumerable.Reverse(this)) result = result.Append(value); return result; }"))]))
+             ">(); foreach (var value in global::System.Linq.Enumerable.Reverse(this)) result = (global::DripSharp.Brine.Util.Paguro.RrbTree<"
+             element-name ">.ImRrbt<" element-name
+             ">)result.Append(value); return result; }"))]))
       (when (or (= "org.pkl.core.util.paguro.RrbTree$Relaxed" (.getQualifiedName type))
                 (= "org.pkl.core.util.paguro.RrbTree.Relaxed" (.getQualifiedName type))
                 (and (= "Relaxed" (.getSimpleName type))
@@ -3173,6 +3395,8 @@
       (= "org.pkl.core.StackFrameTransformers" (.getQualifiedName type))
       [visibility "static" "partial" "class"]
 
+      (netstandard-abstract-interface? type)
+      [visibility "abstract" "partial" "class"]
       (instance? CtInterface type) [visibility "partial" "interface"]
       (instance? CtRecord type) [visibility "sealed" "partial" "record" "class"]
       (instance? CtEnum type) [visibility "sealed" "partial" "class"]
@@ -3257,11 +3481,25 @@
                           (empty? (.getParameters ^CtMethod member))))
                    raw-members))
         selected-members (distinct-selected-members ctx type)
-        members (if (or functional-method stack-frame-transformer?)
-                  []
-                  (if-let [emit-members (:emit-members ctx)]
-                    (emit-members ctx type selected-members)
-                    (mapv #(member-node member-ctx type %) selected-members)))
+        emitted-selected-members
+        (if (or functional-method stack-frame-transformer?)
+          []
+          (if-let [emit-members (:emit-members ctx)]
+            (emit-members ctx type selected-members)
+            (mapv #(member-node member-ctx type %) selected-members)))
+        selected-member-nodes (mapv vector selected-members emitted-selected-members)
+        static-companion-member-nodes
+        (->> selected-member-nodes
+             (keep (fn [[member node]]
+                     (when (interface-static-companion-member? type member)
+                       node)))
+             vec)
+        members
+        (->> selected-member-nodes
+             (keep (fn [[member node]]
+                     (when-not (interface-static-companion-member? type member)
+                       node)))
+             vec)
         members (if explicit-record-constructor?
                   (into (mapv #(record-component-property-node ctx type %)
                               (.getRecordComponents ^CtRecord type))
@@ -3351,8 +3589,8 @@
                        "    this StackFrameTransformer transformer,\n"
                        "    StackFrameTransformer next)\n"
                        "{\n"
-                       "global::System.ArgumentNullException.ThrowIfNull(transformer);\n"
-                       "global::System.ArgumentNullException.ThrowIfNull(next);\n"
+                       "global::DripSharp.Runtime.JavaCompat.ThrowIfNull(transformer);\n"
+                       "global::DripSharp.Runtime.JavaCompat.ThrowIfNull(next);\n"
                        "return frame => next(transformer(frame));\n"
                        "}\n"
                        "}"))
@@ -3386,7 +3624,16 @@
           (sequence-node
            [header (raw "\n{\n")
             (sequence-node members "\n\n")
-            (raw "\n}")]))]
+            (raw "\n}")]))
+        declaration
+        (if (seq static-companion-member-nodes)
+          (sequence-node
+           [declaration
+            (raw (str "\n\n" (first (type-words ctx type)) " static class "
+                      name "Statics\n{\n"))
+            (sequence-node static-companion-member-nodes "\n\n")
+            (raw "\n}")])
+          declaration)]
     (attach-declaration ctx declaration type :type owner name qualified
                         (cond
                           (instance? CtInterface type) :java.declaration/interface
@@ -3418,7 +3665,54 @@
                                 :else :resolved-external-metadata)]
                  {:source (source-ref annotation :java.annotation/resolved)
                   :resolved-key key :origin (:origin occurrence)
-                  :strategy strategy :emitted-runtime-attribute false})))))
+                   :strategy strategy :emitted-runtime-attribute false})))))
+
+(defn- normalized-covariant-invocation-cast-node
+  [ctx ^CtExpression invocation ^CtMethod method]
+  (let [owner (.getDeclaringType method)
+        base-definition (or (superclass-method-definition owner method)
+                            (class-definition ctx method))
+        substituted-return (when base-definition
+                             (substituted-direct-base-return owner base-definition))
+        base-return (some-> ^CtMethod base-definition .getType)
+        method-return (.getType method)
+        invocation-return (.getType invocation)
+        method-formals (set (map #(.getSimpleName ^CtTypeParameter %)
+                                 (.getFormalCtTypeParameters method)))
+        generic-method-return? (and base-return
+                                    (instance? CtTypeParameterReference base-return)
+                                    (contains? method-formals
+                                               (.getSimpleName base-return)))
+        emitted-return (cond
+                         substituted-return substituted-return
+                         generic-method-return? method-return
+                         (and base-return
+                              (instance? CtTypeParameterReference base-return))
+                         nil
+                         (and base-return
+                              (not= (destination-type-key method-return)
+                                    (destination-type-key base-return)))
+                         base-return
+                         :else method-return)
+        desired-return invocation-return]
+    (when (and invocation-return
+               desired-return
+               (not (and
+                     (instance? CtArrayTypeReference invocation-return)
+                     (str/starts-with?
+                      (some-> owner .getQualifiedName)
+                      "org.pkl.core.util.paguro.RrbTree")))
+               (or base-definition
+                   (not (instance? CtTypeParameterReference method-return)))
+               (not (modifier? method ModifierKind/STATIC))
+               (not= "split" (.getSimpleName method))
+               (or (nil? emitted-return)
+                   (not= (destination-type-key desired-return)
+                         (destination-type-key emitted-return))))
+      (if (= "executable:org.pkl.core.runtime.VmBytes#export()"
+             (spoon/declaration-key method))
+        (raw "byte[]")
+        (type-node ctx desired-return)))))
 
 (defn- emission-template
   [resolved-model resolved-mappings]
@@ -3435,6 +3729,9 @@
         base-services {:identifier identifier
                        :pascal pascal
                        :type-parameter-name type-parameter-name
+                       :interface-static-companion?
+                       (fn [owner]
+                         (not (netstandard-abstract-interface? owner)))
                        :method-name (fn [method] (method-name @ctx-holder method))
                        :current-signature-adaptation
                        (fn [] (:signature-adaptation @ctx-holder))
@@ -3446,6 +3743,10 @@
                        (fn [method]
                          (when (instance? CtMethod method)
                            (method-signature-adaptation @ctx-holder method)))
+                       :normalized-covariant-invocation-cast-node
+                       (fn [invocation method]
+                         (normalized-covariant-invocation-cast-node
+                          @ctx-holder invocation method))
                        :exported-product-declaration?
                        (fn [declaration]
                          (exported-product-declaration? @ctx-holder declaration))

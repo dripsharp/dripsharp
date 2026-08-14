@@ -93,7 +93,7 @@
                        (str id "|" version "|symbols")))
         package-sha256 (util/sha256-file artifact)
         symbol-sha256 (some-> symbol-artifact util/sha256-file)
-        pdb-entry (str "lib/net10.0/" id ".pdb")
+        pdb-entry (str "lib/netstandard2.0/" id ".pdb")
         pdb-sha256 (util/sha256-text (str id "|pdb"))
         source-path (str "src/" id "/Mechanical.cs")
         source-paths [source-path]

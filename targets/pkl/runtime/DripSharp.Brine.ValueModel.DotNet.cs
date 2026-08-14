@@ -49,13 +49,10 @@ internal static class DotNetCollections
             ? new ReadOnlyDictionary<TKey, TValue>(mutable)
             : values;
 
-    internal static IReadOnlySet<T> ReadOnly<T>(IReadOnlySet<T> values) =>
-        values is ISet<T> mutable ? new ReadOnlySet<T>(mutable) : values;
-
-    internal static IReadOnlySet<T> ReadOnly<T>(ISet<T> values) =>
+    internal static ISet<T> ReadOnly<T>(ISet<T> values) =>
         new ReadOnlySet<T>(values);
 
-    private sealed class ReadOnlySet<T> : IReadOnlySet<T>
+    private sealed class ReadOnlySet<T> : ISet<T>
     {
         private readonly HashSet<T> values;
 
@@ -69,6 +66,16 @@ internal static class DotNetCollections
         public bool IsSupersetOf(IEnumerable<T> other) => values.IsSupersetOf(other);
         public bool Overlaps(IEnumerable<T> other) => values.Overlaps(other);
         public bool SetEquals(IEnumerable<T> other) => values.SetEquals(other);
+        bool ISet<T>.Add(T item) => throw new NotSupportedException();
+        void ICollection<T>.Add(T item) => throw new NotSupportedException();
+        public void ExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
+        public void IntersectWith(IEnumerable<T> other) => throw new NotSupportedException();
+        public void SymmetricExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
+        public void UnionWith(IEnumerable<T> other) => throw new NotSupportedException();
+        public void Clear() => throw new NotSupportedException();
+        public bool IsReadOnly => true;
+        public bool Remove(T item) => throw new NotSupportedException();
+        public void CopyTo(T[] array, int arrayIndex) => values.CopyTo(array, arrayIndex);
         public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
@@ -87,13 +94,13 @@ public sealed partial class ModuleSource
     public string? Contents => GetContents();
 }
 
-public partial interface FileOutput
+public abstract partial class FileOutput
 {
     public string Text => GetText();
     public byte[] Bytes => GetBytes();
 }
 
-public partial interface Evaluator
+public abstract partial class Evaluator
 {
     public IReadOnlyDictionary<string, FileOutput> EvaluateOutputFilesReadOnly(
         ModuleSource moduleSource) => DotNetCollections.ReadOnly(EvaluateOutputFiles(moduleSource));
@@ -106,15 +113,15 @@ internal static class PklPath
 {
     public static string ResolvePosix(Uri baseUri, string path)
     {
-        ArgumentNullException.ThrowIfNull(baseUri);
-        ArgumentNullException.ThrowIfNull(path);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(baseUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(path);
         return Util.PathResolvers.ForPosix().ResolvePath(baseUri, path);
     }
 
     public static string ResolveWindows(Uri baseUri, string path)
     {
-        ArgumentNullException.ThrowIfNull(baseUri);
-        ArgumentNullException.ThrowIfNull(path);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(baseUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(path);
         return Util.PathResolvers.ForWindows().ResolvePath(baseUri, path);
     }
 }
@@ -123,7 +130,7 @@ internal static class PklGlob
 {
     public static System.Text.RegularExpressions.Regex Compile(string pattern)
     {
-        ArgumentNullException.ThrowIfNull(pattern);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(pattern);
         try
         {
             return Util.GlobResolver.ToRegexPattern(pattern);
@@ -139,7 +146,7 @@ internal static class PklUris
 {
     public static Uri EnsurePathEndsWithSlash(Uri uri)
     {
-        ArgumentNullException.ThrowIfNull(uri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
         if (!uri.IsAbsoluteUri) return EnsureRelativePathEndsWithSlash(uri);
         string schemePrefix = uri.Scheme + ":";
         string afterScheme = uri.OriginalString[schemePrefix.Length..];
@@ -152,8 +159,8 @@ internal static class PklUris
 
     public static Uri Resolve(Uri baseUri, Uri newUri)
     {
-        ArgumentNullException.ThrowIfNull(baseUri);
-        ArgumentNullException.ThrowIfNull(newUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(baseUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(newUri);
         if (newUri.IsAbsoluteUri) return newUri;
         string baseText = DripSharp.Runtime.JavaCompat.UriToString(baseUri);
         if (DripSharp.Runtime.JavaCompat.UriUsesSingleSlashFileSyntax(baseUri) ||
@@ -171,21 +178,21 @@ internal static class PklUris
 
     public static string Format(Uri uri)
     {
-        ArgumentNullException.ThrowIfNull(uri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
         return DripSharp.Runtime.JavaCompat.UriToString(uri);
     }
 
     public static string Relativize(string path, string basePath)
     {
-        ArgumentNullException.ThrowIfNull(path);
-        ArgumentNullException.ThrowIfNull(basePath);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(path);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(basePath);
         return Util.IoUtils.Relativize(path, basePath);
     }
 
     public static Uri Relativize(Uri uri, Uri baseUri)
     {
-        ArgumentNullException.ThrowIfNull(uri);
-        ArgumentNullException.ThrowIfNull(baseUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(baseUri);
         if (!uri.IsAbsoluteUri || !baseUri.IsAbsoluteUri ||
             DripSharp.Runtime.JavaCompat.UriIsOpaque(uri) ||
             DripSharp.Runtime.JavaCompat.UriIsOpaque(baseUri) ||
@@ -199,8 +206,8 @@ internal static class PklUris
         string uriPath = DripSharp.Runtime.JavaCompat.UriPath(uri) ?? "";
         string basePath = DripSharp.Runtime.JavaCompat.UriPath(baseUri) ?? "";
         if (basePath.Length == 0) return uri;
-        var uriParts = uriPath.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
-        var baseParts = basePath.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
+        var uriParts = uriPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+        var baseParts = basePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries).ToList();
         if (!basePath.EndsWith("/", StringComparison.Ordinal) && baseParts.Count > 0)
             baseParts.RemoveAt(baseParts.Count - 1);
         int common = 0;
@@ -213,13 +220,13 @@ internal static class PklUris
 
     public static Uri Parse(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         return Util.IoUtils.ToUri(value);
     }
 
     public static string? ToFilePath(Uri uri)
     {
-        ArgumentNullException.ThrowIfNull(uri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
         if (!uri.IsAbsoluteUri)
             throw new ArgumentException("Only absolute URIs can be converted to paths.", nameof(uri));
         return uri.IsFile ? uri.LocalPath : null;
@@ -227,20 +234,20 @@ internal static class PklUris
 
     public static bool IsWhitespace(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         return value.All(char.IsWhiteSpace);
     }
 
     public static string Capitalize(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         if (value.Length == 0 || !char.IsLower(value[0])) return value;
         return char.ToUpperInvariant(value[0]) + value[1..];
     }
 
     public static int GetMaxLineLength(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         int maximum = 0;
         int current = 0;
         foreach (char character in value)
@@ -260,13 +267,13 @@ internal static class PklUris
 
     public static string EncodePath(string path)
     {
-        ArgumentNullException.ThrowIfNull(path);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(path);
         return Util.IoUtils.EncodePath(path);
     }
 
     public static string InferModuleName(Uri uri)
     {
-        ArgumentNullException.ThrowIfNull(uri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
         string value = uri.OriginalString;
         int fragment = value.LastIndexOf("#/", StringComparison.Ordinal);
         string path = fragment >= 0 ? value[(fragment + 2)..] :
@@ -296,8 +303,8 @@ internal static class PklUris
 
     public static Uri ResolveTripleDotFile(Uri moduleUri, Uri importUri)
     {
-        ArgumentNullException.ThrowIfNull(moduleUri);
-        ArgumentNullException.ThrowIfNull(importUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(moduleUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(importUri);
         string? modulePath = ToFilePath(moduleUri);
         if (modulePath is null)
             throw new ArgumentException("The module URI must use the file scheme.", nameof(moduleUri));
@@ -319,11 +326,11 @@ internal static class PklUris
     public static Uri ResolveTripleDotModulePath(
         Uri moduleUri,
         Uri importUri,
-        IReadOnlySet<Uri> availableModules)
+        ISet<Uri> availableModules)
     {
-        ArgumentNullException.ThrowIfNull(moduleUri);
-        ArgumentNullException.ThrowIfNull(importUri);
-        ArgumentNullException.ThrowIfNull(availableModules);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(moduleUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(importUri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(availableModules);
         string target = ParseTripleDot(importUri,
             moduleUri.AbsolutePath[(moduleUri.AbsolutePath.LastIndexOf('/') + 1)..]);
         string current = moduleUri.AbsolutePath;
@@ -377,7 +384,7 @@ internal static class PklValueRenderer
 
     public static string RenderBytes(byte[] value, int lengthLimit = 80)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         return Runtime.VmValueRenderer.SingleLine(lengthLimit).Render(new Runtime.VmBytes(value));
     }
 }
@@ -386,7 +393,7 @@ internal static class PklExceptions
 {
     public static Exception RootCause(Exception value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         while (value.InnerException is not null) value = value.InnerException;
         return value;
     }
@@ -414,7 +421,7 @@ internal sealed class PklAnsiBuilder
 
     public PklAnsiBuilder Append(string text)
     {
-        ArgumentNullException.ThrowIfNull(text);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(text);
         Reset();
         builder.Append(text);
         return this;
@@ -425,8 +432,8 @@ internal sealed class PklAnsiBuilder
 
     public PklAnsiBuilder Append(IEnumerable<PklAnsiCode> codes, string text)
     {
-        ArgumentNullException.ThrowIfNull(codes);
-        ArgumentNullException.ThrowIfNull(text);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(codes);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(text);
         if (!enabled)
         {
             builder.Append(text);
@@ -476,7 +483,7 @@ internal sealed class PklTextEscaper
 
     public string Escape(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         int first = -1;
         for (int index = 0; index < value.Length; index++)
             if (escapes.ContainsKey(value[index])) { first = index; break; }
@@ -494,7 +501,7 @@ internal sealed class PklTextEscaper
 
         public Builder WithEscape(char character, string replacement)
         {
-            ArgumentNullException.ThrowIfNull(replacement);
+            global::DripSharp.Runtime.JavaCompat.ThrowIfNull(replacement);
             if (character > byte.MaxValue)
                 throw new InvalidOperationException(
                     "Array-backed character escapers only support characters through U+00FF.");
@@ -511,13 +518,13 @@ internal static class PklHttp
 {
     public static bool IsHttpUrl(Uri uri)
     {
-        ArgumentNullException.ThrowIfNull(uri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
         return Util.HttpUtils.IsHttpUrlFromURI(uri);
     }
 
     public static Uri WithPort(Uri uri, int port)
     {
-        ArgumentNullException.ThrowIfNull(uri);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(uri);
         return Util.HttpUtils.SetPort(uri, port);
     }
 
@@ -535,7 +542,7 @@ internal static class PklStrings
         int codePointOffset,
         int startIndex = 0)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         if (codePointOffset < 0 || startIndex < 0 || startIndex > value.Length) return -1;
         int index = startIndex;
         for (int remaining = codePointOffset; remaining > 0; remaining--)
@@ -549,7 +556,7 @@ internal static class PklStrings
 
     public static int CodePointOffsetFromEndToUtf16Offset(string value, int codePointOffset)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         if (codePointOffset < 0) return -1;
         int index = value.Length;
         for (int remaining = codePointOffset; remaining > 0; remaining--)
@@ -566,8 +573,8 @@ internal static class PklClassInfos
 {
     public static bool IsExactTypeOf(PClassInfo<object> classInfo, object value)
     {
-        ArgumentNullException.ThrowIfNull(classInfo);
-        ArgumentNullException.ThrowIfNull(value);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(classInfo);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(value);
         if (classInfo.Equals(PClassInfo<object>.Any.AsObject())) return false;
         if (classInfo.Equals(PClassInfo<object>.Typed.AsObject()) && value is not PObject)
             return false;
@@ -579,7 +586,7 @@ internal static class PklParserUtilities
 {
     public static IReadOnlyList<string> FindImportsAndReads(string source)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(source);
         Module.ModuleKey key = Module.ModuleKeys.CreateSynthetic(new Uri("repl:text"), source);
         return Ast.Builder.ImportsAndReadsParser.Parse(
                 key, key.Resolve(SecurityManagers.defaultManager))
@@ -592,7 +599,7 @@ internal static class PklImportGraphs
 {
     public static IReadOnlyList<IReadOnlyList<Uri>> FindCycles(ImportGraph graph)
     {
-        ArgumentNullException.ThrowIfNull(graph);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(graph);
         return Util.ImportGraphUtils.FindImportCycles(graph)
             .Select(cycle => (IReadOnlyList<Uri>)cycle.ToList().AsReadOnly())
             .ToList().AsReadOnly();
@@ -630,14 +637,15 @@ internal static class PklValuePaths
 {
     public static IReadOnlyList<PklValuePathPart> Parse(string pathSpec)
     {
-        ArgumentNullException.ThrowIfNull(pathSpec);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(pathSpec);
         try
         {
             return new Stdlib.PathSpecParser().Parse(pathSpec)
                 .Select(FromInternal)
                 .ToList().AsReadOnly();
         }
-        catch (Exception error) when (error.GetType().Name.StartsWith("Vm", StringComparison.Ordinal))
+        catch (Exception error) when (
+            error.GetType().Name.StartsWith("Vm", StringComparison.Ordinal))
         {
             throw new ArgumentException($"Invalid Pkl value path `{pathSpec}`.", nameof(pathSpec), error);
         }
@@ -647,8 +655,8 @@ internal static class PklValuePaths
         IReadOnlyList<PklValuePathPart> pathSpec,
         IReadOnlyList<PklValuePathPart> path)
     {
-        ArgumentNullException.ThrowIfNull(pathSpec);
-        ArgumentNullException.ThrowIfNull(path);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(pathSpec);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(path);
         return Stdlib.PathConverterSupport.PathMatches(
             pathSpec.Select(ToInternal), path.Select(ToInternal));
     }
@@ -742,7 +750,7 @@ public abstract partial class Member
     public string ModuleName => GetModuleName();
     public string? DocComment => GetDocComment();
     public SourceLocation Location => GetSourceLocation();
-    public IReadOnlySet<Modifier> Modifiers => DotNetCollections.ReadOnly(GetModifiers());
+    public ISet<Modifier> Modifiers => DotNetCollections.ReadOnly(GetModifiers());
     public IReadOnlyList<PObject> Annotations => DotNetCollections.ReadOnly(GetAnnotations());
     public string SimpleName => GetSimpleName();
     public bool IsExternalMember => IsExternal();
@@ -863,7 +871,7 @@ public sealed partial class Duration
     public TimeSpan ToTimeSpan()
     {
         double ticks = InNanos() / 100.0;
-        if (!double.IsFinite(ticks) || ticks > TimeSpan.MaxValue.Ticks ||
+        if (!global::DripSharp.Runtime.JavaCompat.IsFinite(ticks) || ticks > TimeSpan.MaxValue.Ticks ||
             ticks < TimeSpan.MinValue.Ticks)
             throw new OverflowException("The Pkl duration cannot be represented as a TimeSpan.");
         return TimeSpan.FromTicks(checked((long)Math.Round(ticks, MidpointRounding.AwayFromZero)));
@@ -894,7 +902,7 @@ public sealed partial class ValueFormatter
 {
     public void FormatStringValue(string value, string lineIndent, System.IO.TextWriter writer)
     {
-        ArgumentNullException.ThrowIfNull(writer);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(writer);
         writer.Write(FormatStringValue(value, lineIndent));
     }
 }

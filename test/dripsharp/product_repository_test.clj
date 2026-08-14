@@ -230,7 +230,7 @@
        {:workspace-root workspace :target-contract contract})
       (commit-synchronization! fixture)
       (write! workspace
-              "target/generated/brine/src/DripSharp.Brine/bin/Release/net10.0/DripSharp.Brine.dll"
+              "target/generated/brine/src/DripSharp.Brine/bin/Release/netstandard2.0/DripSharp.Brine.dll"
               "verified build output\n")
       (let [proof
             (product-repository/verify-synchronized!

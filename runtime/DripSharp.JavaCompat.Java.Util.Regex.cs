@@ -204,17 +204,17 @@ sealed class JavaRegexMatcher
                 if (end < 0) throw new ArgumentException("named capturing group is missing trailing '}'");
                 var name = replacement[(index + 1)..end];
                 if (name.Length == 0) throw new ArgumentException("named capturing group has 0 length name");
-                if (!char.IsAsciiLetter(name[0]) || name.Skip(1).Any(character => !char.IsAsciiLetterOrDigit(character)))
+                if (!JavaCompat.IsAsciiLetter(name[0]) || name.Skip(1).Any(character => !JavaCompat.IsAsciiLetterOrDigit(character)))
                     throw new ArgumentException("named capturing group has invalid name");
                 result.Append(Group(name));
                 index = end;
                 continue;
             }
-            if (!char.IsAsciiDigit(replacement[index]))
+            if (!JavaCompat.IsAsciiDigit(replacement[index]))
                 throw new ArgumentException("Illegal group reference");
             var group = replacement[index] - '0';
             if (group > groupCount) throw new ArgumentOutOfRangeException(null, "No group " + group);
-            while (index + 1 < replacement.Length && char.IsAsciiDigit(replacement[index + 1]))
+            while (index + 1 < replacement.Length && JavaCompat.IsAsciiDigit(replacement[index + 1]))
             {
                 var candidate = checked(group * 10 + replacement[index + 1] - '0');
                 if (candidate > groupCount) break;
@@ -774,8 +774,8 @@ internal static partial class JavaCompat
                 var end = pattern.IndexOf('>', index + 1);
                 if (end < 0) throw new ArgumentException("named capturing group is missing trailing '>'");
                 var javaName = pattern[(index + 1)..end];
-                if (javaName.Length == 0 || !char.IsAsciiLetter(javaName[0]) ||
-                    javaName.Skip(1).Any(character => !char.IsAsciiLetterOrDigit(character)))
+                if (javaName.Length == 0 || !JavaCompat.IsAsciiLetter(javaName[0]) ||
+                    javaName.Skip(1).Any(character => !JavaCompat.IsAsciiLetterOrDigit(character)))
                     throw new ArgumentException("capturing group name does not start with a Latin letter");
                 if (namedGroups.ContainsKey(javaName))
                     throw new ArgumentException("Named capturing group <" + javaName + "> is already defined");
@@ -941,7 +941,7 @@ internal static partial class JavaCompat
                 'e' => Literal(0x1b, mode),
                 'c' => ControlEscape(mode),
                 >= '1' and <= '9' => NumericBackReference(escaped, mode),
-                _ when char.IsAsciiLetter(escaped) => throw new ArgumentException(
+                _ when JavaCompat.IsAsciiLetter(escaped) => throw new ArgumentException(
                     "Illegal/unsupported escape sequence near index " + (index - 1)),
                 _ => Literal(escaped, mode)
             };
@@ -974,7 +974,7 @@ internal static partial class JavaCompat
         private string NumericBackReference(char first, int mode)
         {
             var number = first - '0';
-            while (index < pattern.Length && char.IsAsciiDigit(pattern[index]))
+            while (index < pattern.Length && JavaCompat.IsAsciiDigit(pattern[index]))
             {
                 var candidate = checked(number * 10 + pattern[index] - '0');
                 if (candidate >= groupNames.Count) break;
@@ -1125,7 +1125,7 @@ internal static partial class JavaCompat
                 'N' => ParseClassNamedCharacter(),
                 'Q' => ParseClassQuoted(),
                 'c' => ParseClassControl(),
-                _ when char.IsAsciiLetter(escaped) => throw new ArgumentException(
+                _ when JavaCompat.IsAsciiLetter(escaped) => throw new ArgumentException(
                     "Illegal/unsupported escape sequence near index " + (index - 1)),
                 _ => JavaCodePointSet.Range(escaped, escaped)
             };
@@ -1327,7 +1327,9 @@ internal static partial class JavaCompat
         return translator.Translate(0);
     }
 
-    private static string JavaRegexSyntaxMessage(string pattern, ArgumentException error)
+    private static string JavaRegexSyntaxMessage(
+        string pattern,
+        global::System.ArgumentException error)
     {
         if (pattern.StartsWith('*') || pattern.StartsWith('+') || pattern.StartsWith('?'))
             return $"Dangling meta character '{pattern[0]}' near index 0\n{pattern}\n^";
@@ -1392,7 +1394,7 @@ internal static partial class JavaCompat
             _ = OriginalRegexPatterns.GetValue(result, _ => new JavaUriText(pattern));
             return result;
         }
-        catch (ArgumentException error)
+        catch (global::System.ArgumentException error)
         {
             throw new ArgumentException(JavaRegexSyntaxMessage(pattern, error), error);
         }

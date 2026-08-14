@@ -6,7 +6,7 @@
  :destination-bundle dripsharp.pkl.java-project/rule-bundle
  :project {:assembly-name "DripSharp.Brine"
            :root-namespace "DripSharp.Brine"
-           :target-framework "net10.0"
+           :target-framework "netstandard2.0"
            :nullable "enable"
            :implicit-usings false
            :define-constants ["DRIPSHARP_INTERNAL_JAVA_COMPAT"]
@@ -40,6 +40,15 @@
  :namespaces {"org.pkl.core" "DripSharp.Brine"}
  :namespace-prefixes {"org.pkl.core" "DripSharp.Brine"}
  :destination-capabilities #{:java-compat :java-regex-unicode}
+ :runtime-packages [{:id "Microsoft.CSharp"
+                     :version "4.7.0"
+                     :projection :netstandard-compatibility}
+                    {:id "System.Memory"
+                     :version "4.6.3"
+                     :projection :netstandard-compatibility}
+                    {:id "System.Text.Encoding.CodePages"
+                     :version "10.0.0"
+                     :projection :netstandard-compatibility}]
  :public-surface {:strategy dripsharp.pkl.public-api-contract/strategy
                   :source-module "pkl-core"}
  :package-consumer {:strategy :source-file

@@ -137,9 +137,17 @@ Test-only dependencies may map to suitable .NET test packages or focused test
 support. Test dependency adaptation must not leak JSqlParser-specific semantics
 into DripSharp's product-neutral translation kernel.
 
-SqlTrellis targets `net10.0` and supports Windows, Linux, and macOS on x64 and
-ARM64. Mobile, WebAssembly, and NativeAOT are excluded. Completion execution
+The SqlTrellis production project targets only `netstandard2.0`. Its complete
+shipped test project and all executable runners, probes, differential and
+validation hosts, and isolated package consumers target `net10.0` and consume
+that production assembly. SqlTrellis supports Windows, Linux, and macOS on x64
+and ARM64. Mobile, WebAssembly, and NativeAOT are excluded. Completion execution
 evidence is required only on macOS x64 and ARM64.
+
+.NET Framework 4.8 consumption compatibility is inferred from the
+`netstandard2.0` contract and compatible dependencies. The repository does not
+build or execute net48 and does not claim empirical .NET Framework 4.8 runtime
+certification.
 
 ## Excluded Artifacts
 

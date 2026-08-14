@@ -330,7 +330,8 @@
            :expected-packages
            (into [{:id package-id :version version}]
                  (map #(select-keys % [:id :version]) external-packages))
-           :target-framework target-framework}
+           :target-framework
+           (or (get-in contract [:frameworks :execution]) target-framework)}
            run-command! (assoc :run-command! run-command!)))]
     (println "Single-package NuGet bundle consumption passed:"
              (pr-str {:id package-id

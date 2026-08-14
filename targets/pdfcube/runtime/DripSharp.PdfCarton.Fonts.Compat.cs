@@ -86,8 +86,8 @@ internal sealed class JavaX509CertificateHolder
     public JavaX509CertificateHolder(sbyte[] encoded)
     {
         ArgumentNullException.ThrowIfNull(encoded);
-        certificate = X509CertificateLoader.LoadCertificate(
-            MemoryMarshal.AsBytes(encoded.AsSpan()));
+        certificate = new X509Certificate2(
+            MemoryMarshal.AsBytes(encoded.AsSpan()).ToArray());
     }
 
     public string Issuer => certificate.Issuer;
@@ -101,7 +101,7 @@ internal static class PdfCartonCrypto
 
     public static X509Certificate2Collection CreateKeyStore(string type)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(type);
+        JavaCompat.ThrowIfNullOrWhiteSpace(type, nameof(type));
         if (!string.Equals(type, "PKCS12", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(type, "PKCS#12", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(type, "PFX", StringComparison.OrdinalIgnoreCase))
@@ -123,26 +123,14 @@ internal static class PdfCartonCrypto
         var textPassword = password is null ? null : new string(password);
         try
         {
-            certificates.AddRange(
-                X509CertificateLoader.LoadPkcs12Collection(
-                    encoded,
-                    textPassword,
-                    X509KeyStorageFlags.EphemeralKeySet |
-                    X509KeyStorageFlags.Exportable,
-                    Pkcs12LoaderLimits.Defaults));
-        }
-        catch (PlatformNotSupportedException)
-        {
-            certificates.AddRange(
-                X509CertificateLoader.LoadPkcs12Collection(
-                    encoded,
-                    textPassword,
-                    X509KeyStorageFlags.Exportable,
-                    Pkcs12LoaderLimits.Defaults));
+            certificates.Import(
+                encoded,
+                textPassword,
+                X509KeyStorageFlags.Exportable);
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(encoded);
+            Array.Clear(encoded, 0, encoded.Length);
         }
     }
 
@@ -181,7 +169,7 @@ internal static class PdfCartonCrypto
         {
             return (object?)certificate.GetRSAPrivateKey() ??
                 (object?)certificate.GetECDsaPrivateKey() ??
-                (object?)certificate.GetDSAPrivateKey();
+                GetDsaKey(certificate, "GetDSAPrivateKey");
         }
         catch (CryptographicException error)
         {
@@ -210,7 +198,7 @@ internal static class PdfCartonCrypto
         ArgumentNullException.ThrowIfNull(certificate);
         return (AsymmetricAlgorithm?)certificate.GetRSAPublicKey() ??
             (AsymmetricAlgorithm?)certificate.GetECDsaPublicKey() ??
-            (AsymmetricAlgorithm?)certificate.GetDSAPublicKey() ??
+            GetDsaKey(certificate, "GetDSAPublicKey") ??
             throw new CryptographicException(
                 $"Unsupported certificate public-key algorithm `{certificate.GetKeyAlgorithm()}`.");
     }
@@ -218,10 +206,27 @@ internal static class PdfCartonCrypto
     public static BigInteger GetSerialNumber(X509Certificate2 certificate)
     {
         ArgumentNullException.ThrowIfNull(certificate);
-        return new BigInteger(
-            Convert.FromHexString(certificate.SerialNumber),
-            isUnsigned: true,
-            isBigEndian: true);
+        var littleEndian = certificate.GetSerialNumber();
+        Array.Resize(ref littleEndian, littleEndian.Length + 1);
+        return new BigInteger(littleEndian);
+    }
+
+    private static AsymmetricAlgorithm? GetDsaKey(
+        X509Certificate2 certificate,
+        string methodName)
+    {
+        var extensions = Type.GetType(
+            "System.Security.Cryptography.X509Certificates.DSACertificateExtensions, " +
+            "System.Security.Cryptography.X509Certificates",
+            throwOnError: false);
+        var method = extensions?.GetMethod(
+            methodName,
+            global::System.Reflection.BindingFlags.Public |
+            global::System.Reflection.BindingFlags.Static,
+            binder: null,
+            types: new[] { typeof(X509Certificate2) },
+            modifiers: null);
+        return method?.Invoke(null, new object[] { certificate }) as AsymmetricAlgorithm;
     }
 
     private static X509Certificate2? FindKeyStoreCertificate(
@@ -279,7 +284,8 @@ internal class JavaAsn1Primitive
         if (!string.Equals(encoding, JavaAsn1Encoding.DER, StringComparison.Ordinal))
             throw new CryptographicException(
                 $"Unsupported ASN.1 encoding `{encoding}`.");
-        destination.Write(Encode());
+        var bytes = Encode();
+        destination.Write(bytes, 0, bytes.Length);
     }
 }
 
@@ -304,7 +310,7 @@ internal sealed class JavaAsn1ObjectIdentifier : JavaAsn1Primitive
 {
     public JavaAsn1ObjectIdentifier(string id)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        JavaCompat.ThrowIfNullOrWhiteSpace(id, nameof(id));
         Id = id;
     }
 
@@ -471,7 +477,7 @@ internal sealed class JavaIssuerAndSerialNumber : JavaAsn1Primitive
 {
     public JavaIssuerAndSerialNumber(string issuer, BigInteger serialNumber)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(issuer);
+        JavaCompat.ThrowIfNullOrWhiteSpace(issuer, nameof(issuer));
         Issuer = issuer;
         SerialNumber = serialNumber;
     }
@@ -1111,7 +1117,7 @@ public sealed class JavaImageMetadata
             {
                 return null;
             }
-            return Math.Clamp(density, 1, ushort.MaxValue);
+            return JavaCompat.Clamp(density, 1, ushort.MaxValue);
         }
     }
 
@@ -1244,15 +1250,15 @@ public sealed class JavaImageReader : IDisposable
                 var blue = source[2];
                 if (adobeTransform is 1 or 2)
                 {
-                    destination[0] = Math.Clamp(
+                    destination[0] = JavaCompat.Clamp(
                         (int)Math.Round(0.299 * red + 0.587 * green + 0.114 * blue),
                         0,
                         255);
-                    destination[1] = Math.Clamp(
+                    destination[1] = JavaCompat.Clamp(
                         (int)Math.Round(128 - 0.168736 * red - 0.331264 * green + 0.5 * blue),
                         0,
                         255);
-                    destination[2] = Math.Clamp(
+                    destination[2] = JavaCompat.Clamp(
                         (int)Math.Round(128 + 0.5 * red - 0.418688 * green - 0.081312 * blue),
                         0,
                         255);
@@ -2910,7 +2916,7 @@ public sealed class JavaAlphaComposite : JavaComposite
     {
         if (rule != SRC_OVER)
             throw new ArgumentException("Only SRC_OVER alpha compositing is supported.", nameof(rule));
-        if (!float.IsFinite(alpha) || alpha < 0 || alpha > 1)
+        if (!JavaCompat.IsFinite(alpha) || alpha < 0 || alpha > 1)
             throw new ArgumentException("Alpha must be between zero and one.", nameof(alpha));
         return new JavaAlphaComposite(alpha);
     }
@@ -3234,7 +3240,7 @@ public class JavaColorModel
             for (var component = 0; component < explicitMasks.Length; component++)
             {
                 var mask = unchecked((uint)explicitMasks[component]);
-                var shift = BitOperations.TrailingZeroCount(mask);
+                var shift = JavaCompat.TrailingZeroCount(mask);
                 var maximum = mask >> shift;
                 components[offset + component] =
                     ((packedValue & mask) >> shift) / (float)maximum;
@@ -3282,7 +3288,7 @@ public class JavaColorModel
                 short[] words when component < words.Length =>
                     (float)(unchecked((ushort)words[component]) / maximum),
                 int[] values when component < values.Length =>
-                    (float)Math.Clamp(values[component] / maximum, 0d, 1d),
+                    (float)JavaCompat.Clamp(values[component] / maximum, 0d, 1d),
                 _ => throw new ArgumentException(
                     "Pixel storage does not match the color model.",
                     nameof(pixel))
@@ -3297,7 +3303,7 @@ public class JavaColorModel
         if (offset < 0 || components.Length < offset + NumberOfComponents)
             throw new IndexOutOfRangeException();
         static int ByteValue(float value) =>
-            (int)MathF.Round(Math.Clamp(value, 0f, 1f) * 255f);
+            (int)JavaCompat.Round(JavaCompat.Clamp(value, 0f, 1f) * 255f);
 
         if (Palette is not null)
         {
@@ -3333,10 +3339,10 @@ public class JavaColorModel
             for (var component = 0; component < explicitMasks.Length; component++)
             {
                 var mask = unchecked((uint)explicitMasks[component]);
-                var shift = BitOperations.TrailingZeroCount(mask);
+                var shift = JavaCompat.TrailingZeroCount(mask);
                 var maximum = mask >> shift;
-                var value = (uint)MathF.Round(
-                    Math.Clamp(components[offset + component], 0f, 1f) * maximum);
+                var value = (uint)JavaCompat.Round(
+                    JavaCompat.Clamp(components[offset + component], 0f, 1f) * maximum);
                 packedValue |= value << shift & mask;
             }
             var masked = pixel as int[] ?? new int[1];
@@ -3375,8 +3381,8 @@ public class JavaColorModel
                 var maximum = explicitComponentBits is null
                     ? 65535d
                     : Math.Pow(2d, explicitComponentBits[component]) - 1d;
-                words[component] = unchecked((short)(ushort)MathF.Round(
-                    (float)(Math.Clamp(
+                words[component] = unchecked((short)(ushort)JavaCompat.Round(
+                    (float)(JavaCompat.Clamp(
                         components[offset + component],
                         0f,
                         1f) * maximum)));
@@ -3394,7 +3400,7 @@ public class JavaColorModel
                     ? 255d
                     : Math.Pow(2d, explicitComponentBits[component]) - 1d;
                 values[component] = checked((int)Math.Round(
-                    Math.Clamp(
+                    JavaCompat.Clamp(
                         components[offset + component],
                         0f,
                         1f) * maximum));
@@ -3411,8 +3417,8 @@ public class JavaColorModel
                 : explicitComponentBits is null
                 ? 255f
                 : (float)(Math.Pow(2d, explicitComponentBits[component]) - 1d);
-            bytes[component] = unchecked((sbyte)(int)MathF.Round(
-                Math.Clamp(components[offset + component], 0f, 1f) * maximum));
+            bytes[component] = unchecked((sbyte)(int)JavaCompat.Round(
+                JavaCompat.Clamp(components[offset + component], 0f, 1f) * maximum));
         }
         return bytes;
     }
@@ -3427,8 +3433,8 @@ public class JavaColorModel
     {
         var components = GetNormalizedComponents(pixel, null, 0);
         return HasAlpha
-            ? (int)MathF.Round(
-                Math.Clamp(components[NumberOfColorComponents], 0f, 1f) * 255f)
+            ? (int)JavaCompat.Round(
+                JavaCompat.Clamp(components[NumberOfColorComponents], 0f, 1f) * 255f)
             : 255;
     }
 
@@ -3436,7 +3442,7 @@ public class JavaColorModel
     {
         var components = GetNormalizedComponents(pixel, null, 0);
         var rgb = ColorSpace.ToRgb(components);
-        return (int)MathF.Round(Math.Clamp(rgb[component], 0f, 1f) * 255f);
+        return (int)JavaCompat.Round(JavaCompat.Clamp(rgb[component], 0f, 1f) * 255f);
     }
 }
 
@@ -3491,7 +3497,7 @@ public class JavaColorSpace
         ArgumentNullException.ThrowIfNull(components);
         if (components.Length < NumberOfComponents)
             throw new ArgumentException("The component array is too short.", nameof(components));
-        static float Clamp(float value) => Math.Clamp(value, 0f, 1f);
+        static float Clamp(float value) => JavaCompat.Clamp(value, 0f, 1f);
         return Type switch
         {
             TYPE_GRAY => new[]
@@ -3520,9 +3526,9 @@ public class JavaColorSpace
         ArgumentNullException.ThrowIfNull(rgb);
         if (rgb.Length < 3)
             throw new ArgumentException("RGB input must have three components.", nameof(rgb));
-        var red = Math.Clamp(rgb[0], 0f, 1f);
-        var green = Math.Clamp(rgb[1], 0f, 1f);
-        var blue = Math.Clamp(rgb[2], 0f, 1f);
+        var red = JavaCompat.Clamp(rgb[0], 0f, 1f);
+        var green = JavaCompat.Clamp(rgb[1], 0f, 1f);
+        var blue = JavaCompat.Clamp(rgb[2], 0f, 1f);
         if (Type == TYPE_GRAY)
             return new[] { red * 0.2126f + green * 0.7152f + blue * 0.0722f };
         if (Type != TYPE_CMYK)
@@ -3551,7 +3557,7 @@ public class JavaColorSpace
         static float Linear(float component) =>
             component <= 0.04045f
                 ? component / 12.92f
-                : MathF.Pow((component + 0.055f) / 1.055f, 2.4f);
+                : JavaCompat.Pow((component + 0.055f) / 1.055f, 2.4f);
         var red = Linear(rgb[0]);
         var green = Linear(rgb[1]);
         var blue = Linear(rgb[2]);
@@ -3572,9 +3578,9 @@ public class JavaColorSpace
         var green = -xyz[0] * 0.9692660f + xyz[1] * 1.8760108f + xyz[2] * 0.0415560f;
         var blue = xyz[0] * 0.0556434f - xyz[1] * 0.2040259f + xyz[2] * 1.0572252f;
         static float Gamma(float component) =>
-            Math.Clamp(component <= 0.0031308f
+            JavaCompat.Clamp(component <= 0.0031308f
                 ? 12.92f * component
-                : 1.055f * MathF.Pow(component, 1f / 2.4f) - 0.055f, 0f, 1f);
+                : 1.055f * JavaCompat.Pow(component, 1f / 2.4f) - 0.055f, 0f, 1f);
         return FromRgb(new[] { Gamma(red), Gamma(green), Gamma(blue) });
     }
 
@@ -3688,19 +3694,21 @@ public sealed class JavaGraphicsConfiguration
 
 public interface JavaPrintable
 {
-    public const int PAGE_EXISTS = 0;
-    public const int NO_SUCH_PAGE = 1;
-
     int Print(PdfCartonGraphics2D graphics, JavaPageFormat pageFormat, int pageIndex);
 }
 
 public interface JavaPageable
 {
-    public const int UNKNOWN_NUMBER_OF_PAGES = -1;
-
     int GetNumberOfPages();
     JavaPageFormat GetPageFormat(int pageIndex);
     JavaPrintable GetPrintable(int pageIndex);
+}
+
+public static class JavaPrintConstants
+{
+    public const int PAGE_EXISTS = 0;
+    public const int NO_SUCH_PAGE = 1;
+    public const int UNKNOWN_NUMBER_OF_PAGES = -1;
 }
 
 public class JavaPaper : ICloneable
@@ -3926,15 +3934,16 @@ public sealed class JavaAttributedString
 
 public sealed class JavaAttributedCharacterIterator
 {
-    private readonly IReadOnlyDictionary<JavaAttributedCharacterAttribute, object> attributes;
+    private readonly Dictionary<JavaAttributedCharacterAttribute, object> attributes;
 
     internal JavaAttributedCharacterIterator(
         string text,
         IReadOnlyDictionary<JavaAttributedCharacterAttribute, object> attributes)
     {
         Text = text;
-        this.attributes =
-            new Dictionary<JavaAttributedCharacterAttribute, object>(attributes);
+        this.attributes = new Dictionary<JavaAttributedCharacterAttribute, object>();
+        foreach (var entry in attributes)
+            this.attributes.Add(entry.Key, entry.Value);
     }
 
     public string Text { get; }
@@ -3942,7 +3951,7 @@ public sealed class JavaAttributedCharacterIterator
     public object? GetAttribute(JavaAttributedCharacterAttribute attribute)
     {
         ArgumentNullException.ThrowIfNull(attribute);
-        return attributes.GetValueOrDefault(attribute);
+        return attributes.TryGetValue(attribute, out var value) ? value : null;
     }
 }
 
@@ -5091,7 +5100,7 @@ public class JavaPoint : JavaPoint2D, IEquatable<JavaPoint>
     public override bool Equals(object? other) =>
         other is JavaPoint point && Equals(point);
 
-    public override int GetHashCode() => HashCode.Combine(IntX, IntY);
+    public override int GetHashCode() => unchecked(IntX * 397 ^ IntY);
 
     private static int RoundCoordinate(double value) =>
         checked((int)Math.Floor(value + 0.5d));
@@ -5240,7 +5249,7 @@ public sealed class JavaEllipse
         var steps = 4;
         if (radius > 0 && flatness > 0)
         {
-            var ratio = Math.Clamp(1 - flatness / radius, -1, 1);
+            var ratio = JavaCompat.Clamp(1 - flatness / radius, -1, 1);
             var angle = 2 * Math.Acos(ratio);
             if (angle > 0)
             {
@@ -5504,16 +5513,35 @@ internal static class PdfCartonFontCompat
             throw new IOException("Incomplete 16-bit PNG image.");
         }
 
-        compressed.Position = 0;
+        var compressedBytes = compressed.ToArray();
+        if (compressedBytes.Length < 6 ||
+            (compressedBytes[0] & 0x0f) != 8 ||
+            ((compressedBytes[0] << 8) + compressedBytes[1]) % 31 != 0 ||
+            (compressedBytes[1] & 0x20) != 0)
+        {
+            throw new IOException("Invalid PNG zlib stream.");
+        }
         using var inflated = new MemoryStream();
-        using (var zlib = new ZLibStream(
-                   compressed,
+        using (var deflateSource = new MemoryStream(
+                   compressedBytes,
+                   2,
+                   compressedBytes.Length - 6,
+                   writable: false))
+        using (var zlib = new DeflateStream(
+                   deflateSource,
                    CompressionMode.Decompress,
-                   leaveOpen: true))
+                   leaveOpen: false))
         {
             zlib.CopyTo(inflated);
         }
         var filtered = inflated.ToArray();
+        var expectedAdler =
+            (uint)compressedBytes[^4] << 24 |
+            (uint)compressedBytes[^3] << 16 |
+            (uint)compressedBytes[^2] << 8 |
+            compressedBytes[^1];
+        if (Adler32(filtered) != expectedAdler)
+            throw new IOException("PNG zlib checksum does not match its image data.");
         var bytesPerPixel = checked(componentCount * 2);
         var rowLength = checked(width * bytesPerPixel);
         if (filtered.Length != checked((rowLength + 1) * height))
@@ -5559,6 +5587,19 @@ internal static class PdfCartonFontCompat
                 ? PdfCartonTransparency.TRANSLUCENT
                 : PdfCartonTransparency.OPAQUE);
         return CreateImage(colorModel, raster, false, null);
+    }
+
+    private static uint Adler32(byte[] value)
+    {
+        const uint modulus = 65521;
+        uint first = 1;
+        uint second = 0;
+        foreach (var item in value)
+        {
+            first = (first + item) % modulus;
+            second = (second + first) % modulus;
+        }
+        return second << 16 | first;
     }
 
     private static void UnfilterPngRow(
@@ -5888,7 +5929,7 @@ internal static class PdfCartonFontCompat
         var codeWidth = 9;
         void Reset()
         {
-            Array.Clear(dictionary);
+            Array.Clear(dictionary, 0, dictionary.Length);
             for (var value = 0; value < 256; value++) dictionary[value] = [(byte)value];
             nextCode = 258;
             codeWidth = 9;
@@ -5930,7 +5971,7 @@ internal static class PdfCartonFontCompat
                 entry = Extend(previous, previous[0]);
             else
                 throw new IOException("Invalid TIFF LZW code.");
-            output.Write(entry);
+            output.Write(entry, 0, entry.Length);
             if (previous is not null && nextCode < dictionary.Length)
             {
                 dictionary[nextCode++] = Extend(previous, entry[0]);
@@ -6832,12 +6873,12 @@ internal static class PdfCartonFontCompat
         ArgumentOutOfRangeException.ThrowIfNegative(sourceOffset);
         ArgumentOutOfRangeException.ThrowIfNegative(destinationOffset);
         ArgumentOutOfRangeException.ThrowIfNegative(pointCount);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(
-            checked(sourceOffset + checked(pointCount * 2)),
-            source.Length);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(
-            checked(destinationOffset + checked(pointCount * 2)),
-            destination.Length);
+        var sourceEnd = checked(sourceOffset + checked(pointCount * 2));
+        if (sourceEnd > source.Length)
+            throw new ArgumentOutOfRangeException(nameof(sourceOffset));
+        var destinationEnd = checked(destinationOffset + checked(pointCount * 2));
+        if (destinationEnd > destination.Length)
+            throw new ArgumentOutOfRangeException(nameof(destinationOffset));
 
         if (pointCount == 0) return;
         var values = ReferenceEquals(source, destination)

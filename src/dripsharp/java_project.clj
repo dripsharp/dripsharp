@@ -762,6 +762,7 @@
          (remove
           nil?
           [(project-property "TargetFramework" (:target-framework project))
+           (project-property "LangVersion" "latest")
            (project-property "Nullable" (:nullable project))
            (project-property "ImplicitUsings"
                              (if (:implicit-usings project) "enable" "disable"))
@@ -827,6 +828,12 @@
             "Compile"
             [["Include" (str (:source-directory output) "/**/*.cs")]]
             [])]
+          (for [{:keys [id version]}
+                (sort-by :id (:runtime-packages configuration))]
+            (project-xml/element
+             "PackageReference"
+             [["Include" id] ["Version" version]]
+             []))
           (when (:symbols package)
             [(project-xml/element
               "SourceRoot"

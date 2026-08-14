@@ -723,7 +723,7 @@
 
     (testing "all production inputs and source declarations are accounted for"
       (is (= 50 (:compilation-units summary)))
-      (is (= 63 (:generated-files summary)))
+      (is (= 64 (:generated-files summary)))
       (is (= 1 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -758,18 +758,18 @@
         (is (apply >= (map :occurrences (:used-mappings mapping-report))))))
 
     (testing "all executable roots pass accepted recursive coverage"
-      (is (= 984 (:executable-roots summary)))
+      (is (= 983 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
       (is (empty? (:diagnostics first-emission)))
-      (is (= {:semantic 38963
+      (is (= {:semantic 38938
               :fallback 0
-              :visited 89321
+              :visited 89271
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 50358
+              :structural 50333
               :blocked 0
-              :covered 89321}
+              :covered 89271}
              (:executable-coverage summary)))
       (let [sources (map #(slurp (str (paths/resolve-path first-root (:file %))))
                          (:artifacts first-emission))]
@@ -829,7 +829,9 @@
                                 "runtime/DripSharp.JavaRegexUnicodeData.cs")
             upstream
             (first (:production-resources (:discovery (fixture/models))))]
-        (is (str/includes? project "<TargetFramework>net10.0</TargetFramework>"))
+        (is (str/includes? project
+                           "<TargetFramework>netstandard2.0</TargetFramework>"))
+        (is (str/includes? project "<LangVersion>latest</LangVersion>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
         (is (str/includes?
              project

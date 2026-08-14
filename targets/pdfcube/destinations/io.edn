@@ -7,7 +7,7 @@
  :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
  :project {:assembly-name "DripSharp.PdfCarton.IO"
            :root-namespace "DripSharp.PdfCarton.IO"
-           :target-framework "net10.0"
+           :target-framework "netstandard2.0"
            :nullable "disable"
            :implicit-usings false
            :warnings-as-errors true}
@@ -63,7 +63,16 @@
  :runtime-packages
  [{:id "Microsoft.Extensions.Logging.Abstractions"
    :version "10.0.0"
-   :projection :microsoft-package}]
+   :projection :microsoft-package}
+  {:id "Microsoft.CSharp"
+   :version "4.7.0"
+   :projection :netstandard-compatibility}
+  {:id "System.Memory"
+   :version "4.6.3"
+   :projection :netstandard-compatibility}
+  {:id "System.Text.Encoding.CodePages"
+   :version "10.0.0"
+   :projection :netstandard-compatibility}]
  :internal-capabilities #{:java-io :java-nio}
  :destination-capabilities #{:java-compat :java-regex-unicode}
  :public-surface

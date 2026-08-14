@@ -68,7 +68,7 @@ internal static class PdfBoxTextCompatibility
 {
     internal static string NormalizeVisualWord(string word, bool sortByPosition)
     {
-        global::System.ArgumentNullException.ThrowIfNull(word);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(word, nameof(word));
         var normalizedWord = new global::System.Text.StringBuilder(word.Length * 2);
         for (var index = 0; index < word.Length; index++)
         {

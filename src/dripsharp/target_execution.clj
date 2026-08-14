@@ -280,6 +280,7 @@
       (stage-options options)
       {:workspace-root (:workspace-root execution)
        :profile (profile-selection! (:profile execution))
+       :target-contract (:contract execution)
        :verify-fn
        #(verify-loaded! execution % verify-fn generate-fn)
        :pack-fn

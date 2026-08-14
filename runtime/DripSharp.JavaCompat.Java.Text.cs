@@ -558,7 +558,9 @@ internal sealed class JavaMessageFormat : JavaFormat
                 if (close < 0)
                     throw new FormatException("Invalid Java MessageFormat placeholder");
                 var placeholder = pattern.Substring(index + 1, close - index - 1);
-                var fields = placeholder.Split(',', 3, StringSplitOptions.TrimEntries);
+                var fields = placeholder.Split(new[] { ',' }, 3, StringSplitOptions.None)
+                    .Select(field => field.Trim())
+                    .ToArray();
                 if (fields.Length == 0 ||
                     !int.TryParse(fields[0], NumberStyles.None, CultureInfo.InvariantCulture,
                                   out var argumentIndex))

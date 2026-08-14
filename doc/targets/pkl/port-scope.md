@@ -127,6 +127,20 @@ Out-of-scope source still matters when it exposes behavior required by an
 in-scope runtime path. Otherwise, project selection should exclude it
 explicitly rather than letting it enter translation accidentally.
 
+## Framework and Execution Contract
+
+`DripSharp.Brine.Parser` and `DripSharp.Brine` each target only
+`netstandard2.0`. Generated tests, authored runners, probes, differential and
+validation hosts, and isolated package consumers target `net10.0` and reference
+or consume those production libraries. Clean generation must preserve this
+distinction; generated production C# and generated project output remain
+disposable.
+
+.NET Framework 4.8 consumption compatibility is inferred from the
+`netstandard2.0` contract and the compatibility of the package dependency
+closure. DripSharp does not run net48 builds or tests and does not claim
+empirical .NET Framework 4.8 runtime certification.
+
 ## Target Test-Suite Contract
 
 The user-approved 2026-08-03 policy requires Brine to ship a complete adapted

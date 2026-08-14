@@ -112,7 +112,7 @@
               :emission {:project-root root}
               :destination
               {:package-readme-source "README.md"
-               :project {:target-framework "net10.0"}
+               :project {:target-framework "netstandard2.0"}
                :package
                {:id id
                 :version version
@@ -151,7 +151,7 @@
                 (:assembly-dependencies contract)}}
               :resources (vec (repeat (:resources contract) "resource"))
               :symbol-inspection
-              {:pdb-entry (str "lib/net10.0/" id ".pdb")
+              {:pdb-entry (str "lib/netstandard2.0/" id ".pdb")
                :pdb-sha256 pdb-hash
                :dependencies (:dependencies contract)
                :source-link

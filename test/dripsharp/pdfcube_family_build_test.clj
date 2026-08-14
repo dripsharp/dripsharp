@@ -145,7 +145,7 @@
       :production-resources []}
      :destination
      {:project {:assembly-name package-id
-                :target-framework "net10.0"
+                :target-framework "netstandard2.0"
                 :warnings-as-errors true}
       :package {:id package-id}
       :output {:manifest-file "generation-manifest.edn"}}
@@ -160,7 +160,7 @@
   (let [assembly (get-in emission [:destination :package :id])
         file (write-file!
               (:project-root emission)
-              (str "bin/Release/net10.0/" assembly ".dll")
+              (str "bin/Release/netstandard2.0/" assembly ".dll")
               "compiled fixture")]
     {:assembly assembly
      :file (str file)

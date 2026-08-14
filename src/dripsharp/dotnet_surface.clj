@@ -28,6 +28,7 @@
     "java-closeable-disposable"
     "java-functional-adapter-type"
     "java-functional-adapter-member"
+    "java-static-interface-companion-type"
     "java-compatibility-type"
     "java-compatibility-member"
     "clr-special-accessor"})
@@ -480,6 +481,40 @@
                  "java-functional-adapter-type"
                  "java-functional-adapter-member"))))))
 
+(defn- static-interface-companion-row [workspace row metadata-rows]
+  (when (and (= "type" (:kind row))
+             (str/ends-with? (normalize-owner (:owner row)) "Statics"))
+    (let [companion-owner (normalize-owner (:owner row))
+          interface-owner (subs companion-owner 0 (- (count companion-owner)
+                                                       (count "Statics")))
+          companion-members
+          (filter
+           #(and (not= "type" (get-in % [:generated :destination :kind]))
+                 (= companion-owner
+                    (normalize-owner
+                     (get-in % [:generated :destination :owner]))))
+           metadata-rows)
+          interface-types
+          (filter
+           #(and (= "type" (get-in % [:generated :destination :kind]))
+                 (= interface-owner
+                    (normalize-owner
+                     (get-in % [:generated :destination :owner]))))
+           metadata-rows)]
+      (when (seq companion-members)
+        (when-not (= 1 (count interface-types))
+          (fail! "Public static-interface companion does not map to one Java interface"
+                 {:kind :unowned-java-static-interface-companion-surface
+                  :row row :interface-owner interface-owner
+                  :matches (count interface-types)}))
+        (let [metadata (first interface-types)]
+          (assoc row
+                 :source-provenance
+                 (portable-provenance
+                  workspace (get-in metadata [:generated :source :location]))
+                 :source-declaration (get-in metadata [:row :identity])
+                 :translation-rule "java-static-interface-companion-type"))))))
+
 (defn annotate-contract-rows!
   "Joins every reflected row either to one exact selected Java declaration or
   to an explicitly public reusable compatibility declaration/CLR accessor."
@@ -549,6 +584,7 @@
                (or
                 (closeable-disposable-row workspace row type-metadata)
                 (functional-adapter-row workspace row metadata-rows)
+                (static-interface-companion-row workspace row metadata-rows)
                 (let [owner (:owner row)
                       provenance
                       (registered-compatibility-provenance owner)]

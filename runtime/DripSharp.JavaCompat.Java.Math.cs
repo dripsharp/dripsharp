@@ -437,7 +437,7 @@ internal static class JavaStrictMath
 
     internal static double Pow(double x, double y)
     {
-        if (double.IsFinite(x) && double.IsFinite(y) &&
+        if (JavaCompat.IsFinite(x) && JavaCompat.IsFinite(y) &&
             x != 0.0 && y < 0.0 && Math.Truncate(y) == y)
             return 1.0 / Math.Pow(x, -y);
         return Math.Pow(x, y);
@@ -464,7 +464,7 @@ internal static partial class JavaCompat
         public override int GetHashCode()
         {
             var normalized = JavaBigDecimalStripTrailingZeros(this);
-            return System.HashCode.Combine(normalized.UnscaledValue, normalized.Scale);
+            return CombineHash(normalized.UnscaledValue, normalized.Scale);
         }
         public override string ToString() => JavaBigDecimalToString(this);
     }
@@ -651,7 +651,7 @@ internal static partial class JavaCompat
         r = z * t1 / (t1 - 2.0) - (w + z * w);
         z = 1.0 - (r - z);
         j = HighWord(z) + (n << 20);
-        z = (j >> 20) <= 0 ? Math.ScaleB(z, n) : WithHighWord(z, j);
+        z = (j >> 20) <= 0 ? ScaleByPowerOfTwo(z, n) : WithHighWord(z, j);
         return s * z;
     }
 
@@ -1141,15 +1141,19 @@ internal static partial class JavaCompat
     internal static int DecrementExact(int value) => checked(value - 1);
     internal static int ToIntExact(long value) => checked((int)value);
     internal static int AddExactInt(int left, int right) => checked(left + right);
-    internal static int GetExponent(double value) => Math.ILogB(value);
+    internal static int GetExponent(double value)
+    {
+        var exponent = (int)((unchecked((ulong)BitConverter.DoubleToInt64Bits(value)) >> 52) & 0x7ff);
+        return exponent == 0 ? -1023 : exponent == 0x7ff ? 1024 : exponent - 1023;
+    }
     internal static BigInteger NewBigInteger(int signum, sbyte[] magnitude) =>
-        new BigInteger(magnitude.Select(value => unchecked((byte)value)).ToArray(), true, true) * Math.Sign(signum);
+        BigIntegerFromUnsignedBigEndian(magnitude.Select(value => unchecked((byte)value)).ToArray()) * Math.Sign(signum);
     internal static BigInteger NewBigInteger(int signum, byte[] magnitude) =>
-        new BigInteger(magnitude, true, true) * Math.Sign(signum);
+        BigIntegerFromUnsignedBigEndian(magnitude) * Math.Sign(signum);
     internal static BigInteger BigIntegerParse(string value) =>
         BigInteger.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
     internal static sbyte[] BigIntegerToByteArray(BigInteger value) =>
-        ToSignedBytes(value.ToByteArray(isUnsigned: false, isBigEndian: true));
+        ToSignedBytes(Enumerable.Reverse(value.ToByteArray()).ToArray());
     internal static BigInteger BigIntegerMod(BigInteger value, BigInteger modulus)
     {
         if (modulus.Sign <= 0)
@@ -1191,19 +1195,19 @@ internal static partial class JavaCompat
 
     internal static JavaBigDecimal JavaBigDecimalValueOf(double value)
     {
-        if (!double.IsFinite(value)) throw new FormatException("BigDecimal requires a finite value.");
+        if (!IsFinite(value)) throw new FormatException("BigDecimal requires a finite value.");
         return JavaBigDecimalParse(value.ToString("R", CultureInfo.InvariantCulture));
     }
 
     internal static JavaBigDecimal JavaBigDecimalFromDouble(double value)
     {
-        if (!double.IsFinite(value)) throw new FormatException("BigDecimal requires a finite value.");
+        if (!IsFinite(value)) throw new FormatException("BigDecimal requires a finite value.");
         if (value == 0) return new JavaBigDecimal(BigInteger.Zero, 0);
 
-        var bits = BitConverter.DoubleToUInt64Bits(value);
+        var bits = unchecked((ulong)BitConverter.DoubleToInt64Bits(value));
         var negative = (bits >> 63) != 0;
         var exponentBits = (int)((bits >> 52) & 0x7ff);
-        var significand = new BigInteger(bits & 0x000f_ffff_ffff_ffffUL);
+        var significand = new BigInteger(unchecked((long)(bits & 0x000f_ffff_ffff_ffffUL)));
         var binaryExponent = exponentBits == 0 ? -1074 : exponentBits - 1023 - 52;
         if (exponentBits != 0) significand += BigInteger.One << 52;
         if (negative) significand = -significand;
@@ -1395,17 +1399,49 @@ internal static partial class JavaCompat
 
     internal static decimal DecimalDivide(decimal left, decimal right, int scale, object rounding)
     {
-        var rounded = decimal.Round(
-            left / right,
-            scale,
-            string.Equals(rounding.ToString(), "DOWN", StringComparison.Ordinal)
-                ? MidpointRounding.ToZero
-                : MidpointRounding.ToEven);
+        var quotient = left / right;
+        decimal rounded;
+        if (string.Equals(rounding.ToString(), "DOWN", StringComparison.Ordinal))
+        {
+            var factor = 1m;
+            for (var index = 0; index < scale; index++) factor *= 10m;
+            rounded = decimal.Truncate(quotient * factor) / factor;
+        }
+        else
+        {
+            rounded = decimal.Round(quotient, scale, MidpointRounding.ToEven);
+        }
         // BigDecimal.toString() retains the requested division scale. Reparse a fixed-point
         // representation so System.Decimal carries the same scale in its value bits.
         return decimal.Parse(
             rounded.ToString("F" + scale, System.Globalization.CultureInfo.InvariantCulture),
             System.Globalization.NumberStyles.Number,
             System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    internal static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+
+    private static BigInteger BigIntegerFromUnsignedBigEndian(byte[] magnitude)
+    {
+        var littleEndian = new byte[magnitude.Length + 1];
+        for (var index = 0; index < magnitude.Length; index++)
+            littleEndian[index] = magnitude[magnitude.Length - index - 1];
+        return new BigInteger(littleEndian);
+    }
+
+    private static double ScaleByPowerOfTwo(double value, int exponent)
+    {
+        if (value == 0.0 || double.IsNaN(value) || double.IsInfinity(value)) return value;
+        while (exponent > 1023)
+        {
+            value *= BitConverter.Int64BitsToDouble(0x7fe0000000000000L);
+            exponent -= 1023;
+        }
+        while (exponent < -1022)
+        {
+            value *= BitConverter.Int64BitsToDouble(0x0010000000000000L);
+            exponent += 1022;
+        }
+        return value * BitConverter.Int64BitsToDouble((long)(exponent + 1023) << 52);
     }
 }

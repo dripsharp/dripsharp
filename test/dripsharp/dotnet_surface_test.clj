@@ -148,6 +148,37 @@
     (is (= {:rows 2 :types 2 :members 0 :contract-members 2}
            (select-keys result [:rows :types :members :contract-members])))))
 
+(deftest static-interface-companion-is-owned-by-its-java-interface
+  (let [workspace (paths/workspace-root)
+        source-file
+        (paths/resolve-path workspace
+                            "test/dripsharp/dotnet_surface_test.clj")
+        interface
+        (assoc-in
+         (generated-row source-file "type:Api" "type" "Api" 0)
+         [:generated :destination :owner]
+         "Correct.Library.Api")
+        field
+        (assoc-in
+         (generated-row source-file "field:Api#VALUE" "field" "Value" 0)
+         [:generated :destination :owner]
+         "Correct.Library.ApiStatics")
+        reflected
+        [(row {:owner "Correct.Library.Api"
+               :kind "type" :name "Api" :parameter-count "0"
+               :signature "interface Api" :nullability "type=oblivious"})
+         (row {:owner "Correct.Library.ApiStatics"
+               :kind "type" :name "ApiStatics" :parameter-count "0"
+               :signature "static class ApiStatics" :nullability "type=oblivious"})
+         (row {:owner "Correct.Library.ApiStatics"
+               :kind "field" :name "Value" :parameter-count "0"
+               :signature "System.Object Value" :nullability "field=non-null"})]
+        result
+        (surface/verify-generated-rows!
+         workspace reflected {:required-rows 2 :rows [interface field]})]
+    (is (= {:rows 3 :types 2 :members 1 :contract-members 2}
+           (select-keys result [:rows :types :members :contract-members])))))
+
 (deftest spoon-derived-metadata-detects-every-missing-or-misplaced-shape
   (let [workspace (paths/workspace-root)
         source-file

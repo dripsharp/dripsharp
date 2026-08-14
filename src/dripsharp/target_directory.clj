@@ -18,20 +18,26 @@
   (:import [java.io PushbackReader StringReader]
            [java.nio.file Files LinkOption]))
 
-(def schema-version 8)
+(def schema-version 9)
 (def legal-policy-schema-version 4)
 (def mapping-overlay-schema-version 1)
 
 (def ^:private manifest-keys
   #{:schema-version :target :product-family :contracts :baseline :legal-policy
-    :java :capabilities :profiles :destinations :mapping-overlays
+    :java :frameworks :capabilities :profiles :destinations :mapping-overlays
     :runtime-assets :validation-contracts :authorship :proof :publication})
+
+(def ^:private legacy-manifest-keys
+  (disj manifest-keys :frameworks))
 
 (def ^:private document-keys
   #{:product-goal :port-scope :dependencies})
 
 (def ^:private java-keys
   #{:source-language-version :runtime-major :preview-features?})
+
+(def ^:private framework-keys
+  #{:production :execution :net48-compatibility :net48-runtime-tested?})
 
 (def ^:private profile-descriptor-keys
   #{:id :path :destination :mapping-overlays :runtime-assets
@@ -426,6 +432,26 @@
      [:java :preview-features?] preview-features?
      "a boolean" boolean?))
   java)
+
+(defn- validate-frameworks!
+  [frameworks]
+  (let [context (validation-context "Target framework contract")]
+    (exact-keys! "Target framework contract" [] framework-keys frameworks)
+    (validation/check! context [:frameworks :production]
+                       (:production frameworks)
+                       "netstandard2.0" #{"netstandard2.0"})
+    (validation/check! context [:frameworks :execution]
+                       (:execution frameworks)
+                       "net10.0" #{"net10.0"})
+    (validation/check! context [:frameworks :net48-compatibility]
+                       (:net48-compatibility frameworks)
+                       ":inferred-from-netstandard2.0"
+                       #{:inferred-from-netstandard2.0})
+    (validation/check! context [:frameworks :net48-runtime-tested?]
+                       (:net48-runtime-tested? frameworks)
+                       "false because repository validation uses .NET 10"
+                       false?)
+    frameworks))
 
 (defn- validate-path-descriptors!
   [subject path expected-keys descriptors]
@@ -853,7 +879,8 @@
     descriptors)))
 
 (defn- load-destinations!
-  [target-root target family baseline-record declared-capabilities descriptors]
+  [target-root target family baseline-record declared-capabilities frameworks
+   descriptors]
   (into
    {}
    (map
@@ -910,7 +937,13 @@
           (validation/check! context
                              [:destinations id :project :target-framework]
                              target-framework "a non-blank string"
-                             non-blank-string?))
+                             non-blank-string?)
+          (when frameworks
+            (validation/agree!
+             context
+             [:frameworks :production] (:production frameworks)
+             [:destinations id :project :target-framework]
+             target-framework)))
         (let [undeclared (set/difference capabilities declared-capabilities)]
           (when (seq undeclared)
             (fail! "Destination requests undeclared target capabilities"
@@ -1583,7 +1616,7 @@
   (some #(path-contained-by? % path) excluded-paths))
 
 (defn- load-test-suites!
-  [target-root target path profiles managed-paths excluded-paths]
+  [target-root target path profiles frameworks managed-paths excluded-paths]
   (when-not (some #{"tests"} managed-paths)
     (fail! "Generated product test suites require managed tests/"
            {:target target
@@ -1618,9 +1651,11 @@
            (map #(get-in %
                          [:destination :configuration :project
                           :target-framework])
-                (vals profiles)))]
+                (vals profiles)))
+          execution-framework
+          (or (:execution frameworks) (first product-frameworks))]
       (when-not (= 1 (count product-frameworks))
-        (fail! "Test-suite projects require one family target framework"
+        (fail! "Test-suite projects require one production target framework"
                {:target target
                 :target-frameworks (vec (sort product-frameworks))}))
       (validation/check!
@@ -1653,8 +1688,8 @@
                                "true for explicit generated-solution inclusion"
                                true?))
           (validation/check! context (conj project-path :target-framework)
-                             target-framework (first product-frameworks)
-                             product-frameworks)
+                             target-framework execution-framework
+                             #{execution-framework})
           (distinct-vector! "Test-suite profile references"
                             (conj project-path :profile-references)
                             profile-references identity)
@@ -2051,7 +2086,8 @@
     nuget))
 
 (defn- load-publication!
-  [target-root target family publication profiles proof baseline-record]
+  [target-root target family publication profiles frameworks proof
+   baseline-record]
   (let [context (validation-context "Target publication contract"
                                     {:target target})
         kind (:kind publication)]
@@ -2174,7 +2210,7 @@
                   target publication profiles baseline-record)
                  :test-suites
                  (load-test-suites!
-                  target-root target test-suites-path profiles
+                  target-root target test-suites-path profiles frameworks
                   managed-paths excluded-paths))))
 
       (fail! "Target publication contract has an unsupported kind"
@@ -2401,16 +2437,29 @@
               {:target requested-target
                :path (str manifest-file)
                :reason :outside-workspace}))
-     (let [manifest (read-edn! "Target manifest" manifest-file)]
-       (exact-keys! "Target manifest" [] manifest-keys manifest)
+     (let [manifest (read-edn! "Target manifest" manifest-file)
+           manifest-schema-version (:schema-version manifest)]
        (validation/check!
         (validation-context "Target manifest")
-        [:schema-version] (:schema-version manifest)
-        (str "a supported schema version in " [7 schema-version])
-        #{7 schema-version})
+        [:schema-version] manifest-schema-version
+        (str "a supported schema version in " [7 8 schema-version])
+        #{7 8 schema-version})
+       (exact-keys! "Target manifest" []
+                    (if (= schema-version manifest-schema-version)
+                      manifest-keys
+                      legacy-manifest-keys)
+                    manifest)
+       (when (= :generated-repository (get-in manifest [:publication :kind]))
+         (validation/check!
+          (validation-context "Generated target manifest")
+          [:schema-version] manifest-schema-version
+          (str "the generated-publication schema version " schema-version)
+          #{schema-version}))
        (let [target (target-id (:target manifest))
              family (:product-family manifest)
              java (validate-java! (:java manifest))
+             frameworks (when (= schema-version manifest-schema-version)
+                          (validate-frameworks! (:frameworks manifest)))
              declared-capabilities
              (keyword-set! "Target capabilities" [:capabilities]
                            (:capabilities manifest))]
@@ -2478,7 +2527,7 @@
                  destinations
                  (load-destinations!
                   target-root target family baseline-record
-                  declared-capabilities (:destinations manifest))
+                  declared-capabilities frameworks (:destinations manifest))
                  mapping-overlays
                  (load-mapping-overlays!
                   target-root target family profile-names
@@ -2507,14 +2556,7 @@
                  publication
                  (load-publication! target-root target family
                                     (:publication manifest)
-                                    profiles proof baseline-record)
-                 _ (when (= :generated-repository (:kind publication))
-                     (validation/check!
-                      (validation-context "Generated target manifest")
-                      [:schema-version] (:schema-version manifest)
-                      (str "the generated-publication schema version "
-                           schema-version)
-                      #{schema-version}))
+                                    profiles frameworks proof baseline-record)
                  selected-destinations
                  (set (map #(get-in % [:descriptor :destination])
                            (vals profiles)))
@@ -2577,6 +2619,7 @@
               :manifest manifest
               :documents (:contracts manifest)
               :java java
+              :frameworks frameworks
               :capabilities declared-capabilities
               :baseline baseline
               :legal-policy legal-policy

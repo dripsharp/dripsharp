@@ -1688,6 +1688,12 @@
    [:java-library.mapping.executable/handler-0687
     ["executable:java.util.Deque#addLast(java.lang.Object)"
      "executable:java.util.ArrayDeque#addLast(java.lang.Object)"]]
+   [:java-library.mapping.executable/handler-0688
+    ["executable:java.lang.StrictMath#cbrt(double)"
+     "executable:java.lang.Math#cbrt(double)"]]
+   [:java-library.mapping.executable/handler-0689
+    ["executable:java.lang.StrictMath#copySign(double,double)"
+     "executable:java.lang.Math#copySign(double,double)"]]
    [:java-library.mapping/executable-default
     ["executable:java.io.DataOutputStream#flush()"
      "executable:java.io.DataOutputStream#write(byte[],int,int)"
@@ -1765,9 +1771,7 @@
      "executable:java.lang.StrictMath#asin(double)"
      "executable:java.lang.StrictMath#atan(double)"
      "executable:java.lang.StrictMath#atan2(double,double)"
-     "executable:java.lang.StrictMath#cbrt(double)"
      "executable:java.lang.StrictMath#ceil(double)"
-     "executable:java.lang.StrictMath#copySign(double,double)"
      "executable:java.lang.StrictMath#cos(double)"
      "executable:java.lang.StrictMath#decrementExact(int)"
      "executable:java.lang.StrictMath#decrementExact(long)"
@@ -2263,7 +2267,9 @@
     ["executable:java.util.concurrent.ConcurrentHashMap#<init>(int)"]]
    [:java-library.mapping.constructor/handler-0042
     ["executable:java.util.HashSet#<init>(int,float)"
+     "executable:java.util.HashSet#<init>(int)"
      "executable:java.util.LinkedHashSet#<init>(int,float)"
+     "executable:java.util.LinkedHashSet#<init>(int)"
      "executable:java.util.LinkedHashMap#<init>(int,float)"
      "executable:java.util.concurrent.ConcurrentHashMap#<init>(int,float)"]]
    [:java-library.mapping.constructor/handler-0043 ["executable:java.util.TreeMap#<init>()"]]
@@ -2351,7 +2357,6 @@
      "executable:java.util.ArrayList#<init>(java.util.Collection)"
      "executable:java.util.BitSet#<init>()"
      "executable:java.util.HashSet#<init>()"
-     "executable:java.util.HashSet#<init>(int)"
      "executable:java.util.HashSet#<init>(java.util.Collection)"
      "executable:java.util.Hashtable#<init>()"
      "executable:java.util.IdentityHashMap#<init>()"
@@ -2361,7 +2366,6 @@
      "executable:java.util.LinkedHashMap#<init>(int,float,boolean)"
      "executable:java.util.LinkedHashMap#<init>(java.util.Map)"
      "executable:java.util.LinkedHashSet#<init>()"
-     "executable:java.util.LinkedHashSet#<init>(int)"
      "executable:java.util.LinkedHashSet#<init>(java.util.Collection)"
      "executable:java.util.LinkedList#<init>()"
      "executable:java.util.NoSuchElementException#<init>()"
@@ -2520,23 +2524,23 @@
    "global::DripSharp.Runtime.JavaStandardCharsets.UTF8"
    "field:java.nio.file.LinkOption#NOFOLLOW_LINKS" "new object()"
    "field:java.nio.file.attribute.PosixFilePermission#GROUP_EXECUTE"
-   "global::System.IO.UnixFileMode.GroupExecute"
+   "global::DripSharp.Runtime.JavaUnixFileMode.GroupExecute"
    "field:java.nio.file.attribute.PosixFilePermission#GROUP_READ"
-   "global::System.IO.UnixFileMode.GroupRead"
+   "global::DripSharp.Runtime.JavaUnixFileMode.GroupRead"
    "field:java.nio.file.attribute.PosixFilePermission#GROUP_WRITE"
-   "global::System.IO.UnixFileMode.GroupWrite"
+   "global::DripSharp.Runtime.JavaUnixFileMode.GroupWrite"
    "field:java.nio.file.attribute.PosixFilePermission#OTHERS_EXECUTE"
-   "global::System.IO.UnixFileMode.OtherExecute"
+   "global::DripSharp.Runtime.JavaUnixFileMode.OtherExecute"
    "field:java.nio.file.attribute.PosixFilePermission#OTHERS_READ"
-   "global::System.IO.UnixFileMode.OtherRead"
+   "global::DripSharp.Runtime.JavaUnixFileMode.OtherRead"
    "field:java.nio.file.attribute.PosixFilePermission#OTHERS_WRITE"
-   "global::System.IO.UnixFileMode.OtherWrite"
+   "global::DripSharp.Runtime.JavaUnixFileMode.OtherWrite"
    "field:java.nio.file.attribute.PosixFilePermission#OWNER_EXECUTE"
-   "global::System.IO.UnixFileMode.UserExecute"
+   "global::DripSharp.Runtime.JavaUnixFileMode.UserExecute"
    "field:java.nio.file.attribute.PosixFilePermission#OWNER_READ"
-   "global::System.IO.UnixFileMode.UserRead"
+   "global::DripSharp.Runtime.JavaUnixFileMode.UserRead"
    "field:java.nio.file.attribute.PosixFilePermission#OWNER_WRITE"
-   "global::System.IO.UnixFileMode.UserWrite"
+   "global::DripSharp.Runtime.JavaUnixFileMode.UserWrite"
    "field:java.text.Bidi#DIRECTION_DEFAULT_LEFT_TO_RIGHT"
    "global::DripSharp.Runtime.JavaBidi.DirectionDefaultLeftToRight"
    "field:java.text.Bidi#DIRECTION_DEFAULT_RIGHT_TO_LEFT"

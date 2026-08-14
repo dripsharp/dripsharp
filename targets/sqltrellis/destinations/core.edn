@@ -7,7 +7,7 @@
  :project
  {:assembly-name "DripSharp.SqlTrellis"
   :root-namespace "DripSharp.SqlTrellis"
-  :target-framework "net10.0"
+  :target-framework "netstandard2.0"
   :nullable "disable"
   :implicit-usings false
   :warnings-as-errors true
@@ -44,6 +44,15 @@
   "net.sf.jsqlparser.util.validation.validator.AbstractValidator"
   "global::DripSharp.SqlTrellis.Util.Validation.IAbstractValidator"}
  :destination-capabilities #{:java-compat :java-regex-unicode}
+ :runtime-packages [{:id "Microsoft.CSharp"
+                     :version "4.7.0"
+                     :projection :netstandard-compatibility}
+                    {:id "System.Memory"
+                     :version "4.6.3"
+                     :projection :netstandard-compatibility}
+                    {:id "System.Text.Encoding.CodePages"
+                     :version "10.0.0"
+                     :projection :netstandard-compatibility}]
  :runtime-sources ["runtime/DripSharp.SqlTrellis.Compatibility.cs"]
  :resources
  {"rr/xhtml2rst.xsl"

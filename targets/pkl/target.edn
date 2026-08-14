@@ -1,4 +1,4 @@
-{:schema-version 8
+{:schema-version 9
  :target :pkl
  :product-family :brine
  :contracts
@@ -11,6 +11,11 @@
  {:source-language-version 17
   :runtime-major 17
   :preview-features? false}
+ :frameworks
+ {:production "netstandard2.0"
+  :execution "net10.0"
+  :net48-compatibility :inferred-from-netstandard2.0
+  :net48-runtime-tested? false}
  :capabilities #{:java-compat :java-regex-unicode :pkl/runtime}
  :authorship
  {:compatibility "config/authored-compat.edn"
@@ -27,7 +32,7 @@
    {:sources []
     :evidence [:pkl-complete-product-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 13842 :total-lines 22304}}
+    :budget {:authored-lines 14585 :total-lines 23047}}
    :required-capabilities #{:java-compat :java-regex-unicode}}
   {:id "pkl-core-value-model"
    :path "profiles/core.edn"
@@ -41,7 +46,7 @@
    {:sources [:pkl/runtime]
     :evidence [:pkl-complete-product-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 20973 :total-lines 137192}}
+    :budget {:authored-lines 21834 :total-lines 138046}}
    :required-capabilities
    #{:java-compat :java-regex-unicode :pkl/runtime}}]
  :destinations

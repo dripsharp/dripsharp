@@ -23,10 +23,17 @@ internal static class PklRuntimeBridge
     };
 
     internal static JavaTuple2<T[], T[]> SplitArray<T>(T[] source, int index) =>
-        new(source[..index], source[index..]);
+        new(CopyRange(source, 0, index), CopyRange(source, index, source.Length - index));
 
     internal static int[][] SplitArray(int[] source, int index) =>
-        new[] { source[..index], source[index..] };
+        new[] { CopyRange(source, 0, index), CopyRange(source, index, source.Length - index) };
+
+    private static T[] CopyRange<T>(T[] source, int offset, int count)
+    {
+        var result = new T[count];
+        global::System.Array.Copy(source, offset, result, 0, count);
+        return result;
+    }
 
     internal static global::DripSharp.Brine.Pair<object, object> ObjectPair<F, S>(
         global::DripSharp.Brine.Pair<F, S> pair) =>

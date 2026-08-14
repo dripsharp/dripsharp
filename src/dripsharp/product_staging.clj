@@ -173,6 +173,8 @@
         source-url "https://github.com/dripsharp/dripsharp"
         upstream-url (str/replace (:repository upstream) #"[.]git$" "")
         revision (:revision upstream)
+        production-framework (get-in target-contract [:frameworks :production])
+        execution-framework (get-in target-contract [:frameworks :execution])
         bundle (get-in publication [:nuget :bundle])
         install-records
         (if bundle
@@ -191,6 +193,16 @@
          "## Projects\n\n"
          (apply str (map project-line
                          (sort-by :assembly-name records)))
+         "\n## Framework compatibility\n\n"
+         "Every production library has one target framework: `"
+         production-framework "`. Repository test projects, runners, probes, "
+         "differential hosts, and package consumers execute on `"
+         execution-framework "` while referencing or consuming those "
+         "production assemblies.\n\n"
+         ".NET Framework 4.8 compatibility is inferred from the `"
+         production-framework "` contract and compatible dependency assets. "
+         "This repository does not build or run a .NET Framework 4.8 host and "
+         "does not empirically certify net48 runtime behavior.\n\n"
          "\n## Install\n\n"
          "The first public release is a prerelease. Install from nuget.org:\n\n"
          (apply

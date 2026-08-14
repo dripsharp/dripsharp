@@ -1,4 +1,4 @@
-{:schema-version 8
+{:schema-version 9
  :target :pdfcube
  :product-family :pdfcarton
  :contracts
@@ -11,6 +11,11 @@
  {:source-language-version 8
   :runtime-major 17
   :preview-features? false}
+ :frameworks
+ {:production "netstandard2.0"
+  :execution "net10.0"
+  :net48-compatibility :inferred-from-netstandard2.0
+  :net48-runtime-tested? false}
  :capabilities
  #{:calendar-value-semantics :font-discovery :icc :java-bidi :java-compat
    :java-io :java-nio :java-regex-unicode :jbig2 :jpx :managed-raster
@@ -31,7 +36,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 13842 :total-lines 15993}}
+    :budget {:authored-lines 14585 :total-lines 16736}}
    :required-capabilities
    #{:java-compat :java-io :java-nio :java-regex-unicode}}
   {:id "pdfcube-fontbox"
@@ -48,7 +53,7 @@
      :pdfcube/image-codecs-unsupported]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 26404 :total-lines 43865}}
+    :budget {:authored-lines 27182 :total-lines 44666}}
    :required-capabilities
    #{:font-discovery :icc :java-bidi :java-compat :java-regex-unicode
      :skia-geometry}}
@@ -62,7 +67,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 13842 :total-lines 21306}}
+    :budget {:authored-lines 14585 :total-lines 22049}}
    :required-capabilities #{:java-compat :java-regex-unicode :xml}}
   {:id "pdfcube-pdfbox"
    :path "profiles/pdfbox.edn"
@@ -78,7 +83,7 @@
      :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 12707 :total-lines 193920}}
+    :budget {:authored-lines 12742 :total-lines 193955}}
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing

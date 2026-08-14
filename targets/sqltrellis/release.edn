@@ -2,7 +2,7 @@
  :kind :github-alpha-zip
  :product-family :sqltrellis
  :asset-prefix "DripSharp.SqlTrellis"
- :target-framework "net10.0"
+ :target-framework "netstandard2.0"
  :entry-assembly "DripSharp.SqlTrellis.dll"
  :product-assemblies
  [{:file "DripSharp.SqlTrellis.dll"

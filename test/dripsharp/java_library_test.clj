@@ -228,7 +228,7 @@
      :notice-reference "NOTICE.txt"}
     :project {:assembly-name "Example.Java.Library"
               :root-namespace "Example.Java.Library"
-              :target-framework "net8.0"
+              :target-framework "netstandard2.0"
               :nullable "enable"
               :implicit-usings false
               :warnings-as-errors true}
@@ -254,6 +254,16 @@
     :namespaces {"example" "Example.Java.Library"}
     :namespace-prefixes {}
     :destination-capabilities capabilities
+    :runtime-packages
+    [{:id "Microsoft.CSharp"
+      :version "4.7.0"
+      :projection :netstandard-compatibility}
+     {:id "System.Memory"
+      :version "4.6.3"
+      :projection :netstandard-compatibility}
+     {:id "System.Text.Encoding.CodePages"
+      :version "10.0.0"
+      :projection :netstandard-compatibility}]
     :resources {}
     :resource-policy {:strategy :embedded-resource-preserve-path}
     :project-dependencies []
@@ -429,11 +439,12 @@
     (is (not (str/includes? statement "FunctionalAdapter")))
     (is (str/includes?
          parenthesed
-         (str "void global::Example.Java.Library.Statement.accept<TWildcard0_0>("
-              "global::Example.Java.Library.Visitor<TWildcard0_0> visitor)")))
+         (str "public new void accept<TWildcard0_0>("
+              "global::Example.Java.Library.Visitor<TWildcard0_0> visitor);")))
     (is (str/includes?
          statement
-         "this.accept<TWildcard0_0, object>(visitor, (object)default!);"))
+         (str "public void accept<TWildcard0_0>("
+              "global::Example.Java.Library.Visitor<TWildcard0_0> visitor);")))
     (is (not (str/includes? box "Expression.accept")))
     (is (not (str/includes? box "new virtual int getType()")))
     (is (str/includes? box "public virtual int getType()"))
@@ -2176,8 +2187,7 @@
     (is (str/includes?
          first-source
          (str "global::System.Collections.Generic.ISet<string> visited = "
-              "new global::System.Collections.Generic.HashSet<string>("
-              "global::DripSharp.Runtime.JavaCompat.CollectionCount(names));\n"
+              "new global::System.Collections.Generic.HashSet<string>();\n"
               "return visited.Add(name);")))
     (is (str/includes?
          first-source
@@ -2194,8 +2204,7 @@
          "return visited.Remove(name);"))
     (is (str/includes?
          first-source
-         (str "return new global::System.Collections.Generic.HashSet<string>("
-              "capacity);")))
+         "return new global::System.Collections.Generic.HashSet<string>();"))
     (is (str/includes?
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.CollectionToArray("
@@ -2273,7 +2282,9 @@
     (is (str/includes? source "return 1.17549435E-38f;"))
     (is (str/includes? source "return float.PositiveInfinity;"))
     (is (str/includes? source "return float.NegativeInfinity;"))
-    (is (str/includes? source "return float.IsFinite(value);"))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.IsFinite(value);"))
     (is (str/includes? source "return float.IsInfinity(value);"))
     (is (str/includes? source "return float.IsNaN(value);"))
     (is (str/includes?
@@ -2391,7 +2402,7 @@
                                         "src/Example/Java/Library/Unsupported.cs")))]
     (is (str/includes?
          source
-         "new global::System.Collections.Generic.HashSet<string>(capacity)"))
+         "new global::System.Collections.Generic.HashSet<string>()"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
@@ -4006,9 +4017,7 @@
                    "global::System.IO.IOException)) {\n")
               (str "throw (global::System.IO.IOException)("
                    "global::DripSharp.Runtime.JavaCompat.GetCause(caught)!);\n}\n")
-              (str "global::System.Runtime.ExceptionServices.ExceptionDispatchInfo."
-                   "Throw(caught);\n")
-              "throw new global::System.InvalidOperationException(\"unreachable\");\n}")))
+              "throw;\n}")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -4067,7 +4076,9 @@
                        "catch (global::System.Exception) {"))
     (is (not (str/includes? first-source "Exception ignored")))
     (is (not (str/includes? first-source "Exception outer")))
-    (is (str/includes? first-source "Exception inner"))
+    (is (not (str/includes? first-source "Exception inner")))
+    (is (str/includes? first-source
+                       "catch (global::System.Exception) {\nthrow;"))
     (is (= first-source second-source))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
@@ -5498,7 +5509,7 @@
     (is (str/includes? source "return random.NextInt();"))
     (is (str/includes?
          runtime-source
-         "RandomNumberGenerator.Fill(MemoryMarshal.AsBytes(destination.AsSpan()));"))
+         "using (var generator = RandomNumberGenerator.Create()) generator.GetBytes(bytes);"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
@@ -6858,7 +6869,9 @@
         source
         (slurp (str (paths/resolve-path (:project-root result)
                                         "src/Example/Java/Library/Lists.cs")))]
-    (is (str/includes? source "values.EnsureCapacity(10);"))
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.EnsureCapacity(values, 10);"))
     (is (zero? (get-in result [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root result)
@@ -7023,6 +7036,10 @@
         visitor
         (slurp (str (paths/resolve-path (:project-root result)
                                         "src/Example/Java/Library/Visitor.cs")))
+        visitor-impl
+        (slurp (str (paths/resolve-path
+                     (:project-root result)
+                     "src/Example/Java/Library/VisitorImpl.cs")))
         box
         (slurp (str (paths/resolve-path (:project-root result)
                                         "src/Example/Java/Library/Box.cs")))
@@ -7034,11 +7051,16 @@
          "visit<S, TWildcard0_0>(global::Example.Java.Library.Box<TWildcard0_0> box, S context)"))
     (is (str/includes?
          visitor
+         "public void visit<TWildcard0_0>(global::Example.Java.Library.Box<TWildcard0_0> box)"))
+    (is (not (str/includes? visitor "this.visit<object")))
+    (is (str/includes?
+         visitor-impl
          "this.visit<object, TWildcard0_0>(box, (object)default!)"))
     (is (str/includes? box "visitor.visit<S, T>(this, context)"))
     (is (str/includes?
          visitable
-         "this.accept<TWildcard0_0, object>(visitor, (object)default!)"))
+         "public void accept<TWildcard0_0>(global::Example.Java.Library.ModelVisitor<TWildcard0_0> visitor);"))
+    (is (not (str/includes? visitable "this.accept<TWildcard0_0, object>")))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root result)
                                :command ["dotnet" "build" (:project-file result)
@@ -7159,9 +7181,8 @@
                                         "src/Example/Java/Library/Configured.cs")))]
     (is (str/includes?
          default-capability
-         (str "void global::Example.Java.Library.Capability.validate("
-              "global::System.Action<string> errors) => "
-              "this.validate(errors);")))
+         (str "public new void validate("
+              "global::System.Action<string> errors);")))
     (is (str/includes? default-capability
                        "public sealed class __DefaultCapabilityFunctionalAdapter"))
     (is (str/includes?

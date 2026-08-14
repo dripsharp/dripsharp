@@ -174,7 +174,7 @@ internal sealed class JavaMethodType : IEquatable<JavaMethodType>
     public override bool Equals(object? obj) => Equals(obj as JavaMethodType);
     public override int GetHashCode() =>
         ParameterTypes.Aggregate(ReturnType.GetHashCode(),
-            (hash, parameter) => HashCode.Combine(hash, parameter));
+            (hash, parameter) => JavaCompat.CombineHash(hash, parameter));
 }
 
 internal sealed class JavaMethodHandle
@@ -273,7 +273,17 @@ internal sealed class JavaProcessBuilder
         using var parts = command.GetEnumerator();
         if (!parts.MoveNext()) throw new ArgumentException("Process command must not be empty.", nameof(command));
         startInfo.FileName = parts.Current;
-        while (parts.MoveNext()) startInfo.ArgumentList.Add(parts.Current);
+        var arguments = new List<string>();
+        while (parts.MoveNext()) arguments.Add(QuoteProcessArgument(parts.Current));
+        startInfo.Arguments = string.Join(" ", arguments);
+    }
+
+    private static string QuoteProcessArgument(string value)
+    {
+        if (value.Length > 0 && value.All(character =>
+                !char.IsWhiteSpace(character) && character != '"'))
+            return value;
+        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
     }
 
     internal JavaProcessBuilder Directory(string directory)
@@ -361,7 +371,7 @@ internal sealed class JavaProcess : IDisposable
     {
         try
         {
-            if (IsAlive()) process.Kill(entireProcessTree: true);
+            if (IsAlive()) Kill(process);
         }
         catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException or ThreadInterruptedException) { }
         return this;
@@ -416,7 +426,7 @@ internal sealed class JavaProcess : IDisposable
         {
             try
             {
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                if (!process.HasExited) Kill(process);
             }
             catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException or ThreadInterruptedException) { }
             ClosePipes();
@@ -426,6 +436,15 @@ internal sealed class JavaProcess : IDisposable
             cancellationRegistration.Dispose();
             process.Dispose();
         }
+    }
+
+    private static void Kill(Process process)
+    {
+#if NETSTANDARD2_0
+        process.Kill();
+#else
+        process.Kill(entireProcessTree: true);
+#endif
     }
 }
 
@@ -534,11 +553,17 @@ internal static partial class JavaCompat
 
     internal static readonly TextWriter @out = Console.Out;
     internal static readonly TextWriter err = Console.Error;
+    internal static bool IsWindows() =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    internal static bool IsMacOS() =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+    internal static bool IsLinux() =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
     private static readonly Dictionary<string, string> SystemProperties = new(StringComparer.Ordinal)
     {
-        ["os.name"] = OperatingSystem.IsMacOS() ? "Mac OS X"
-            : OperatingSystem.IsWindows() ? "Windows"
-            : OperatingSystem.IsLinux() ? "Linux"
+        ["os.name"] = IsMacOS() ? "Mac OS X"
+            : IsWindows() ? "Windows"
+            : IsLinux() ? "Linux"
             : Environment.OSVersion.Platform.ToString(),
         ["os.version"] = Environment.OSVersion.VersionString,
         ["os.arch"] = RuntimeInformation.OSArchitecture switch
@@ -576,11 +601,13 @@ internal static partial class JavaCompat
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Static |
             BindingFlags.Public | BindingFlags.NonPublic;
-        MethodInfo? method = type.GetMethod(name, flags, parameterTypes);
+        MethodInfo? method = type.GetMethod(
+            name, flags, binder: null, types: parameterTypes, modifiers: null);
         if (method is null && name.Length > 0)
         {
             string publicName = char.ToUpperInvariant(name[0]) + name.Substring(1);
-            method = type.GetMethod(publicName, flags, parameterTypes);
+            method = type.GetMethod(
+                publicName, flags, binder: null, types: parameterTypes, modifiers: null);
         }
         return method ?? throw new MissingMethodException(type.FullName, name);
     }
@@ -851,7 +878,8 @@ internal static partial class JavaCompat
         if (float.IsNaN(value)) return "NaN";
         if (float.IsPositiveInfinity(value)) return "Infinity";
         if (float.IsNegativeInfinity(value)) return "-Infinity";
-        if (value == 0) return BitConverter.SingleToInt32Bits(value) < 0 ? "-0.0" : "0.0";
+        if (value == 0)
+            return BitConverter.ToInt32(BitConverter.GetBytes(value), 0) < 0 ? "-0.0" : "0.0";
         return JavaFiniteFloatingString(value.ToString("R", CultureInfo.InvariantCulture), Math.Abs((double)value));
     }
 
@@ -1094,13 +1122,28 @@ internal static partial class JavaCompat
     }
     internal static int StringCompareTo(string left, string right) =>
         string.Compare(left, right, StringComparison.Ordinal);
-    internal static int LongLeadingZeros(long value) => BitOperations.LeadingZeroCount(unchecked((ulong)value));
-    internal static int LongTrailingZeros(long value) => BitOperations.TrailingZeroCount(unchecked((ulong)value));
-    internal static int IntLeadingZeros(int value) => BitOperations.LeadingZeroCount(unchecked((uint)value));
+    internal static int LongLeadingZeros(long value) => LeadingZeroCount(unchecked((ulong)value));
+    internal static int LongTrailingZeros(long value)
+    {
+        var bits = unchecked((ulong)value);
+        if (bits == 0) return 64;
+        var count = 0;
+        while ((bits & 1) == 0) { count++; bits >>= 1; }
+        return count;
+    }
+    internal static int IntLeadingZeros(int value) =>
+        LeadingZeroCount(unchecked((uint)value)) - 32;
     internal static int HighestOneBit(int value) =>
-        value == 0 ? 0 : 1 << (31 - BitOperations.LeadingZeroCount(unchecked((uint)value)));
+        value == 0 ? 0 : 1 << (31 - IntLeadingZeros(value));
     internal static int FloatToIntBits(float value) =>
-        float.IsNaN(value) ? 0x7fc00000 : BitConverter.SingleToInt32Bits(value);
+        float.IsNaN(value) ? 0x7fc00000 : BitConverter.ToInt32(BitConverter.GetBytes(value), 0);
+    private static int LeadingZeroCount(ulong value)
+    {
+        if (value == 0) return 64;
+        var count = 0;
+        for (var bit = 1UL << 63; (value & bit) == 0; bit >>= 1) count++;
+        return count;
+    }
     internal static int DoubleHashCode(double value)
     {
         var bits = double.IsNaN(value)
@@ -1234,7 +1277,7 @@ internal static partial class JavaCompat
     private static string? ClassResourceName(Assembly assembly, Type? type, string name)
     {
         var absolute = name.TrimStart('/').Replace('/', '.');
-        var relative = name.StartsWith('/') || type?.Namespace is null
+        var relative = name.Length > 0 && name[0] == '/' || type?.Namespace is null
             ? absolute
             : type.Namespace + "." + absolute;
         if (assembly.GetManifestResourceInfo(relative) is not null) return relative;
@@ -1280,9 +1323,14 @@ internal static partial class JavaCompat
         member.GetCustomAttributes(true).Any(annotationType.IsInstanceOfType);
     internal static Exception NewThrowable()
     {
-        var throwable = new Exception();
-        System.Runtime.ExceptionServices.ExceptionDispatchInfo.SetCurrentStackTrace(throwable);
-        return throwable;
+        try
+        {
+            throw new Exception();
+        }
+        catch (Exception throwable)
+        {
+            return throwable;
+        }
     }
 
     internal static System.Diagnostics.StackFrame[] GetStackTrace(Exception exception) =>

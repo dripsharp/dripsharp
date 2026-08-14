@@ -322,7 +322,7 @@
                                             :dotnet.type/file-attribute]
    "java.nio.file.attribute.FileOwnerAttributeView" ["global::DripSharp.Runtime.JavaAclFileAttributeView"
                                                      :dotnet.type/file-owner-attribute-view]
-   "java.nio.file.attribute.PosixFilePermission" ["global::System.IO.UnixFileMode"
+   "java.nio.file.attribute.PosixFilePermission" ["global::DripSharp.Runtime.JavaUnixFileMode"
                                                   :dotnet.type/unix-file-mode]
    "java.nio.file.attribute.PosixFilePermissions" ["global::DripSharp.Runtime.JavaCompat"
                                                    :dotnet.type/java-compat]

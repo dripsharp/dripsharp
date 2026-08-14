@@ -15,6 +15,10 @@ namespace DripSharp.SqlTrellis.Util.Validation
     public interface IValidator
     {
         IDictionary<ValidationCapability, ISet<ValidationException>> getValidationErrors();
+        IDictionary<ValidationCapability, ISet<ValidationException>> getValidationErrors(
+            params ValidationCapability[] capabilities);
+        IDictionary<ValidationCapability, ISet<ValidationException>> getValidationErrors(
+            ICollection<ValidationCapability> capabilities);
         void setContext(ValidationContext context);
     }
 

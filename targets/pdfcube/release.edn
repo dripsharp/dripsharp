@@ -2,7 +2,7 @@
  :kind :github-alpha-zip
  :product-family :pdfcarton
  :asset-prefix "DripSharp.PdfCarton"
- :target-framework "net10.0"
+ :target-framework "netstandard2.0"
  :entry-assembly "DripSharp.PdfCarton.Preflight.dll"
  :product-assemblies
  [{:file "DripSharp.PdfCarton.dll"

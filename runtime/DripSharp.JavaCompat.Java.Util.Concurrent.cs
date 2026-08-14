@@ -121,9 +121,8 @@ internal sealed class JavaFuture<T>
         var cancellation = JavaCancellation.CurrentToken;
         try
         {
-            return cancellation.CanBeCanceled
-                ? task.WaitAsync(cancellation).GetAwaiter().GetResult()
-                : task.GetAwaiter().GetResult();
+            if (cancellation.CanBeCanceled) task.Wait(cancellation);
+            return task.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -139,9 +138,18 @@ internal sealed class JavaFuture<T>
     {
         try
         {
-            return task.WaitAsync(JavaTimeUnits.ToTimeSpan(timeout, unit),
-                    JavaCancellation.CurrentToken)
-                .GetAwaiter().GetResult();
+            var remaining = JavaTimeUnits.ToTimeSpan(timeout, unit);
+            while (!task.IsCompleted && remaining.TotalMilliseconds > int.MaxValue)
+            {
+                if (task.Wait(int.MaxValue, JavaCancellation.CurrentToken)) break;
+                remaining -= TimeSpan.FromMilliseconds(int.MaxValue);
+            }
+            if (!task.IsCompleted &&
+                !task.Wait(
+                    checked((int)Math.Ceiling(remaining.TotalMilliseconds)),
+                    JavaCancellation.CurrentToken))
+                throw new TimeoutException();
+            return task.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException) when (JavaCancellation.CurrentToken.IsCancellationRequested)
         {

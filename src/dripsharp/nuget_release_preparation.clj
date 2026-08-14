@@ -404,7 +404,8 @@
                                     (re-matches sha256-pattern (or sha256 ""))))
                              pdbs)))
                    (string? target-framework)
-                   (re-matches #"net[1-9][0-9]*[.]0" target-framework)
+                   (re-matches #"net(?:standard2[.]0|[1-9][0-9]*[.]0)"
+                               target-framework)
                    (re-matches commit-pattern (or source-commit "")))
       (fail! "NuGet package lacks an exact symbol, framework, or source pairing"
              {:target target :package package-id

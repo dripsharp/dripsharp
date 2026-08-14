@@ -230,6 +230,17 @@
        (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                           (declaring-types declaration)))))
 
+(defn- interface-static-companion-name [^CtType interface]
+  (str (pascal (.getSimpleName interface)) "Statics"))
+
+(defn- project-interface-static-companion-base [ctx ^CtType interface]
+  (let [types (declaring-types interface)]
+    (str "global::" (destination-namespace ctx interface) "."
+         (str/join
+          "."
+          (concat (map #(pascal (.getSimpleName ^CtType %)) (butlast types))
+                  [(interface-static-companion-name interface)])))))
+
 (defn- reference-declaring-types [^CtTypeReference reference]
   (loop [current reference result ()]
     (if current
@@ -264,6 +275,8 @@
                      (str/join "." (map pascal segments)))))))
         (sort-by (comp - count key) mappings))))))
 
+(def ^:dynamic *destination-type-parameter-overrides* nil)
+
 (defn- destination-type-parameter-name [^CtElement parameter]
   (let [base (identifier (.getSimpleName parameter))
         parent (when (.isParentInitialized parameter) (.getParent parameter))
@@ -275,9 +288,12 @@
         outer-names (when owner
                       (set (map #(.getSimpleName ^CtElement %)
                                 (.getFormalCtTypeParameters ^CtType owner))))]
-    (if (contains? outer-names (.getSimpleName parameter))
-      (str (if executable-owner "Method" "Nested") (pascal base))
-      base)))
+    (or
+     (when *destination-type-parameter-overrides*
+       (get *destination-type-parameter-overrides* (.getSimpleName parameter)))
+     (if (contains? outer-names (.getSimpleName parameter))
+       (str (if executable-owner "Method" "Nested") (pascal base))
+       base))))
 
 (declare lexical-type-parameter?)
 
@@ -729,7 +745,11 @@
     (raw " = ")
     value-node]))
 
-(declare covariant-value-override?)
+(declare covariant-value-override? netstandard-covariant-override?
+         wildcard-generic-covariant-override?
+         interface-static-companion-member?
+         inherited-default-interface-method?
+         inherited-abstract-interface-method)
 
 (def ^:private boxed-primitive-types
   #{"java.lang.Boolean" "java.lang.Byte" "java.lang.Character"
@@ -3033,6 +3053,21 @@
     "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
     "executable:java.util.SortedSet#headSet(java.lang.Object)"})
 
+(defn- netstandard-math-invocation-node
+  [key arguments]
+  (cond
+    (contains? #{"executable:java.lang.StrictMath#cbrt(double)"
+                 "executable:java.lang.Math#cbrt(double)"}
+               key)
+    (compat-call "Cbrt" arguments)
+
+    (contains? #{"executable:java.lang.StrictMath#copySign(double,double)"
+                 "executable:java.lang.Math#copySign(double,double)"}
+               key)
+    (compat-call "CopySign" arguments)
+
+    :else nil))
+
 (defn- supplemental-neutral-invocation-node
   [ctx ^CtInvocation element key target-node arguments]
   (cond (or (and (str/starts-with? key "executable:java.util.function.") (or (str/includes? key "#accept(") (str/includes? key "#apply(") (str/includes? key "#get()"))) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (= key "executable:java.lang.invoke.MethodHandles#lookup()")) (cond (str/starts-with? key "executable:java.util.function.") (csharp/invocation target-node arguments) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (csharp/invocation (csharp/member target-node "Compare") arguments) :else (raw "global::DripSharp.Runtime.JavaMethodHandles.lookup()")) (= key "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)") (csharp/invocation target-node arguments) (str/starts-with? key "executable:java.util.Set#of(") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) (str/starts-with? key "executable:java.util.Map#of(") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.MapOf") (mapv (fn* [p1__477#] (type-node ctx p1__477#)) (.getActualTypeArguments (.getType element)))) (raw "(") (sequence-node arguments ", ") (raw ")")]) (and (str/starts-with? key "executable:java.util.Arrays#copyOf(") (str/ends-with? key ",int)")) (let [component (some-> (first (.getArguments element)) .getType .getComponentType)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.CopyOf") [(type-node ctx component)]) (raw "(") (sequence-node arguments ", ") (raw ")")])) (and (str/starts-with? key "executable:java.util.Arrays#copyOfRange(") (str/ends-with? key ",int,int)")) (let [component (some-> (first (.getArguments element)) .getType .getComponentType)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.CopyOfRange") [(type-node ctx component)]) (raw "(") (sequence-node arguments ", ") (raw ")")])) :else (case key ("executable:java.lang.Character#isLetterOrDigit(int)" "executable:java.lang.Character#isUnicodeIdentifierPart(int)" "executable:java.lang.Character#isUnicodeIdentifierStart(int)") (compat-call (case key "executable:java.lang.Character#isLetterOrDigit(int)" "IsLetterOrDigit" "executable:java.lang.Character#isUnicodeIdentifierPart(int)" "IsUnicodeIdentifierPart" "IsUnicodeIdentifierStart") arguments) "executable:java.lang.Character#isHighSurrogate(char)" (sequence-node [(raw "char.IsHighSurrogate(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Character#isLowSurrogate(char)" (sequence-node [(raw "char.IsLowSurrogate(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Character#toString(int)" (compat-call "CodePointToString" arguments) "executable:java.lang.Character#toTitleCase(int)" (compat-call "ToTitleCase" arguments) "executable:java.lang.Character#isTitleCase(int)" (compat-call "IsTitleCase" arguments) ("executable:java.lang.Character#isUpperCase(char)" "executable:java.lang.Character#isUpperCase(int)") (compat-call "IsUpperCase" arguments) "executable:java.lang.Character#toUpperCase(int)" (compat-call "ToUpperCase" arguments) "executable:java.lang.CharSequence#isEmpty()" (csharp/binary "==" 40 (sequence-node [target-node (raw ".Length")]) (raw "0")) "executable:java.lang.String#formatted(java.lang.Object[])" (compat-call "Formatted" (into [target-node] arguments)) "executable:java.lang.String#isBlank()" (sequence-node [(raw "global::System.String.IsNullOrWhiteSpace(") target-node (raw ")")]) "executable:java.lang.String#repeat(int)" (compat-call "Repeat" (into [target-node] arguments)) "executable:java.lang.String#regionMatches(boolean,int,java.lang.String,int,int)" (compat-call "RegionMatches" (into [target-node] arguments)) "executable:java.lang.String#regionMatches(int,java.lang.String,int,int)" (compat-call "RegionMatches" (into [target-node (raw "false")] arguments)) "executable:java.lang.String#lastIndexOf(int,int)" (compat-call "StringLastIndexOf" (into [target-node] arguments)) "executable:java.lang.String#lastIndexOf(java.lang.String)" (sequence-node [target-node (raw ".LastIndexOf(") (first arguments) (raw ", global::System.StringComparison.Ordinal)")]) "executable:java.util.Deque#getFirst()" (compat-call "DequeGetFirst" [target-node]) "executable:java.util.Deque#descendingIterator()" (csharp/invocation (csharp/member target-node "DescendingIterator") []) ("executable:java.util.List#of()" "executable:java.util.List#of(java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" "executable:java.util.List#of(java.lang.Object[])") (let [element-node (collection-element-type-node ctx element)] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.ListOf") [element-node]) (raw "(") (sequence-node (collection-factory-argument-nodes ctx element arguments element-node) ", ") (raw ")")])) "executable:java.util.List#copyOf(java.util.Collection)" (compat-call "ListCopyOf" arguments) ("executable:java.util.List#addAll(java.util.Collection)" "executable:java.util.ArrayList#addAll(java.util.Collection)") (compat-call "AddAll" (into [target-node] arguments)) "executable:java.util.Locale#getDefault()" (raw "global::System.Globalization.CultureInfo.CurrentCulture") "executable:java.util.Collections#singleton(java.lang.Object)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.SetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Objects#deepEquals(java.lang.Object,java.lang.Object)" (compat-call "DeepEquals" arguments) "executable:java.util.Map#equals(java.lang.Object)" (compat-call "Equals" (into [target-node] arguments)) ("executable:java.util.function.Function#apply(java.lang.Object)" "executable:java.util.function.LongFunction#apply(long)" "executable:java.lang.Runnable#run()") (csharp/invocation target-node arguments) "executable:java.util.function.Function#identity()" (raw "value => value") "executable:java.util.function.Function#andThen(java.util.function.Function)" (compat-call "AndThen" (into [target-node] arguments)) "executable:java.util.ResourceBundle#getBundle(java.lang.String,java.util.Locale)" (compat-call "GetResourceBundle" arguments) "executable:java.util.ResourceBundle#getString(java.lang.String)" (compat-call "GetResourceString" (into [target-node] arguments)) "executable:java.util.stream.IntStream#allMatch(java.util.function.IntPredicate)" (compat-call "All" (into [target-node] arguments)) "executable:java.util.stream.IntStream#skip(long)" (compat-call "Skip" (into [target-node] arguments)) "executable:java.lang.Iterable#iterator()" (compat-call "Iterator" [target-node]) ("executable:java.util.stream.IntStream#iterator()" "executable:java.util.stream.LongStream#iterator()") (compat-call "Iterator" [target-node]) "executable:java.util.stream.Collectors#joining(java.lang.CharSequence)" (compat-call "Joining" arguments) "executable:java.util.stream.Collectors#toMap(java.util.function.Function,java.util.function.Function)" (let [key-selector-type (.getType (first (.getArguments element))) value-selector-type (.getType (second (.getArguments element))) input-type (first (.getActualTypeArguments key-selector-type)) key-type (second (.getActualTypeArguments key-selector-type)) value-type (second (.getActualTypeArguments value-selector-type))] (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.ToMap") (mapv (fn* [p1__479#] (type-node ctx p1__479#)) [input-type key-type value-type])) (raw "(") (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#end()" (sequence-node [target-node (raw ".End()")]) "executable:java.util.regex.Matcher#find()" (sequence-node [target-node (raw ".Find()")]) "executable:java.util.regex.Matcher#find(int)" (sequence-node [target-node (raw ".Find(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.regex.Matcher#group()" (sequence-node [target-node (raw ".Group()")]) "executable:java.util.regex.Matcher#group(int)" (sequence-node [target-node (raw ".Group(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.regex.Matcher#group(java.lang.String)" "executable:java.util.regex.Matcher#groupCount()" "executable:java.util.regex.Matcher#lookingAt()" "executable:java.util.regex.Matcher#region(int,int)" "executable:java.util.regex.Matcher#replaceFirst(java.lang.String)" "executable:java.util.regex.Matcher#start(int)" "executable:java.util.regex.Matcher#end(int)" "executable:java.util.regex.Matcher#toMatchResult()" "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuffer,java.lang.String)" "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuilder,java.lang.String)" "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuffer)" "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuilder)") (let [name (get {"executable:java.util.regex.Matcher#groupCount()" "GroupCount", "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuilder)" "AppendTail", "executable:java.util.regex.Matcher#replaceFirst(java.lang.String)" "ReplaceFirst", "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuffer,java.lang.String)" "AppendReplacement", "executable:java.util.regex.Matcher#group(java.lang.String)" "Group", "executable:java.util.regex.Matcher#start(int)" "Start", "executable:java.util.regex.Matcher#end(int)" "End", "executable:java.util.regex.Matcher#toMatchResult()" "ToMatchResult", "executable:java.util.regex.Matcher#appendReplacement(java.lang.StringBuilder,java.lang.String)" "AppendReplacement", "executable:java.util.regex.Matcher#lookingAt()" "LookingAt", "executable:java.util.regex.Matcher#region(int,int)" "Region", "executable:java.util.regex.Matcher#appendTail(java.lang.StringBuffer)" "AppendTail"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#quoteReplacement(java.lang.String)" (compat-call "QuoteReplacement" arguments) ("executable:java.util.regex.MatchResult#end()" "executable:java.util.regex.MatchResult#end(int)" "executable:java.util.regex.MatchResult#group()" "executable:java.util.regex.MatchResult#group(int)" "executable:java.util.regex.MatchResult#groupCount()" "executable:java.util.regex.MatchResult#start()" "executable:java.util.regex.MatchResult#start(int)") (let [name (get {"executable:java.util.regex.MatchResult#end()" "End", "executable:java.util.regex.MatchResult#end(int)" "End", "executable:java.util.regex.MatchResult#group()" "Group", "executable:java.util.regex.MatchResult#group(int)" "Group", "executable:java.util.regex.MatchResult#groupCount()" "GroupCount", "executable:java.util.regex.MatchResult#start()" "Start", "executable:java.util.regex.MatchResult#start(int)" "Start"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.util.regex.Matcher#replaceAll(java.lang.String)" (sequence-node [target-node (raw ".ReplaceAll(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.regex.Matcher#start()" (sequence-node [target-node (raw ".Start()")]) "executable:java.util.regex.Pattern#matches(java.lang.String,java.lang.CharSequence)" (compat-call "StringMatches" [(second arguments) (first arguments)]) "executable:java.util.regex.Pattern#compile(java.lang.String,int)" (compat-call "CompileRegex" arguments) ("executable:java.util.regex.Pattern#pattern()" "executable:java.util.regex.Pattern#toString()") (compat-call "RegexPattern" [target-node]) "executable:java.util.regex.Pattern#flags()" (compat-call "RegexFlags" [target-node]) "executable:java.util.regex.Pattern#quote(java.lang.String)" (compat-call "QuoteRegex" arguments) "executable:java.util.regex.Pattern#split(java.lang.CharSequence,int)" (compat-call "RegexSplit" (into [target-node] arguments)) "executable:java.util.stream.Stream#anyMatch(java.util.function.Predicate)" (compat-call "Any" (into [target-node] arguments)) "executable:java.util.stream.Stream#allMatch(java.util.function.Predicate)" (compat-call "AllValues" (into [target-node] arguments)) "executable:java.util.stream.Stream#noneMatch(java.util.function.Predicate)" (compat-call "NoValues" (into [target-node] arguments)) "executable:java.util.stream.Stream#distinct()" (sequence-node [(raw "global::System.Linq.Enumerable.Distinct(") target-node (raw ")")]) "executable:java.util.stream.Stream#count()" (sequence-node [(raw "global::System.Linq.Enumerable.LongCount(") target-node (raw ")")]) "executable:java.util.stream.Stream#reduce(java.util.function.BinaryOperator)" (compat-call "ReduceOptional" (into [target-node] arguments)) "executable:java.util.stream.Stream#findFirst()" (compat-call "FindFirstOptional" [target-node]) "executable:java.util.stream.StreamSupport#stream(java.util.Spliterator,boolean)" (first arguments) ("executable:java.lang.Iterable#spliterator()" "executable:java.util.Collection#spliterator()" "executable:java.util.ServiceLoader#spliterator()" "executable:java.util.stream.Stream#spliterator()") target-node "executable:java.util.stream.Stream#toList()" (compat-call "ToListValues" [target-node]) "executable:java.util.stream.IntStream#toArray()" (sequence-node [(raw "global::System.Linq.Enumerable.ToArray(") target-node (raw ")")]) "executable:java.util.stream.IntStream#max()" (compat-call "MaxOptionalInt" [target-node]) "executable:java.util.stream.IntStream#forEach(java.util.function.IntConsumer)" (compat-call "ForEach" (into [target-node] arguments)) "executable:java.util.Optional#empty()" (sequence-node [(type-node ctx (.getType element)) (raw ".Empty()")]) "executable:java.util.Optional#of(java.lang.Object)" (sequence-node [(type-node ctx (.getType element)) (raw ".Of(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ofNullable(java.lang.Object)" (sequence-node [(type-node ctx (.getType element)) (raw ".OfNullable(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#get()" (sequence-node [target-node (raw ".Get()")]) "executable:java.util.Optional#isPresent()" (sequence-node [target-node (raw ".IsPresent()")]) "executable:java.util.Optional#isEmpty()" (sequence-node [target-node (raw ".IsEmpty()")]) "executable:java.util.Optional#equals(java.lang.Object)" (compat-call "Equals" (into [target-node] arguments)) "executable:java.util.Optional#map(java.util.function.Function)" (sequence-node [target-node (raw ".Map(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#orElse(java.lang.Object)" (sequence-node [target-node (raw ".OrElse(") (if (and (= 1 (count (.getArguments element))) (instance? CtLiteral (first (.getArguments element))) (nil? (.getValue (first (.getArguments element))))) (raw "default!") (sequence-node arguments ", ")) (raw ")")]) "executable:java.util.Optional#orElseGet(java.util.function.Supplier)" (sequence-node [target-node (raw ".OrElseGet(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ifPresent(java.util.function.Consumer)" (sequence-node [target-node (raw ".IfPresent(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.Optional#ifPresentOrElse(java.util.function.Consumer,java.lang.Runnable)" (sequence-node [target-node (raw ".IfPresentOrElse(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.Optional#orElseThrow()" "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)") (sequence-node [target-node (raw ".OrElseThrow(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.OptionalInt#isPresent()" (sequence-node [target-node (raw ".HasValue")]) "executable:java.util.OptionalInt#getAsInt()" (sequence-node [target-node (raw ".Value")]) "executable:java.util.OptionalInt#empty()" (raw "(int?)null") "executable:java.util.OptionalInt#of(int)" (first arguments) "executable:java.util.OptionalInt#orElse(int)" (sequence-node [target-node (raw ".GetValueOrDefault(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.OptionalLong#empty()" (raw "(long?)null") "executable:java.util.OptionalLong#of(long)" (first arguments) "executable:java.util.OptionalLong#ifPresent(java.util.function.LongConsumer)" (compat-call "OptionalLongIfPresent" (into [target-node] arguments)) ("executable:java.lang.Math#acos(double)" "executable:java.lang.Math#abs(double)" "executable:java.lang.Math#abs(float)" "executable:java.lang.Math#abs(int)" "executable:java.lang.Math#abs(long)" "executable:java.lang.Math#atan2(double,double)" "executable:java.lang.Math#cos(double)" "executable:java.lang.Math#floor(double)" "executable:java.lang.Math#log(double)" "executable:java.lang.Math#log10(double)" "executable:java.lang.Math#pow(double,double)" "executable:java.lang.Math#sin(double)" "executable:java.lang.Math#sqrt(double)") (let [name (get {"executable:java.lang.Math#abs(double)" "Abs", "executable:java.lang.Math#pow(double,double)" "Pow", "executable:java.lang.Math#log10(double)" "Log10", "executable:java.lang.Math#floor(double)" "Floor", "executable:java.lang.Math#cos(double)" "Cos", "executable:java.lang.Math#abs(int)" "Abs", "executable:java.lang.Math#abs(long)" "Abs", "executable:java.lang.Math#log(double)" "Log", "executable:java.lang.Math#abs(float)" "Abs", "executable:java.lang.Math#acos(double)" "Acos", "executable:java.lang.Math#atan2(double,double)" "Atan2", "executable:java.lang.Math#sqrt(double)" "Sqrt", "executable:java.lang.Math#sin(double)" "Sin"} key)] (sequence-node [(raw (str "global::System.Math." name "(")) (sequence-node arguments ", ") (raw ")")])) ("executable:java.lang.Math#floorDiv(int,int)" "executable:java.lang.Math#round(double)" "executable:java.lang.Math#round(float)" "executable:java.lang.Math#signum(double)" "executable:java.lang.Math#signum(float)" "executable:java.lang.Math#toDegrees(double)" "executable:java.lang.Math#toRadians(double)") (compat-call (get {"executable:java.lang.Math#floorDiv(int,int)" "FloorDiv", "executable:java.lang.Math#round(double)" "MathRound", "executable:java.lang.Math#round(float)" "MathRoundFloat", "executable:java.lang.Math#signum(double)" "SignumDouble", "executable:java.lang.Math#signum(float)" "SignumFloat", "executable:java.lang.Math#toDegrees(double)" "ToDegrees", "executable:java.lang.Math#toRadians(double)" "ToRadians"} key) arguments) ("executable:java.lang.Math#addExact(long,long)" "executable:java.lang.StrictMath#addExact(long,long)") (compat-call "AddExact" arguments) ("executable:java.lang.Math#addExact(int,int)" "executable:java.lang.StrictMath#addExact(int,int)") (compat-call "AddExactInt" arguments) ("executable:java.lang.Math#negateExact(int)" "executable:java.lang.Math#negateExact(long)" "executable:java.lang.StrictMath#negateExact(int)" "executable:java.lang.StrictMath#negateExact(long)") (compat-call "NegateExact" arguments) ("executable:java.lang.Math#incrementExact(int)" "executable:java.lang.Math#incrementExact(long)" "executable:java.lang.StrictMath#incrementExact(int)" "executable:java.lang.StrictMath#incrementExact(long)") (compat-call "IncrementExact" arguments) ("executable:java.lang.Math#decrementExact(int)" "executable:java.lang.Math#decrementExact(long)" "executable:java.lang.StrictMath#decrementExact(int)" "executable:java.lang.StrictMath#decrementExact(long)") (compat-call "DecrementExact" arguments) "executable:java.lang.StrictMath#toIntExact(long)" (compat-call "ToIntExact" arguments) ("executable:java.lang.StrictMath#abs(double)" "executable:java.lang.StrictMath#abs(long)" "executable:java.lang.StrictMath#acos(double)" "executable:java.lang.StrictMath#asin(double)" "executable:java.lang.StrictMath#atan(double)" "executable:java.lang.StrictMath#atan2(double,double)" "executable:java.lang.StrictMath#cbrt(double)" "executable:java.lang.StrictMath#ceil(double)" "executable:java.lang.StrictMath#copySign(double,double)" "executable:java.lang.StrictMath#cos(double)" "executable:java.lang.StrictMath#exp(double)" "executable:java.lang.StrictMath#floor(double)" "executable:java.lang.StrictMath#log(double)" "executable:java.lang.StrictMath#log10(double)" "executable:java.lang.StrictMath#max(double,double)" "executable:java.lang.StrictMath#max(long,long)" "executable:java.lang.StrictMath#min(double,double)" "executable:java.lang.StrictMath#min(long,long)" "executable:java.lang.StrictMath#pow(double,double)" "executable:java.lang.StrictMath#rint(double)" "executable:java.lang.StrictMath#sin(double)" "executable:java.lang.StrictMath#sqrt(double)" "executable:java.lang.StrictMath#tan(double)") (let [method-name (get {"executable:java.lang.StrictMath#exp(double)" "Exp", "executable:java.lang.StrictMath#floor(double)" "Floor", "executable:java.lang.StrictMath#asin(double)" "Asin", "executable:java.lang.StrictMath#cbrt(double)" "Cbrt", "executable:java.lang.StrictMath#atan2(double,double)" "Atan2", "executable:java.lang.StrictMath#cos(double)" "Cos", "executable:java.lang.StrictMath#sqrt(double)" "Sqrt", "executable:java.lang.StrictMath#max(double,double)" "Max", "executable:java.lang.StrictMath#min(long,long)" "Min", "executable:java.lang.StrictMath#abs(long)" "Abs", "executable:java.lang.StrictMath#log10(double)" "Log10", "executable:java.lang.StrictMath#pow(double,double)" "Pow", "executable:java.lang.StrictMath#copySign(double,double)" "CopySign", "executable:java.lang.StrictMath#ceil(double)" "Ceiling", "executable:java.lang.StrictMath#sin(double)" "Sin", "executable:java.lang.StrictMath#acos(double)" "Acos", "executable:java.lang.StrictMath#min(double,double)" "Min", "executable:java.lang.StrictMath#rint(double)" "Round", "executable:java.lang.StrictMath#max(long,long)" "Max", "executable:java.lang.StrictMath#atan(double)" "Atan", "executable:java.lang.StrictMath#tan(double)" "Tan", "executable:java.lang.StrictMath#log(double)" "Log", "executable:java.lang.StrictMath#abs(double)" "Abs"} key)] (csharp/invocation (raw (str "global::System.Math." method-name)) arguments)) ("executable:java.lang.StrictMath#getExponent(double)" "executable:java.lang.Math#getExponent(double)") (compat-call "GetExponent" arguments) "executable:java.lang.Double#doubleToRawLongBits(double)" (sequence-node [(raw "global::System.BitConverter.DoubleToInt64Bits(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StrictMath#signum(double)" (compat-call "SignumDouble" arguments) ("executable:java.lang.Math#multiplyExact(long,long)" "executable:java.lang.Math#multiplyExact(long,int)" "executable:java.lang.StrictMath#multiplyExact(long,int)" "executable:java.lang.StrictMath#multiplyExact(long,long)") (compat-call "MultiplyExact" arguments) ("executable:java.lang.Math#multiplyExact(int,int)" "executable:java.lang.StrictMath#multiplyExact(int,int)") (compat-call "MultiplyExactInt" arguments) ("executable:java.lang.Math#subtractExact(long,long)" "executable:java.lang.StrictMath#subtractExact(long,long)") (compat-call "SubtractExact" arguments) ("executable:java.text.Bidi#getBaseLevel()" "executable:java.text.Bidi#getRunCount()" "executable:java.text.Bidi#getRunLevel(int)" "executable:java.text.Bidi#getRunLimit(int)" "executable:java.text.Bidi#getRunStart(int)" "executable:java.text.Bidi#isMixed()") (let [name (get {"executable:java.text.Bidi#getBaseLevel()" "GetBaseLevel", "executable:java.text.Bidi#getRunCount()" "GetRunCount", "executable:java.text.Bidi#getRunLevel(int)" "GetRunLevel", "executable:java.text.Bidi#getRunLimit(int)" "GetRunLimit", "executable:java.text.Bidi#getRunStart(int)" "GetRunStart", "executable:java.text.Bidi#isMixed()" "IsMixed"} key)] (sequence-node [target-node (raw (str "." name "(")) (sequence-node arguments ", ") (raw ")")])) "executable:java.text.Bidi#reorderVisually(byte[],int,java.lang.Object[],int,int)" (sequence-node [(raw "global::DripSharp.Runtime.JavaBidi.ReorderVisually(") (sequence-node arguments ", ") (raw ")")]) "executable:java.text.Normalizer#normalize(java.lang.CharSequence,java.text.Normalizer$Form)" (compat-call "Normalize" arguments) "executable:javax.net.ssl.KeyManagerFactory#getDefaultAlgorithm()" (raw "global::DripSharp.Runtime.JavaKeyManagerFactory.GetDefaultAlgorithm()") "executable:javax.net.ssl.KeyManagerFactory#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaKeyManagerFactory.GetInstance(") (sequence-node arguments ", ") (raw ")")]) ("executable:javax.net.ssl.KeyManagerFactory#init(java.security.KeyStore,char[])" "executable:javax.net.ssl.TrustManagerFactory#init(java.security.KeyStore)" "executable:javax.net.ssl.SSLContext#init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)") (sequence-node [target-node (raw ".Init(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.KeyManagerFactory#getKeyManagers()" (sequence-node [target-node (raw ".GetKeyManagers()")]) "executable:javax.net.ssl.TrustManagerFactory#getDefaultAlgorithm()" (raw "global::DripSharp.Runtime.JavaTrustManagerFactory.GetDefaultAlgorithm()") "executable:javax.net.ssl.TrustManagerFactory#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaTrustManagerFactory.GetInstance(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.TrustManagerFactory#getTrustManagers()" (sequence-node [target-node (raw ".GetTrustManagers()")]) "executable:javax.net.ssl.SSLContext#getDefault()" (raw "global::DripSharp.Runtime.JavaSslContext.GetDefault()") "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)" (sequence-node [(raw "global::DripSharp.Runtime.JavaSslContext.GetInstance(") (sequence-node arguments ", ") (raw ")")]) "executable:javax.net.ssl.SSLSocketFactory#getDefault()" (raw "global::DripSharp.Runtime.JavaSocketFactory.Default") "executable:javax.net.ssl.SSLContext#getSocketFactory()" (sequence-node [target-node (raw ".GetSocketFactory()")]) "executable:javax.net.ssl.SSLContext#getServerSocketFactory()" (sequence-node [target-node (raw ".GetServerSocketFactory()")]) "executable:java.lang.String#lines()" (compat-call "StringLines" [target-node]) "executable:java.lang.String#strip()" (sequence-node [target-node (raw ".Trim()")]) "executable:java.util.stream.Stream#skip(long)" (compat-call "DropValues" (into [target-node] arguments)) "executable:java.util.Objects#requireNonNullElseGet(java.lang.Object,java.util.function.Supplier)" (compat-call "RequireNonNullElseGet" arguments) "executable:java.util.Random#nextLong()" (sequence-node [target-node (raw ".NextLong()")]) "executable:java.util.concurrent.CompletableFuture#complete(java.lang.Object)" (sequence-node [target-node (raw ".Complete(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.concurrent.CompletableFuture#completeExceptionally(java.lang.Throwable)" (sequence-node [target-node (raw ".CompleteExceptionally(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.concurrent.Future#get()" (sequence-node [target-node (raw ".Get()")]) "executable:java.lang.StringBuilder#append(char[])" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StringBuilder#append(char[],int,int)" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.StringBuilder#append(java.lang.CharSequence)" (sequence-node [target-node (raw ".Append(") (sequence-node arguments ", ") (raw ")")]) "executable:java.lang.Long#byteValue()" (sequence-node [(raw "unchecked((sbyte)(") target-node (raw "))")]) "executable:java.lang.Long#shortValue()" (sequence-node [(raw "unchecked((short)(") target-node (raw "))")]) "executable:java.lang.Long#intValue()" (sequence-node [(raw "unchecked((int)(") target-node (raw "))")]) "executable:java.lang.Float#doubleValue()" (sequence-node [(raw "(double)(") target-node (raw ")")]) "executable:java.net.URI#getAuthority()" (sequence-node [(compat-call "UriAuthority" [target-node]) (raw "!")]) "executable:java.net.URI#getFragment()" (sequence-node [(compat-call "UriFragment" [target-node]) (raw "!")]) "executable:java.net.URI#getQuery()" (sequence-node [(compat-call "UriQuery" [target-node]) (raw "!")]) "executable:java.net.URI#getSchemeSpecificPart()" (sequence-node [(compat-call "UriSchemeSpecificPart" [target-node]) (raw "!")]) "executable:java.net.URI#getRawAuthority()" (sequence-node [(compat-call "UriRawAuthority" [target-node]) (raw "!")]) "executable:java.net.URI#getRawSchemeSpecificPart()" (sequence-node [(compat-call "UriRawSchemeSpecificPart" [target-node]) (raw "!")]) "executable:java.net.URI#getRawUserInfo()" (sequence-node [(compat-call "UriRawUserInfo" [target-node]) (raw "!")]) "executable:java.net.URI#isAbsolute()" (csharp/member target-node "IsAbsoluteUri") "executable:java.net.URI#isOpaque()" (compat-call "UriIsOpaque" [target-node]) "executable:java.net.URI#normalize()" (compat-call "NormalizeUri" [target-node]) "executable:java.net.URI#relativize(java.net.URI)" (compat-call "RelativizeUri" (into [target-node] arguments)) ("executable:java.net.URI#resolve(java.lang.String)" "executable:java.net.URI#resolve(java.net.URI)") (compat-call "ResolveUri" (into [target-node] arguments)) "executable:java.net.URI#toASCIIString()" (csharp/member target-node "AbsoluteUri") "executable:java.net.URI#toURL()" target-node "executable:java.net.URI#compareTo(java.net.URI)" (compat-call "CompareUri" (into [target-node] arguments)) "executable:java.net.URL#toURI()" target-node "executable:java.net.URL#getProtocol()" (compat-call "UriScheme" [target-node]) "executable:java.net.URLConnection#connect()" (csharp/invocation (csharp/member target-node "Connect") arguments) "executable:java.net.URLConnection#setUseCaches(boolean)" (csharp/invocation (csharp/member target-node "SetUseCaches") arguments) "executable:java.net.URLConnection#getInputStream()" (csharp/invocation (csharp/member target-node "GetInputStream") arguments) "executable:java.net.URLConnection#getURL()" (csharp/invocation (csharp/member target-node "GetURL") arguments) "executable:java.lang.invoke.VarHandle#storeStoreFence()" (csharp/invocation (raw "global::System.Threading.Thread.MemoryBarrier") []) "executable:java.nio.file.Path#toString()" (sequence-node [target-node (raw ".ToString()!")]) "executable:java.nio.file.Path#of(java.lang.String,java.lang.String[])" (compat-call "PathOf" arguments) "executable:java.nio.file.Path#of(java.net.URI)" (compat-call "PathOfUri" arguments) "executable:java.nio.file.Path#getRoot()" (compat-call "PathRoot" [target-node]) "executable:java.nio.file.Path#isAbsolute()" (compat-call "PathIsAbsolute" [target-node]) "executable:java.nio.file.Path#normalize()" (compat-call "NormalizePath" [target-node]) "executable:java.nio.file.Path#startsWith(java.nio.file.Path)" (compat-call "PathStartsWith" (into [target-node] arguments)) ("executable:java.nio.file.Path#endsWith(java.lang.String)" "executable:java.nio.file.Path#endsWith(java.nio.file.Path)") (compat-call "PathEndsWith" (into [target-node] arguments)) "executable:java.nio.file.Path#getFileName()" (csharp/invocation (raw "global::System.IO.Path.GetFileName") [target-node]) "executable:java.nio.file.Path#getParent()" (compat-call "PathParent" [target-node]) "executable:java.nio.file.Path#resolveSibling(java.lang.String)" (compat-call "PathResolveSibling" (into [target-node] arguments)) "executable:java.nio.file.Path#getNameCount()" (compat-call "PathNameCount" [target-node]) "executable:java.nio.file.Path#getName(int)" (compat-call "PathName" (into [target-node] arguments)) "executable:java.nio.file.Path#relativize(java.nio.file.Path)" (compat-call "PathRelativize" (into [target-node] arguments)) ("executable:java.nio.file.Path#resolve(java.lang.String)" "executable:java.nio.file.Path#resolve(java.nio.file.Path)") (compat-call "PathResolve" (into [target-node] arguments)) "executable:java.nio.file.Path#toAbsolutePath()" (csharp/invocation (raw "global::System.IO.Path.GetFullPath") [target-node]) "executable:java.nio.file.Path#toRealPath(java.nio.file.LinkOption[])" (compat-call "RealPath" [target-node]) "executable:java.nio.file.Path#toUri()" (compat-call "PathToUri" [target-node]) "executable:java.nio.file.Files#exists(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "Exists" [(first arguments)]) "executable:java.nio.file.Files#createDirectories(java.nio.file.Path,java.nio.file.attribute.FileAttribute[])" (compat-call "CreateDirectories" [(first arguments)]) "executable:java.nio.file.Files#newOutputStream(java.nio.file.Path,java.nio.file.OpenOption[])" (compat-call "NewOutputStream" arguments) "executable:java.nio.file.Files#deleteIfExists(java.nio.file.Path)" (compat-call "DeleteIfExists" arguments) ("executable:java.nio.file.Files#readString(java.nio.file.Path)" "executable:java.nio.file.Files#readString(java.nio.file.Path,java.nio.charset.Charset)") (compat-call "ReadString" arguments) ("executable:java.nio.file.Files#copy(java.io.InputStream,java.nio.file.Path,java.nio.file.CopyOption[])" "executable:java.nio.file.Files#copy(java.nio.file.Path,java.io.OutputStream)" "executable:java.nio.file.Files#copy(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption[])") (compat-call "Copy" arguments) "executable:java.nio.file.Files#move(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption[])" (compat-call "Move" arguments) "executable:java.nio.file.Files#writeString(java.nio.file.Path,java.lang.CharSequence,java.nio.file.OpenOption[])" (compat-call "WriteString" arguments) "executable:java.nio.file.Files#isSymbolicLink(java.nio.file.Path)" (compat-call "IsSymbolicLink" arguments) "executable:java.nio.file.Files#newDirectoryStream(java.nio.file.Path)" (compat-call "NewDirectoryStream" arguments) "executable:java.nio.file.Files#isDirectory(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "IsDirectory" [(first arguments)]) "executable:java.nio.file.Files#isRegularFile(java.nio.file.Path,java.nio.file.LinkOption[])" (compat-call "PathIsRegularFile" [(first arguments)]) "executable:java.nio.file.Files#list(java.nio.file.Path)" (compat-call "List" arguments) "executable:java.nio.file.FileSystem#getPath(java.lang.String,java.lang.String[])" (csharp/invocation (csharp/member target-node "GetPath") arguments) "executable:java.nio.file.FileSystem#provider()" (csharp/invocation (csharp/member target-node "Provider") arguments) "executable:java.nio.file.FileSystem#isOpen()" (csharp/invocation (csharp/member target-node "IsOpen") arguments) "executable:java.nio.file.FileSystem#isReadOnly()" (csharp/invocation (csharp/member target-node "IsReadOnly") arguments) "executable:java.nio.file.FileSystem#getSeparator()" (csharp/invocation (csharp/member target-node "GetSeparator") arguments) "executable:java.nio.file.FileSystem#getFileStores()" (csharp/invocation (csharp/member target-node "GetFileStores") arguments) "executable:java.nio.file.FileSystem#supportedFileAttributeViews()" (csharp/invocation (csharp/member target-node "SupportedFileAttributeViews") arguments) "executable:java.nio.file.FileSystem#getPathMatcher(java.lang.String)" (csharp/invocation (csharp/member target-node "GetPathMatcher") arguments) "executable:java.nio.file.FileSystem#getUserPrincipalLookupService()" (csharp/invocation (csharp/member target-node "GetUserPrincipalLookupService") arguments) "executable:java.nio.file.FileSystem#newWatchService()" (csharp/invocation (csharp/member target-node "NewWatchService") arguments) "executable:java.nio.file.FileSystem#close()" (csharp/invocation (csharp/member target-node "Close") arguments) "executable:java.nio.file.FileSystems#getDefault()" (csharp/invocation (csharp/member target-node "GetDefault") arguments) "executable:java.nio.file.FileSystems#getFileSystem(java.net.URI)" (csharp/invocation (csharp/member target-node "GetFileSystem") arguments) "executable:java.nio.file.FileSystems#newFileSystem(java.net.URI,java.util.Map)" (csharp/invocation (csharp/member target-node "NewFileSystem") arguments) "executable:java.util.EnumSet#noneOf(java.lang.Class)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetNoneOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) "executable:java.util.EnumSet#allOf(java.lang.Class)" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetAllOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.EnumSet#copyOf(java.util.EnumSet)" "executable:java.util.EnumSet#copyOf(java.util.Collection)") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.EnumSetCopyOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum,java.lang.Enum)" "executable:java.util.EnumSet#of(java.lang.Enum,java.lang.Enum[])") (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.SetOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) ("executable:java.net.http.HttpRequest#newBuilder()" "executable:java.net.http.HttpRequest#newBuilder(java.net.URI)") (csharp/invocation (csharp/member target-node "NewBuilder") arguments) "executable:java.net.http.HttpRequest#uri()" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpRequest#headers()" (csharp/invocation (csharp/member target-node "Headers") arguments) "executable:java.net.http.HttpRequest#expectContinue()" (csharp/invocation (csharp/member target-node "ExpectContinue") arguments) "executable:java.net.http.HttpRequest#method()" (csharp/invocation (csharp/member target-node "Method") arguments) "executable:java.net.http.HttpRequest#timeout()" (csharp/invocation (csharp/member target-node "Timeout") arguments) "executable:java.net.http.HttpRequest#version()" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpRequest#bodyPublisher()" (csharp/invocation (csharp/member target-node "BodyPublisher") arguments) "executable:java.net.http.HttpRequest$Builder#uri(java.net.URI)" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpRequest$Builder#timeout(java.time.Duration)" (csharp/invocation (csharp/member target-node "Timeout") arguments) "executable:java.net.http.HttpRequest$Builder#version(java.net.http.HttpClient$Version)" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpRequest$Builder#header(java.lang.String,java.lang.String)" (csharp/invocation (csharp/member target-node "Header") arguments) "executable:java.net.http.HttpRequest$Builder#setHeader(java.lang.String,java.lang.String)" (csharp/invocation (csharp/member target-node "SetHeader") arguments) "executable:java.net.http.HttpRequest$Builder#expectContinue(boolean)" (csharp/invocation (csharp/member target-node "ExpectContinue") arguments) "executable:java.net.http.HttpRequest$Builder#method(java.lang.String,java.net.http.HttpRequest$BodyPublisher)" (csharp/invocation (csharp/member target-node "Method") arguments) "executable:java.net.http.HttpRequest$Builder#GET()" (csharp/invocation (csharp/member target-node "GET") arguments) "executable:java.net.http.HttpRequest$Builder#DELETE()" (csharp/invocation (csharp/member target-node "DELETE") arguments) "executable:java.net.http.HttpRequest$Builder#build()" (csharp/invocation (csharp/member target-node "Build") arguments) "executable:java.net.http.HttpRequest$BodyPublishers#noBody()" (csharp/invocation (csharp/member target-node "NoBody") arguments) "executable:java.net.http.HttpResponse#statusCode()" (csharp/invocation (csharp/member target-node "StatusCode") arguments) "executable:java.net.http.HttpResponse#body()" (csharp/invocation (csharp/member target-node "Body") arguments) "executable:java.net.http.HttpResponse#request()" (csharp/invocation (csharp/member target-node "Request") arguments) "executable:java.net.http.HttpResponse#previousResponse()" (csharp/invocation (csharp/member target-node "PreviousResponse") arguments) "executable:java.net.http.HttpResponse#uri()" (csharp/invocation (csharp/member target-node "Uri") arguments) "executable:java.net.http.HttpResponse#headers()" (csharp/invocation (csharp/member target-node "Headers") arguments) "executable:java.net.http.HttpResponse#version()" (csharp/invocation (csharp/member target-node "Version") arguments) "executable:java.net.http.HttpHeaders#firstValue(java.lang.String)" (csharp/invocation (csharp/member target-node "FirstValue") arguments) "executable:java.net.http.HttpHeaders#map()" (csharp/invocation (csharp/member target-node "Map") arguments) "executable:java.net.http.HttpResponse$BodyHandlers#ofInputStream()" (csharp/invocation (csharp/member target-node "OfInputStream") arguments) "executable:java.net.http.HttpResponse$BodyHandlers#ofByteArray()" (csharp/invocation (csharp/member target-node "OfByteArray") arguments) "executable:java.util.zip.ZipInputStream#getNextEntry()" (csharp/invocation (csharp/member target-node "GetNextEntry") arguments) "executable:java.util.zip.ZipInputStream#readAllBytes()" (csharp/invocation (csharp/member target-node "ReadAllBytes") arguments) "executable:java.util.zip.ZipInputStream#closeEntry()" (csharp/invocation (csharp/member target-node "CloseEntry") arguments) "executable:java.util.zip.ZipOutputStream#putNextEntry(java.util.zip.ZipEntry)" (csharp/invocation (csharp/member target-node "PutNextEntry") arguments) "executable:java.util.zip.ZipOutputStream#closeEntry()" (csharp/invocation (csharp/member target-node "CloseEntry") arguments) "executable:java.util.zip.ZipEntry#getName()" (csharp/invocation (csharp/member target-node "GetName") arguments) "executable:java.util.zip.ZipEntry#isDirectory()" (csharp/invocation (csharp/member target-node "IsDirectory") arguments) "executable:java.util.zip.ZipEntry#setTimeLocal(java.time.LocalDateTime)" (csharp/invocation (csharp/member target-node "SetTimeLocal") arguments) "executable:java.util.Arrays#stream(java.lang.Object[])" (sequence-node [(csharp/generic-name (raw "global::DripSharp.Runtime.JavaCompat.StreamOf") [(type-node ctx (collection-element-type element))]) (raw "(") (sequence-node arguments ", ") (raw ")")]) nil)))
@@ -3956,9 +3991,7 @@
    :java-library.mapping.executable/handler-0591
    (fn
      [{:keys [target-node arguments]}]
-     {:node
-      (sequence-node
-       [target-node (raw ".EnsureCapacity(") (sequence-node arguments ", ") (raw ")")])}),
+     {:node (compat-call "EnsureCapacity" (into [target-node] arguments))}),
    :java-library.mapping.executable/handler-0453
    (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".Length")])}),
    :java-library.mapping.executable/handler-0022
@@ -4363,12 +4396,11 @@
    :java-library.mapping.executable/handler-0141
    (fn
      [{:keys [target-node arguments]}]
-     {:node
-      (sequence-node
-       [target-node
-        (raw ".Replace(")
-        (sequence-node arguments ", ")
-        (raw ", global::System.StringComparison.Ordinal)")])}),
+     {:node (compat-call "ReplaceOrdinal" (into [target-node] arguments))}),
+   :java-library.mapping.executable/handler-0688
+   (fn [{:keys [arguments]}] {:node (compat-call "Cbrt" arguments)}),
+   :java-library.mapping.executable/handler-0689
+   (fn [{:keys [arguments]}] {:node (compat-call "CopySign" arguments)}),
    :java-library.mapping.executable/handler-0394
    (fn [{:keys [arguments]}] {:node (compat-call "SumInt" arguments)}),
    :java-library.mapping.executable/handler-0672
@@ -4699,7 +4731,7 @@
    :java-library.mapping.executable/handler-0083
    (fn
      [{:keys [arguments]}]
-     {:node (sequence-node [(raw "double.IsFinite(") (sequence-node arguments ", ") (raw ")")])}),
+     {:node (compat-call "IsFinite" arguments)}),
    :java-library.mapping.executable/handler-0517
    (fn
      [{:keys [target-node arguments]}]
@@ -4779,7 +4811,7 @@
    :java-library.mapping.executable/handler-0082
    (fn
      [{:keys [arguments]}]
-     {:node (sequence-node [(raw "float.IsFinite(") (sequence-node arguments ", ") (raw ")")])}),
+     {:node (compat-call "IsFinite" arguments)}),
    :java-library.mapping.executable/handler-0632
    (fn
      [{:keys [target-node arguments]}]
@@ -4886,15 +4918,24 @@
      [{:keys [arguments element children occurrence default-target-node declaration],
        target :target-element}]
      {:node
-      (sequence-node
-       [(when target (sequence-node [default-target-node (raw ".")]))
-        (child-node children (.getExecutable element))
-        (when
-         (= :project (:origin occurrence))
-          (project-invocation-type-arguments-node @ctx-holder element declaration))
-        (raw "(")
-        (sequence-node arguments ", ")
-        (raw ")")])}),
+      (case (:key occurrence)
+        ("executable:java.lang.StrictMath#cbrt(double)"
+         "executable:java.lang.Math#cbrt(double)")
+        (compat-call "Cbrt" arguments)
+
+        ("executable:java.lang.StrictMath#copySign(double,double)"
+         "executable:java.lang.Math#copySign(double,double)")
+        (compat-call "CopySign" arguments)
+
+        (sequence-node
+         [(when target (sequence-node [default-target-node (raw ".")]))
+          (child-node children (.getExecutable element))
+          (when
+           (= :project (:origin occurrence))
+            (project-invocation-type-arguments-node @ctx-holder element declaration))
+          (raw "(")
+          (sequence-node arguments ", ")
+          (raw ")")]))}),
    :java-library.mapping.executable/handler-0196
    (fn
      [{:keys [target-node arguments]}]
@@ -6057,12 +6098,15 @@
    (fn
      [{:keys [arguments element]}]
      {:node
-      (sequence-node
-       [(raw "new ")
-        (type-node @ctx-holder (.getType element))
-        (raw "(")
-        (first arguments)
-        (raw ")")])}),
+      (let [source-type (.getQualifiedName (.getType element))]
+        (sequence-node
+         [(raw "new ")
+          (type-node @ctx-holder (.getType element))
+          (raw "(")
+          (when-not (contains? #{"java.util.HashSet" "java.util.LinkedHashSet"}
+                               source-type)
+            (first arguments))
+          (raw ")")]))}),
    :java-library.mapping.constructor/handler-0043
    (fn
      [{:keys [element]}]
@@ -6255,11 +6299,24 @@
          (let [target (.getTarget element)
                occurrence (invocation-occurrence context element)
                declaration (:declaration occurrence)
+               static-interface-owner
+               (when (and (= :project (:origin occurrence))
+                          (instance? CtMethod declaration)
+                          (.hasModifier ^CtMethod declaration
+                                        ModifierKind/STATIC)
+                          (interface-type?
+                           (.getDeclaringType ^CtMethod declaration))
+                          (interface-static-companion-member?
+                           @ctx-holder declaration))
+                 (.getDeclaringType ^CtMethod declaration))
                target-node
-               (when target
-                 (invocation-target-node
-                  @ctx-holder children target declaration
-                  (.getExecutable element)))
+               (if static-interface-owner
+                 (raw (project-interface-static-companion-base
+                       @ctx-holder static-interface-owner))
+                 (when target
+                   (invocation-target-node
+                    @ctx-holder children target declaration
+                    (.getExecutable element))))
                parameter-types
                (executable-parameter-types
                 declaration (.getExecutable element) (some-> target .getType))
@@ -6347,6 +6404,8 @@
                    (:key occurrence) target-node arguments)
                   (security-invocation-node
                    (:key occurrence) target-node arguments)
+                  (netstandard-math-invocation-node
+                   (:key occurrence) arguments)
                   (supplemental-neutral-invocation-node
                    @ctx-holder element (:key occurrence) target-node arguments)
                   (or
@@ -6375,7 +6434,7 @@
                     children
                     declaration)
                    (sequence-node
-                    [(when target
+                    [(when target-node
                        (sequence-node [default-target-node (raw ".")]))
                      (child-node children (.getExecutable element))
                      (when (= :project (:origin occurrence))
@@ -6384,16 +6443,25 @@
                      (raw "(")
                      (sequence-node arguments ", ")
                      (raw ")")]))))
-               raw-node
-               (if (and (= :project (:origin occurrence))
-                        (instance? CtMethod declaration)
-                        (covariant-value-override?
+               covariant-cast-node
+               (when (and (= :project (:origin occurrence))
+                          (instance? CtMethod declaration)
+                          (not (statement-expression? element)))
+                 (or
+                  (when-let [normalized-covariant-cast
+                             (get-in @ctx-holder
+                                     [:services
+                                      :normalized-covariant-invocation-cast-node])]
+                    (normalized-covariant-cast element declaration))
+                  (when (netstandard-covariant-override?
                          (.getDeclaringType ^CtMethod declaration)
-                         declaration))
+                         declaration)
+                    (type-node @ctx-holder (.getType ^CtMethod declaration)))))
+               raw-node
+               (if covariant-cast-node
                  (sequence-node
-                  [(raw "(")
-                   (type-node @ctx-holder (.getType ^CtMethod declaration))
-                   (raw ")(") raw-node (raw ")")])
+                  [(raw "((") covariant-cast-node
+                   (raw ")(") raw-node (raw "))")])
                  raw-node)
                raw-node
                (if (= :project (:origin occurrence))
@@ -6741,10 +6809,10 @@
                  (compat-call "CompileRegex" [(raw "value0")])])
 
                (= "executable:java.lang.Math#min(float,float)" (:key occurrence))
-               (raw "global::System.MathF.Min")
+               (raw "global::System.Math.Min")
 
                (= "executable:java.lang.Math#max(float,float)" (:key occurrence))
-               (raw "global::System.MathF.Max")
+               (raw "global::System.Math.Max")
 
                (= "executable:java.util.Map$Entry#getKey()" (:key occurrence))
                (raw "(value0) => value0.Key")
@@ -7255,7 +7323,7 @@
          (let [target (.getTarget element)
                occurrence (field-occurrence context element)
                field-declaration (:declaration occurrence)
-               interface-constant-owner
+               interface-static-owner
                (when (and (instance? CtTypeAccess target)
                           (= :project (:origin occurrence))
                           (instance? CtField field-declaration)
@@ -7265,8 +7333,14 @@
                  (.getDeclaringType ^CtField field-declaration))
                target-node
                (cond
-                 interface-constant-owner
-                 (raw (project-type-base @ctx-holder interface-constant-owner))
+                 (and interface-static-owner
+                      (interface-static-companion-member?
+                       @ctx-holder field-declaration))
+                 (raw (project-interface-static-companion-base
+                       @ctx-holder interface-static-owner))
+
+                 interface-static-owner
+                 (raw (project-type-base @ctx-holder interface-static-owner))
 
                  target
                  (let [node (child-node children target)]
@@ -7796,9 +7870,16 @@
                used?
                (some
                 (fn [^CtVariableRead read]
-                  (identical?
-                   parameter
-                   (some-> read .getVariable .getDeclaration)))
+                  (let [parent (when (.isParentInitialized read)
+                                 (.getParent read))]
+                    (and
+                     (identical?
+                      parameter
+                      (some-> read .getVariable .getDeclaration))
+                     (not (and (instance? CtThrow parent)
+                               (identical?
+                                read
+                                (.getThrownExpression ^CtThrow parent)))))))
                 (.getElements
                  (.getBody element)
                  (TypeFilter. CtVariableRead)))
@@ -7881,12 +7962,7 @@
                          .getDeclaration)))]
            {:node
             (if catch-variable?
-              (sequence-node
-               [(raw
-                 "global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(")
-                (child-node children expression)
-                (raw
-                 ");\nthrow new global::System.InvalidOperationException(\"unreachable\");")])
+              (raw "throw;")
               (sequence-node [(raw "throw ")
                               (child-node children expression)
                               (raw ";")]))}))}
@@ -8072,9 +8148,14 @@
 
 (defn- destination-owner-name [ctx ^CtType type]
   (or (some-> ^IdentityHashMap (:destination-owner-overrides ctx) (.get type))
-      (str (destination-namespace ctx type) "."
-           (str/join "." (map #(pascal (.getSimpleName ^CtType %))
-                              (declaring-types type))))))
+      (let [owner
+            (str (destination-namespace ctx type) "."
+                 (str/join "." (map #(pascal (.getSimpleName ^CtType %))
+                                    (declaring-types type))))]
+        (if (and (:interface-static-companion? ctx)
+                 (interface-type? type))
+          (str owner "Statics")
+          owner))))
 
 (def ^:private model-all-types-cache (WeakHashMap.))
 
@@ -8373,6 +8454,21 @@
         (sequence-node (mapv raw parameters) ", ")
         (raw ">")]))))
 
+(defn- materialized-method-type-parameter-overrides
+  [^CtType owner ^CtMethod method]
+  (let [owner-names
+        (set (map #(.getSimpleName ^CtElement %)
+                  (.getFormalCtTypeParameters owner)))
+        parameters (.getFormalCtTypeParameters method)]
+    (into
+     {}
+     (keep
+      (fn [^CtTypeParameter parameter]
+        (let [name (.getSimpleName parameter)]
+          (when (contains? owner-names name)
+            [name (str "Method" (pascal name))])))
+      parameters))))
+
 (defn- constraints-node [ctx parameters]
   (let [clauses
         (keep
@@ -8442,6 +8538,13 @@
          (or (lifted-wildcard-parameter-type-node ctx parameter lifted)
              (declaration-type-node ctx parameter (.getType parameter))))
        (raw (str " " (identifier (.getSimpleName parameter))))]))))
+
+(defn- interface-constant-container? [^CtType type]
+  (and (interface-type? type)
+       (seq (.getFields type))
+       (not-any? #(and (instance? CtMethod %)
+                       (not (.hasModifier ^CtMethod % ModifierKind/STATIC)))
+                 (.getMethods type))))
 
 (defn- base-type-references [^CtType type]
   (vec
@@ -8719,6 +8822,62 @@
      (contains? clr-value-type-covariant-returns
                 (.getQualifiedName (.getType method))))))
 
+(defn- superclass-reference-to
+  [^CtType owner ^CtType ancestor]
+  (loop [reference (when (instance? CtClass owner)
+                     (.getSuperclass ^CtClass owner))]
+    (when reference
+      (if (= (.getQualifiedName ancestor)
+             (.getQualifiedName ^CtTypeReference reference))
+        reference
+        (when-let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
+          (when (instance? CtClass declaration)
+            (recur (.getSuperclass ^CtClass declaration))))))))
+
+(defn- substituted-owner-reference
+  [^CtTypeReference owner-reference ^CtTypeReference member-reference]
+  (if-not (instance? CtTypeParameterReference member-reference)
+    member-reference
+    (let [owner (.getTypeDeclaration owner-reference)
+          formals (when (instance? CtType owner)
+                    (vec (.getFormalCtTypeParameters ^CtType owner)))
+          actuals (vec (.getActualTypeArguments owner-reference))]
+      (if (= (count formals) (count actuals))
+        (or
+         (some
+          (fn [[^CtTypeParameter formal ^CtTypeReference actual]]
+            (when (= (.getSimpleName formal)
+                     (.getSimpleName member-reference))
+              actual))
+          (map vector formals actuals))
+         member-reference)
+        member-reference))))
+
+(defn- override-family-return-type
+  [^CtType owner ^CtMethod method]
+  (if-let [^CtMethod super-method (superclass-method owner method)]
+    (let [super-owner (.getDeclaringType super-method)
+          parent-return (override-family-return-type super-owner super-method)]
+      (if-let [reference (superclass-reference-to owner super-owner)]
+        (substituted-owner-reference reference parent-return)
+        parent-return))
+    (if-let [^CtMethod interface-method
+             (inherited-abstract-interface-method owner method)]
+      (.getType interface-method)
+      (.getType method))))
+
+(defn- netstandard-covariant-override?
+  [^CtType owner ^CtMethod method]
+  (let [source (.getType method)
+        destination (override-family-return-type owner method)]
+    (and (or (superclass-method owner method)
+             (inherited-abstract-interface-method owner method))
+         (not (wildcard-generic-covariant-override? owner method))
+         (or (not= (.getQualifiedName source)
+                   (.getQualifiedName destination))
+             (not= (mapv str (.getActualTypeArguments source))
+                   (mapv str (.getActualTypeArguments destination)))))))
+
 (defn- concrete-generic-return-reference
   [^CtTypeReference declared ^CtExpression expression]
   (let [references
@@ -8773,8 +8932,8 @@
 
 (defn- emitted-method-return-type
   [^CtType owner ^CtMethod method]
-  (if (covariant-value-override? owner method)
-    (.getType ^CtMethod (superclass-method owner method))
+  (if (netstandard-covariant-override? owner method)
+    (override-family-return-type owner method)
     (or (concrete-wildcard-method-return method)
         (.getType method))))
 
@@ -8789,10 +8948,55 @@
 
 (defn- method-return-type-node
   [ctx ^CtType owner ^CtMethod method]
-  (if (self-generic-method-return? owner method)
+  (cond
+    (netstandard-covariant-override? owner method)
+    (let [^CtMethod super-method (superclass-method owner method)
+          super-owner (some-> super-method .getDeclaringType)
+          owner-reference (when super-owner
+                            (superclass-reference-to owner super-owner))
+          formals (if super-owner
+                    (vec (.getFormalCtTypeParameters ^CtType super-owner))
+                    [])
+          actuals (if owner-reference
+                    (vec (.getActualTypeArguments ^CtTypeReference owner-reference))
+                    [])
+          overrides
+          (when (= (count formals) (count actuals))
+            (into {}
+                  (map (fn [[^CtTypeParameter formal ^CtTypeReference actual]]
+                         [(.getSimpleName formal)
+                          (:text (csharp/render (type-node ctx actual)))]))
+                  (map vector formals actuals)))]
+      (binding [*destination-type-parameter-overrides* overrides]
+        (declaration-type-node ctx method
+                               (emitted-method-return-type owner method))))
+    (self-generic-method-return? owner method)
     (owner-type-node ctx owner)
+    :else
     (declaration-type-node ctx method
                            (emitted-method-return-type owner method))))
+
+(defn- interface-reference-subtype?
+  [^CtTypeReference candidate ^CtTypeReference ancestor]
+  (let [ancestor-name (.getQualifiedName ancestor)]
+    (loop [pending
+           (some-> candidate .getTypeDeclaration .getSuperInterfaces seq)
+           seen #{}]
+      (when-let [^CtTypeReference reference (first pending)]
+        (let [qualified-name (.getQualifiedName reference)]
+          (cond
+            (= ancestor-name qualified-name) true
+            (contains? seen qualified-name)
+            (recur (next pending) seen)
+            :else
+            (recur
+             (concat (next pending)
+                     (or (some-> reference
+                                 .getTypeDeclaration
+                                 .getSuperInterfaces
+                                 seq)
+                         []))
+             (conj seen qualified-name))))))))
 
 (defn- interface-methods [^CtType type]
   (letfn [(methods-for [^CtTypeReference reference]
@@ -8806,12 +9010,37 @@
     (->> (.getSuperInterfaces type)
          (mapcat methods-for)
          (reduce
-          (fn [methods [^CtTypeReference reference ^CtMethod method :as entry]]
-            (assoc methods
-                   [(.getQualifiedName reference) (.getSignature method)]
-                   entry))
+          (fn [methods [^CtTypeReference reference
+                        ^CtMethod method :as entry]]
+            ;; One Java default can be reachable through several parent
+            ;; interfaces. C# needs one materialized implementation per
+            ;; signature, not one per inheritance path. Prefer the contract
+            ;; reached through the most-specific interface regardless of the
+            ;; order of an implementor's direct interface list.
+            (let [signature [(.getSignature method) (str (.getType method))]
+                  entries (get methods signature [])
+                  more-specific-existing?
+                  (some
+                   (fn [[^CtTypeReference existing-reference]]
+                     (or (= (.getQualifiedName existing-reference)
+                            (.getQualifiedName reference))
+                         (interface-reference-subtype?
+                          existing-reference reference)))
+                   entries)]
+              (if more-specific-existing?
+                methods
+                (assoc
+                 methods signature
+                 (conj
+                  (filterv
+                   (fn [[^CtTypeReference existing-reference]]
+                     (not (interface-reference-subtype?
+                           reference existing-reference)))
+                   entries)
+                  entry)))))
           (sorted-map))
          vals
+         (mapcat identity)
          vec)))
 
 (defn- inherited-abstract-interface-method
@@ -8963,6 +9192,9 @@
          inherited-abstract-interface-method
          (when-not static?
            (inherited-abstract-interface-method owner method))
+         inherited-default-interface-method
+         (when-not static?
+           (inherited-default-interface-method? owner method))
          redeclared-interface-method
          (when (interface-type? owner)
            (direct-interface-method owner method))
@@ -8993,6 +9225,7 @@
                                  super-method
                                  (destination-overridable-super-method?
                                   super-method))
+                            inherited-default-interface-method
                             inherited-abstract-interface-method
                             inherited-runtime-interface-method))
          virtual? (and (instance? CtClass owner)
@@ -9195,6 +9428,32 @@
            (compile-time-constant-expression?
             (.getRightHandOperand ^CtBinaryOperator expression)))))
 
+(defn- compile-time-constant-field? [^CtField field]
+  (let [initializer (.getDefaultExpression field)]
+    (and (.hasModifier field ModifierKind/STATIC)
+         (.hasModifier field ModifierKind/FINAL)
+         (compile-time-constant-expression? initializer)
+         (or (.isPrimitive (.getType field))
+             (= "java.lang.String" (.getQualifiedName (.getType field)))))))
+
+(defn- interface-static-companion-member?
+  ([member]
+   (interface-static-companion-member? nil member))
+  ([ctx member]
+   (let [owner (cond
+                 (instance? CtMethod member)
+                 (.getDeclaringType ^CtMethod member)
+                 (instance? CtField member)
+                 (.getDeclaringType ^CtField member)
+                 :else nil)
+         companion? (get-in ctx [:services :interface-static-companion?])]
+     (and owner
+          (interface-type? owner)
+          (.hasModifier ^CtModifiable member ModifierKind/STATIC)
+          (or (nil? companion?) (companion? owner))
+          (or (instance? CtMethod member)
+              (instance? CtField member))))))
+
 (defn- compile-time-string-value [expression]
   (cond
     (instance? CtLiteral expression)
@@ -9251,12 +9510,7 @@
                        (enum-value-ordinal ^CtEnum owner ^CtEnumValue field))
         initializer (.getDefaultExpression field)
         compile-time-constant?
-        (and (not enum-value?)
-             (.hasModifier field ModifierKind/STATIC)
-             (.hasModifier field ModifierKind/FINAL)
-             (compile-time-constant-expression? initializer)
-             (or (.isPrimitive (.getType field))
-                 (= "java.lang.String" (.getQualifiedName (.getType field)))))
+        (and (not enum-value?) (compile-time-constant-field? field))
         deferred?
         (boolean
          (some #(identical? field %)
@@ -9321,7 +9575,14 @@
                             (remove nil?
                                     [(if enum-value?
                                        "public"
-                                       emitted-visibility)
+                                       (when-not
+                                        (and (interface-type? owner)
+                                             (not (interface-constant-container?
+                                                   owner))
+                                             (not (:interface-static-companion?
+                                                   ctx))
+                                             compile-time-constant?)
+                                         emitted-visibility))
                                      (when (or enum-value?
                                                (.hasModifier field ModifierKind/STATIC))
                                        (when-not compile-time-constant? "static"))
@@ -9354,7 +9615,15 @@
         anonymous-types (mapv #(emit-anonymous-type ctx owner %)
                               (executable-anonymous-calls ctx method))
         body (.getBody method)
-        body-node (when body (translated-node ctx body))
+        ;; netstandard2.0 cannot carry default-interface implementations.  The
+        ;; same Java body is materialized on each concrete implementor by
+        ;; interface-contract-nodes below, while the interface retains the
+        ;; ordinary abstract contract that net48 and modern runtimes share.
+        body-node (when (and body
+                             (not (and (interface-type? owner)
+                                       (not (.hasModifier method
+                                                          ModifierKind/STATIC)))))
+                    (translated-node ctx body))
         name (method-name ctx owner method)
         rule :java-library.declaration/method
         words (method-words ctx owner method)
@@ -9412,39 +9681,45 @@
        [reference candidate]))
    (interface-methods owner)))
 
+(defn- inherited-default-interface-method?
+  [^CtType owner ^CtMethod interface-method]
+  (loop [reference (when (instance? CtClass owner)
+                     (.getSuperclass ^CtClass owner))]
+    (when reference
+      (when-let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
+        (when (instance? CtClass declaration)
+          (or
+           (some
+            (fn [[_ ^CtMethod candidate]]
+              (and (some? (.getBody candidate))
+                   (not (.hasModifier candidate ModifierKind/STATIC))
+                   (override-compatible-method? interface-method candidate)))
+            (interface-methods declaration))
+           (recur (.getSuperclass ^CtClass declaration))))))))
+
 (defn- substituted-interface-reference
   [^CtTypeReference interface-reference ^CtTypeReference member-reference]
-  (if-not (instance? CtTypeParameterReference member-reference)
-    member-reference
-    (let [interface (.getTypeDeclaration interface-reference)
-          formals (when (instance? CtType interface)
-                    (vec (.getFormalCtTypeParameters ^CtType interface)))
-          actuals (vec (.getActualTypeArguments interface-reference))]
-      (if (= (count formals) (count actuals))
-        (or
-         (some
-          (fn [[^CtTypeParameter formal ^CtTypeReference actual]]
-            (when (= (.getSimpleName formal)
-                     (.getSimpleName member-reference))
-              actual))
-          (map vector formals actuals))
-         member-reference)
-        member-reference))))
+  (substituted-owner-reference interface-reference member-reference))
 
 (defn- interface-contract-nodes [ctx ^CtType owner]
   (when (instance? CtClass owner)
     (->> (interface-methods owner)
          (keep
           (fn [[^CtTypeReference interface-reference ^CtMethod interface-method]]
-            (when (and (nil? (.getBody interface-method))
-                       (not (.hasModifier interface-method ModifierKind/STATIC)))
+            (when-not (.hasModifier interface-method ModifierKind/STATIC)
               (let [implementation
                     (matching-class-method owner interface-method)
                     default-implementation
                     (matching-default-interface-method owner interface-method)
+                    inherited-default-implementation?
+                    (inherited-default-interface-method?
+                     owner interface-method)
                     interface-return-reference
                     (substituted-interface-reference
                      interface-reference (.getType interface-method))
+                    implementation-return-reference
+                    (when implementation
+                      (emitted-method-return-type owner implementation))
                     name (method-name ctx
                                       (.getDeclaringType interface-method)
                                       interface-method)]
@@ -9452,7 +9727,7 @@
                   (and implementation
                        (not (override-compatible-type?
                              interface-return-reference
-                             (.getType ^CtMethod implementation))))
+                             implementation-return-reference)))
                   (let [parameters (vec (.getParameters interface-method))]
                     (sequence-node
                      [(declaration-type-node
@@ -9463,16 +9738,22 @@
                       (executable-formals-node interface-method)
                       (raw "(")
                       (sequence-node (mapv #(parameter-node ctx %) parameters) ", ")
-                      (raw ") => this.")
+                      (raw ") => (")
+                      (declaration-type-node
+                       ctx interface-method interface-return-reference)
+                      (raw ")(this.")
                       (raw (method-name ctx owner implementation))
                       (raw "(")
                       (sequence-node
                        (mapv #(raw (identifier (.getSimpleName ^CtParameter %)))
                              parameters)
                        ", ")
-                      (raw ");")]))
+                      (raw "));")]))
 
                   implementation
+                  nil
+
+                  inherited-default-implementation?
                   nil
 
                   default-implementation
@@ -9484,25 +9765,29 @@
                          ctx {:inlined-default-interface-body? true})
                         parameters (vec (.getParameters interface-method))
                         formals (vec (.getFormalCtTypeParameters interface-method))
-                        lifted (wildcard-method-type-parameters interface-method)]
-                    (sequence-node
-                     [(raw "public ")
-                      (when-not (.hasModifier ^CtModifiable owner
-                                              ModifierKind/FINAL)
-                        (raw "virtual "))
-                      (declaration-type-node
-                       ctx interface-method interface-return-reference)
-                      (raw (str " " name))
-                      (method-formals-node interface-method lifted)
-                      (raw "(")
+                        lifted (wildcard-method-type-parameters interface-method)
+                        overrides
+                        (materialized-method-type-parameter-overrides
+                         owner interface-method)]
+                    (binding [*destination-type-parameter-overrides* overrides]
                       (sequence-node
-                       (mapv #(parameter-node ctx % lifted) parameters) ", ")
-                      (raw ")")
-                      (constraints-node ctx formals)
-                      (lifted-wildcard-constraints-node ctx lifted)
-                      (raw " ")
-                      (translated-node default-body-ctx
-                                       (.getBody default-method))]))
+                       [(raw "public ")
+                        (when-not (.hasModifier ^CtModifiable owner
+                                                ModifierKind/FINAL)
+                          (raw "virtual "))
+                        (declaration-type-node
+                         ctx interface-method interface-return-reference)
+                        (raw (str " " name))
+                        (method-formals-node interface-method lifted)
+                        (raw "(")
+                        (sequence-node
+                         (mapv #(parameter-node ctx % lifted) parameters) ", ")
+                        (raw ")")
+                        (constraints-node ctx formals)
+                        (lifted-wildcard-constraints-node ctx lifted)
+                        (raw " ")
+                        (translated-node default-body-ctx
+                                         (.getBody default-method))])))
 
                   (.hasModifier ^CtModifiable owner ModifierKind/ABSTRACT)
                   (let [parameters (vec (.getParameters interface-method))]
@@ -9528,80 +9813,130 @@
                    owner))))))
          vec)))
 
-(defn- runtime-interface-contract-nodes [^CtType owner]
-  (when (and (instance? CtClass owner)
-             (.hasModifier ^CtModifiable owner ModifierKind/ABSTRACT))
+(defn- runtime-interface-contract-nodes [ctx ^CtType owner]
+  (when (instance? CtClass owner)
     (->> (.getSuperInterfaces owner)
          (mapcat
           (fn [^CtTypeReference reference]
             (case (.getQualifiedName reference)
-              "java.awt.Paint"
-              (remove
-               nil?
-               [(when (empty? (.getMethodsByName owner "createContext"))
-                  (raw
+              "java.lang.Iterable"
+              (let [arguments (vec (.getActualTypeArguments reference))
+                    element-type (if (= 1 (count arguments))
+                                   (type-node ctx (first arguments))
+                                   (raw "object"))]
+                [(sequence-node
+                  [(raw "global::System.Collections.Generic.IEnumerator<")
+                   element-type
+                   (raw "> global::System.Collections.Generic.IEnumerable<")
+                   element-type
+                   (raw ">.GetEnumerator() {")
+                   (raw "return global::DripSharp.Runtime.JavaCompat.AsEnumerator(this.Iterator());")
+                   (raw "}")])
+                 (sequence-node
+                  [(raw
+                    (str
+                     "global::System.Collections.IEnumerator "
+                     "global::System.Collections.IEnumerable.GetEnumerator() {"
+                     "return ((global::System.Collections.Generic.IEnumerable<"))
+                   element-type
+                   (raw ">)this).GetEnumerator();}")])])
+
+              "java.util.Iterator"
+              (when (empty? (.getMethodsByName owner "remove"))
+                [(raw
+                  (str
+                   "public void Remove() {"
+                   "throw new global::System.NotSupportedException("
+                   "\"Iterator removal is not supported.\");}"))])
+
+              "java.util.List"
+              (let [arguments (vec (.getActualTypeArguments reference))
+                    element (if (= 1 (count arguments))
+                              (:text (csharp/render
+                                      (type-node ctx (first arguments))))
+                              "object")]
+                [(raw
+                  (format
                    (str
-                    "public abstract global::DripSharp.Runtime.JavaPaintContext "
-                    "CreateContext("
-                    "global::DripSharp.Runtime.JavaColorModel colorModel, "
-                    "global::SkiaSharp.SKRectI deviceBounds, "
-                    "global::SkiaSharp.SKRect userBounds, "
-                    "global::SkiaSharp.SKMatrix transform, "
-                    "global::DripSharp.Runtime.PdfCartonRenderingHints hints);")))
-                (when (empty? (.getMethodsByName owner "getTransparency"))
-                  (raw "public abstract int GetTransparency();"))])
+                    "int global::System.Collections.Generic.ICollection<%1$s>.Count => this.Size();\n"
+                    "bool global::System.Collections.Generic.ICollection<%1$s>.IsReadOnly => false;\n"
+                    "%1$s global::System.Collections.Generic.IList<%1$s>.this[int index] { get => this.Get(index); set => this.Set(index, value); }\n"
+                    "void global::System.Collections.Generic.ICollection<%1$s>.Add(%1$s item) => this.Add(item);\n"
+                    "bool global::System.Collections.Generic.ICollection<%1$s>.Contains(%1$s item) => this.Contains(item);\n"
+                    "void global::System.Collections.Generic.ICollection<%1$s>.CopyTo(%1$s[] array, int arrayIndex) { global::DripSharp.Runtime.JavaCompat.ThrowIfNull(array, nameof(array)); foreach (var item in (global::System.Collections.Generic.IEnumerable<%1$s>)this) array[arrayIndex++] = item; }\n"
+                    "bool global::System.Collections.Generic.ICollection<%1$s>.Remove(%1$s item) => this.Remove(item);\n"
+                    "int global::System.Collections.Generic.IList<%1$s>.IndexOf(%1$s item) => this.IndexOf(item);\n"
+                    "void global::System.Collections.Generic.IList<%1$s>.Insert(int index, %1$s item) => this.Add(index, item);\n"
+                    "void global::System.Collections.Generic.IList<%1$s>.RemoveAt(int index) => this.Remove(index);\n"
+                    "global::System.Collections.Generic.IEnumerator<%1$s> global::System.Collections.Generic.IEnumerable<%1$s>.GetEnumerator() { return global::DripSharp.Runtime.JavaCompat.AsEnumerator(this.Iterator()); }\n"
+                    "global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => ((global::System.Collections.Generic.IEnumerable<%1$s>)this).GetEnumerator();")
+                   element))])
+
+              "java.util.Map"
+              (let [arguments (vec (.getActualTypeArguments reference))
+                    key-type (if (= 2 (count arguments))
+                               (:text (csharp/render
+                                       (type-node ctx (first arguments))))
+                               "object")
+                    value-type (if (= 2 (count arguments))
+                                 (:text (csharp/render
+                                         (type-node ctx (second arguments))))
+                                 "object")]
+                [(raw
+                  (format
+                   (str
+                    "%2$s global::System.Collections.Generic.IDictionary<%1$s, %2$s>.this[%1$s key] { get => this.Get(key); set => this.Put(key, value); }\n"
+                    "global::System.Collections.Generic.ICollection<%1$s> global::System.Collections.Generic.IDictionary<%1$s, %2$s>.Keys => this.KeySet();\n"
+                    "global::System.Collections.Generic.ICollection<%2$s> global::System.Collections.Generic.IDictionary<%1$s, %2$s>.Values => this.Values();\n"
+                    "int global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>.Count => this.Size();\n"
+                    "bool global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>.IsReadOnly => false;\n"
+                    "void global::System.Collections.Generic.IDictionary<%1$s, %2$s>.Add(%1$s key, %2$s value) => this.Put(key, value);\n"
+                    "bool global::System.Collections.Generic.IDictionary<%1$s, %2$s>.ContainsKey(%1$s key) => this.ContainsKey(key);\n"
+                    "bool global::System.Collections.Generic.IDictionary<%1$s, %2$s>.Remove(%1$s key) { if (!this.ContainsKey(key)) return false; this.Remove(key); return true; }\n"
+                    "bool global::System.Collections.Generic.IDictionary<%1$s, %2$s>.TryGetValue(%1$s key, out %2$s value) { if (this.ContainsKey(key)) { value = this.Get(key); return true; } value = default!; return false; }\n"
+                    "void global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>.Add(global::System.Collections.Generic.KeyValuePair<%1$s, %2$s> item) => this.Put(item.Key, item.Value);\n"
+                    "bool global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>.Contains(global::System.Collections.Generic.KeyValuePair<%1$s, %2$s> item) => this.ContainsKey(item.Key) && global::DripSharp.Runtime.JavaCompat.Equals(this.Get(item.Key), item.Value);\n"
+                    "void global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>.CopyTo(global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>[] array, int arrayIndex) { global::DripSharp.Runtime.JavaCompat.ThrowIfNull(array, nameof(array)); foreach (var item in (global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>)this) array[arrayIndex++] = item; }\n"
+                    "bool global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>.Remove(global::System.Collections.Generic.KeyValuePair<%1$s, %2$s> item) { if (!((global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>)this).Contains(item)) return false; this.Remove(item.Key); return true; }\n"
+                    "global::System.Collections.Generic.IEnumerator<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>> global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>.GetEnumerator() { foreach (var entry in this.EntrySet()) yield return new global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>(entry.Key, entry.Value); }\n"
+                    "global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => ((global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<%1$s, %2$s>>)this).GetEnumerator();")
+                   key-type value-type))])
+
+              "java.awt.Paint"
+              (when (.hasModifier ^CtModifiable owner ModifierKind/ABSTRACT)
+                (remove
+                 nil?
+                 [(when (empty? (.getMethodsByName owner "createContext"))
+                    (raw
+                     (str
+                      "public abstract global::DripSharp.Runtime.JavaPaintContext "
+                      "CreateContext("
+                      "global::DripSharp.Runtime.JavaColorModel colorModel, "
+                      "global::SkiaSharp.SKRectI deviceBounds, "
+                      "global::SkiaSharp.SKRect userBounds, "
+                      "global::SkiaSharp.SKMatrix transform, "
+                      "global::DripSharp.Runtime.PdfCartonRenderingHints hints);")))
+                  (when (empty? (.getMethodsByName owner "getTransparency"))
+                    (raw "public abstract int GetTransparency();"))]))
 
               "java.awt.PaintContext"
-              (remove
-               nil?
-               [(when (empty? (.getMethodsByName owner "getRaster"))
-                  (raw
-                   (str
-                    "public abstract global::DripSharp.Runtime.JavaRaster "
-                    "GetRaster(int x, int y, int width, int height);")))])
+              (when (.hasModifier ^CtModifiable owner ModifierKind/ABSTRACT)
+                (remove
+                 nil?
+                 [(when (empty? (.getMethodsByName owner "getRaster"))
+                    (raw
+                     (str
+                      "public abstract global::DripSharp.Runtime.JavaRaster "
+                      "GetRaster(int x, int y, int width, int height);")))]))
 
               [])))
          vec)))
 
-(defn- interface-redeclaration-contract-nodes [ctx ^CtType owner]
-  (when (interface-type? owner)
-    (->> (explicit-members owner)
-         (keep
-          (fn [member]
-            (when (and (instance? CtMethod member)
-                       (not (.hasModifier ^CtMethod member ModifierKind/STATIC)))
-              (when-let [[^CtTypeReference interface-reference
-                          ^CtMethod interface-method]
-                         (direct-interface-method-entry owner member)]
-                (let [parameters (vec (.getParameters interface-method))
-                      lifted (wildcard-method-type-parameters interface-method)
-                      void? (= "void"
-                               (.getQualifiedName (.getType interface-method)))]
-                  (sequence-node
-                   [(declaration-type-node ctx interface-method
-                                           (.getType interface-method))
-                    (raw " ")
-                    (type-node ctx interface-reference)
-                    (raw (str "." (method-name ctx
-                                               (.getDeclaringType interface-method)
-                                               interface-method)))
-                    (method-formals-node interface-method lifted)
-                    (raw "(")
-                    (sequence-node
-                     (mapv #(parameter-node ctx % lifted) parameters) ", ")
-                    (raw ") => ")
-                    (when-not void? (raw "("))
-                    (raw "this.")
-                    (raw (method-name ctx owner member))
-                    (raw "(")
-                    (sequence-node
-                     (mapv #(raw (identifier (.getSimpleName ^CtParameter %)))
-                           parameters)
-                     ", ")
-                    (raw ")")
-                    (when-not void? (raw ")"))
-                    (raw ";")]))))))
-         vec)))
+(defn- interface-redeclaration-contract-nodes [_ctx ^CtType owner]
+  ;; A redeclared abstract method already satisfies its inherited interface
+  ;; contract. An explicit forwarding body would be a default interface
+  ;; implementation, which netstandard2.0 cannot encode.
+  (when (interface-type? owner) []))
 
 (defn- java-map-entry-contract-nodes [ctx ^CtType owner]
   (when-let [^CtTypeReference reference
@@ -9976,7 +10311,51 @@
         parameters (vec (.getParameters method))
         parameter-nodes (mapv #(parameter-node ctx %) parameters)
         arguments (mapv #(raw (identifier (.getSimpleName ^CtParameter %))) parameters)
-        void? (= "void" (.getQualifiedName (.getType method)))]
+        void? (= "void" (.getQualifiedName (.getType method)))
+        default-body-ctx
+        (derived-body-context ctx {:inlined-default-interface-body? true})
+        default-methods
+        (->> (concat
+              (map (fn [^CtMethod candidate]
+                     [(.getReference interface) candidate])
+                   (.getMethods interface))
+              (interface-methods interface))
+             (filter
+              (fn [[_ ^CtMethod candidate]]
+                (and (some? (.getBody candidate))
+                     (not (.hasModifier candidate ModifierKind/STATIC))
+                     (not= (.getSignature method)
+                           (.getSignature candidate)))))
+             (reduce
+              (fn [methods [_ ^CtMethod candidate :as entry]]
+                (assoc methods (.getSignature candidate) entry))
+              (sorted-map))
+             vals)
+        default-nodes
+        (mapv
+         (fn [[^CtTypeReference interface-reference ^CtMethod candidate]]
+           (let [candidate-parameters (vec (.getParameters candidate))
+                 formals (vec (.getFormalCtTypeParameters candidate))
+                 lifted (wildcard-method-type-parameters candidate)]
+             (sequence-node
+              [(raw "public ")
+               (declaration-type-node
+                ctx candidate
+                (substituted-interface-reference
+                 interface-reference (.getType candidate)))
+               (raw (str " " (method-name ctx
+                                           (.getDeclaringType candidate)
+                                           candidate)))
+               (method-formals-node candidate lifted)
+               (raw "(")
+               (sequence-node
+                (mapv #(parameter-node ctx % lifted) candidate-parameters) ", ")
+               (raw ")")
+               (constraints-node ctx formals)
+               (lifted-wildcard-constraints-node ctx lifted)
+               (raw " ")
+               (translated-node default-body-ctx (.getBody candidate))])))
+         default-methods)]
     (sequence-node
      [(raw (str visibility " sealed class " adapter-name))
       (type-formals-node ctx interface)
@@ -9989,7 +10368,11 @@
       (sequence-node parameter-nodes ", ")
       (raw ") {\n")
       (when-not void? (raw "return "))
-      (raw "this.implementation(") (sequence-node arguments ", ") (raw ");\n}\n}")])))
+      (raw "this.implementation(") (sequence-node arguments ", ") (raw ");\n}")
+      (when (seq default-nodes)
+        (sequence-node [(raw "\n\n")
+                        (sequence-node default-nodes "\n\n")]))
+      (raw "\n}")])))
 
 (defn- generated-outer-field-name [^CtType type]
   (let [reserved (->> (concat (.getFields type) (.getMethods type))
@@ -10173,6 +10556,14 @@
               (when (seq constructor-assignments) (raw "\n"))
               (raw "}")])
             member-nodes (mapv #(member-node derived anonymous-class %) members)
+            iterator-default-nodes
+            (when (and (anonymous-iterator? call)
+                       (empty? (.getMethodsByName anonymous-class "remove")))
+              [(raw
+                (str
+                 "public void Remove() {"
+                 "throw new global::System.NotSupportedException("
+                 "\"Iterator removal is not supported.\");}"))])
             declaration
             (csharp/with-source
               (sequence-node
@@ -10180,7 +10571,10 @@
                 (type-node ctx (.getType call))
                 (raw " {\n")
                 (sequence-node
-                 (vec (concat capture-fields [constructor] member-nodes))
+                 (vec (concat capture-fields
+                              [constructor]
+                              member-nodes
+                              iterator-default-nodes))
                  "\n\n")
                 (raw "\n}")])
               (source-ref anonymous-class rule
@@ -10394,6 +10788,10 @@
           (filterv
            #(.containsKey ^IdentityHashMap selected-declarations %)
            all-members))
+        static-companion-members
+        (filterv #(interface-static-companion-member? ctx %) members)
+        members
+        (filterv #(not (interface-static-companion-member? ctx %)) members)
         inner? (non-static-member-class? type)
         outer-field-name (when inner? (generated-outer-field-name type))
         nested-instance-class?
@@ -10474,11 +10872,24 @@
         member-nodes (if-let [emit-members (:emit-members ctx)]
                        (emit-members member-ctx type members)
                        (mapv #(member-node member-ctx type %) members))
+        static-companion-member-nodes
+        (mapv #(member-node
+                (assoc member-ctx :interface-static-companion? true)
+                type %)
+              static-companion-members)
+        static-companion-anonymous-types
+        (mapv #(emit-anonymous-type
+                (assoc member-ctx :interface-static-companion? true)
+                type %)
+              (mapcat #(if (instance? CtField %)
+                         (field-anonymous-calls member-ctx %)
+                         [])
+                      static-companion-members))
         interface-contracts (interface-contract-nodes member-ctx type)
         interface-redeclaration-contracts
         (interface-redeclaration-contract-nodes member-ctx type)
         runtime-interface-contracts
-        (runtime-interface-contract-nodes type)
+        (runtime-interface-contract-nodes member-ctx type)
         java-map-entry-contracts
         (java-map-entry-contract-nodes member-ctx type)
         field-anonymous-types
@@ -10574,6 +10985,15 @@
         source)
       (when functional-method
         (project-functional-adapter-node ctx type functional-method))
+      (when (seq static-companion-member-nodes)
+        (sequence-node
+         [(raw (str (emitted-type-visibility type) " static class "
+                    (interface-static-companion-name type) " {\n"))
+          (sequence-node
+           (into static-companion-member-nodes
+                 static-companion-anonymous-types)
+           "\n\n")
+          (raw "\n}")]))
       (when (instance? CtAnnotationType type)
         (annotation-companion-node ctx type))]
      "\n\n")))
@@ -10652,7 +11072,8 @@
      "Java.Util"
      "Java.Util.Concurrent"
      "Java.Util.Regex"
-     "Java.Xml"])
+     "Java.Xml"
+     "NetStandard"])
    :java-regex-unicode
    {:source "runtime/DripSharp.JavaRegexUnicodeData.cs"
     :destination "DripSharp/Runtime/JavaRegexUnicodeData.cs"
@@ -11182,16 +11603,19 @@
                             (let [default-method
                                   (matching-default-interface-method
                                    type interface-method)]
-                              (when (and (nil? (.getBody interface-method))
-                                         (not (.hasModifier
+                              (when (and (not (.hasModifier
                                                interface-method
                                                ModifierKind/STATIC))
                                          (nil? (matching-class-method
                                                 type interface-method))
+                                         (not (inherited-default-interface-method?
+                                               type interface-method))
                                          (or default-method
-                                             (.hasModifier
-                                              ^CtModifiable type
-                                              ModifierKind/ABSTRACT)))
+                                             (and
+                                              (nil? (.getBody interface-method))
+                                              (.hasModifier
+                                               ^CtModifiable type
+                                               ModifierKind/ABSTRACT))))
                                 (assoc
                                  (synthetic-surface-entry
                                   type

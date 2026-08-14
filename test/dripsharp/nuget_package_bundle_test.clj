@@ -29,7 +29,7 @@
        "    <id>" id "</id>\n"
        "    <version>1.2.3-alpha.1</version>\n"
        "    <dependencies>\n"
-       "      <group targetFramework=\"net10.0\">\n"
+       "      <group targetFramework=\"netstandard2.0\">\n"
        (apply str
               (for [{:keys [id version]} dependencies]
                 (str "        <dependency id=\"" id "\" version=\""
@@ -45,8 +45,8 @@
         package-file (str id "." version ".nupkg")
         symbol-file (str id "." version ".snupkg")
         nuspec-entry (str id ".nuspec")
-        assembly-entry (str "lib/net10.0/" id ".dll")
-        pdb-entry (str "lib/net10.0/" id ".pdb")
+        assembly-entry (str "lib/netstandard2.0/" id ".dll")
+        pdb-entry (str "lib/netstandard2.0/" id ".pdb")
         artifact
         (zip-file! (paths/resolve-path feed package-file)
                    {nuspec-entry (nuspec id dependencies)
@@ -57,7 +57,7 @@
                     pdb-entry (str id "|pdb")})]
     {:profile id
      :artifact artifact
-     :destination {:project {:target-framework "net10.0"}}
+     :destination {:project {:target-framework "netstandard2.0"}}
      :identity {:id id :version version :file package-file
                 :sha256 (util/sha256-file artifact)}
      :inspection {:assembly-entry assembly-entry
@@ -114,7 +114,7 @@
             {"complete"
              {:destination
               {:configuration
-               {:project {:target-framework "net10.0"}
+               {:project {:target-framework "netstandard2.0"}
                 :package-consumer
                 {:strategy :compile-only
                  :project-file "Consumer.csproj"
@@ -139,14 +139,14 @@
         package-nuspec (archive-text (:artifact package)
                                      "Example.Core.nuspec")]
     (is (= "Example.Core" (get-in package [:identity :id])))
-    (is (= ["lib/net10.0/Example.Support.dll"
-            "lib/net10.0/Example.Core.dll"]
+    (is (= ["lib/netstandard2.0/Example.Support.dll"
+            "lib/netstandard2.0/Example.Core.dll"]
            (get-in package [:inspection :assembly-entries])))
-    (is (= #{"lib/net10.0/Example.Support.dll"
-             "lib/net10.0/Example.Core.dll"}
+    (is (= #{"lib/netstandard2.0/Example.Support.dll"
+             "lib/netstandard2.0/Example.Core.dll"}
            (set (filter #(str/ends-with? % ".dll") package-names))))
-    (is (= #{"lib/net10.0/Example.Support.pdb"
-             "lib/net10.0/Example.Core.pdb"}
+    (is (= #{"lib/netstandard2.0/Example.Support.pdb"
+             "lib/netstandard2.0/Example.Core.pdb"}
            (set (filter #(str/ends-with? % ".pdb") symbol-names))))
     (is (str/includes? package-nuspec "Example.Logging"))
     (is (not (str/includes? package-nuspec

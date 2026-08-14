@@ -337,7 +337,7 @@
            {:reason :invalid-release-inventory
             :asset-prefix (:asset-prefix inventory)}))
   (when-not (and (string? (:target-framework inventory))
-                 (re-matches #"net[1-9][0-9]*\.0"
+                 (re-matches #"net(?:standard2\.0|[1-9][0-9]*\.0)"
                              (:target-framework inventory)))
     (fail! "Release target framework is invalid"
            {:reason :invalid-release-inventory
@@ -978,10 +978,16 @@
 
 (defn- runtime-target-name
   [inventory platform]
-  (str ".NETCoreApp,Version=v"
-       (subs (:target-framework inventory) 3)
-       (when-let [runtime-identifier (:runtime-identifier platform)]
-         (str "/" runtime-identifier))))
+  (let [target-framework (:target-framework inventory)
+        [runtime-name version]
+        (if (str/starts-with? target-framework "netstandard")
+          [".NETStandard" (subs target-framework (count "netstandard"))]
+          [".NETCoreApp" (subs target-framework (count "net"))])]
+    (str runtime-name ",Version=v" version
+         (if-let [runtime-identifier (:runtime-identifier platform)]
+           (str "/" runtime-identifier)
+           (when (str/starts-with? target-framework "netstandard")
+             "/")))))
 
 (defn- dependency-coordinate
   [{:keys [package-id version]}]

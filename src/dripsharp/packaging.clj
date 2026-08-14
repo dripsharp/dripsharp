@@ -1933,7 +1933,7 @@
 (defn verify-package-consumption!
   "Runs clean generation/compilation, packs it, and proves isolated consumption."
   ([] (verify-package-consumption! {}))
-  ([{:keys [workspace-root profile verify-fn run-command! pack-fn]
+  ([{:keys [workspace-root profile target-contract verify-fn run-command! pack-fn]
      :or {verify-fn compiler/verify-clean-build!
           pack-fn pack-verified-profile!
           run-command! process/run!}}]
@@ -1951,7 +1951,9 @@
                               (fail! "Destination has no independent package-consumer contract"
                                      {:profile profile}))
          {:keys [id version]} (:package configuration)
-         target-framework (get-in configuration [:project :target-framework])
+         target-framework
+         (or (get-in target-contract [:frameworks :execution])
+             (get-in configuration [:project :target-framework]))
          identities (available-identities package-proof)
          consumer-proof
          (verify-packed-consumer!

@@ -479,17 +479,6 @@ internal sealed class JavaSequenceInputStream : Stream
         return second.Read(buffer, offset, count);
     }
 
-    public override int Read(Span<byte> buffer)
-    {
-        if (readingFirst)
-        {
-            var read = first.Read(buffer);
-            if (read != 0) return read;
-            readingFirst = false;
-        }
-        return second.Read(buffer);
-    }
-
     public override void Flush() { }
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -620,23 +609,23 @@ internal sealed class JavaDataOutputStream : Stream
 
     internal void writeShort(int value)
     {
-        Span<byte> bytes = stackalloc byte[2];
+        var bytes = new byte[2];
         System.Buffers.Binary.BinaryPrimitives.WriteInt16BigEndian(bytes, unchecked((short)value));
-        output.Write(bytes);
+        output.Write(bytes, 0, bytes.Length);
     }
 
     internal void writeInt(int value)
     {
-        Span<byte> bytes = stackalloc byte[4];
+        var bytes = new byte[4];
         System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(bytes, value);
-        output.Write(bytes);
+        output.Write(bytes, 0, bytes.Length);
     }
 
     internal void writeLong(long value)
     {
-        Span<byte> bytes = stackalloc byte[8];
+        var bytes = new byte[8];
         System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(bytes, value);
-        output.Write(bytes);
+        output.Write(bytes, 0, bytes.Length);
     }
 
     internal void flush() => output.Flush();
@@ -656,7 +645,6 @@ internal sealed class JavaDataOutputStream : Stream
     public override void SetLength(long value) => output.SetLength(value);
     public override void Write(byte[] buffer, int offset, int count) =>
         output.Write(buffer, offset, count);
-    public override void Write(ReadOnlySpan<byte> buffer) => output.Write(buffer);
     public override void WriteByte(byte value) => output.WriteByte(value);
     protected override void Dispose(bool disposing)
     {
@@ -697,7 +685,7 @@ internal static partial class JavaCompat
     internal static int ReaderRead(TextReader reader, char[] buffer, int index, int count)
     {
         try { var read = reader.Read(buffer, index, count); return read == 0 && count != 0 ? -1 : read; }
-        catch (ObjectDisposedException error) { throw new IOException(error.Message, error); }
+        catch (global::System.ObjectDisposedException error) { throw new IOException(error.Message, error); }
     }
     internal static bool ReaderReady(TextReader reader)
     {
@@ -821,7 +809,7 @@ internal static partial class JavaCompat
             string.Equals(
                 file.ToString(),
                 candidate.ToString(),
-                OperatingSystem.IsWindows()
+                IsWindows()
                     ? StringComparison.OrdinalIgnoreCase
                     : StringComparison.Ordinal);
     }
@@ -832,7 +820,7 @@ internal static partial class JavaCompat
     internal static IOException NewIOException(string? message, Exception? cause) => new(message, cause);
     internal static FileNotFoundException NewFileNotFoundException() => new JavaFileNotFoundException();
     internal static void OutputStreamWrite(Stream stream, sbyte[] values) =>
-        stream.Write(ToUnsignedBytes(values));
+        OutputStreamWrite(stream, values, 0, values.Length);
     internal static void OutputStreamWrite(Stream stream, sbyte[] values, int offset, int count)
     {
         var buffer = new byte[count];
@@ -898,6 +886,6 @@ internal static partial class JavaCompat
     {
         if (!source.TryGetBuffer(out var contents))
             contents = new ArraySegment<byte>(source.ToArray());
-        destination.Write(contents.AsSpan(0, checked((int)source.Length)));
+        destination.Write(contents.Array!, contents.Offset, checked((int)source.Length));
     }
 }

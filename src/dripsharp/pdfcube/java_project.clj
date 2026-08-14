@@ -1774,7 +1774,14 @@
     (call-node target member arguments)))
 
 (def ^:private translated-project-invocation-adaptations
-  {"executable:org.apache.fontbox.ttf.TrueTypeCollection#close()"
+  {"executable:org.apache.fontbox.ttf.OTFParser#parse(org.apache.pdfbox.io.RandomAccessRead)"
+   (fn [target arguments]
+     (sequence-node
+      [(raw "((global::DripSharp.PdfCarton.Fonts.Ttf.OpenTypeFont)(")
+       (call-node target "Parse" arguments)
+       (raw "))")]))
+
+   "executable:org.apache.fontbox.ttf.TrueTypeCollection#close()"
    (direct-instance-adaptation "Dispose")
    "executable:org.apache.fontbox.ttf.TrueTypeFont#close()"
    (direct-instance-adaptation "Dispose")
@@ -2460,7 +2467,12 @@
        (raw ")")]))})
 
 (def ^:private commons-field-adaptations
-  {"field:org.bouncycastle.asn1.ASN1Encoding#DER"
+  {"field:org.apache.fontbox.ttf.model.GsubData#NO_DATA_FOUND"
+   (fn [_target]
+     (raw (str "global::DripSharp.PdfCarton.Fonts.Ttf.Model."
+               "GsubDataStatics.NoDataFound")))
+
+   "field:org.bouncycastle.asn1.ASN1Encoding#DER"
    (fn [_target]
      (raw "global::DripSharp.Runtime.JavaAsn1Encoding.DER"))
 
@@ -2482,15 +2494,15 @@
 
    "field:java.awt.print.Printable#PAGE_EXISTS"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPrintable.PAGE_EXISTS"))
+     (raw "global::DripSharp.Runtime.JavaPrintConstants.PAGE_EXISTS"))
 
    "field:java.awt.print.Printable#NO_SUCH_PAGE"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPrintable.NO_SUCH_PAGE"))
+     (raw "global::DripSharp.Runtime.JavaPrintConstants.NO_SUCH_PAGE"))
 
    "field:java.awt.print.Pageable#UNKNOWN_NUMBER_OF_PAGES"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPageable.UNKNOWN_NUMBER_OF_PAGES"))
+     (raw "global::DripSharp.Runtime.JavaPrintConstants.UNKNOWN_NUMBER_OF_PAGES"))
 
    "field:java.awt.print.PageFormat#LANDSCAPE"
    (fn [_target]
@@ -2868,6 +2880,26 @@
    :version "10.0.0"
    :projection :microsoft-package})
 
+(def ^:private memory-package
+  {:id "System.Memory"
+   :version "4.6.3"
+   :projection :netstandard-compatibility})
+
+(def ^:private csharp-package
+  {:id "Microsoft.CSharp"
+   :version "4.7.0"
+   :projection :netstandard-compatibility})
+
+(def ^:private code-pages-package
+  {:id "System.Text.Encoding.CodePages"
+   :version "10.0.0"
+   :projection :netstandard-compatibility})
+
+(def ^:private asn1-package
+  {:id "System.Formats.Asn1"
+   :version "10.0.0"
+   :projection :netstandard-compatibility})
+
 (def ^:private pkcs-package
   {:id "System.Security.Cryptography.Pkcs"
    :version "10.0.0"
@@ -2926,7 +2958,7 @@
     #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
       "DripSharp.PdfCarton.Tests"}
     :external-dependencies {commons-coordinate commons-dependency}
-    :runtime-packages [logging-package]
+    :runtime-packages [logging-package csharp-package memory-package code-pages-package]
     :internal-capabilities #{:java-io :java-nio}
     :destination-capabilities #{:java-compat :java-regex-unicode}}
 
@@ -2952,7 +2984,8 @@
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Fonts.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.Fonts focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
-    :runtime-packages [logging-package skia-package skia-linux-package]
+    :runtime-packages [logging-package csharp-package memory-package asn1-package
+                       code-pages-package skia-package skia-linux-package]
     :internal-capabilities #{:font-discovery :icc :skia-geometry}
     :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
     :compatibility-namespace "DripSharp.PdfCarton.Runtime.Fonts"}
@@ -2977,7 +3010,7 @@
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Xmp.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.Xmp focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
-    :runtime-packages [logging-package]
+    :runtime-packages [logging-package csharp-package memory-package code-pages-package]
     :internal-capabilities #{:xml}
     :destination-capabilities #{:java-compat :java-regex-unicode}
     :compatibility-namespace "DripSharp.PdfCarton.Runtime.Xmp"}
@@ -3010,7 +3043,8 @@
      :success-message "DripSharp.PdfCarton package boundary passed."}
     :external-dependencies
     (assoc bouncy-dependencies commons-coordinate commons-dependency)
-    :runtime-packages [logging-package pkcs-package skia-package]
+    :runtime-packages [logging-package csharp-package memory-package code-pages-package
+                       pkcs-package skia-package]
     :legal-files (into legal-files pdfbox-codec-legal-files)
     :internal-capabilities
     #{:calendar-value-semantics :icc :jbig2 :jpx :managed-raster :printing
@@ -3045,7 +3079,8 @@
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Preflight.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.Preflight focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
-    :runtime-packages [logging-package skia-package]
+    :runtime-packages [logging-package csharp-package memory-package code-pages-package
+                       skia-package]
     :internal-capabilities #{:preflight-font-erasure}
     :generic-erasure-mappings preflight-generic-erasure-mappings
     :destination-capabilities #{:java-compat :java-regex-unicode}
@@ -3079,7 +3114,7 @@
     (fail! message {:field field :expected expected :actual actual})))
 
 (def ^:private allowed-projection-kinds
-  #{:bcl :internal-capability :microsoft-package :skia-sharp
+  #{:bcl :internal-capability :microsoft-package :netstandard-compatibility :skia-sharp
     :translated-source})
 
 (defn- validate-dependency-projections! [configuration]
@@ -3109,6 +3144,10 @@
     (doseq [{:keys [id version projection] :as dependency} runtime-packages]
       (when-not
        (or (= logging-package dependency)
+           (= csharp-package dependency)
+           (= memory-package dependency)
+           (= code-pages-package dependency)
+           (= asn1-package dependency)
            (= pkcs-package dependency)
            (= skia-package dependency)
            (= skia-linux-package dependency))
@@ -3122,6 +3161,13 @@
                           "System.Security.Cryptography.Pkcs"}
                         id)
                        (= "10.0.0" version))
+                  :netstandard-compatibility
+                  (contains?
+                   #{["Microsoft.CSharp" "4.7.0"]
+                     ["System.Memory" "4.6.3"]
+                     ["System.Formats.Asn1" "10.0.0"]
+                     ["System.Text.Encoding.CodePages" "10.0.0"]}
+                   [id version])
                   :skia-sharp
                   (and (= "SkiaSharp" id) (= "4.150.1" version))
                   :skia-sharp-native-assets
@@ -3140,8 +3186,8 @@
   (let [product (product! configuration)
         package-id (:package-id product)]
     (validate-dependency-projections! configuration)
-    (exact! "PdfCarton destination must target net10.0"
-            [:project :target-framework] "net10.0"
+    (exact! "PdfCarton destination must target netstandard2.0"
+            [:project :target-framework] "netstandard2.0"
             (get-in configuration [:project :target-framework]))
     (exact! "PdfCarton destination must disable nullable reference types"
             [:project :nullable] "disable"
@@ -3321,12 +3367,6 @@
         items
         (vec
          (concat
-          (for [{:keys [id version]}
-                (sort-by :id (:runtime-packages configuration))]
-            (project-xml/element
-             "PackageReference"
-             [["Include" id] ["Version" version]]
-             []))
           (for [{:keys [destination package-path]}
                 (sort-by :package-path (:legal-files configuration))]
             (project-xml/element

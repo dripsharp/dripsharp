@@ -109,7 +109,8 @@ internal sealed class JavaBidi
         mixed = directionState.Resolve() == ResolvedDirection.Mixed;
         if (!mixed)
         {
-            Array.Fill(charLevels, checked((sbyte)baseLevel));
+            for (var index = 0; index < charLevels.Length; index++)
+                charLevels[index] = checked((sbyte)baseLevel);
         }
 
         var collected = new List<Run>();

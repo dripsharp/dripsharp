@@ -274,7 +274,7 @@ static class CorePackageProbe
         public void VisitBytes(byte[] value) => Observation = "bytes";
         public void VisitPair(Pair<object, object> value) => Observation = "pair";
         public void VisitList(IReadOnlyList<object> value) => Observation = "list";
-        public void VisitSet(IReadOnlySet<object> value) => Observation = "set";
+        public void VisitSet(ISet<object> value) => Observation = "set";
         public void VisitMap(IReadOnlyDictionary<object, object> value) => Observation = "map";
         public void VisitObject(PObject value) => Observation = "object";
         public void VisitModule(PModule value) => Observation = "module";
@@ -296,7 +296,7 @@ static class CorePackageProbe
         public string ConvertBytes(byte[] value) => "bytes";
         public string ConvertPair(Pair<object, object> value) => "pair";
         public string ConvertList(IReadOnlyList<object> value) => "list";
-        public string ConvertSet(IReadOnlySet<object> value) => "set";
+        public string ConvertSet(ISet<object> value) => "set";
         public string ConvertMap(IReadOnlyDictionary<object, object> value) => "map";
         public string ConvertObject(PObject value) => "object";
         public string ConvertModule(PModule value) => "module";

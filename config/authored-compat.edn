@@ -8,11 +8,11 @@
    :include-pattern "DripSharp\\.JavaCompat\\..*\\.cs"
    :charset nil
    :capability :java-compat
-   :source-files 13
-   :max-source-lines 13759
-   :max-emitted-lines 13759
+   :source-files 14
+   :max-source-lines 14502
+   :max-emitted-lines 14502
    :source-inventory-sha256
-   "4eab3b1263b3af7c924cf7ea9f77bd52ee4b68f1857bac8312963184fe3d198e"
+   "11f7c0ca56758d8846f825746b57118e787755cdc4befb84b47a8d11d796405b"
    :public-types
    {:count 66
     :sha256
@@ -39,8 +39,8 @@
    :charset nil
    :capability :java-bidi
    :source-files 15
-   :max-source-lines 4667
-   :max-emitted-lines 4667
+   :max-source-lines 4661
+   :max-emitted-lines 4661
    :source-inventory-sha256
    "e264419d1ade473a485c5fc5bf8691c6a75c65c09b0dce365d9890fe44d993bc"
    :public-types

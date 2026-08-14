@@ -65,9 +65,19 @@ boundaries do not require separate public package identities.
 
 ## Supported Destination Platforms
 
-PdfCarton targets `net10.0`. Its supported host matrix is Windows, Linux, and
-macOS on x64 and ARM64. Mobile, WebAssembly, and NativeAOT are outside this
-platform contract.
+Each of PdfCarton's five production libraries targets only `netstandard2.0`;
+the libraries do not multi-target or emit production `net10.0` or `net48`
+assemblies. Generated tests and every executable runner, probe, differential
+host, validation host, and isolated package consumer target `net10.0` and
+consume the `netstandard2.0` libraries. The supported host matrix is Windows,
+Linux, and macOS on x64 and ARM64. Mobile, WebAssembly, and NativeAOT are
+outside this platform contract.
+
+The intended compatibility contract includes consumption from .NET Framework
+4.8 as well as modern .NET. This repository infers that compatibility from the
+`netstandard2.0` API contract and compatible package dependencies. It does not
+provide a .NET Framework 4.8 build host, runtime, CI job, VM, compatibility
+runner, or empirical net48 execution certification.
 
 By explicit user decision on 2026-07-28, completion evidence is required only
 for macOS on x64 and ARM64. Windows and Linux remain supported destination

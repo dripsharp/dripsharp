@@ -199,12 +199,15 @@ internal sealed class JavaSocketFactory
         using var candidate =
             new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate);
         using var customChain = new System.Security.Cryptography.X509Certificates.X509Chain();
-        customChain.ChainPolicy.TrustMode =
-            System.Security.Cryptography.X509Certificates.X509ChainTrustMode.CustomRootTrust;
-        customChain.ChainPolicy.CustomTrustStore.AddRange(trustedRoots);
+        customChain.ChainPolicy.ExtraStore.AddRange(trustedRoots);
         customChain.ChainPolicy.RevocationMode =
             System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
-        return customChain.Build(candidate);
+        customChain.ChainPolicy.VerificationFlags =
+            System.Security.Cryptography.X509Certificates.X509VerificationFlags.AllowUnknownCertificateAuthority;
+        if (!customChain.Build(candidate) || customChain.ChainElements.Count == 0) return false;
+        var chainRoot = customChain.ChainElements[customChain.ChainElements.Count - 1].Certificate;
+        return trustedRoots.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>()
+            .Any(root => root.RawData.SequenceEqual(chainRoot.RawData));
     }
 
     internal System.Net.Sockets.Socket CreateSocket(System.Net.IPAddress address, int port)
@@ -373,11 +376,11 @@ internal static partial class JavaCompat
         }
         if (Regex.IsMatch(value, @"(?i)(?:^|/)%2e(?:%2e)?(?:/|$)"))
         {
-            var options = new UriCreationOptions
-            {
-                DangerousDisablePathAndQueryCanonicalization = true
-            };
-            return new Uri(value, in options);
+            var carrier = new Uri(
+                value.Replace("%", "%25", StringComparison.Ordinal),
+                UriKind.RelativeOrAbsolute);
+            _ = OriginalUriTexts.GetValue(carrier, _ => new JavaUriText(value));
+            return carrier;
         }
         return new Uri(value, UriKind.RelativeOrAbsolute);
     }
@@ -678,8 +681,18 @@ internal static partial class JavaCompat
         SocketStreams.Add(socket, stream);
         return stream;
     }
-    internal static bool SocketIsClosed(System.Net.Sockets.Socket socket) =>
-        socket.SafeHandle.IsClosed;
+    internal static bool SocketIsClosed(System.Net.Sockets.Socket socket)
+    {
+        try
+        {
+            _ = socket.Handle;
+            return false;
+        }
+        catch (global::System.ObjectDisposedException)
+        {
+            return true;
+        }
+    }
     internal static bool SocketIsConnected(System.Net.Sockets.Socket socket) => socket.Connected;
     internal static void SocketSetSoTimeout(System.Net.Sockets.Socket socket, int timeout) =>
         socket.ReceiveTimeout = timeout;

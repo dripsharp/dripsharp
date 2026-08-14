@@ -187,13 +187,30 @@ The reusable test-suite contract has this shape (vectors may contain multiple
 exact project identities and multiple strategies may contribute to one
 project):
 
+Generated-product target manifests use schema version 9 and declare the
+framework split once:
+
+```clojure
+:frameworks
+{:production "netstandard2.0"
+ :execution "net10.0"
+ :net48-compatibility :inferred-from-netstandard2.0
+ :net48-runtime-tested? false}
+```
+
+Every destination project's `:target-framework` must equal `:production`.
+Every generated test-suite project's `:target-framework` must equal
+`:execution`. Package assets and dependency groups use the production value;
+all executable validation and isolated consumers use the execution value. The
+net48 fields record that compatibility is inferred rather than runtime-tested.
+
 ```clojure
 {:schema-version 2
  :projects
  [{:id "DripSharp.Example.Tests"
    :directory "tests/DripSharp.Example.Tests"
    :assembly-name "DripSharp.Example.Tests"
-   :target-framework "<the product family's target framework>"
+   :target-framework "<the target's execution framework>"
    :profile-references ["example-core"]
    :project-references []
    :packages

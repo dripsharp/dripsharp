@@ -140,14 +140,7 @@ namespace DripSharp.Runtime
         /// </summary>
         public void Clear()
         {
-            if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-            {
-                ClearArray();
-            }
-            else
-            {
-                _size = 0;
-            }
+            ClearArray();
         }
 
         private void ClearArray()

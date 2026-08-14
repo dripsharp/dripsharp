@@ -152,12 +152,12 @@ internal sealed class JavaMapBackedSet<T> : ISet<T> where T : notnull
         foreach (var item in map.Keys.ToArray())
             if (!retained.Contains(item)) Remove(item);
     }
-    public bool IsProperSubsetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsProperSubsetOf(other);
-    public bool IsProperSupersetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsProperSupersetOf(other);
-    public bool IsSubsetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsSubsetOf(other);
-    public bool IsSupersetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsSupersetOf(other);
-    public bool Overlaps(IEnumerable<T> other) => map.Keys.ToHashSet().Overlaps(other);
-    public bool SetEquals(IEnumerable<T> other) => map.Keys.ToHashSet().SetEquals(other);
+    public bool IsProperSubsetOf(IEnumerable<T> other) => new HashSet<T>(map.Keys).IsProperSubsetOf(other);
+    public bool IsProperSupersetOf(IEnumerable<T> other) => new HashSet<T>(map.Keys).IsProperSupersetOf(other);
+    public bool IsSubsetOf(IEnumerable<T> other) => new HashSet<T>(map.Keys).IsSubsetOf(other);
+    public bool IsSupersetOf(IEnumerable<T> other) => new HashSet<T>(map.Keys).IsSupersetOf(other);
+    public bool Overlaps(IEnumerable<T> other) => new HashSet<T>(map.Keys).Overlaps(other);
+    public bool SetEquals(IEnumerable<T> other) => new HashSet<T>(map.Keys).SetEquals(other);
     public void SymmetricExceptWith(IEnumerable<T> other)
     {
         foreach (var item in other.ToArray())
@@ -644,6 +644,113 @@ internal sealed class JavaBitSet
     }
 }
 
+internal static class JavaZlib
+{
+    internal static byte[] Decompress(MemoryStream compressed)
+    {
+        var bytes = compressed.ToArray();
+        if (bytes.Length < 6)
+            throw new InvalidDataException("The zlib stream is incomplete.");
+        var header = (bytes[0] << 8) | bytes[1];
+        if ((bytes[0] & 0x0f) != 8 || header % 31 != 0 || (bytes[1] & 0x20) != 0)
+            throw new InvalidDataException("The zlib stream header is invalid.");
+
+        using var payload = new MemoryStream(bytes, 2, bytes.Length - 6, writable: false);
+        using var inflater = new DeflateStream(payload, CompressionMode.Decompress);
+        using var decoded = new MemoryStream();
+        inflater.CopyTo(decoded);
+        var result = decoded.ToArray();
+        var expected = ((uint)bytes[bytes.Length - 4] << 24) |
+                       ((uint)bytes[bytes.Length - 3] << 16) |
+                       ((uint)bytes[bytes.Length - 2] << 8) |
+                       bytes[bytes.Length - 1];
+        if (Adler32(result) != expected)
+            throw new InvalidDataException("The zlib stream checksum is invalid.");
+        return result;
+    }
+
+    internal static uint Adler32(byte[] bytes)
+    {
+        uint first = 1;
+        uint second = 0;
+        foreach (var value in bytes)
+        {
+            first = (first + value) % 65521;
+            second = (second + first) % 65521;
+        }
+        return (second << 16) | first;
+    }
+}
+
+internal sealed class JavaZlibOutputStream : Stream
+{
+    private readonly Stream destination;
+    private readonly DeflateStream deflater;
+    private uint adlerFirst = 1;
+    private uint adlerSecond;
+    private bool disposed;
+
+    internal JavaZlibOutputStream(Stream destination, CompressionLevel level)
+    {
+        this.destination = destination ?? throw new ArgumentNullException(nameof(destination));
+        destination.WriteByte(0x78);
+        destination.WriteByte(level == CompressionLevel.Fastest ? (byte)0x01 : (byte)0x9c);
+        deflater = new DeflateStream(destination, level, leaveOpen: true);
+    }
+
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => !disposed;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush()
+    {
+        deflater.Flush();
+        destination.Flush();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) =>
+        throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        deflater.Write(buffer, offset, count);
+        for (var index = offset; index < offset + count; index++)
+        {
+            adlerFirst = (adlerFirst + buffer[index]) % 65521;
+            adlerSecond = (adlerSecond + adlerFirst) % 65521;
+        }
+    }
+
+    public override void WriteByte(byte value)
+    {
+        deflater.WriteByte(value);
+        adlerFirst = (adlerFirst + value) % 65521;
+        adlerSecond = (adlerSecond + adlerFirst) % 65521;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (!disposing || disposed) return;
+        disposed = true;
+        deflater.Dispose();
+        var checksum = (adlerSecond << 16) | adlerFirst;
+        destination.WriteByte((byte)(checksum >> 24));
+        destination.WriteByte((byte)(checksum >> 16));
+        destination.WriteByte((byte)(checksum >> 8));
+        destination.WriteByte((byte)checksum);
+        base.Dispose(disposing);
+    }
+}
+
 internal sealed class JavaInflaterOutputStream : Stream
 {
     private readonly Stream destination;
@@ -666,16 +773,10 @@ internal sealed class JavaInflaterOutputStream : Stream
     public override void Flush()
     {
         var position = compressed.Position;
-        compressed.Position = 0;
-        using (var inflater = new ZLibStream(compressed, CompressionMode.Decompress, leaveOpen: true))
-        using (var decoded = new MemoryStream())
-        {
-            inflater.CopyTo(decoded);
-            var bytes = decoded.ToArray();
-            if (bytes.Length > emitted)
-                destination.Write(bytes, emitted, bytes.Length - emitted);
-            emitted = bytes.Length;
-        }
+        var bytes = JavaZlib.Decompress(compressed);
+        if (bytes.Length > emitted)
+            destination.Write(bytes, emitted, bytes.Length - emitted);
+        emitted = bytes.Length;
         compressed.Position = position;
         destination.Flush();
     }
@@ -735,11 +836,16 @@ sealed class JavaInflater
         var inputPosition = compressed.Position;
         compressed.Position = 0;
         using var decoded = new MemoryStream();
-        using (Stream inflater = rawDeflate
-                   ? new DeflateStream(compressed, CompressionMode.Decompress, leaveOpen: true)
-                   : new ZLibStream(compressed, CompressionMode.Decompress, leaveOpen: true))
+        if (rawDeflate)
         {
+            using var inflater = new DeflateStream(
+                compressed, CompressionMode.Decompress, leaveOpen: true);
             inflater.CopyTo(decoded);
+        }
+        else
+        {
+            var decodedBytes = JavaZlib.Decompress(compressed);
+            decoded.Write(decodedBytes, 0, decodedBytes.Length);
         }
         compressed.Position = inputPosition;
 
@@ -783,7 +889,7 @@ sealed class JavaDeflater
         CompressionLevel = level switch
         {
             <= 1 => System.IO.Compression.CompressionLevel.Fastest,
-            >= 8 => System.IO.Compression.CompressionLevel.SmallestSize,
+            >= 8 => System.IO.Compression.CompressionLevel.Optimal,
             _ => System.IO.Compression.CompressionLevel.Optimal
         };
     }
@@ -801,13 +907,13 @@ public
 #endif
 sealed class JavaDeflaterOutputStream : JavaOutputStream
 {
-    private readonly ZLibStream compressed;
+    private readonly JavaZlibOutputStream compressed;
 
     internal JavaDeflaterOutputStream(Stream destination, JavaDeflater deflater)
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(deflater);
-        compressed = new ZLibStream(destination, deflater.CompressionLevel, leaveOpen: true);
+        compressed = new JavaZlibOutputStream(destination, deflater.CompressionLevel);
     }
 
     public override void Write(int value) => compressed.WriteByte(unchecked((byte)value));
@@ -832,21 +938,24 @@ sealed class JavaRandom
     public void NextBytes(sbyte[] destination)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        RandomNumberGenerator.Fill(MemoryMarshal.AsBytes(destination.AsSpan()));
+        var bytes = new byte[destination.Length];
+        using (var generator = RandomNumberGenerator.Create()) generator.GetBytes(bytes);
+        for (var index = 0; index < destination.Length; index++)
+            destination[index] = unchecked((sbyte)bytes[index]);
     }
 
     public int NextInt()
     {
-        Span<byte> bytes = stackalloc byte[sizeof(int)];
-        RandomNumberGenerator.Fill(bytes);
-        return BitConverter.ToInt32(bytes);
+        var bytes = new byte[sizeof(int)];
+        using (var generator = RandomNumberGenerator.Create()) generator.GetBytes(bytes);
+        return BitConverter.ToInt32(bytes, 0);
     }
 
     public long NextLong()
     {
-        Span<byte> bytes = stackalloc byte[sizeof(long)];
-        RandomNumberGenerator.Fill(bytes);
-        return BitConverter.ToInt64(bytes);
+        var bytes = new byte[sizeof(long)];
+        using (var generator = RandomNumberGenerator.Create()) generator.GetBytes(bytes);
+        return BitConverter.ToInt64(bytes, 0);
     }
 }
 
@@ -883,7 +992,7 @@ internal sealed class JavaProperties
 
     internal void Load(Stream stream)
     {
-        using var reader = new StreamReader(stream, Encoding.Latin1, false, 1024, leaveOpen: true);
+        using var reader = new StreamReader(stream, Encoding.GetEncoding(28591), false, 1024, leaveOpen: true);
         string? pending = null;
         while (reader.ReadLine() is { } physicalLine)
         {
@@ -1096,8 +1205,7 @@ interface JavaIterator<out T>
     bool HasNext();
     [return: System.Diagnostics.CodeAnalysis.MaybeNull]
     T Next();
-    void Remove() => throw new NotSupportedException(
-        "This Java iterator does not expose mutable removal semantics.");
+    void Remove();
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -1108,16 +1216,6 @@ public
 interface JavaIterableContract<out T> : IEnumerable<T>
 {
     JavaIterator<T> Iterator();
-
-    IEnumerator<T> IEnumerable<T>.GetEnumerator()
-    {
-        var iterator = Iterator();
-        while (iterator.HasNext())
-            yield return iterator.Next()!;
-    }
-
-    IEnumerator IEnumerable.GetEnumerator() =>
-        ((IEnumerable<T>)this).GetEnumerator();
 }
 
 internal sealed class JavaIterableAdapter<T> : JavaIterableContract<T>
@@ -1129,6 +1227,9 @@ internal sealed class JavaIterableAdapter<T> : JavaIterableContract<T>
             throw new ArgumentNullException(nameof(iteratorFactory));
 
     public JavaIterator<T> Iterator() => iteratorFactory();
+
+    public IEnumerator<T> GetEnumerator() => JavaCompat.AsEnumerator(Iterator());
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -1150,39 +1251,6 @@ interface JavaListContract<T> : IList<T>
     int IndexOf(object? value);
     new void Clear();
 
-    int ICollection<T>.Count => Size();
-    bool ICollection<T>.IsReadOnly => false;
-
-    T IList<T>.this[int index]
-    {
-        get => Get(index);
-        set => Set(index, value);
-    }
-
-    void ICollection<T>.Add(T item) => Add(item);
-    bool ICollection<T>.Contains(T item) => Contains(item);
-
-    void ICollection<T>.CopyTo(T[] array, int arrayIndex)
-    {
-        ArgumentNullException.ThrowIfNull(array);
-        foreach (var item in (IEnumerable<T>)this)
-            array[arrayIndex++] = item;
-    }
-
-    bool ICollection<T>.Remove(T item) => Remove(item);
-    int IList<T>.IndexOf(T item) => IndexOf(item);
-    void IList<T>.Insert(int index, T item) => Add(index, item);
-    void IList<T>.RemoveAt(int index) => Remove(index);
-
-    IEnumerator<T> IEnumerable<T>.GetEnumerator()
-    {
-        var iterator = Iterator();
-        while (iterator.HasNext())
-            yield return iterator.Next()!;
-    }
-
-    IEnumerator IEnumerable.GetEnumerator() =>
-        ((IEnumerable<T>)this).GetEnumerator();
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -1202,71 +1270,6 @@ interface JavaMapContract<K, V> : IDictionary<K, V>
     new ICollection<V> Values();
     ISet<JavaMapEntry<K, V>> EntrySet();
 
-    V IDictionary<K, V>.this[K key]
-    {
-        get => Get(key);
-        set => Put(key, value);
-    }
-
-    ICollection<K> IDictionary<K, V>.Keys => KeySet();
-    ICollection<V> IDictionary<K, V>.Values => Values();
-    int ICollection<KeyValuePair<K, V>>.Count => Size();
-    bool ICollection<KeyValuePair<K, V>>.IsReadOnly => false;
-    void IDictionary<K, V>.Add(K key, V value) => Put(key, value);
-    bool IDictionary<K, V>.ContainsKey(K key) => ContainsKey(key);
-
-    bool IDictionary<K, V>.Remove(K key)
-    {
-        if (!ContainsKey(key))
-            return false;
-        Remove(key);
-        return true;
-    }
-
-    bool IDictionary<K, V>.TryGetValue(K key, out V value)
-    {
-        if (ContainsKey(key))
-        {
-            value = Get(key);
-            return true;
-        }
-        value = default!;
-        return false;
-    }
-
-    void ICollection<KeyValuePair<K, V>>.Add(KeyValuePair<K, V> item) =>
-        Put(item.Key, item.Value);
-
-    bool ICollection<KeyValuePair<K, V>>.Contains(KeyValuePair<K, V> item) =>
-        ContainsKey(item.Key) &&
-        JavaCompat.Equals(Get(item.Key), item.Value);
-
-    void ICollection<KeyValuePair<K, V>>.CopyTo(
-        KeyValuePair<K, V>[] array,
-        int arrayIndex)
-    {
-        ArgumentNullException.ThrowIfNull(array);
-        foreach (var item in (IEnumerable<KeyValuePair<K, V>>)this)
-            array[arrayIndex++] = item;
-    }
-
-    bool ICollection<KeyValuePair<K, V>>.Remove(KeyValuePair<K, V> item)
-    {
-        if (!((ICollection<KeyValuePair<K, V>>)this).Contains(item))
-            return false;
-        Remove(item.Key);
-        return true;
-    }
-
-    IEnumerator<KeyValuePair<K, V>>
-        IEnumerable<KeyValuePair<K, V>>.GetEnumerator()
-    {
-        foreach (var entry in EntrySet())
-            yield return new KeyValuePair<K, V>(entry.Key, entry.Value);
-    }
-
-    IEnumerator IEnumerable.GetEnumerator() =>
-        ((IEnumerable<KeyValuePair<K, V>>)this).GetEnumerator();
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -1443,7 +1446,7 @@ internal sealed class JavaUnmodifiableDictionary<K, V> :
     public bool Remove(KeyValuePair<K, V> item) => throw new NotSupportedException();
 }
 
-internal sealed class JavaReadOnlySet<T> : IReadOnlySet<T>, JavaReadOnlyAdapter
+internal sealed class JavaReadOnlySet<T> : ISet<T>, JavaReadOnlyAdapter
 {
     private readonly ISet<T> values;
 
@@ -1458,6 +1461,16 @@ internal sealed class JavaReadOnlySet<T> : IReadOnlySet<T>, JavaReadOnlyAdapter
     public bool IsSupersetOf(IEnumerable<T> other) => values.IsSupersetOf(other);
     public bool Overlaps(IEnumerable<T> other) => values.Overlaps(other);
     public bool SetEquals(IEnumerable<T> other) => values.SetEquals(other);
+    bool ISet<T>.Add(T item) => throw new NotSupportedException();
+    void ICollection<T>.Add(T item) => throw new NotSupportedException();
+    public void ExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public void IntersectWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public void SymmetricExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public void UnionWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public void Clear() => throw new NotSupportedException();
+    public bool IsReadOnly => true;
+    public bool Remove(T item) => throw new NotSupportedException();
+    public void CopyTo(T[] array, int arrayIndex) => values.CopyTo(array, arrayIndex);
     public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
@@ -1915,7 +1928,7 @@ class JavaLinkedHashMap<K, V> :
 
     internal void PutAll(IEnumerable<KeyValuePair<K, V>> values)
     {
-        foreach (var (key, value) in values) Put(key, value);
+        foreach (var entry in values) Put(entry.Key, entry.Value);
     }
 
     internal void ReplaceValueWithoutAccess(K key, V value)
@@ -1946,7 +1959,8 @@ class JavaLinkedHashMap<K, V> :
 
     public bool Remove(K key)
     {
-        if (!entries.Remove(key, out var node)) return false;
+        if (!entries.TryGetValue(key, out var node)) return false;
+        entries.Remove(key);
         order.Remove(node);
         return true;
     }
@@ -2192,7 +2206,7 @@ internal sealed class JavaResourceBundle
     private static IReadOnlyDictionary<string, string> ReadProperties(Stream stream)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        using var reader = new StreamReader(stream, Encoding.Latin1, false, 1024, leaveOpen: true);
+        using var reader = new StreamReader(stream, Encoding.GetEncoding(28591), false, 1024, leaveOpen: true);
         var logicalLine = new StringBuilder();
         var continued = false;
 
@@ -2435,7 +2449,7 @@ internal static partial class JavaCompat
 
     internal static bool ArrayEquals<T>(T[]? left, T[]? right) =>
         ReferenceEquals(left, right) ||
-        (left is not null && right is not null && left.AsSpan().SequenceEqual(right));
+        (left is not null && right is not null && left.SequenceEqual(right));
 
     internal static bool Add<T>(ICollection<T> collection, T value)
     {
@@ -2492,7 +2506,7 @@ internal static partial class JavaCompat
     }
     internal static bool RetainAll<T>(ICollection<T> collection, System.Collections.IEnumerable values)
     {
-        var retained = values.Cast<object?>().ToHashSet();
+        var retained = new HashSet<object?>(values.Cast<object?>());
         var changed = false;
         foreach (var value in collection.Where(value => !retained.Contains(value)).ToArray())
             changed |= collection.Remove(value);
@@ -2650,7 +2664,7 @@ internal static partial class JavaCompat
             linked.PutAll(values);
             return;
         }
-        foreach (var (key, value) in values) map[key] = value;
+        foreach (var entry in values) map[entry.Key] = entry.Value;
     }
 
     internal static V MapGet<K, V>(IDictionary<K, V> map, object? key) where K : notnull
@@ -2856,10 +2870,20 @@ internal static partial class JavaCompat
             throw new ArgumentOutOfRangeException("Java array dimensions cannot be negative.");
         return Enumerable.Range(0, outerLength).Select(_ => new T[innerLength]).ToArray();
     }
-    internal static T[] CopyOfRange<T>(T[] source, int fromIndex, int toIndex) => source[fromIndex..toIndex];
-    internal static void Fill<T>(T[] values, T value) => Array.Fill(values, value);
-    internal static void Fill<T>(T[] values, int fromIndex, int toIndex, T value) =>
-        Array.Fill(values, value, fromIndex, toIndex - fromIndex);
+    internal static T[] CopyOfRange<T>(T[] source, int fromIndex, int toIndex)
+    {
+        var result = new T[toIndex - fromIndex];
+        Array.Copy(source, fromIndex, result, 0, result.Length);
+        return result;
+    }
+    internal static void Fill<T>(T[] values, T value)
+    {
+        for (var index = 0; index < values.Length; index++) values[index] = value;
+    }
+    internal static void Fill<T>(T[] values, int fromIndex, int toIndex, T value)
+    {
+        for (var index = fromIndex; index < toIndex; index++) values[index] = value;
+    }
     internal static T[] EmptyArray<T>() => Array.Empty<T>();
 
     internal static T[] SingleElementArray<T>(T value) => new[] { value };
@@ -3058,8 +3082,7 @@ internal static partial class JavaCompat
     private static bool IsJavaSet(object value) =>
         value is IEnumerable && value.GetType().GetInterfaces().Any(type =>
             type.IsGenericType &&
-            (type.GetGenericTypeDefinition() == typeof(ISet<>) ||
-             type.GetGenericTypeDefinition() == typeof(IReadOnlySet<>)));
+            type.GetGenericTypeDefinition() == typeof(ISet<>));
 
     internal static bool IsSet(object? value) => value is not null && IsJavaSet(value);
 
@@ -3110,18 +3133,18 @@ internal static partial class JavaCompat
             var schemeHash = StringComparer.OrdinalIgnoreCase.GetHashCode(UriScheme(uri) ?? "");
             var fragmentHash = UriEscapedHashCode(UriRawFragment(uri));
             if (UriIsOpaque(uri))
-                return System.HashCode.Combine(
+                return CombineHash(
                     schemeHash,
                     UriEscapedHashCode(UriRawSchemeSpecificPart(uri)),
                     fragmentHash);
             var host = UriHost(uri);
             var authorityHash = host is null
                 ? UriEscapedHashCode(UriRawAuthority(uri))
-                : System.HashCode.Combine(
+                : CombineHash(
                     UriEscapedHashCode(UriRawUserInfo(uri)),
                     StringComparer.OrdinalIgnoreCase.GetHashCode(host),
                     UriPort(uri));
-            return System.HashCode.Combine(
+            return CombineHash(
                 schemeHash,
                 authorityHash,
                 UriEscapedHashCode(UriRawPath(uri)),
@@ -3319,8 +3342,8 @@ internal static partial class JavaCompat
         values as IReadOnlyList<T> ?? values.ToList();
     internal static IReadOnlyCollection<T> ToReadOnlyCollection<T>(IEnumerable<T> values) =>
         values as IReadOnlyCollection<T> ?? values.ToList();
-    internal static IReadOnlySet<T> ToReadOnlySet<T>(IEnumerable<T> values) =>
-        values as IReadOnlySet<T> ?? values.ToHashSet();
+    internal static ISet<T> ToReadOnlySet<T>(IEnumerable<T> values) =>
+        values as ISet<T> ?? new HashSet<T>(values);
     internal static IReadOnlyDictionary<K, V> ToReadOnlyDictionary<K, V>(
         IEnumerable<KeyValuePair<K, V>> values) where K : notnull =>
         values as IReadOnlyDictionary<K, V> ??
@@ -3351,7 +3374,7 @@ internal static partial class JavaCompat
                 typeof(JavaReadOnlyList<>).MakeGenericType(arguments[0]), result)!);
         }
 
-        if (definition == typeof(IReadOnlySet<>))
+        if (definition == typeof(ISet<>))
         {
             var mutableType = typeof(ISet<>).MakeGenericType(arguments[0]);
             object result = value;
@@ -3546,7 +3569,8 @@ internal static partial class JavaCompat
 
     internal static IList<T> NCopies<T>(int count, T value) => Enumerable.Repeat(value, count).ToList();
     internal static T Min<T>(T left, T right) where T : IComparable<T> => left.CompareTo(right) <= 0 ? left : right;
-    internal static T Min<T>(IEnumerable<T> values) => values.Min(Comparer<T>.Default)!;
+    internal static T Min<T>(IEnumerable<T> values) =>
+        values.Aggregate((left, right) => JavaCompare(left, right) <= 0 ? left : right);
     internal static T CollectionMin<T>(IEnumerable<T> values) =>
         values.Aggregate((left, right) => JavaCompare(left, right) <= 0 ? left : right);
     internal static T CollectionMax<T>(IEnumerable<T> values) =>
@@ -3598,4 +3622,22 @@ internal static partial class JavaCompat
         result.Add(value);
         return result;
     }
+
+    internal static int CombineHash(params object?[] values)
+    {
+        unchecked
+        {
+            var hash = 17;
+            foreach (var value in values) hash = hash * 31 + JavaHashCode(value);
+            return hash;
+        }
+    }
+
+    internal static bool IsAsciiLetter(char value) =>
+        value is >= 'A' and <= 'Z' or >= 'a' and <= 'z';
+
+    internal static bool IsAsciiDigit(char value) => value is >= '0' and <= '9';
+
+    internal static bool IsAsciiLetterOrDigit(char value) =>
+        IsAsciiLetter(value) || IsAsciiDigit(value);
 }

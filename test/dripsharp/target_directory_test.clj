@@ -120,7 +120,7 @@
    :project
    {:assembly-name "Acme.Core"
     :root-namespace "Acme.Core"
-    :target-framework "net10.0"}
+    :target-framework "netstandard2.0"}
    :package
    {:id "Acme.Core"
     :title "Acme Core"
@@ -203,7 +203,7 @@
     :supported-hosts
     [{:os "linux" :architecture "x64" :runner "ubuntu-24.04"}]}
    :package-contract
-   {:target-framework "net10.0"
+   {:target-framework "netstandard2.0"
     :assembly-name "Acme.Core"
     :assembly-dependencies []
     :dependencies []
@@ -214,7 +214,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 8
+  {:schema-version 9
    :target :acme
    :product-family :acme
    :contracts
@@ -227,6 +227,11 @@
    {:source-language-version 17
     :runtime-major 17
     :preview-features? false}
+   :frameworks
+   {:production "netstandard2.0"
+    :execution "net10.0"
+    :net48-compatibility :inferred-from-netstandard2.0
+    :net48-runtime-tested? false}
    :capabilities #{:java-compat :acme/mapping :acme/runtime}
    :authorship
    {:compatibility "config/authored-compat.edn"
@@ -464,6 +469,11 @@
        (is (= :acme (:target target)))
        (is (= :acme (:product-family target)))
        (is (= :product (get-in target [:proof :role])))
+       (is (= {:production "netstandard2.0"
+               :execution "net10.0"
+               :net48-compatibility :inferred-from-netstandard2.0
+               :net48-runtime-tested? false}
+              (:frameworks target)))
        (is (= {:debug-type :portable
                :package-format :snupkg
                :source-link :exact-generated-product-commit}
@@ -511,7 +521,8 @@
            (is (= [:publication field] (:path result))))))
      (testing "schema version 7 cannot declare a generated product"
        (create-target-workspace! root)
-       (update-edn! root "targets/acme/target.edn" assoc :schema-version 7)
+       (update-edn! root "targets/acme/target.edn"
+                    #(-> % (assoc :schema-version 7) (dissoc :frameworks)))
        (let [result (failure-data #(target-directory/read-target root :acme))]
          (is (= :invalid-target-directory (:kind result)))
          (is (= [:schema-version] (:path result)))))
@@ -609,6 +620,20 @@
               (:kind
                (failure-data
                 #(target-directory/read-target root :acme))))))
+     (testing "production and execution frameworks remain distinct and centralized"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/destinations/core.edn"
+                    assoc-in [:project :target-framework] "net10.0")
+       (is (= [:destinations :core :project :target-framework]
+              (:path
+               (failure-data #(target-directory/read-target root :acme)))))
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/test-suites.edn"
+                    assoc-in [:projects 0 :target-framework]
+                    "netstandard2.0")
+       (is (= [:publication :test-suites :projects 0 :target-framework]
+              (:path
+               (failure-data #(target-directory/read-target root :acme))))))
      (testing "test projects select exactly one supported xUnit framework"
        (create-target-workspace! root)
        (update-edn! root "targets/acme/test-suites.edn"

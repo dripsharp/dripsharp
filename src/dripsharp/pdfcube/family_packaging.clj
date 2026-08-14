@@ -24,6 +24,9 @@
   (baseline/assembly-version :pdfcube package-id))
 
 (def ^:private target-framework
+  "netstandard2.0")
+
+(def ^:private execution-target-framework
   "net10.0")
 
 (def ^:private package-copyright
@@ -518,7 +521,7 @@
                 [{:id id :version (package-version id)}]
                 :expected-packages
                 (identity-contract (get restored-closures id))
-                :target-framework target-framework
+                :target-framework execution-target-framework
                 :run-command! run-command!})))
           (sort (keys package-contract)))
          family-consumer
@@ -531,7 +534,7 @@
            (identity-contract (set (keys package-contract)))
            :expected-packages
            (identity-contract (get restored-closures "DripSharp.PdfCarton.Preflight"))
-           :target-framework target-framework
+           :target-framework execution-target-framework
            :run-command! run-command!})
          consumption
          (validate-consumers! (conj product-consumers family-consumer))

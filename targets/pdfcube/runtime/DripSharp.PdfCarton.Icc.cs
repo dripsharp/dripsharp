@@ -76,9 +76,12 @@ internal sealed class PdfCartonIccProfileData
                 throw new ArgumentException(
                     $"ICC tag `{Signature(signature)}` is outside the profile.");
             }
-            tags.TryAdd(
-                signature,
-                new TagRecord(checked((int)offset), checked((int)size)));
+            if (!tags.ContainsKey(signature))
+            {
+                tags.Add(
+                    signature,
+                    new TagRecord(checked((int)offset), checked((int)size)));
+            }
         }
     }
 
@@ -127,7 +130,7 @@ internal sealed class PdfCartonIccProfileData
 
         var source = new float[NumberOfComponents];
         for (var index = 0; index < source.Length; index++)
-            source[index] = Math.Clamp(components[index], 0f, 1f);
+            source[index] = JavaCompat.Clamp(components[index], 0f, 1f);
 
         var pcs = TryDeviceToPcs(source) ?? MatrixDeviceToXyz(source);
         var xyz = pcsSignature == PcsLab ? LabToXyz(pcs) : pcs;
@@ -149,7 +152,7 @@ internal sealed class PdfCartonIccProfileData
         if (NumberOfComponents == 3 && TryMatrixInverse(xyz, out var device))
             return device;
         if (NumberOfComponents == 1)
-            return new[] { Math.Clamp(rgb[0] * 0.2126f + rgb[1] * 0.7152f +
+            return new[] { JavaCompat.Clamp(rgb[0] * 0.2126f + rgb[1] * 0.7152f +
                                       rgb[2] * 0.0722f, 0f, 1f) };
         return NaiveFromRgb(rgb, NumberOfComponents);
     }
@@ -289,9 +292,9 @@ internal sealed class PdfCartonIccProfileData
         var scale = MajorVersion < 4 ? 65535f / 65280f : 1f;
         return new[]
         {
-            Math.Clamp(encoded[0] * scale, 0f, 1f) * 100f,
-            Math.Clamp(encoded[1] * scale, 0f, 1f) * 255f - 128f,
-            Math.Clamp(encoded[2] * scale, 0f, 1f) * 255f - 128f
+            JavaCompat.Clamp(encoded[0] * scale, 0f, 1f) * 100f,
+            JavaCompat.Clamp(encoded[1] * scale, 0f, 1f) * 255f - 128f,
+            JavaCompat.Clamp(encoded[2] * scale, 0f, 1f) * 255f - 128f
         };
     }
 
@@ -300,16 +303,16 @@ internal sealed class PdfCartonIccProfileData
         if (pcsSignature == PcsXyz)
             return new[]
             {
-                Math.Clamp(pcs[0] / 1.9999695f, 0f, 1f),
-                Math.Clamp(pcs[1] / 1.9999695f, 0f, 1f),
-                Math.Clamp(pcs[2] / 1.9999695f, 0f, 1f)
+                JavaCompat.Clamp(pcs[0] / 1.9999695f, 0f, 1f),
+                JavaCompat.Clamp(pcs[1] / 1.9999695f, 0f, 1f),
+                JavaCompat.Clamp(pcs[2] / 1.9999695f, 0f, 1f)
             };
         var scale = MajorVersion < 4 ? 65280f / 65535f : 1f;
         return new[]
         {
-            Math.Clamp(pcs[0] / 100f, 0f, 1f) * scale,
-            Math.Clamp((pcs[1] + 128f) / 255f, 0f, 1f) * scale,
-            Math.Clamp((pcs[2] + 128f) / 255f, 0f, 1f) * scale
+            JavaCompat.Clamp(pcs[0] / 100f, 0f, 1f) * scale,
+            JavaCompat.Clamp((pcs[1] + 128f) / 255f, 0f, 1f) * scale,
+            JavaCompat.Clamp((pcs[2] + 128f) / 255f, 0f, 1f) * scale
         };
     }
 
@@ -363,7 +366,7 @@ internal sealed class PdfCartonIccProfileData
             const float delta = 6f / 29f;
             var threshold = delta * delta * delta;
             return value > threshold
-                ? MathF.Cbrt(value)
+                ? JavaCompat.Cbrt(value)
                 : value / (3f * delta * delta) + 4f / 29f;
         }
         var fx = Forward(xyz[0] / 0.9642f);
@@ -381,9 +384,9 @@ internal sealed class PdfCartonIccProfileData
         var green = -0.9692660f * x + 1.8760108f * y + 0.0415560f * z;
         var blue = 0.0556434f * x - 0.2040259f * y + 1.0572252f * z;
         static float Gamma(float value) =>
-            Math.Clamp(value <= 0.0031308f
+            JavaCompat.Clamp(value <= 0.0031308f
                 ? 12.92f * value
-                : 1.055f * MathF.Pow(Math.Max(0f, value), 1f / 2.4f) - 0.055f,
+                : 1.055f * JavaCompat.Pow(Math.Max(0f, value), 1f / 2.4f) - 0.055f,
                 0f,
                 1f);
         return new[] { Gamma(red), Gamma(green), Gamma(blue) };
@@ -393,10 +396,10 @@ internal sealed class PdfCartonIccProfileData
     {
         static float Linear(float value)
         {
-            value = Math.Clamp(value, 0f, 1f);
+            value = JavaCompat.Clamp(value, 0f, 1f);
             return value <= 0.04045f
                 ? value / 12.92f
-                : MathF.Pow((value + 0.055f) / 1.055f, 2.4f);
+                : JavaCompat.Pow((value + 0.055f) / 1.055f, 2.4f);
         }
         var r = Linear(rgb[0]);
         var g = Linear(rgb[1]);
@@ -479,16 +482,13 @@ internal sealed class PdfCartonIccProfileData
         BinaryPrimitives.ReadInt32BigEndian(source.AsSpan(offset, 4)) / 65536f;
 
     private static string Signature(uint value) =>
-        string.Create(
-            4,
-            value,
-            static (characters, signature) =>
-            {
-                characters[0] = (char)(signature >> 24);
-                characters[1] = (char)(signature >> 16);
-                characters[2] = (char)(signature >> 8);
-                characters[3] = (char)signature;
-            });
+        new(new[]
+        {
+            (char)(value >> 24),
+            (char)(value >> 16),
+            (char)(value >> 8),
+            (char)value
+        });
 
     private readonly record struct TagRecord(int Offset, int Size);
 
@@ -499,11 +499,11 @@ internal sealed class PdfCartonIccProfileData
         private IccCurve(Func<float, float> evaluate) => this.evaluate = evaluate;
 
         internal float Evaluate(float value) =>
-            Math.Clamp(evaluate(Math.Clamp(value, 0f, 1f)), 0f, 1f);
+            JavaCompat.Clamp(evaluate(JavaCompat.Clamp(value, 0f, 1f)), 0f, 1f);
 
         internal float Invert(float value)
         {
-            value = Math.Clamp(value, 0f, 1f);
+            value = JavaCompat.Clamp(value, 0f, 1f);
             var low = 0f;
             var high = 1f;
             for (var iteration = 0; iteration < 24; iteration++)
@@ -529,7 +529,7 @@ internal sealed class PdfCartonIccProfileData
                     if (size < 14) throw new ArgumentException("ICC gamma curve is truncated.");
                     var gamma = BinaryPrimitives.ReadUInt16BigEndian(
                         source.AsSpan(offset + 12, 2)) / 256f;
-                    return new IccCurve(value => MathF.Pow(value, gamma));
+                    return new IccCurve(value => JavaCompat.Pow(value, gamma));
                 }
                 if (12L + count * 2L > size)
                     throw new ArgumentException("ICC sampled curve is truncated.");
@@ -561,18 +561,18 @@ internal sealed class PdfCartonIccProfileData
                 p[index] = ReadS15Fixed16(source, offset + 12 + index * 4);
             return new IccCurve(value => functionType switch
             {
-                0 => MathF.Pow(value, p[0]),
+                0 => JavaCompat.Pow(value, p[0]),
                 1 => value >= -p[2] / p[1]
-                    ? MathF.Pow(p[1] * value + p[2], p[0])
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0])
                     : 0f,
                 2 => value >= -p[2] / p[1]
-                    ? MathF.Pow(p[1] * value + p[2], p[0]) + p[3]
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0]) + p[3]
                     : p[3],
                 3 => value >= p[4]
-                    ? MathF.Pow(p[1] * value + p[2], p[0])
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0])
                     : p[3] * value,
                 4 => value >= p[4]
-                    ? MathF.Pow(p[1] * value + p[2], p[0]) + p[5]
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0]) + p[5]
                     : p[3] * value + p[6],
                 _ => value
             });
@@ -620,16 +620,16 @@ internal sealed class PdfCartonIccProfileData
                 var x = mapped[0];
                 var y = mapped[1];
                 var z = mapped[2];
-                mapped[0] = Math.Clamp(matrix[0] * x + matrix[1] * y + matrix[2] * z, 0f, 1f);
-                mapped[1] = Math.Clamp(matrix[3] * x + matrix[4] * y + matrix[5] * z, 0f, 1f);
-                mapped[2] = Math.Clamp(matrix[6] * x + matrix[7] * y + matrix[8] * z, 0f, 1f);
+                mapped[0] = JavaCompat.Clamp(matrix[0] * x + matrix[1] * y + matrix[2] * z, 0f, 1f);
+                mapped[1] = JavaCompat.Clamp(matrix[3] * x + matrix[4] * y + matrix[5] * z, 0f, 1f);
+                mapped[2] = JavaCompat.Clamp(matrix[6] * x + matrix[7] * y + matrix[8] * z, 0f, 1f);
             }
 
             var low = new int[InputChannels];
             var fractions = new float[InputChannels];
             for (var channel = 0; channel < InputChannels; channel++)
             {
-                var position = Math.Clamp(mapped[channel], 0f, 1f) * (gridPoints - 1);
+                var position = JavaCompat.Clamp(mapped[channel], 0f, 1f) * (gridPoints - 1);
                 low[channel] = Math.Min((int)position, gridPoints - 2);
                 fractions[channel] = position - low[channel];
             }
@@ -747,7 +747,7 @@ internal sealed class PdfCartonIccProfileData
 
     private static float Interpolate(float[] table, float value)
     {
-        var position = Math.Clamp(value, 0f, 1f) * (table.Length - 1);
+        var position = JavaCompat.Clamp(value, 0f, 1f) * (table.Length - 1);
         var lower = Math.Min((int)position, table.Length - 2);
         var fraction = position - lower;
         return table[lower] + (table[lower + 1] - table[lower]) * fraction;

@@ -39,7 +39,7 @@
    {:os "macos" :architecture "x64" :runner "macos-15-intel"}
    {:os "macos" :architecture "arm64" :runner "macos-15"}]}
  :package-contract
- {:target-framework "net10.0"
+ {:target-framework "netstandard2.0"
   :assembly-name "DripSharp.PdfCarton.IO"
   :assembly-dependencies []
   :dependencies

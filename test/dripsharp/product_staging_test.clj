@@ -84,6 +84,12 @@
                 (paths/resolve-path (:staging first) "NOTICE"))))
         (is (str/includes? first-readme "# Brine — Pkl for .NET"))
         (is (str/includes? first-readme "DripSharp.Brine.Parser"))
+        (is (str/includes? first-readme
+                           "Every production library has one target framework: `netstandard2.0`"))
+        (is (str/includes? first-readme
+                           "package consumers execute on `net10.0`"))
+        (is (str/includes? first-readme
+                           "does not empirically certify net48 runtime behavior"))
         (is (str/includes?
              first-readme
              "dotnet add package DripSharp.Brine --version 0.32.0-alpha.1"))

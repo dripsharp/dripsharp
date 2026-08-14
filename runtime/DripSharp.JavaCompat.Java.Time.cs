@@ -42,9 +42,9 @@ sealed class JavaSqlDate
 {
     private static readonly Regex Pattern =
         new(@"^(\d{4})-(\d{1,2})-(\d{1,2})$", RegexOptions.CultureInvariant);
-    private readonly DateOnly value;
+    private readonly DateTime value;
 
-    private JavaSqlDate(DateOnly value) => this.value = value;
+    private JavaSqlDate(DateTime value) => this.value = value;
 
     public static JavaSqlDate ValueOf(string text)
     {
@@ -55,12 +55,13 @@ sealed class JavaSqlDate
         try
         {
             return new JavaSqlDate(
-                new DateOnly(
+                new DateTime(
                     int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
                     int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture),
-                    int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture)));
+                    int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture),
+                    0, 0, 0, DateTimeKind.Unspecified));
         }
-        catch (ArgumentOutOfRangeException error)
+        catch (global::System.ArgumentOutOfRangeException error)
         {
             throw new ArgumentException("Invalid JDBC date escape value.", nameof(text), error);
         }
@@ -79,9 +80,9 @@ sealed class JavaSqlTime
 {
     private static readonly Regex Pattern =
         new(@"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", RegexOptions.CultureInvariant);
-    private readonly TimeOnly value;
+    private readonly TimeSpan value;
 
-    private JavaSqlTime(TimeOnly value) => this.value = value;
+    private JavaSqlTime(TimeSpan value) => this.value = value;
 
     public static JavaSqlTime ValueOf(string text)
     {
@@ -92,19 +93,19 @@ sealed class JavaSqlTime
         try
         {
             return new JavaSqlTime(
-                new TimeOnly(
+                new TimeSpan(
                     int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
                     int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture),
                     int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture)));
         }
-        catch (ArgumentOutOfRangeException error)
+        catch (global::System.ArgumentOutOfRangeException error)
         {
             throw new ArgumentException("Invalid JDBC time escape value.", nameof(text), error);
         }
     }
 
     public override string ToString() =>
-        value.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        value.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
@@ -147,7 +148,7 @@ sealed class JavaSqlTimestamp
                 : "0";
             return new JavaSqlTimestamp(value, fraction.Length == 0 ? "0" : fraction);
         }
-        catch (ArgumentOutOfRangeException error)
+        catch (global::System.ArgumentOutOfRangeException error)
         {
             throw new ArgumentException(
                 "Invalid JDBC timestamp escape value.", nameof(text), error);

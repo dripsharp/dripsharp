@@ -2,7 +2,7 @@
  :kind :github-alpha-zip
  :product-family :brine
  :asset-prefix "DripSharp.Brine"
- :target-framework "net10.0"
+ :target-framework "netstandard2.0"
  :entry-assembly "DripSharp.Brine.dll"
  :product-assemblies
  [{:file "DripSharp.Brine.dll"

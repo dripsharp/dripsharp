@@ -35,7 +35,7 @@
    :public-surface-strategy :complete-accessible-java-library
    :destination
    {:package {:id (get family-workflows/package-profiles profile)}
-    :project {:target-framework "net10.0"}}
+    :project {:target-framework "netstandard2.0"}}
    :summary {:declarations 1}
    :public-metadata {:rows []}})
 

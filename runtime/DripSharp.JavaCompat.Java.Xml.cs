@@ -324,8 +324,10 @@ internal static partial class JavaCompat
                 return;
             case System.Xml.XmlNodeType.Element:
                 var element = (System.Xml.XmlElement)node;
-                var namespaces =
-                    new Dictionary<string, string>(inheritedNamespaces, StringComparer.Ordinal);
+                var namespaces = inheritedNamespaces.ToDictionary(
+                    entry => entry.Key,
+                    entry => entry.Value,
+                    StringComparer.Ordinal);
                 if (!string.IsNullOrEmpty(element.NamespaceURI))
                     namespaces[element.Prefix] = element.NamespaceURI;
                 var orderedAttributes =

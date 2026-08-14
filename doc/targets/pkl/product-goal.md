@@ -101,6 +101,20 @@ capability, but their presence does not require Kotlin translation. Such
 behavior should be implemented through the reusable Java path when available or
 directly through an idiomatic .NET implementation.
 
+## Supported Frameworks and Validation Runtime
+
+The two Brine production libraries each target only `netstandard2.0`; they do
+not multi-target or emit production `net10.0` or `net48` assemblies. Generated
+test projects and every executable runner, probe, differential host, validation
+host, and isolated package consumer target `net10.0` and consume the
+`netstandard2.0` libraries.
+
+The intended compatibility contract includes consumption from .NET Framework
+4.8 as well as modern .NET. This repository infers that compatibility from the
+`netstandard2.0` API contract and compatible package dependencies. It does not
+provide a .NET Framework 4.8 build host, runtime, CI job, VM, compatibility
+runner, or empirical net48 execution certification.
+
 ## In-Scope Pending Areas
 
 Unless the user later decides otherwise, these are in-scope product work even

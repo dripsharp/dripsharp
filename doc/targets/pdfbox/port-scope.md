@@ -152,8 +152,16 @@ substitute for semantic project resolution.
 
 ## Platform and Dependency Adaptation
 
-Generated PdfCarton projects target `net10.0`. Supported hosts are Windows,
-Linux, and macOS on x64 and ARM64.
+Generated PdfCarton production projects target only `netstandard2.0`.
+Generated test projects and all executable runners, probes, differential and
+validation hosts, and isolated package consumers target `net10.0` and reference
+or consume those production projects. Supported hosts are Windows, Linux, and
+macOS on x64 and ARM64.
+
+.NET Framework 4.8 consumption compatibility is inferred from the
+`netstandard2.0` contract and compatible dependency assets. The repository does
+not build or execute net48 and does not claim empirical .NET Framework 4.8
+runtime certification.
 
 Approved standard-library and Microsoft-package mappings are recorded in
 [Dependency Mappings](dependencies.md). That document also records the

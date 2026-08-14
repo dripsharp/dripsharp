@@ -110,7 +110,7 @@ public sealed class ConfigBinderOptions
 
     public ConfigBinderOptions AddGeneratedLoader<T>(IPklGeneratedLoader<T> loader)
     {
-        ArgumentNullException.ThrowIfNull(loader);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(loader);
         generatedLoaders[typeof(T)] = loader;
         return this;
     }
@@ -118,7 +118,7 @@ public sealed class ConfigBinderOptions
     public ConfigBinderOptions AddConversion<TSource, TTarget>(
         Func<TSource, ConfigBinder, TTarget> conversion)
     {
-        ArgumentNullException.ThrowIfNull(conversion);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(conversion);
         conversions.RemoveAll(item => item.SourceType == typeof(TSource) && item.TargetType == typeof(TTarget));
         conversions.Add(new CustomConversion(typeof(TSource), typeof(TTarget),
             (value, binder) => conversion((TSource)value, binder)));
@@ -128,7 +128,7 @@ public sealed class ConfigBinderOptions
     public ConfigBinderOptions AddTypeMapping<TBase, TDerived>(string pklQualifiedName)
         where TDerived : TBase
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(pklQualifiedName);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNullOrWhiteSpace(pklQualifiedName);
         var derived = typeof(TDerived);
         if (derived.IsAbstract || derived.IsInterface || derived.ContainsGenericParameters)
             throw new ArgumentException($"Mapped type {derived.FullName} must be a closed, constructible type.",
@@ -180,18 +180,21 @@ public sealed class ConfigBinderOptions
 
 public sealed class ConfigBinder
 {
-    private static readonly NullabilityInfoContext Nullability = new();
     private readonly ConfigBinderOptions options;
     private readonly Dictionary<(Type BaseType, string QualifiedName), Type?> discoveredTypeMappings = new();
 
     private sealed class BindingNullability
     {
-        private BindingNullability(NullabilityInfo info, Func<NullabilityInfo, NullabilityState> state)
+        private BindingNullability(Type type, IEnumerator<byte> flags, byte fallback)
         {
-            AllowsNull = state(info) != NullabilityState.NotNull;
-            Element = info.ElementType is null ? null : new BindingNullability(info.ElementType, state);
-            GenericArguments = info.GenericTypeArguments
-                .Select(argument => new BindingNullability(argument, state)).ToArray();
+            var flag = flags.MoveNext() ? flags.Current : fallback;
+            AllowsNull = Nullable.GetUnderlyingType(type) is not null ||
+                !type.IsValueType && flag != 1;
+            Element = type.GetElementType() is { } element
+                ? new BindingNullability(element, flags, fallback)
+                : null;
+            GenericArguments = type.GetGenericArguments()
+                .Select(argument => new BindingNullability(argument, flags, fallback)).ToArray();
         }
 
         public bool AllowsNull { get; }
@@ -201,11 +204,53 @@ public sealed class ConfigBinder
         public BindingNullability? GenericArgument(int index) =>
             index < GenericArguments.Count ? GenericArguments[index] : null;
 
-        public static BindingNullability ForRead(NullabilityInfo info) =>
-            new(info, item => item.ReadState);
+        public static BindingNullability ForRead(ParameterInfo parameter) =>
+            Create(parameter.ParameterType, parameter.GetCustomAttributesData(), parameter.Member);
 
-        public static BindingNullability ForWrite(NullabilityInfo info) =>
-            new(info, item => item.WriteState);
+        public static BindingNullability ForWrite(PropertyInfo property) =>
+            Create(property.PropertyType, property.GetCustomAttributesData(), property);
+
+        public static BindingNullability ForWrite(FieldInfo field) =>
+            Create(field.FieldType, field.GetCustomAttributesData(), field);
+
+        private static BindingNullability Create(
+            Type type,
+            IList<CustomAttributeData> attributes,
+            MemberInfo contextMember)
+        {
+            var fallback = NullableContext(contextMember);
+            var flags = NullableFlags(attributes);
+            return new BindingNullability(
+                type,
+                ((IEnumerable<byte>)flags).GetEnumerator(),
+                fallback);
+        }
+
+        private static byte[] NullableFlags(IList<CustomAttributeData> attributes)
+        {
+            var attribute = attributes.FirstOrDefault(item =>
+                item.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute");
+            if (attribute is null || attribute.ConstructorArguments.Count == 0)
+                return Array.Empty<byte>();
+            var value = attribute.ConstructorArguments[0].Value;
+            if (value is byte flag) return new[] { flag };
+            return value is IReadOnlyCollection<CustomAttributeTypedArgument> values
+                ? values.Select(item => Convert.ToByte(item.Value, CultureInfo.InvariantCulture)).ToArray()
+                : Array.Empty<byte>();
+        }
+
+        private static byte NullableContext(MemberInfo member)
+        {
+            for (var current = member; current is not null; current = current.DeclaringType)
+            {
+                var attribute = current.GetCustomAttributesData().FirstOrDefault(item =>
+                    item.AttributeType.FullName ==
+                    "System.Runtime.CompilerServices.NullableContextAttribute");
+                if (attribute?.ConstructorArguments.FirstOrDefault().Value is byte flag)
+                    return flag;
+            }
+            return 0;
+        }
     }
 
     public ConfigBinder(ConfigBinderOptions? options = null) =>
@@ -225,23 +270,23 @@ public sealed class ConfigBinder
         (T?)BindAt(value, typeof(T), "$", allowsNull: true);
 
     public T BindGenerated<T>(object? value) =>
-        (T)BindCore(value, typeof(T), "$", new HashSet<object>(ReferenceEqualityComparer.Instance),
+        (T)BindCore(value, typeof(T), "$", new HashSet<object>(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance),
             allowsNull: !typeof(T).IsValueType, skipGeneratedLoader: true)!;
 
     public object? Bind(object? value, Type targetType)
     {
-        ArgumentNullException.ThrowIfNull(targetType);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(targetType);
         return BindAt(value, targetType, "$", allowsNull: !targetType.IsValueType);
     }
 
     public object? Bind(object? value, Type targetType, bool allowNull)
     {
-        ArgumentNullException.ThrowIfNull(targetType);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(targetType);
         return BindAt(value, targetType, "$", allowNull);
     }
 
     internal object? BindAt(object? value, Type targetType, string path, bool allowsNull) =>
-        BindCore(value, targetType, path, new HashSet<object>(ReferenceEqualityComparer.Instance),
+        BindCore(value, targetType, path, new HashSet<object>(global::DripSharp.Runtime.JavaReferenceEqualityComparer.Instance),
             allowsNull, skipGeneratedLoader: false);
 
     private object? BindCore(object? value, Type targetType, string path, ISet<object> active,
@@ -377,7 +422,8 @@ public sealed class ConfigBinder
         if (discovered is not null) return discovered;
 
         var declaredName = targetType.GetCustomAttribute<PklQualifiedNameAttribute>()?.QualifiedName;
-        if (declaredName is not null && !string.Equals(declaredName, qualifiedName, StringComparison.Ordinal))
+        if (declaredName is not null &&
+            !string.Equals(declaredName, qualifiedName, StringComparison.Ordinal))
             throw Error(path, value, targetType,
                 $"Pkl class `{qualifiedName}` does not match generated target `{declaredName}`");
         return targetType;
@@ -426,7 +472,7 @@ public sealed class ConfigBinder
             throw Error(path, value, targetType, "a Pkl type-alias target must have exactly one public single-argument constructor");
         var constructor = constructors[0];
         var parameter = constructor.GetParameters()[0];
-        var nullability = BindingNullability.ForRead(Nullability.Create(parameter));
+        var nullability = BindingNullability.ForRead(parameter);
         var converted = BindCore(value, parameter.ParameterType, path, active,
             nullability.AllowsNull, skipGeneratedLoader: false, nullability: nullability);
         try { return constructor.Invoke(new[] { converted }); }
@@ -461,14 +507,14 @@ public sealed class ConfigBinder
             {
                 case PropertyInfo property:
                 {
-                    var nullability = BindingNullability.ForWrite(Nullability.Create(property));
+                    var nullability = BindingNullability.ForWrite(property);
                     property.SetValue(instance, BindCore(item, property.PropertyType, path + "." + name,
                         active, nullability.AllowsNull, nullability: nullability));
                     break;
                 }
                 case FieldInfo field:
                 {
-                    var nullability = BindingNullability.ForWrite(Nullability.Create(field));
+                    var nullability = BindingNullability.ForWrite(field);
                     field.SetValue(instance, BindCore(item, field.FieldType, path + "." + name,
                         active, nullability.AllowsNull, nullability: nullability));
                     break;
@@ -492,9 +538,11 @@ public sealed class ConfigBinder
     {
         var result = new Dictionary<string, object?>(comparer);
         foreach (var entry in properties.OrderBy(item => item.Key, StringComparer.Ordinal))
-            if (!result.TryAdd(entry.Key, entry.Value))
+            if (result.ContainsKey(entry.Key))
                 throw Error(path + "." + entry.Key, entry.Value, targetType,
                     $"property name `{entry.Key}` is ambiguous under the configured comparison");
+            else
+                result.Add(entry.Key, entry.Value);
         return result;
     }
 
@@ -524,7 +572,7 @@ public sealed class ConfigBinder
                     var name = PklName(parameter);
                     if (!source.TryGetValue(name, out var item)) return parameter.DefaultValue;
                     consumed.Add(name);
-                    var nullability = BindingNullability.ForRead(Nullability.Create(parameter));
+                    var nullability = BindingNullability.ForRead(parameter);
                     return BindCore(item, parameter.ParameterType, path + "." + name, active,
                         nullability.AllowsNull, nullability: nullability);
                 }).ToArray();
@@ -667,7 +715,8 @@ public sealed class ConfigBinder
             throw Error(path, value, targetType, "enum values must come from Pkl strings");
         foreach (var field in targetType.GetFields(BindingFlags.Public | BindingFlags.Static)
                      .OrderBy(item => item.Name, StringComparer.Ordinal))
-            if (string.Equals(PklName(field), text, StringComparison.Ordinal)) return field.GetValue(null)!;
+            if (string.Equals(PklName(field), text, StringComparison.Ordinal))
+                return field.GetValue(null)!;
         var normalized = Identifier(text);
         foreach (var name in Enum.GetNames(targetType))
             if (string.Equals(name, normalized, StringComparison.OrdinalIgnoreCase))
@@ -701,11 +750,11 @@ public sealed class ConfigBinder
             if (targetType == typeof(ulong)) return (ulong)value;
             if (targetType == typeof(nint)) return (nint)value;
             if (targetType == typeof(nuint)) return (nuint)value;
-            if (targetType == typeof(Int128)) return (Int128)value;
-            if (targetType == typeof(UInt128)) return (UInt128)value;
             if (targetType == typeof(decimal)) return (decimal)value;
             if (targetType == typeof(BigInteger)) return new BigInteger(value);
         }
+        if (targetType.FullName is "System.Int128" or "System.UInt128" or "System.Half")
+            return ParseModernNumeric(targetType, value.ToString(CultureInfo.InvariantCulture));
         if (targetType == typeof(double))
         {
             var result = (double)value;
@@ -720,14 +769,6 @@ public sealed class ConfigBinder
                 throw new ArithmeticException("the conversion would lose integer precision");
             return result;
         }
-        if (targetType == typeof(Half))
-        {
-            var result = (Half)value;
-            if (!Half.IsFinite(result)) throw new OverflowException();
-            if (!options.AllowLossyNumericConversions && (long)result != value)
-                throw new ArithmeticException("the conversion would lose integer precision");
-            return result;
-        }
         throw new InvalidOperationException("unsupported numeric target");
     }
 
@@ -737,22 +778,27 @@ public sealed class ConfigBinder
         if (targetType == typeof(float))
         {
             var result = checked((float)value);
-            if (double.IsFinite(value) && !float.IsFinite(result)) throw new OverflowException();
+            if (global::DripSharp.Runtime.JavaCompat.IsFinite(value) && !global::DripSharp.Runtime.JavaCompat.IsFinite(result)) throw new OverflowException();
             if (!options.AllowLossyNumericConversions && (double)result != value)
                 throw new ArithmeticException("the conversion would lose floating-point precision");
             return result;
         }
-        if (targetType == typeof(Half))
+        if (targetType.FullName == "System.Half")
         {
-            var result = (Half)value;
-            if (double.IsFinite(value) && !Half.IsFinite(result)) throw new OverflowException();
-            if (!options.AllowLossyNumericConversions && (double)result != value)
+            var result = ParseModernNumeric(
+                targetType, value.ToString("R", CultureInfo.InvariantCulture));
+            var roundTrip = double.Parse(
+                result.ToString()!, NumberStyles.Float, CultureInfo.InvariantCulture);
+            if (global::DripSharp.Runtime.JavaCompat.IsFinite(value) &&
+                !global::DripSharp.Runtime.JavaCompat.IsFinite(roundTrip))
+                throw new OverflowException();
+            if (!options.AllowLossyNumericConversions && roundTrip != value)
                 throw new ArithmeticException("the conversion would lose floating-point precision");
             return result;
         }
         if (targetType == typeof(decimal))
         {
-            if (!double.IsFinite(value)) throw new OverflowException();
+            if (!global::DripSharp.Runtime.JavaCompat.IsFinite(value)) throw new OverflowException();
             var result = checked((decimal)value);
             if (!options.AllowLossyNumericConversions && (double)result != value)
                 throw new ArithmeticException("the conversion would lose floating-point precision");
@@ -760,15 +806,30 @@ public sealed class ConfigBinder
         }
         if (targetType == typeof(BigInteger))
         {
-            if (!double.IsFinite(value) || Math.Truncate(value) != value)
+            if (!global::DripSharp.Runtime.JavaCompat.IsFinite(value) || Math.Truncate(value) != value)
                 throw new ArithmeticException("a non-integral Pkl Float cannot be converted to an integral target");
             return new BigInteger(value);
         }
-        if (!double.IsFinite(value) || Math.Truncate(value) != value)
+        if (!global::DripSharp.Runtime.JavaCompat.IsFinite(value) || Math.Truncate(value) != value)
             throw new ArithmeticException("a non-integral Pkl Float cannot be converted to an integral target");
         if (value < long.MinValue || value > long.MaxValue)
             throw new OverflowException();
         return ConvertInteger(checked((long)value), targetType);
+    }
+
+    private static object ParseModernNumeric(Type targetType, string value)
+    {
+        var parse = targetType.GetMethod(
+            "Parse", BindingFlags.Public | BindingFlags.Static, null,
+            new[] { typeof(string), typeof(IFormatProvider) }, null) ??
+            targetType.GetMethod(
+                "Parse", BindingFlags.Public | BindingFlags.Static, null,
+                new[] { typeof(string) }, null);
+        if (parse is null)
+            throw new InvalidOperationException($"unsupported numeric target {targetType}");
+        return parse.Invoke(null, parse.GetParameters().Length == 2
+            ? new object?[] { value, CultureInfo.InvariantCulture }
+            : new object?[] { value })!;
     }
 
     private static Uri CreateUri(string value, string path, Type targetType)
@@ -812,7 +873,8 @@ public sealed class ConfigBinder
     }
 
     private static bool IsSemanticVersion(PObject value) =>
-        string.Equals(value.GetClassInfo().GetQualifiedName(), "pkl.semver#Version", StringComparison.Ordinal);
+        string.Equals(value.GetClassInfo().GetQualifiedName(), "pkl.semver#Version",
+            StringComparison.Ordinal);
 
     private static string SemanticVersionString(PObject value)
     {
@@ -926,7 +988,7 @@ public sealed class ConfigBinder
     {
         if (type.IsArray) { element = type.GetElementType()!; return true; }
         var definitions = new[] { typeof(IEnumerable<>), typeof(ICollection<>), typeof(IList<>),
-            typeof(ISet<>), typeof(IReadOnlySet<>), typeof(IReadOnlyList<>), typeof(IReadOnlyCollection<>) };
+            typeof(ISet<>), typeof(IReadOnlyList<>), typeof(IReadOnlyCollection<>) };
         var match = type.GetInterfaces().Concat(new[] { type }).FirstOrDefault(candidate =>
             candidate.IsGenericType && definitions.Contains(candidate.GetGenericTypeDefinition()));
         if (match is null) { element = null!; return false; }
@@ -979,13 +1041,14 @@ public sealed class ConfigBinder
 
     private static bool IsSetType(Type type) => type.GetInterfaces().Concat(new[] { type }).Any(candidate =>
         candidate.IsGenericType && candidate.GetGenericTypeDefinition() is var definition &&
-        (definition == typeof(ISet<>) || definition == typeof(IReadOnlySet<>)));
+        definition == typeof(ISet<>));
     private static bool RequiresRecursiveBinding(Type type) =>
         type != typeof(byte[]) && type != typeof(sbyte[]) &&
         (TryGetPairTypes(type, out _, out _) || TryGetDictionaryTypes(type, out _, out _) ||
          TryGetCollectionElementType(type, out _));
-    private static bool IsNumeric(Type type) => type == typeof(BigInteger) || type == typeof(Half) ||
-        type == typeof(nint) || type == typeof(nuint) || type == typeof(Int128) || type == typeof(UInt128) ||
+    private static bool IsNumeric(Type type) => type == typeof(BigInteger) ||
+        type == typeof(nint) || type == typeof(nuint) ||
+        type.FullName is "System.Half" or "System.Int128" or "System.UInt128" ||
         Type.GetTypeCode(type) is >= TypeCode.SByte and <= TypeCode.Decimal;
     private static string PklName(MemberInfo member) => member.GetCustomAttribute<PklNameAttribute>()?.Name ?? member.Name;
     private static string PklName(ParameterInfo parameter) => parameter.GetCustomAttribute<PklNameAttribute>()?.Name ?? parameter.Name!;
@@ -1015,7 +1078,7 @@ public sealed class ConfigBinder
     }
     private static string ConstructorSignature(ConstructorInfo constructor) =>
         string.Join("|", constructor.GetParameters().Select(item => item.ParameterType.FullName + ":" + PklName(item)));
-    private static string FormatPathKey(object? value) => value is string text ? "\"" + text.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"" :
+    private static string FormatPathKey(object? value) => value is string text ? "\"" + text.Replace("\"", "\\\"") + "\"" :
         Convert.ToString(value, CultureInfo.InvariantCulture) ?? "null";
     private static object Track(object value, Type targetType, string path, ISet<object> active, Func<object> bind)
     {
@@ -1068,7 +1131,7 @@ public sealed class Config
 
     public Config Get(string childName)
     {
-        ArgumentNullException.ThrowIfNull(childName);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(childName);
         if (RawValue is PObject pklObject &&
             pklObject.GetProperties().TryGetValue(childName, out var property))
             return Child(childName, property);
@@ -1079,7 +1142,7 @@ public sealed class Config
 
     public bool TryGet(string childName, out Config? child)
     {
-        ArgumentNullException.ThrowIfNull(childName);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(childName);
         if (RawValue is PObject pklObject &&
             pklObject.GetProperties().TryGetValue(childName, out var property))
         {
@@ -1113,7 +1176,7 @@ public sealed class Config
 
     public Config Get(object key)
     {
-        ArgumentNullException.ThrowIfNull(key);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(key);
         if (RawValue is IDictionary dictionary && dictionary.Contains(key))
             return key is string childName
                 ? Child(childName, dictionary[key])
@@ -1125,7 +1188,7 @@ public sealed class Config
 
     public Config GetKey(object key)
     {
-        ArgumentNullException.ThrowIfNull(key);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(key);
         if (RawValue is IDictionary dictionary && dictionary.Contains(key))
             return KeyedChild(key, dictionary[key]);
         throw new NoSuchChildException(QualifiedName, FormatChildName(key));
@@ -1133,7 +1196,7 @@ public sealed class Config
 
     public Config GetPath(params object[] path)
     {
-        ArgumentNullException.ThrowIfNull(path);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(path);
         return path.Aggregate(this, (node, segment) => node.Get(segment));
     }
 
@@ -1145,13 +1208,13 @@ public sealed class Config
 
     public object As(Type targetType)
     {
-        ArgumentNullException.ThrowIfNull(targetType);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(targetType);
         return binder.BindAt(RawValue, targetType, BindingPath, allowsNull: false)!;
     }
 
     public object? AsNullable(Type targetType)
     {
-        ArgumentNullException.ThrowIfNull(targetType);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(targetType);
         return binder.BindAt(RawValue, targetType, BindingPath, allowsNull: true);
     }
 
@@ -1210,7 +1273,7 @@ public sealed class ConfigEvaluatorBuilder
 
     public ConfigEvaluatorBuilder ConfigureBinder(Action<ConfigBinderOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(configure);
         configure(binderOptions);
         return this;
     }
@@ -1315,7 +1378,7 @@ public sealed class ConfigEvaluator : IDisposable
         if (ownsEvaluator) evaluator.Dispose();
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
+    private void ThrowIfDisposed() => global::DripSharp.Runtime.JavaCompat.ThrowIfDisposed(disposed, this);
 }
 
 public sealed class CSharpGenerationException : Exception
@@ -1342,8 +1405,8 @@ public sealed class CSharpGeneratorOptions
 
     public CSharpGeneratorOptions MapNamespace(string moduleName, string @namespace)
     {
-        ArgumentException.ThrowIfNullOrEmpty(moduleName);
-        ArgumentException.ThrowIfNullOrEmpty(@namespace);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNullOrEmpty(moduleName);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNullOrEmpty(@namespace);
         namespaceMappings[moduleName] = @namespace;
         return this;
     }
@@ -1380,14 +1443,14 @@ public sealed class CSharpGenerator
 
     public string Generate(Evaluator evaluator, ModuleSource source)
     {
-        ArgumentNullException.ThrowIfNull(evaluator);
-        ArgumentNullException.ThrowIfNull(source);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(evaluator);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(source);
         return Generate(evaluator.EvaluateSchema(source));
     }
 
     public string Generate(ModuleSchema schema)
     {
-        ArgumentNullException.ThrowIfNull(schema);
+        global::DripSharp.Runtime.JavaCompat.ThrowIfNull(schema);
         moduleName = schema.GetModuleName();
         moduleNamespace = options.Namespace ?? NamespaceForModule(moduleName);
         localTypes.Clear();
@@ -1560,7 +1623,7 @@ file static class PklGeneratedModelSemantics
             if (!implemented.IsGenericType) continue;
             var definition = implemented.GetGenericTypeDefinition();
             if (definition == typeof(global::System.Collections.Generic.ISet<>) ||
-                definition == typeof(global::System.Collections.Generic.IReadOnlySet<>)) return true;
+                definition == typeof(global::System.Collections.Generic.ISet<>)) return true;
         }
         return false;
     }
@@ -1738,7 +1801,8 @@ file static class PklGeneratedModelSemantics
             output.Append("\n        : base(")
                 .Append(string.Join(", ", baseProperties.Select(entry =>
                     ParameterIdentifier(allProperties.Single(item => string.Equals(
-                        item.Value.GetSimpleName(), entry.Value.GetSimpleName(), StringComparison.Ordinal)).Value))))
+                        item.Value.GetSimpleName(), entry.Value.GetSimpleName(),
+                        StringComparison.Ordinal)).Value))))
                 .Append(')');
         }
         if (declaredProperties.Count == 0)
@@ -1819,7 +1883,8 @@ file static class PklGeneratedModelSemantics
              superclass is not null && !superclass.GetInfo().IsStandardLibraryClass();
              superclass = superclass.GetSuperclass())
             if (superclass.GetProperties().Values.Any(property =>
-                    string.Equals(property.GetSimpleName(), pklName, StringComparison.Ordinal)))
+                    string.Equals(property.GetSimpleName(), pklName,
+                        StringComparison.Ordinal)))
                 return true;
         return false;
     }
@@ -1852,7 +1917,8 @@ file static class PklGeneratedModelSemantics
                 var current = group.Where(item => !item.IsInherited).ToArray();
                 var inherited = group.Where(item => item.IsInherited).ToArray();
                 return current.Length > 1 || current.Any(candidate => inherited.Any(prior =>
-                    !string.Equals(candidate.PklName, prior.PklName, StringComparison.Ordinal)));
+                    !string.Equals(candidate.PklName, prior.PklName,
+                        StringComparison.Ordinal)));
             })
             .Select(group => $"member collision in {owner} for `{group.Key}`: " +
                 string.Join(", ", group.Select(item => item.Description)
@@ -1924,7 +1990,7 @@ file static class PklGeneratedModelSemantics
             "pkl.base#Collection" => $"global::System.Collections.Generic.IReadOnlyCollection<{Argument(arguments, 0)}>",
             "pkl.base#List" or "pkl.base#Listing" =>
                 $"global::System.Collections.Generic.IReadOnlyList<{Argument(arguments, 0)}>",
-            "pkl.base#Set" => $"global::System.Collections.Generic.IReadOnlySet<{Argument(arguments, 0)}>",
+            "pkl.base#Set" => $"global::System.Collections.Generic.ISet<{Argument(arguments, 0)}>",
             "pkl.base#Map" or "pkl.base#Mapping" =>
                 $"global::System.Collections.Generic.IReadOnlyDictionary<{Argument(arguments, 0)}, {Argument(arguments, 1)}>",
             "pkl.base#Pair" => $"global::DripSharp.Brine.Pair<{Argument(arguments, 0)}, {Argument(arguments, 1)}>",
@@ -1965,7 +2031,8 @@ file static class PklGeneratedModelSemantics
 
     private static bool IsNullType(PType type) => type is PType.Class classType &&
         classType.GetPClass().GetQualifiedName() == "pkl.base#Null";
-    private static string MakeNullable(string type) => type.EndsWith("?", StringComparison.Ordinal) ? type : type + "?";
+    private static string MakeNullable(string type) =>
+        type.EndsWith("?", StringComparison.Ordinal) ? type : type + "?";
     private string Argument(IReadOnlyList<PType> arguments, int index) => index < arguments.Count ? TypeName(arguments[index]) : "object";
 
     private static IReadOnlyList<string>? StringLiteralValues(PType type)
@@ -1983,8 +2050,8 @@ file static class PklGeneratedModelSemantics
         ? localTypes["module:" + moduleName]
         : localTypes.TryGetValue("class:" + pClass.GetQualifiedName(), out var symbol) ? symbol : ToIdentifier(pClass.GetSimpleName());
     private string NamespaceForModule(string name) => options.NamespaceMappings.TryGetValue(name, out var mapped) ? mapped :
-        string.Join(".", name.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(ToIdentifier));
-    private static string LastModulePart(string name) => name.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "Module";
+        string.Join(".", name.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries).Select(ToIdentifier));
+    private static string LastModulePart(string name) => name.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "Module";
     private static IEnumerable<KeyValuePair<string, T>> Ordered<T>(IEnumerable<KeyValuePair<string, T>> values) =>
         values.OrderBy(entry => entry.Value is Member member ? member.GetSourceLocation().StartLine : int.MaxValue)
             .ThenBy(entry => entry.Key, StringComparer.Ordinal);
@@ -1997,7 +2064,7 @@ file static class PklGeneratedModelSemantics
     {
         if (!options.EmitDocComments || string.IsNullOrWhiteSpace(comment)) return;
         output.Append(indent).Append("/// <summary>\n");
-        foreach (var line in comment.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        foreach (var line in comment.Replace("\r\n", "\n").Split('\n'))
             output.Append(indent).Append("/// ").Append(System.Security.SecurityElement.Escape(line.Trim())).Append("\n");
         output.Append(indent).Append("/// </summary>\n");
     }
@@ -2042,7 +2109,7 @@ file static class PklGeneratedModelSemantics
         return Keywords.Contains(result) ? "@" + result : result;
     }
 
-    private static string Escape(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal)
-        .Replace("\"", "\\\"", StringComparison.Ordinal)
-        .Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
+    private static string Escape(string value) => value.Replace("\\", "\\\\")
+        .Replace("\"", "\\\"")
+        .Replace("\r", "\\r").Replace("\n", "\\n");
 }

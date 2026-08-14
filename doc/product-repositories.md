@@ -95,6 +95,23 @@ Translator-only `source-map.edn` files likewise remain in the proved staging
 tree and are excluded from generated product repositories. They are not needed
 to restore, build, or run the generated test suites.
 
+## Production and execution frameworks
+
+Brine, PdfCarton, and SqlTrellis production libraries each have exactly one
+target framework, `netstandard2.0`. They do not multi-target and do not emit
+production `net10.0` or `net48` assets. Their generated test projects and every
+executable runner, probe, differential host, validation host, and isolated
+package consumer target `net10.0` and reference or consume the
+`netstandard2.0` assemblies.
+
+Each generated-product target records this distinction in its target-owned
+`:frameworks` contract. Clean generation, package paths, dependency groups,
+release preparation, and consumer validation derive their production or
+execution assumption from that contract. .NET Framework 4.8 compatibility is
+inferred from the `netstandard2.0` contract and compatible dependency assets;
+the repository performs no net48 runtime build or test and does not empirically
+certify net48 execution.
+
 ## GitHub Alpha-Release Assets
 
 Early GitHub distribution is a DLL-focused prerelease workflow, separate from

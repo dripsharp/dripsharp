@@ -1,4 +1,4 @@
-{:schema-version 8
+{:schema-version 9
  :target :sqltrellis
  :product-family :sqltrellis
  :contracts
@@ -11,6 +11,11 @@
  {:source-language-version 11
   :runtime-major 17
   :preview-features? false}
+ :frameworks
+ {:production "netstandard2.0"
+  :execution "net10.0"
+  :net48-compatibility :inferred-from-netstandard2.0
+  :net48-runtime-tested? false}
  :capabilities
  #{:java-compat :java-regex-unicode :sqltrellis-generic-compatibility}
  :authorship
@@ -29,7 +34,7 @@
    {:sources [:sqltrellis/generic-compatibility]
     :evidence [:sqltrellis-complete-product-proof]
     :review "pkl-e2eu.3"
-    :budget {:authored-lines 13889 :total-lines 134932}}
+    :budget {:authored-lines 14636 :total-lines 135679}}
    :required-capabilities
    #{:java-compat :java-regex-unicode :sqltrellis-generic-compatibility}}]
  :destinations [{:id :core :path "destinations/core.edn"}]
