@@ -37,12 +37,12 @@ and does not change any product scope, exclusion, synchronization rule, or
 shipped-test policy.
 
 All four production packages contain assemblies and portable symbols only
-under `lib/netstandard2.0`, with `netstandard2.0` dependency groups. Release
-preparation and remote validation use `net10.0` consumers to restore, compile,
-load, and exercise those assemblies. Compatibility with .NET Framework 4.8 is
-inferred from the `netstandard2.0` contract and compatible dependency closure;
-this repository does not run a net48 build, host, VM, CI job, or compatibility
-test and does not empirically certify net48 execution.
+under `lib/netstandard2.0`, with canonical `.NETStandard2.0` dependency groups.
+Release preparation and remote validation use `net10.0` consumers to restore,
+compile, load, and exercise those assemblies. Compatibility with .NET Framework
+4.8 is inferred from the `netstandard2.0` contract and compatible dependency
+closure; this repository does not run a net48 build, host, VM, CI job, or
+compatibility test and does not empirically certify net48 execution.
 
 All steps before **Authorized live push** are either local-only or explicitly
 read-only. No command in this document implicitly authorizes an upload,

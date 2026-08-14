@@ -200,9 +200,11 @@ framework split once:
 
 Every destination project's `:target-framework` must equal `:production`.
 Every generated test-suite project's `:target-framework` must equal
-`:execution`. Package assets and dependency groups use the production value;
-all executable validation and isolated consumers use the execution value. The
-net48 fields record that compatibility is inferred rather than runtime-tested.
+`:execution`. Package asset paths use the lowercase production TFM, while
+nuspec dependency groups use its exact NuGet canonical identifier (for example,
+`netstandard2.0` and `.NETStandard2.0`, respectively). All executable validation
+and isolated consumers use the execution value. The net48 fields record that
+compatibility is inferred rather than runtime-tested.
 
 ```clojure
 {:schema-version 2

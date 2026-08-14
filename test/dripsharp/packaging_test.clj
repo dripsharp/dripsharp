@@ -46,37 +46,57 @@
 (def dc-elements-namespace
   "http://purl.org/dc/elements/1.1/")
 
-(defn- nuspec []
+(defn- nuspec
+  ([] (nuspec "net8.0"))
+  ([dependency-framework]
+   (str "<package xmlns=\"" nuspec-namespace "\"><metadata>"
+        "<id>" (:id package) "</id>"
+        "<version>" (:version package) "</version>"
+        "<title>" (:title package) "</title>"
+        "<description>" (:description package) "</description>"
+        "<authors>" (:authors package) "</authors>"
+        "<tags>" (:tags package) "</tags>"
+        "<license type=\"expression\">" (:license-expression package) "</license>"
+        "<licenseUrl>https://licenses.nuget.org/" (:license-expression package)
+        "</licenseUrl>"
+        "<projectUrl>" (:project-url package) "</projectUrl>"
+        "<repository type=\"" (:repository-type package) "\" url=\""
+        (:repository-url package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
+        "<dependencies><group targetFramework=\"" dependency-framework
+        "\" /></dependencies>"
+        "</metadata></package>")))
+
+(defn- core-nuspec
+  ([] (core-nuspec "net8.0"))
+  ([dependency-framework]
+   (str "<package xmlns=\"" dependency-nuspec-namespace "\"><metadata>"
+        "<id>" (:id core-package) "</id>"
+        "<version>" (:version core-package) "</version>"
+        "<title>" (:title core-package) "</title>"
+        "<description>" (:description core-package) "</description>"
+        "<authors>" (:authors core-package) "</authors>"
+        "<tags>" (:tags core-package) "</tags>"
+        "<projectUrl>" (:project-url core-package) "</projectUrl>"
+        "<repository type=\"" (:repository-type core-package) "\" url=\""
+        (:repository-url core-package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
+        "<dependencies><group targetFramework=\"" dependency-framework "\">"
+        "<dependency id=\"DripSharp.Brine.Parser\" version=\"0.0.0-development\" exclude=\"Build,Analyzers\" />"
+        "</group></dependencies>"
+        "</metadata></package>")))
+
+(defn- symbol-nuspec [dependency-framework]
   (str "<package xmlns=\"" nuspec-namespace "\"><metadata>"
        "<id>" (:id package) "</id>"
        "<version>" (:version package) "</version>"
        "<title>" (:title package) "</title>"
-       "<description>" (:description package) "</description>"
-       "<authors>" (:authors package) "</authors>"
-       "<tags>" (:tags package) "</tags>"
-       "<license type=\"expression\">" (:license-expression package) "</license>"
-       "<licenseUrl>https://licenses.nuget.org/" (:license-expression package)
-       "</licenseUrl>"
        "<projectUrl>" (:project-url package) "</projectUrl>"
+       "<description>" (:description package) "</description>"
+       "<tags>" (:tags package) "</tags>"
+       "<packageTypes><packageType name=\"SymbolsPackage\" /></packageTypes>"
        "<repository type=\"" (:repository-type package) "\" url=\""
        (:repository-url package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
-       "<dependencies><group targetFramework=\"net8.0\" /></dependencies>"
-       "</metadata></package>"))
-
-(defn- core-nuspec []
-  (str "<package xmlns=\"" dependency-nuspec-namespace "\"><metadata>"
-       "<id>" (:id core-package) "</id>"
-       "<version>" (:version core-package) "</version>"
-       "<title>" (:title core-package) "</title>"
-       "<description>" (:description core-package) "</description>"
-       "<authors>" (:authors core-package) "</authors>"
-       "<tags>" (:tags core-package) "</tags>"
-       "<projectUrl>" (:project-url core-package) "</projectUrl>"
-       "<repository type=\"" (:repository-type core-package) "\" url=\""
-       (:repository-url core-package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
-       "<dependencies><group targetFramework=\"net8.0\">"
-       "<dependency id=\"DripSharp.Brine.Parser\" version=\"0.0.0-development\" exclude=\"Build,Analyzers\" />"
-       "</group></dependencies>"
+       "<dependencies><group targetFramework=\"" dependency-framework
+       "\" /></dependencies>"
        "</metadata></package>"))
 
 (defn- archive! [entries]
@@ -91,13 +111,16 @@
         (.closeEntry output)))
     archive))
 
-(defn- content-types []
-  (str "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
-       "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\" />"
-       "<Default Extension=\"psmdcp\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\" />"
-       "<Default Extension=\"dll\" ContentType=\"application/octet\" />"
-       "<Default Extension=\"nuspec\" ContentType=\"application/octet\" />"
-       "</Types>"))
+(defn- content-types
+  ([] (content-types "dll"))
+  ([payload-extension]
+   (str "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\" />"
+        "<Default Extension=\"psmdcp\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\" />"
+        "<Default Extension=\"" payload-extension
+        "\" ContentType=\"application/octet\" />"
+        "<Default Extension=\"nuspec\" ContentType=\"application/octet\" />"
+        "</Types>")))
 
 (defn- relationships [nuspec-name]
   (str "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
@@ -133,6 +156,20 @@
   (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
   (Files/writeString file contents (make-array OpenOption 0))
   file)
+
+(defn- symbol-package-fixture! [symbol-metadata]
+  (let [pdb "BSJBportable-pdb"
+        artifact
+        (archive!
+         {"[Content_Types].xml" (content-types "pdb")
+          "_rels/.rels" (relationships "DripSharp.Brine.Parser.nuspec")
+          "package/services/metadata/core-properties/core-properties.psmdcp"
+          (core-properties package)
+          "DripSharp.Brine.Parser.nuspec" symbol-metadata
+          "lib/netstandard2.0/DripSharp.Brine.Parser.pdb" pdb})
+        verified-pdb (write-file! (.resolve (.getParent artifact) "verified.pdb")
+                                  pdb)]
+    {:artifact artifact :verified-pdb verified-pdb}))
 
 (defn- sha256 [^Path file]
   (let [digest (MessageDigest/getInstance "SHA-256")]
@@ -571,6 +608,68 @@
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= ["NOTICE.txt"] (:missing (ex-data error)))))))
 
+(deftest netstandard-package-and-symbol-inspection-require-canonical-dependency-group
+  (let [canonical-framework ".NETStandard2.0"
+        package-artifact
+        (package-archive!
+         {"DripSharp.Brine.Parser.nuspec" (nuspec canonical-framework)
+          "lib/netstandard2.0/DripSharp.Brine.Parser.dll" "assembly"})
+        package-inspection
+        (packaging/inspect-package!
+         package-artifact package "netstandard2.0" "DripSharp.Brine.Parser")
+        symbol-fixture (symbol-package-fixture!
+                        (symbol-nuspec canonical-framework))
+        symbol-inspection
+        (packaging/inspect-symbol-package!
+         (:artifact symbol-fixture) package "netstandard2.0"
+         "DripSharp.Brine.Parser" [] (:verified-pdb symbol-fixture))]
+    (is (= "lib/netstandard2.0/DripSharp.Brine.Parser.dll"
+           (:assembly-entry package-inspection)))
+    (is (= "lib/netstandard2.0/DripSharp.Brine.Parser.pdb"
+           (:pdb-entry symbol-inspection))))
+  (let [canonical-group "<group targetFramework=\".NETStandard2.0\" />"]
+    (doseq [[label altered-group]
+            [["wrong framework"
+              "<group targetFramework=\".NETStandard2.1\" />"]
+             ["missing group" ""]
+             ["duplicate group" (str canonical-group canonical-group)]
+             ["extra group"
+              (str canonical-group
+                   "<group targetFramework=\"net8.0\" />")]
+             ["noncanonical group"
+              "<group targetFramework=\"netstandard2.0\" />"]]]
+      (let [package-metadata
+            (str/replace (nuspec ".NETStandard2.0")
+                         canonical-group altered-group)
+            package-artifact
+            (package-archive!
+             {"DripSharp.Brine.Parser.nuspec" package-metadata
+              "lib/netstandard2.0/DripSharp.Brine.Parser.dll" "assembly"})
+            package-error
+            (try
+              (packaging/inspect-package!
+               package-artifact package "netstandard2.0"
+               "DripSharp.Brine.Parser")
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))
+            symbol-metadata
+            (str/replace (symbol-nuspec ".NETStandard2.0")
+                         canonical-group altered-group)
+            symbol-fixture (symbol-package-fixture! symbol-metadata)
+            symbol-error
+            (try
+              (packaging/inspect-symbol-package!
+               (:artifact symbol-fixture) package "netstandard2.0"
+               "DripSharp.Brine.Parser" [] (:verified-pdb symbol-fixture))
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (testing (str label " in the release package")
+          (is (= :package-consumption-failed
+                 (:kind (ex-data package-error)))))
+        (testing (str label " in the symbol package")
+          (is (= :package-consumption-failed
+                 (:kind (ex-data symbol-error)))))))))
+
 (deftest package-inspection-requires-exact-release-layout
   (let [artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" (nuspec)
                                     "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
@@ -668,15 +767,40 @@
         (is (seq (expected-key (ex-data error))))))))
 
 (deftest package-inspection-pins-dependency-closure-without-bundling-it
-  (let [artifact (package-archive! {"DripSharp.Brine.nuspec" (core-nuspec)
-                                    "lib/net8.0/DripSharp.Brine.dll" "assembly"})
+  (let [dependencies
+        [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}]
+        canonical-metadata (core-nuspec ".NETStandard2.0")
+        artifact (package-archive! {"DripSharp.Brine.nuspec" canonical-metadata
+                                    "lib/netstandard2.0/DripSharp.Brine.dll" "assembly"})
         renamed (.resolve (.getParent artifact) "DripSharp.Brine.0.0.0-development.nupkg")
         _ (Files/move artifact renamed (make-array java.nio.file.CopyOption 0))
         inspection (packaging/inspect-package!
-                    renamed core-package "net8.0" "DripSharp.Brine"
-                    [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}])]
-    (is (= [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}]
-           (:dependencies inspection)))))
+                    renamed core-package "netstandard2.0" "DripSharp.Brine"
+                    dependencies)
+        wrong-artifact
+        (package-archive!
+         {"DripSharp.Brine.nuspec"
+          (str/replace canonical-metadata
+                       "dependency id=\"DripSharp.Brine.Parser\""
+                       "dependency id=\"DripSharp.Shadow\"")
+          "lib/netstandard2.0/DripSharp.Brine.dll" "assembly"})
+        wrong-renamed
+        (.resolve (.getParent wrong-artifact)
+                  "DripSharp.Brine.0.0.0-development.nupkg")
+        _ (Files/move wrong-artifact wrong-renamed
+                      (make-array java.nio.file.CopyOption 0))
+        error
+        (try
+          (packaging/inspect-package!
+           wrong-renamed core-package "netstandard2.0" "DripSharp.Brine"
+           dependencies)
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= dependencies (:dependencies inspection)))
+    (is (= :package-consumption-failed (:kind (ex-data error))))
+    (is (= dependencies (:expected (ex-data error))))
+    (is (= [{:id "DripSharp.Shadow" :version "0.0.0-development"}]
+           (:actual (ex-data error))))))
 
 (deftest package-inspection-pins-file-license-and-notice-payloads
   (let [file-package (dissoc package :license-expression)

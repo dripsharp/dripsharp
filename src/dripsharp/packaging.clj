@@ -191,6 +191,11 @@
 (def ^:private dependency-nuspec-namespace
   "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd")
 
+(defn- canonical-nuget-framework [target-framework]
+  (if-let [[_ version] (re-matches #"netstandard(\d+\.\d+)" target-framework)]
+    (str ".NETStandard" version)
+    target-framework))
+
 (def ^:private content-types-namespace
   "http://schemas.openxmlformats.org/package/2006/content-types")
 
@@ -315,6 +320,7 @@
   [nuspec package target-framework expected-dependencies]
   (let [document (parse-xml! nuspec :nuspec)
         root (.getDocumentElement document)
+        dependency-framework (canonical-nuget-framework target-framework)
         expected-namespace (if (seq expected-dependencies)
                              dependency-nuspec-namespace
                              base-nuspec-namespace)]
@@ -400,7 +406,7 @@
                                  "package/metadata/dependencies")
         (when-not (= 1 (count groups))
           (fail! "NuGet dependencies do not contain exactly one target-framework group"
-                 {:expected target-framework :groups (count groups)}))
+                 {:expected dependency-framework :groups (count groups)}))
         (let [group (first groups)
               actual-framework (.getAttribute ^Element group "targetFramework")
               dependencies (mapv (fn [^Element dependency]
@@ -418,10 +424,10 @@
                                  (child-elements group "dependency"))
               expected-dependencies
               (mapv #(select-keys % [:id :version]) expected-dependencies)]
-          (when-not (= target-framework actual-framework)
+          (when-not (= dependency-framework actual-framework)
             (fail! "NuGet dependency group does not match the configured target framework"
-                   {:expected target-framework :actual actual-framework}))
-          (require-exact-attributes! group {"targetFramework" target-framework}
+                   {:expected dependency-framework :actual actual-framework}))
+          (require-exact-attributes! group {"targetFramework" dependency-framework}
                                      "package/metadata/dependencies/group")
           (require-exact-children!
            group (repeat (count expected-dependencies) "dependency")
@@ -576,6 +582,7 @@
   [nuspec package target-framework expected-dependencies]
   (let [document (parse-xml! nuspec :symbol-nuspec)
         root (.getDocumentElement document)
+        dependency-framework (canonical-nuget-framework target-framework)
         expected-namespace (if (seq expected-dependencies)
                              dependency-nuspec-namespace
                              base-nuspec-namespace)]
@@ -589,7 +596,7 @@
     (let [metadata (exactly-one-child! root "metadata" "package")
           configured-elements
           (cond->
-          [["id" (:id package)]
+           [["id" (:id package)]
             ["version" (:version package)]
             ["title" (:title package)]
             ["projectUrl" (:project-url package)]
@@ -657,15 +664,15 @@
                                    "package/metadata/dependencies")
         (require-exact-children! container ["group"]
                                  "package/metadata/dependencies")
-        (require-exact-attributes! group {"targetFramework" target-framework}
+        (require-exact-attributes! group {"targetFramework" dependency-framework}
                                    "package/metadata/dependencies/group")
         (require-exact-children!
          group (repeat (count expected-dependencies) "dependency")
          "package/metadata/dependencies/group")
-        (when-not (= target-framework (.getAttribute ^Element group
-                                                     "targetFramework"))
+        (when-not (= dependency-framework (.getAttribute ^Element group
+                                                         "targetFramework"))
           (fail! "NuGet symbol dependency group targets the wrong framework"
-                 {:expected target-framework
+                 {:expected dependency-framework
                   :actual (.getAttribute ^Element group "targetFramework")}))
         (when-not (= expected-dependencies dependencies)
           (fail! "NuGet symbol dependencies differ from the release package"

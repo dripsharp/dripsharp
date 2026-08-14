@@ -121,10 +121,12 @@ package consumer target `net10.0` and reference or consume the
 Each generated-product target records this distinction in its target-owned
 `:frameworks` contract. Clean generation, package paths, dependency groups,
 release preparation, and consumer validation derive their production or
-execution assumption from that contract. .NET Framework 4.8 compatibility is
-inferred from the `netstandard2.0` contract and compatible dependency assets;
-the repository performs no net48 runtime build or test and does not empirically
-certify net48 execution.
+execution assumption from that contract. Package paths retain the lowercase
+`netstandard2.0` TFM while nuspec dependency groups use NuGet's canonical
+`.NETStandard2.0` identifier. .NET Framework 4.8 compatibility is inferred from
+the `netstandard2.0` contract and compatible dependency assets; the repository
+performs no net48 runtime build or test and does not empirically certify net48
+execution.
 
 ## GitHub Alpha-Release Assets
 
