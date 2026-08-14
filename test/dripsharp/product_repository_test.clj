@@ -469,48 +469,103 @@
       (finally
         (delete-tree! workspace)))))
 
-(deftest target-workflow-proves-before-sync-and-rejects-conformance-early
-  (let [calls (atom [])
-        result
-        (target-execution/synchronize!
-         {:target :pkl
-          :proof-fn
-          (fn [options]
-            (swap! calls conj [:proof options])
-            :proved)
-          :test-suites-fn
-          (fn [options]
-            (swap! calls conj
-                   [:test-suites
-                    (get-in options
-                            [:target-contract :publication
-                             :test-suites :projects 0 :assembly-name])])
-            :consumer-tests-passed)
-          :staging-cleanup-fn
-          (fn [options]
-            (swap! calls conj
-                   [:staging-cleanup
-                    (get-in options
-                            [:target-contract :publication :staging-path])])
-            :staging-cleaned)
-          :synchronize-fn
-          (fn [options]
-            (swap! calls conj
-                   [:sync (get-in options
-                                  [:target-contract :publication
-                                   :staging-path])])
-            :synchronized)})]
-    (is (= [[:proof {:workspace-root (paths/workspace-root)
-                     :target :pkl}]
-            [:test-suites "DripSharp.Brine.Tests"]
-            [:staging-cleanup "target/generated/brine"]
-            [:sync "target/generated/brine"]]
-           @calls))
-    (is (= :proved (:proof result)))
-    (is (= :consumer-tests-passed (:consumer-tests result)))
-    (is (= :consumer-tests-passed (:test-suites result)))
-    (is (= :staging-cleaned (:staging-cleanup result)))
-    (is (= :synchronized (:synchronization result))))
+(deftest target-workflow-supports-the-two-pass-commit-boundary
+  (testing "a stale product receives every pre-commit check before managed copy"
+    (let [calls (atom [])
+          result
+          (target-execution/synchronize!
+           {:target :pkl
+            :verify-fn
+            (fn [{:keys [profile]}]
+              (swap! calls conj [:verify profile])
+              {:profile profile})
+            :proof-fn
+            (fn [_]
+              (swap! calls conj [:unexpected-full-proof])
+              :unexpected)
+            :test-suites-fn
+            (fn [_]
+              (swap! calls conj [:test-suites])
+              :generated-tests-passed)
+            :staging-cleanup-fn
+            (fn [_]
+              (swap! calls conj [:staging-cleanup])
+              :staging-cleaned)
+            :repository-proof-fn
+            (fn [_]
+              (swap! calls conj [:repository-proof])
+              (throw
+               (ex-info "stale product"
+                        {:reason :stale-generated-product-commit})))
+            :synchronize-fn
+            (fn [_]
+              (swap! calls conj [:sync])
+              :synchronized)})]
+      (is (= [[:verify "pkl-parser"]
+              [:verify "pkl-core-value-model"]
+              [:test-suites]
+              [:staging-cleanup]
+              [:repository-proof]
+              [:sync]]
+             @calls))
+      (is (= :pre-commit-synchronization (:mode result)))
+      (is (= ["pkl-parser" "pkl-core-value-model"]
+             (mapv :profile (get-in result [:precommit-proof :profiles]))))
+      (is (= {:production "netstandard2.0"
+              :execution "net10.0"
+              :net48-compatibility :inferred-from-netstandard2.0
+              :net48-runtime-tested? false}
+             (get-in result [:precommit-proof :frameworks])))
+      (is (nil? (:repository-proof result)))
+      (is (= :generated-tests-passed (:test-suites result)))
+      (is (= :staging-cleaned (:staging-cleanup result)))
+      (is (= :synchronized (:synchronization result)))))
+  (testing "an exact product receives the complete proof and a no-op sync"
+    (let [calls (atom [])
+          exact-proof {:repository-commit (apply str (repeat 40 "a"))}
+          result
+          (target-execution/synchronize!
+           {:target :pkl
+            :verify-fn
+            (fn [{:keys [profile]}]
+              (swap! calls conj [:verify profile])
+              {:profile profile})
+            :proof-fn
+            (fn [options]
+              (swap! calls conj [:full-proof options])
+              :proved)
+            :test-suites-fn
+            (fn [_]
+              (swap! calls conj [:test-suites])
+              :generated-tests-passed)
+            :staging-cleanup-fn
+            (fn [_]
+              (swap! calls conj [:staging-cleanup])
+              :staging-cleaned)
+            :repository-proof-fn
+            (fn [_]
+              (swap! calls conj [:repository-proof])
+              exact-proof)
+            :synchronize-fn
+            (fn [_]
+              (swap! calls conj [:sync])
+              {:changes []})})]
+      (is (= [[:verify "pkl-parser"]
+              [:verify "pkl-core-value-model"]
+              [:test-suites]
+              [:staging-cleanup]
+              [:repository-proof]
+              [:full-proof {:workspace-root (paths/workspace-root)
+                            :target :pkl}]
+              [:test-suites]
+              [:staging-cleanup]
+              [:repository-proof]
+              [:sync]]
+             @calls))
+      (is (= :exact-commit-proof (:mode result)))
+      (is (= :proved (:proof result)))
+      (is (= exact-proof (:repository-proof result)))
+      (is (empty? (get-in result [:synchronization :changes])))))
   (let [called? (atom false)
         result
         (failure
@@ -520,3 +575,31 @@
             :synchronize-fn (fn [_] (reset! called? true))}))]
     (is (= :conformance-only-target (:reason result)))
     (is (false? @called?))))
+
+(deftest pack-and-package-entry-points-still-reject-stale-product-commits
+  (let [stale!
+        (fn [_]
+          (throw
+           (ex-info "stale product"
+                    {:reason :stale-generated-product-commit})))
+        pack-fn
+        (fn [{:keys [repository-proof-fn]}]
+          (repository-proof-fn))]
+    (with-redefs [product-repository/verify-synchronized! stale!]
+      (is (= :stale-generated-product-commit
+             (:reason
+              (failure
+               #(target-execution/pack!
+                 {:target :pkl
+                  :profile "pkl-parser"
+                  :pack-fn pack-fn})))))
+      (is (= :stale-generated-product-commit
+             (:reason
+              (failure
+               #(target-execution/package!
+                 {:target :pkl
+                  :profile "pkl-parser"
+                  :pack-fn pack-fn
+                  :package-fn
+                  (fn [{:keys [pack-fn profile]}]
+                    (pack-fn {:profile profile}))}))))))))
