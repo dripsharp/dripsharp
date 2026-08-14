@@ -5,9 +5,10 @@
             [dripsharp.process :as process]
             [dripsharp.product-repository :as product-repository]
             [dripsharp.target-directory :as target-directory]
-            [dripsharp.target-execution :as target-execution])
+            [dripsharp.target-execution :as target-execution]
+            [dripsharp.util :as util])
   (:import [java.nio.file FileVisitOption Files OpenOption Path]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute BasicFileAttributes FileAttribute]))
 
 (defn- temp-directory
   []
@@ -156,6 +157,23 @@
   (git! workspace "add" "products/brine")
   (git! workspace "commit" "-m" "Advance Brine gitlink"))
 
+(defn- file-state
+  [^Path root relative-paths]
+  (into
+   (sorted-map)
+   (map
+    (fn [relative]
+      (let [file (.resolve root relative)
+            attributes
+            (Files/readAttributes
+             file BasicFileAttributes
+             (make-array java.nio.file.LinkOption 0))]
+        [relative
+         {:sha256 (util/sha256-file file)
+          :file-key (str (.fileKey attributes))
+          :last-modified (str (.lastModifiedTime attributes))}]))
+    relative-paths)))
+
 (deftest target-publication-variants-map-products-exactly
   (let [brine (:publication (target-directory/read-target :pkl))
         pdfcarton (:publication (target-directory/read-target :pdfcube))
@@ -221,6 +239,60 @@
           (is (empty? (:changes second)))
           (is (= (:source-sha256 first) (:source-sha256 second)))
           (is (= (:inventory first) (:inventory second)))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest exact-brine-test-assets-are-never-deleted-or-recreated
+  (let [{:keys [workspace brine contract] :as fixture} (fixture!)
+        fixture-paths
+        (mapv #(format "tests/Fixtures/fixture-%03d.pkl" %) (range 974))
+        ledger-paths
+        ["tests/SHA256SUMS"
+         "tests/TEST-AUTHORSHIP.tsv"
+         "tests/TEST-BOUNDARY.md"
+         "tests/TEST-PROVENANCE.tsv"]
+        protected-paths (into fixture-paths ledger-paths)]
+    (try
+      (doseq [relative fixture-paths]
+        (write! workspace (str "target/generated/brine/" relative)
+                (str relative "\n")))
+      (doseq [relative ledger-paths]
+        (write! workspace (str "target/generated/brine/" relative)
+                (str relative "\n")))
+      (product-repository/synchronize!
+       {:workspace-root workspace :target-contract contract})
+      (commit-synchronization! fixture)
+      (let [before (file-state brine protected-paths)
+            result
+            (product-repository/synchronize!
+             {:workspace-root workspace :target-contract contract})
+            after (file-state brine protected-paths)]
+        (is (= 974 (count fixture-paths)))
+        (is (= 4 (count ledger-paths)))
+        (is (every? #(not= "nil" (:file-key %)) (vals before)))
+        (is (= before after))
+        (is (empty? (:changes result))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest ignored-managed-output-is-rejected-without-deleting-it
+  (let [{:keys [workspace brine contract] :as fixture} (fixture!)]
+    (try
+      (product-repository/synchronize!
+       {:workspace-root workspace :target-contract contract})
+      (commit-synchronization! fixture)
+      (let [ignored
+            (write! brine
+                    "tests/DripSharp.Brine.Tests/bin/preserve-me.txt"
+                    "untracked build output\n")
+            result
+            (failure
+             #(product-repository/synchronize!
+               {:workspace-root workspace :target-contract contract}))]
+        (is (= :ignored-managed-output (:reason result)))
+        (is (= ["tests/DripSharp.Brine.Tests/bin/preserve-me.txt"]
+               (:paths result)))
+        (is (= "untracked build output\n" (slurp (str ignored)))))
       (finally
         (delete-tree! workspace)))))
 

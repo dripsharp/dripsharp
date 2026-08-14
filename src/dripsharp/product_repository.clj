@@ -699,23 +699,38 @@
   (some #(relative-under? % changed) managed-paths))
 
 (defn synchronize!
-  "Copies only declared managed paths from proved staging into one clean
-  generated-product submodule. This local operation does not commit, push,
-  create a repository, or open a pull request."
+  "Copies changed declared managed paths from proved staging into one clean
+  generated-product submodule. Exact managed content is a filesystem no-op.
+  This local operation does not commit, push, create a repository, or open a
+  pull request."
   [{:keys [run-command!] :as options
     :or {run-command! process/run!}}]
   (let [{:keys [workspace-root publication staging product other-products]
          :as preflight}
         (preflight! (assoc options :run-command! run-command!))
         managed-paths (:managed-paths publication)
-        excluded-paths (:excluded-paths publication)]
-    (doseq [relative managed-paths]
-      (let [source (safe-contained-path! staging relative
-                                         "Managed staging path")
-            destination (safe-contained-path! product relative
-                                              "Managed product path")]
-        (delete-tree! destination)
-        (copy-path! staging source destination excluded-paths)))
+        excluded-paths (:excluded-paths publication)
+        ignored-before (ignored-paths run-command! product managed-paths)
+        _ (when (seq ignored-before)
+            (fail! "Managed publication output is ignored by the product repository"
+                   {:reason :ignored-managed-output
+                    :paths ignored-before}))
+        existing-product-paths
+        (filterv
+         #(existing-no-follow?
+           (safe-contained-path! product % "Managed product path"))
+         managed-paths)
+        product-inventory
+        (managed-inventory product existing-product-paths excluded-paths)
+        exact-content? (= (:inventory preflight) product-inventory)]
+    (when-not exact-content?
+      (doseq [relative managed-paths]
+        (let [source (safe-contained-path! staging relative
+                                           "Managed staging path")
+              destination (safe-contained-path! product relative
+                                                "Managed product path")]
+          (delete-tree! destination)
+          (copy-path! staging source destination excluded-paths))))
     (let [destination-inventory
           (managed-inventory product managed-paths excluded-paths)
           _ (when-not (= (:inventory preflight) destination-inventory)
