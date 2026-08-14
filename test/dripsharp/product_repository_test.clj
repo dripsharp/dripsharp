@@ -297,16 +297,20 @@
       (product-repository/synchronize!
        {:workspace-root workspace :target-contract contract})
       (commit-synchronization! fixture)
-      (let [artifact
-            "src/DripSharp.Brine/bin/Release/netstandard2.0/DripSharp.Brine.dll"]
-        (write! brine artifact "compiled output\n")
-        (git! brine "add" "--force" "--" artifact)
+      (let [artifacts
+            ["src/DripSharp.Brine.Parser/bin/Release/netstandard2.0/DripSharp.Brine.Parser.dll"
+             "src/DripSharp.Brine/obj/Release/netstandard2.0/DripSharp.Brine.dll"
+             "tests/DripSharp.Brine.CoreTestRunner/bin/Release/net10.0/DripSharp.Brine.CoreTestRunner.dll"
+             "tests/DripSharp.Brine.CoreTestRunner/obj/Release/net10.0/DripSharp.Brine.CoreTestRunner.dll"]]
+        (doseq [artifact artifacts]
+          (write! brine artifact "compiled output\n")
+          (git! brine "add" "--force" "--" artifact))
         (let [result
               (failure
                #(product-repository/synchronize!
                  {:workspace-root workspace :target-contract contract}))]
           (is (= :tracked-build-artifacts (:reason result)))
-          (is (= [artifact] (:paths result))))
+          (is (= artifacts (:paths result))))
         (git! brine "commit" "-m" "Accidentally track build output")
         (git! workspace "add" "products/brine")
         (git! workspace "commit" "-m" "Advance to contaminated product")
@@ -317,7 +321,7 @@
                  #(operation {:workspace-root workspace
                               :target-contract contract}))]
             (is (= :tracked-build-artifacts (:reason result)))
-            (is (= [artifact] (:paths result))))))
+            (is (= artifacts (:paths result))))))
       (finally
         (delete-tree! workspace)))))
 
