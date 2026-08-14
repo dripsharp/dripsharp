@@ -2934,9 +2934,9 @@ static class Program
         Uri bar = new("file:///bar.pkl");
         Uri biz = new("file:///biz.pkl");
         Uri qux = new("file:///qux.pkl");
-        IReadOnlySet<ImportGraph.Import> Imports(params Uri[] values) =>
+        ISet<ImportGraph.Import> Imports(params Uri[] values) =>
             new HashSet<ImportGraph.Import>(values.Select(value => new ImportGraph.Import(value)));
-        Dictionary<Uri, IReadOnlySet<ImportGraph.Import>> imports = row.SourceMethod switch
+        Dictionary<Uri, ISet<ImportGraph.Import>> imports = row.SourceMethod switch
         {
             "basic" => new() { [foo] = Imports(bar), [bar] = Imports(foo) },
             "two cycles" => new()
@@ -4731,13 +4731,12 @@ static class Program
             this.globbable = globbable;
         }
 
-        public ModuleKey? Create(Uri uri)
+        public override ModuleKey? Create(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             return uri.Scheme == scheme ? new CorpusModuleKey(uri, source(uri), globbable) : null;
         }
-        public void Close() => disposed = true;
-        public void Dispose() => Close();
+        public override void Close() => disposed = true;
     }
 
     sealed class CorpusModuleKey(Uri uri, string source, bool globbable)
@@ -4745,10 +4744,33 @@ static class Program
     {
         public ModuleKey GetOriginal() => this;
         public Uri GetUri() => uri;
+        public ModuleKey Original => GetOriginal();
+        public Uri Uri => GetUri();
+        public bool Cached => IsCached();
+        public bool Local => IsLocal();
+        public string? FileCachePath => GetFileCacheLocation();
+        public string Source => LoadSource();
         public bool HasHierarchicalUris() => uri.OriginalString.Contains('/', StringComparison.Ordinal);
         public bool IsGlobbable() => globbable;
+        public bool HasFragmentPaths() => false;
         public bool IsCached() => true;
         public bool IsLocal() => true;
+        public string? GetFileCacheLocation() => null;
+        public Uri ResolveUri(Uri value) => ResolveUri(uri, value);
+        public Uri ResolveUri(Uri baseUri, Uri value) =>
+            value.IsAbsoluteUri || !HasHierarchicalUris() ? value : new Uri(baseUri, value);
+        public bool HasElement(SecurityManager securityManager, Uri elementUri)
+        {
+            securityManager.CheckResolveModule(elementUri);
+            return elementUri.Scheme == uri.Scheme;
+        }
+        public IReadOnlyList<PathElement> ListElements(
+            SecurityManager securityManager,
+            Uri baseUri)
+        {
+            securityManager.CheckResolveModule(baseUri);
+            return Array.Empty<PathElement>();
+        }
         public ResolvedModuleKey Resolve(SecurityManager securityManager)
         {
             securityManager.CheckResolveModule(uri);
@@ -4769,16 +4791,15 @@ static class Program
             this.value = value ?? "resource-value";
         }
 
-        public string GetUriScheme() => scheme;
-        public bool HasHierarchicalUris() => false;
-        public bool IsGlobbable() => false;
-        public object? Read(Uri uri)
+        public override string GetUriScheme() => scheme;
+        public override bool HasHierarchicalUris() => false;
+        public override bool IsGlobbable() => false;
+        public override object? Read(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             return uri.Scheme == scheme ? value : null;
         }
-        public void Close() => disposed = true;
-        public void Dispose() => Close();
+        public override void Close() => disposed = true;
     }
 
     sealed class Base64RequestResourceReader : ResourceReader
@@ -4788,10 +4809,10 @@ static class Program
 
         internal IReadOnlyList<string> RequestKinds => requestKinds.AsReadOnly();
 
-        public string GetUriScheme() => "b64";
-        public bool HasHierarchicalUris() => false;
-        public bool IsGlobbable() => false;
-        public object? Read(Uri uri)
+        public override string GetUriScheme() => "b64";
+        public override bool HasHierarchicalUris() => false;
+        public override bool IsGlobbable() => false;
+        public override object? Read(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             if (uri.Scheme != "b64") return null;
@@ -4812,8 +4833,7 @@ static class Program
             requestKinds.Add(kind);
             return new Resource(uri, result);
         }
-        public void Close() => disposed = true;
-        public void Dispose() => Close();
+        public override void Close() => disposed = true;
     }
 
     static void VerifyRedirectBehavior(string method)
@@ -5444,8 +5464,44 @@ static class Program
         public bool ObjectVisited { get; private set; }
         public bool ModuleVisited { get; private set; }
 
+        public void VisitDefault(object? value) { }
+        public void VisitNull() => VisitDefault(null);
+        public void VisitString(string value) => VisitDefault(value);
+        public void VisitBoolean(bool value) => VisitDefault(value);
+        public void VisitInt(long value) => VisitDefault(value);
+        public void VisitFloat(double value) => VisitDefault(value);
+        public void VisitDuration(Duration value) => VisitDefault(value);
+        public void VisitDataSize(DataSize value) => VisitDefault(value);
+        public void VisitBytes(byte[] value) => VisitDefault(value);
+        public void VisitPair(Pair<object, object> value) => VisitDefault(value);
+        public void VisitList(IReadOnlyList<object> value) => VisitDefault(value);
+        public void VisitSet(ISet<object> value) => VisitDefault(value);
+        public void VisitMap(IReadOnlyDictionary<object, object> value) => VisitDefault(value);
         public void VisitObject(PObject value) => ObjectVisited = true;
         public void VisitModule(PModule value) => ModuleVisited = true;
+        public void VisitClass(PClass value) => VisitDefault(value);
+        public void VisitTypeAlias(TypeAlias value) => VisitDefault(value);
+        public void VisitRegex(Regex value) => VisitDefault(value);
+        public void VisitReference(Reference value) => VisitDefault(value);
+        public void Visit(object value)
+        {
+            switch (value)
+            {
+                case Value pklValue: pklValue.Accept(this); break;
+                case string text: VisitString(text); break;
+                case bool boolean: VisitBoolean(boolean); break;
+                case long integer: VisitInt(integer); break;
+                case double floating: VisitFloat(floating); break;
+                case IReadOnlyList<object> list: VisitList(list); break;
+                case ISet<object> set: VisitSet(set); break;
+                case IReadOnlyDictionary<object, object> map: VisitMap(map); break;
+                case Regex regex: VisitRegex(regex); break;
+                case byte[] bytes: VisitBytes(bytes); break;
+                default:
+                    throw new ArgumentException(
+                        "Cannot visit value with unexpected type: " + value);
+            }
+        }
     }
 
     static void Require(bool condition, string subject)

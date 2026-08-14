@@ -321,6 +321,74 @@
                       "WaitForExitAsync" "entireProcessTree" "TIMEOUT" "CRASH"]]
       (is (.contains csharp required)))))
 
+(deftest shipped-core-adapters-track-current-public-contract
+  (let [root (paths/workspace-root)
+        runner (Files/readString
+                (paths/resolve-path root "validation" "pkl-core-corpus"
+                                    "PklCorePackageCorpusRunner.cs"))
+        loading (Files/readString
+                 (paths/resolve-path root "targets" "pkl" "runtime"
+                                     "DripSharp.Brine.Loading.cs"))
+        visitor (Files/readString
+                 (paths/resolve-path root "research" "pkl" "pkl-core" "src"
+                                     "main" "java" "org" "pkl" "core"
+                                     "ValueVisitor.java"))]
+    (testing "the target-owned public contract retains the adapter surface"
+      (doseq [required ["public Uri Uri { get; }"
+                        "public bool Cached { get; }"
+                        "public bool Local { get; }"
+                        "public string? FileCachePath { get; }"
+                        "public ModuleKey Original { get; }"
+                        "public string Source { get; }"
+                        "public abstract bool HasHierarchicalUris();"
+                        "public abstract bool IsGlobbable();"]]
+        (is (.contains loading required) required))
+      (doseq [required ["default void visitDefault"
+                        "default void visitObject"
+                        "default void visitModule"
+                        "default void visit(Object value)"]]
+        (is (.contains visitor required) required)))
+    (testing "the shipped runner implements abstract, compatibility, and visitor members"
+      (doseq [required ["public override ModuleKey? Create(Uri uri)"
+                        "Dictionary<Uri, ISet<ImportGraph.Import>> imports"
+                        "public ModuleKey Original => GetOriginal();"
+                        "public Uri Uri => GetUri();"
+                        "public bool Cached => IsCached();"
+                        "public bool Local => IsLocal();"
+                        "public string? FileCachePath => GetFileCacheLocation();"
+                        "public string Source => LoadSource();"
+                        "public string? GetFileCacheLocation() => null;"
+                        "public Uri ResolveUri(Uri value)"
+                        "public Uri ResolveUri(Uri baseUri, Uri value)"
+                        "public bool HasElement(SecurityManager securityManager, Uri elementUri)"
+                        "public IReadOnlyList<PathElement> ListElements("
+                        "public override string GetUriScheme()"
+                        "public override bool HasHierarchicalUris()"
+                        "public override bool IsGlobbable()"
+                        "public override object? Read(Uri uri)"
+                        "public override void Close() => disposed = true;"
+                        "public void VisitDefault(object? value)"
+                        "public void VisitNull()"
+                        "public void VisitString(string value)"
+                        "public void VisitBoolean(bool value)"
+                        "public void VisitInt(long value)"
+                        "public void VisitFloat(double value)"
+                        "public void VisitDuration(Duration value)"
+                        "public void VisitDataSize(DataSize value)"
+                        "public void VisitBytes(byte[] value)"
+                        "public void VisitPair(Pair<object, object> value)"
+                        "public void VisitList(IReadOnlyList<object> value)"
+                        "public void VisitSet(ISet<object> value)"
+                        "public void VisitMap(IReadOnlyDictionary<object, object> value)"
+                        "public void VisitObject(PObject value)"
+                        "public void VisitModule(PModule value)"
+                        "public void VisitClass(PClass value)"
+                        "public void VisitTypeAlias(TypeAlias value)"
+                        "public void VisitRegex(Regex value)"
+                        "public void VisitReference(Reference value)"
+                        "public void Visit(object value)"]]
+        (is (.contains runner required) required)))))
+
 (deftest isolated-corpus-uses-the-package-proofs-restored-cache
   (let [root (paths/workspace-root)
         packaging (Files/readString

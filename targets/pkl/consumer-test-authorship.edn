@@ -62,10 +62,10 @@
    :review-evidence "beads:pkl-rjf1.1"
    :role :authored-language-package-adapter}
   {:path "validation/pkl-core-corpus/PklCorePackageCorpusRunner.cs"
-   :sha256 "204b308ca3886459d49900bdf5f19a7b28c632444e2a653252444b4156a8a061"
-   :lines 6213
-   :line-budget 6213
-   :review-evidence "beads:pkl-rjf1.1"
+   :sha256 "88fe1bd711703d5bfbaf206b8b0a8a56897ca696e2cb3f08a592ac0fe619cffc"
+   :lines 6269
+   :line-budget 6269
+   :review-evidence "beads:pkl-zysr.13"
    :role :authored-core-package-adapter}
   {:path "validation/pkl-core-corpus/fixtures/module.pkl"
    :sha256 "88f92d58d9706e16b293aacf471dd930213780b70cbf773d31c716c3e1e84682"
