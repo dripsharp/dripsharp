@@ -1,5 +1,5 @@
 (ns dripsharp.pkl.differential-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.package-provenance :as provenance]
             [dripsharp.pkl.differential :as differential]
@@ -62,6 +62,51 @@
     (is (every? #(#{"existing-evidence" "pending-in-scope"}
                   (:implementation %))
                 (:evidence contract)))))
+
+(deftest loading-probe-test-doubles-track-current-public-contract
+  (let [root (paths/workspace-root)
+        probe (Files/readString
+               (paths/resolve-path root "validation" "loading-contract"
+                                   "LoadingContractDotNetProbe.cs"))
+        loading (Files/readString
+                 (paths/resolve-path root "targets" "pkl" "runtime"
+                                     "DripSharp.Brine.Loading.cs"))]
+    (testing "the target-owned public contract retains the extension surface"
+      (doseq [required ["public Uri Uri { get; }"
+                        "public bool Cached { get; }"
+                        "public bool Local { get; }"
+                        "public string? FileCachePath { get; }"
+                        "public ModuleKey Original { get; }"
+                        "public string Source { get; }"
+                        "public abstract bool HasHierarchicalUris();"
+                        "public abstract bool IsGlobbable();"]]
+        (is (.contains loading required) required)))
+    (testing "the package-only loading doubles implement required and inherited members"
+      (doseq [[required occurrences]
+              [["public override ModuleKey? Create(Uri uri)" 3]
+               ["public override string GetUriScheme()" 2]
+               ["public override bool HasHierarchicalUris()" 2]
+               ["public override bool IsGlobbable()" 2]
+               ["public override object? Read(Uri uri)" 2]
+               ["public override void Close()" 5]
+               ["public ModuleKey Original => GetOriginal();" 2]
+               ["public Uri Uri => GetUri();" 4]
+               ["public bool Cached => IsCached();" 2]
+               ["public bool Local => IsLocal();" 2]
+               ["public string? FileCachePath => GetFileCacheLocation();" 2]
+               ["public string Source => LoadSource();" 2]
+               ["public bool IsCached() => true;" 2]
+               ["public bool IsLocal() => false;" 2]
+               ["public string? GetFileCacheLocation() => null;" 2]
+               ["public bool HasElement(SecurityManager securityManager, Uri elementUri)" 2]
+               ["public IReadOnlyList<PathElement> ListElements(" 2]
+               ["public bool HasFragmentPaths() => false;" 2]
+               ["public Uri ResolveUri(Uri value)" 2]
+               ["public Uri ResolveUri(Uri baseUri, Uri value)" 2]]]
+        (is (= occurrences
+               (count (re-seq (re-pattern (java.util.regex.Pattern/quote required))
+                              probe)))
+            required)))))
 
 (deftest packed-assembly-manifest-pins-exact-runtime-hashes
   (let [output (Files/createTempFile "dripsharp-packed-assemblies" ".tsv"

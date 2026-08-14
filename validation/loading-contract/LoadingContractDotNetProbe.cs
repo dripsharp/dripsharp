@@ -2066,18 +2066,33 @@ static class LoadingContractDotNetProbe
 
     sealed class FailingModuleFactory : ModuleKeyFactory
     {
-        public ModuleKey? Create(Uri uri) => uri.Scheme == "iofail"
+        public override ModuleKey? Create(Uri uri) => uri.Scheme == "iofail"
             ? new FailingModuleKey(uri)
             : null;
-        public void Close() { }
-        public void Dispose() { }
+        public override void Close() { }
     }
 
     sealed class FailingModuleKey(Uri uri) : ModuleKey
     {
         public Uri GetUri() => uri;
+        public Uri Uri => GetUri();
+        public bool Cached => IsCached();
+        public bool Local => IsLocal();
+        public string? FileCachePath => GetFileCacheLocation();
         public bool HasHierarchicalUris() => false;
         public bool IsGlobbable() => false;
+        public bool IsCached() => true;
+        public bool IsLocal() => false;
+        public string? GetFileCacheLocation() => null;
+        public bool HasElement(SecurityManager securityManager, Uri elementUri) =>
+            throw new NotSupportedException();
+        public IReadOnlyList<PathElement> ListElements(
+            SecurityManager securityManager,
+            Uri baseUri) => throw new NotSupportedException();
+        public bool HasFragmentPaths() => false;
+        public Uri ResolveUri(Uri value) => ResolveUri(uri, value);
+        public Uri ResolveUri(Uri baseUri, Uri value) =>
+            value.IsAbsoluteUri || !HasHierarchicalUris() ? value : new Uri(baseUri, value);
         public ResolvedModuleKey Resolve(SecurityManager securityManager)
         {
             securityManager.CheckResolveModule(uri);
@@ -2089,7 +2104,10 @@ static class LoadingContractDotNetProbe
     {
         public ModuleKey GetOriginal() => original;
         public Uri GetUri() => uri;
+        public ModuleKey Original => GetOriginal();
+        public Uri Uri => GetUri();
         public string LoadSource() => throw new IOException("contract I/O failure");
+        public string Source => LoadSource();
     }
 
     sealed class CountingModuleFactory : ModuleKeyFactory
@@ -2098,7 +2116,7 @@ static class LoadingContractDotNetProbe
         public int Closes { get; private set; }
         bool disposed;
 
-        public ModuleKey? Create(Uri uri)
+        public override ModuleKey? Create(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             if (uri.Scheme != "custom") return null;
@@ -2106,51 +2124,63 @@ static class LoadingContractDotNetProbe
             return new CountingModuleKey(uri);
         }
 
-        public void Close()
+        public override void Close()
         {
             if (disposed) return;
             disposed = true;
             Closes++;
         }
-
-        public void Dispose() => Close();
     }
 
     sealed class BlockingModuleFactory : ModuleKeyFactory
     {
         internal ManualResetEventSlim Exited { get; } = new(false);
-        public ModuleKey? Create(Uri uri)
+        public override ModuleKey? Create(Uri uri)
         {
             if (uri.Scheme != "timeoutmod") return null;
             try { Thread.Sleep(TimeSpan.FromSeconds(5)); }
             finally { Exited.Set(); }
             return null;
         }
-        public void Close() { }
-        public void Dispose() { }
+        public override void Close() { }
     }
 
     sealed class BlockingResourceReader : ResourceReader
     {
         internal ManualResetEventSlim Exited { get; } = new(false);
-        public string GetUriScheme() => "timeoutres";
-        public bool HasHierarchicalUris() => false;
-        public bool IsGlobbable() => false;
-        public object? Read(Uri uri)
+        public override string GetUriScheme() => "timeoutres";
+        public override bool HasHierarchicalUris() => false;
+        public override bool IsGlobbable() => false;
+        public override object? Read(Uri uri)
         {
             try { Thread.Sleep(TimeSpan.FromSeconds(5)); }
             finally { Exited.Set(); }
             return null;
         }
-        public void Close() { }
-        public void Dispose() { }
+        public override void Close() { }
     }
 
     sealed class CountingModuleKey(Uri uri) : ModuleKey
     {
         public Uri GetUri() => uri;
+        public Uri Uri => GetUri();
+        public bool Cached => IsCached();
+        public bool Local => IsLocal();
+        public string? FileCachePath => GetFileCacheLocation();
         public bool HasHierarchicalUris() => false;
         public bool IsGlobbable() => false;
+        public bool IsCached() => true;
+        public bool IsLocal() => false;
+        public string? GetFileCacheLocation() => null;
+        public bool HasElement(SecurityManager securityManager, Uri elementUri) =>
+            throw new NotSupportedException();
+        public IReadOnlyList<PathElement> ListElements(
+            SecurityManager securityManager,
+            Uri baseUri) => throw new NotSupportedException();
+        public bool HasFragmentPaths() => false;
+        public Uri ResolveUri(Uri value) => ResolveUri(uri, value);
+        public Uri ResolveUri(Uri baseUri, Uri value) =>
+            value.IsAbsoluteUri || !HasHierarchicalUris() ? value : new Uri(baseUri, value);
         public ResolvedModuleKey Resolve(SecurityManager securityManager)
         {
             securityManager.CheckResolveModule(uri);
@@ -2164,7 +2194,10 @@ static class LoadingContractDotNetProbe
     {
         public ModuleKey GetOriginal() => original;
         public Uri GetUri() => uri;
+        public ModuleKey Original => GetOriginal();
+        public Uri Uri => GetUri();
         public string LoadSource() => source;
+        public string Source => LoadSource();
     }
 
     sealed class CountingResourceReader : ResourceReader
@@ -2172,10 +2205,10 @@ static class LoadingContractDotNetProbe
         public int Closes { get; private set; }
         public int Reads { get; private set; }
         bool disposed;
-        public string GetUriScheme() => "contractres";
-        public bool HasHierarchicalUris() => false;
-        public bool IsGlobbable() => false;
-        public object? Read(Uri uri)
+        public override string GetUriScheme() => "contractres";
+        public override bool HasHierarchicalUris() => false;
+        public override bool IsGlobbable() => false;
+        public override object? Read(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             Reads++;
@@ -2183,13 +2216,12 @@ static class LoadingContractDotNetProbe
                 ? "resource-value"
                 : null;
         }
-        public void Close()
+        public override void Close()
         {
             if (disposed) return;
             disposed = true;
             Closes++;
         }
-        public void Dispose() => Close();
     }
 
     static void CopyTree(string source, string destination)
