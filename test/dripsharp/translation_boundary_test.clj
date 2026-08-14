@@ -458,7 +458,7 @@
                              :command ["dotnet" "run" "--project" project
                                        "--configuration" "Release" "--no-build"]})))))
 
-(defn- compile-and-run-netstandard-rune-probe! []
+(defn- compile-and-run-netstandard-probes! []
   (let [root (Files/createTempDirectory "dripsharp-netstandard-rune"
                                         (make-array FileAttribute 0))
         library-root (paths/resolve-path root "library")
@@ -494,6 +494,31 @@
                 "        }\n"
                 "    }\n"
                 "}\n"))
+        _ (write-string!
+           (paths/resolve-path library-root "RelativePathProbe.cs")
+           (str "namespace DripSharp.Runtime\n"
+                "{\n"
+                "    public static class RelativePathProbe\n"
+                "    {\n"
+                "        public static bool Verify()\n"
+                "        {\n"
+                "            var root = global::System.IO.Path.Combine(\n"
+                "                global::System.IO.Path.GetTempPath(),\n"
+                "                \"dripsharp-relative-root\");\n"
+                "            var child = global::System.IO.Path.Combine(\n"
+                "                root, \"catalog\", \"Bird.pkl\");\n"
+                "            var outside = global::System.IO.Path.Combine(\n"
+                "                root, \"..\", \"outside.pkl\");\n"
+                "            return JavaCompat.PortableRelativePath(\n"
+                "                       root, root + global::System.IO.Path.DirectorySeparatorChar) == \".\" &&\n"
+                "                   JavaCompat.PortableRelativePath(root, child) ==\n"
+                "                       global::System.IO.Path.Combine(\"catalog\", \"Bird.pkl\") &&\n"
+                "                   JavaCompat.PortableRelativePath(root, outside).StartsWith(\n"
+                "                       \"..\" + global::System.IO.Path.DirectorySeparatorChar,\n"
+                "                       global::System.StringComparison.Ordinal);\n"
+                "        }\n"
+                "    }\n"
+                "}\n"))
         consumer-project
         (write-string!
          (paths/resolve-path consumer-root "Consumer.csproj")
@@ -513,7 +538,7 @@
            (paths/resolve-path consumer-root "Program.cs")
            (str "using System;\n"
                 "using DripSharp.Runtime;\n"
-                "Console.Write(RuneProbe.Convert());\n"))
+                "Console.Write(RuneProbe.Convert() + \"\\n\" + RelativePathProbe.Verify());\n"))
         build (process/run! {:directory root
                              :command ["dotnet" "build" consumer-project
                                        "--nologo" "--configuration" "Release"
@@ -561,11 +586,11 @@
     (testing "Pkl products can keep the reusable runtime internal"
       (is (= "OK" (compile-and-run-generic-runtime! assets true))))))
 
-(deftest netstandard-runes-convert-to-scalar-and-sequence-text
-  (let [{:keys [build run output]} (compile-and-run-netstandard-rune-probe!)]
+(deftest netstandard-runes-and-relative-paths-preserve-their-contracts
+  (let [{:keys [build run output]} (compile-and-run-netstandard-probes!)]
     (is (zero? (:exit build)) (:output build))
     (is (zero? (:exit run)) (:output run))
-    (is (= "🙂|A🙂" output))))
+    (is (= ["🙂|A🙂" "True"] (str/split-lines output)))))
 
 (deftest product-bundles-select-java-compatibility-visibility-explicitly
   (let [runtime (java-compat-runtime)

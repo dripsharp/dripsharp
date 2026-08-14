@@ -237,14 +237,14 @@ namespace DripSharp.Runtime
 
         internal static string PortableRelativePath(string basis, string path)
         {
-            var basisUri = new global::System.Uri(
-                AppendDirectorySeparator(global::System.IO.Path.GetFullPath(basis)));
-            var pathUri = new global::System.Uri(global::System.IO.Path.GetFullPath(path));
+            var fullBasis = global::System.IO.Path.GetFullPath(basis); var fullPath = global::System.IO.Path.GetFullPath(path);
+            if (global::System.String.Equals(fullBasis.TrimEnd(global::System.IO.Path.DirectorySeparatorChar, global::System.IO.Path.AltDirectorySeparatorChar), fullPath.TrimEnd(global::System.IO.Path.DirectorySeparatorChar, global::System.IO.Path.AltDirectorySeparatorChar), global::System.StringComparison.Ordinal)) return ".";
+            var basisUri = new global::System.Uri(AppendDirectorySeparator(fullBasis));
+            var pathUri = new global::System.Uri(fullPath);
             var relative = global::System.Uri.UnescapeDataString(
                 basisUri.MakeRelativeUri(pathUri).ToString());
             return relative.Replace('/', global::System.IO.Path.DirectorySeparatorChar);
         }
-
         private static string AppendDirectorySeparator(string path) =>
             path.EndsWith(global::System.IO.Path.DirectorySeparatorChar.ToString(),
                 global::System.StringComparison.Ordinal)
