@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [dripsharp.baseline :as baseline]
             [dripsharp.concurrency :as concurrency]
+            [dripsharp.generation-provenance :as generation-provenance]
             [dripsharp.java-project :as java-project]
             [dripsharp.maven :as maven]
             [dripsharp.paths :as paths]
@@ -790,8 +791,13 @@
     emission
     (let [metadata (public-surface/validate-generated! selection surface emission)
           file (paths/resolve-path (:project-root emission)
-                                   (get-in destination [:output :public-metadata-file]))]
-      (spit (str file) (str (pr-str metadata) "\n"))
+                                   (get-in destination [:output :public-metadata-file]))
+          portable-metadata
+          (generation-provenance/portable-public-metadata!
+           (:workspace-root emission)
+           (:provenance-source-roots emission)
+           metadata)]
+      (spit (str file) (str (pr-str portable-metadata) "\n"))
       (assoc emission :public-metadata-file file :public-metadata metadata))))
 
 (defn- generate-prepared-profile!

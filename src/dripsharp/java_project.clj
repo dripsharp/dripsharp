@@ -13,6 +13,7 @@
             [dripsharp.bundle-contract :as bundle-contract]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.csharp :as csharp]
+            [dripsharp.generation-provenance :as generation-provenance]
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
@@ -1612,24 +1613,36 @@
                     configuration resource-artifacts))
       (write-text! source-map-file (edn-text {:schema-version 1 :mappings mappings}))
       (write-text! diagnostics-file (edn-text {:schema-version 1 :diagnostics (:diagnostics ctx)}))
-      (write-text! annotations-file
-                   (edn-text {:schema-version 1
-                              :decisions ((rule rule-bundle :resolved-mappings
-                                                :annotation-decisions)
-                                          ctx)}))
-      (write-text! manifest-file
-                   (edn-text {:schema-version 1
-                              :configuration configuration
-                              :rule-bundle (:id rule-bundle)
-                              :mechanical-source-headers
-                              mechanical-source-header-proof
-                              :authorship authorship-ledger
-                              :mapping-report mapping-report
-                              :sources accounts
-                              :resources resource-artifacts
-                              :artifacts (mapv #(dissoc % :mappings) artifacts)
-                              :summary summary}))
+      (write-text!
+       annotations-file
+       (edn-text
+        (generation-provenance/portable-annotation-decisions!
+         root (:source-roots project-input)
+         {:schema-version 1
+          :decisions ((rule rule-bundle :resolved-mappings
+                            :annotation-decisions)
+                      ctx)})))
+      (write-text!
+       manifest-file
+       (edn-text
+        (generation-provenance/portable-generation-manifest!
+         root (:source-roots project-input)
+         {:schema-version 1
+          :configuration configuration
+          :rule-bundle (:id rule-bundle)
+          :mechanical-source-headers mechanical-source-header-proof
+          :authorship authorship-ledger
+          :mapping-report mapping-report
+          :sources accounts
+          :resources resource-artifacts
+          :artifacts (mapv #(dissoc % :mappings) artifacts)
+          :summary summary})))
       {:workspace-root root
+       :provenance-source-roots
+       (->> (cond-> (:source-roots project-input)
+              (:project-root project-input) (conj (:project-root project-input)))
+            distinct
+            vec)
        :project-root project-root
        :source-root source-root
        :project-file project-file
