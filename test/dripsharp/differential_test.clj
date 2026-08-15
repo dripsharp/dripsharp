@@ -227,6 +227,127 @@
       (is (= "drift" (get-in (ex-data error)
                              [:actual :version]))))))
 
+(deftest sqltrellis-netstandard-package-contract-rejects-drift
+  (let [root (paths/workspace-root)
+        contract
+        (differential/read-contract
+         "targets/sqltrellis/validation/behavior.edn")
+        profile (baseline/profile root :sqltrellis :core)
+        revision (baseline/upstream-revision :sqltrellis)
+        version
+        (baseline/package-version :sqltrellis "DripSharp.SqlTrellis")
+        legal (baseline/package-legal-files :sqltrellis [:upstream])
+        counts (:source-counts profile)
+        dependencies
+        [{:id "Microsoft.CSharp" :version "4.7.0"}
+         {:id "System.Memory" :version "4.6.3"}
+         {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
+        rows 8852
+        package-proof
+        {:verification
+         {:generation
+          {:project-input
+           {:project-id (:source-project-id profile)
+            :production-sources
+            (vec (repeat (:ordinary counts) :source))
+            :generated-production-sources
+            (vec (repeat (:generated counts) :generated))}
+           :source-project {:revision revision}
+           :destination {:project {:target-framework "netstandard2.0"}}
+           :emission
+           {:public-metadata {:required-rows rows :rows []}}}
+          :public-surface
+          {:strategy :complete-accessible-java-library
+           :assemblies
+           [{:assembly "DripSharp.SqlTrellis"
+             :contract-members rows}]}}
+         :identity {:id "DripSharp.SqlTrellis" :version version}
+         :inspection
+         {:dependencies dependencies
+          :package-files
+          (conj legal
+                {:kind :readme
+                 :path "README.md"
+                 :sha256 (apply str (repeat 64 "a"))})}
+         :packages
+         [{:primary? true
+           :resource-proof
+           {:assembly-identity
+            {:name "DripSharp.SqlTrellis"
+             :version "5.3.0.0"
+             :dependency-assemblies []}
+            :resources 1}}]
+         :packing-summary {:clean-builds 2}}
+        failure
+        (fn [proof]
+          (try
+            (differential/validate-package-contract! contract root proof)
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught)))]
+    (is (= {:target-framework "netstandard2.0"
+            :dependencies dependencies
+            :public-contract-rows rows
+            :compiled-contract-members rows}
+           (select-keys (:package-contract contract)
+                        [:target-framework :dependencies
+                         :public-contract-rows
+                         :compiled-contract-members])))
+    (testing "the corrected dependency and public-count contract is accepted"
+      (is (= {:dependencies dependencies
+              :required-rows rows
+              :compiled-contract-members rows}
+             (let [actual
+                   (differential/validate-package-contract!
+                    contract root package-proof)]
+               {:dependencies (:dependencies actual)
+                :required-rows
+                (get-in actual [:public-contract :required-rows])
+                :compiled-contract-members
+                (get-in actual
+                        [:public-contract :compiled-contract-members])}))))
+    (testing "dependency inventory drift is rejected"
+      (let [error (failure (update-in package-proof
+                                      [:inspection :dependencies]
+                                      pop))]
+        (is (= :sqltrellis-behavior-differential-failed
+               (:kind (ex-data error))))
+        (is (= dependencies
+               (get-in (ex-data error) [:expected :dependencies])))
+        (is (= (pop dependencies)
+               (get-in (ex-data error) [:actual :dependencies])))))
+    (testing "generated public-count drift is rejected"
+      (let [error
+            (failure
+             (update-in package-proof
+                        [:verification :generation :emission
+                         :public-metadata :required-rows]
+                        dec))]
+        (is (= :sqltrellis-behavior-differential-failed
+               (:kind (ex-data error))))
+        (is (= rows
+               (get-in (ex-data error)
+                       [:expected :public-contract :required-rows])))
+        (is (= (dec rows)
+               (get-in (ex-data error)
+                       [:actual :public-contract :required-rows])))))
+    (testing "compiled public-count drift is rejected"
+      (let [error
+            (failure
+             (update-in package-proof
+                        [:verification :public-surface :assemblies 0
+                         :contract-members]
+                        dec))]
+        (is (= :sqltrellis-behavior-differential-failed
+               (:kind (ex-data error))))
+        (is (= rows
+               (get-in (ex-data error)
+                       [:expected :public-contract
+                        :compiled-contract-members])))
+        (is (= (dec rows)
+               (get-in (ex-data error)
+                       [:actual :public-contract
+                        :compiled-contract-members])))))))
+
 (deftest differential-package-file-projection-excludes-packed-readme
   (is (= [{:kind :license :path "LICENSE.txt" :sha256 "license"}
           {:kind :notice :path "NOTICE.txt" :sha256 "notice"}]

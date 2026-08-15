@@ -43,10 +43,13 @@
   :assembly-name "DripSharp.SqlTrellis"
   :assembly-version "5.3.0.0"
   :assembly-dependencies []
-  :dependencies []
+  :dependencies
+  [{:id "Microsoft.CSharp" :version "4.7.0"}
+   {:id "System.Memory" :version "4.6.3"}
+   {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
   :legal-sets [:upstream]
-  :public-contract-rows 8261
-  :compiled-contract-members 8261
+  :public-contract-rows 8852
+  :compiled-contract-members 8852
   :resource-count 1
   :clean-builds 2}
  :summary
