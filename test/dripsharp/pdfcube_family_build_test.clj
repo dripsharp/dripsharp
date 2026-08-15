@@ -1,6 +1,7 @@
 (ns dripsharp.pdfcube-family-build-test
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing]]
+            [dripsharp.baseline :as baseline]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.family-build :as family-build])
   (:import [clojure.lang ExceptionInfo]
@@ -13,6 +14,13 @@
 (def ^:private order
   ["pdfcube-io" "pdfcube-fontbox" "pdfcube-pdfbox" "pdfcube-xmpbox"
    "pdfcube-preflight"])
+
+(def ^:private approved-public-contract-counts
+  {"pdfcube-io" 214
+   "pdfcube-fontbox" 1448
+   "pdfcube-xmpbox" 1199
+   "pdfcube-pdfbox" 7438
+   "pdfcube-preflight" 946})
 
 (def ^:private products
   {"pdfcube-io"
@@ -232,12 +240,75 @@
      {:strategy :complete-accessible-java-library
       :assemblies (mapv compiled-audit emissions)}}))
 
+(defn- with-public-contract-counts
+  [build counts]
+  (let [with-source-count
+        (fn [emission]
+          (let [count (get counts (:profile emission))]
+            (-> emission
+                (assoc-in [:public-metadata :required-rows] count)
+                (assoc-in [:public-metadata :rows]
+                          (vec (repeat count nil))))))
+        profile-by-assembly
+        (into {} (map (fn [[profile {:keys [package-id]}]]
+                        [package-id profile]))
+              products)]
+    (-> build
+        (update-in [:generation :dependency-emissions]
+                   #(mapv with-source-count %))
+        (update-in [:generation :emission] with-source-count)
+        (update-in
+         [:public-surface :assemblies]
+         (fn [assemblies]
+           (mapv
+            (fn [audit]
+              (assoc audit :contract-members
+                     (get counts (get profile-by-assembly
+                                      (:assembly audit)))))
+            assemblies))))))
+
 (defn- caught
   [thunk]
   (try
     (thunk)
     nil
     (catch ExceptionInfo error error)))
+
+(deftest reviewed-public-contract-counts-fail-closed
+  (let [root (Files/createTempDirectory
+              "pdfcube-family-baseline-counts-"
+              (make-array FileAttribute 0))
+        record (baseline/read-baseline :pdfcube)
+        recorded-counts
+        (into {} (map (fn [[_ profile]]
+                        [(:profile profile) (:public-contract-rows profile)]))
+              (:profiles record))
+        build (with-public-contract-counts
+               (clean-build root) approved-public-contract-counts)
+        validate
+        (fn [candidate]
+          (binding [baseline/*target-records* {:pdfcube candidate}]
+            (family-build/validate-baseline-public-counts! root build)))
+        candidates
+        [["stale"
+          (assoc-in record [:profiles :io :public-contract-rows] 177)]
+         ["missing"
+          (update record :profiles dissoc :io)]
+         ["extra"
+          (assoc-in record [:profiles :unexpected]
+                    (assoc (get-in record [:profiles :io])
+                           :profile "pdfcube-unexpected"))]
+         ["weakened"
+          (-> record
+              (assoc-in [:profiles :io :public-contract-rows] nil)
+              (assoc-in [:profiles :io :public-contract-status] :pending))]]]
+    (is (= approved-public-contract-counts recorded-counts))
+    (is (= build (validate record)))
+    (doseq [[label candidate] candidates]
+      (testing label
+        (let [error (caught #(validate candidate))]
+          (is (= :pdfcube-family-build-failed
+                 (:kind (ex-data error)))))))))
 
 (deftest complete-family-build-accounting-is-exact
   (let [root (Files/createTempDirectory

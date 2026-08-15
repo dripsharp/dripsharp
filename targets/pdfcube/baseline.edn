@@ -60,7 +60,9 @@
    :source-project-dependencies []
    :package-id "DripSharp.PdfCarton.IO"
    :source-counts {:ordinary 18 :generated 0}
-   :public-contract-rows 177}
+   ;; netstandard2.0 requires 37 inherited RandomAccessRead default-interface
+   ;; bodies on its concrete implementations in addition to the 177 Java rows.
+   :public-contract-rows 214}
   :fontbox
   {:profile "pdfcube-fontbox"
    :source-module "fontbox"
@@ -69,7 +71,9 @@
    :source-project-dependencies ["org.apache.pdfbox:pdfbox-io:3.0.8"]
    :package-id "DripSharp.PdfCarton.Fonts"
    :source-counts {:ordinary 143 :generated 0}
-   :public-contract-rows 1440}
+   ;; netstandard2.0 requires eight inherited DataInput default-interface bodies
+   ;; across DataInputByteArray and DataInputRandomAccessRead.
+   :public-contract-rows 1448}
   :xmpbox
   {:profile "pdfcube-xmpbox"
    :source-module "xmpbox"
@@ -89,7 +93,10 @@
     "org.apache.pdfbox:pdfbox-io:3.0.8"]
    :package-id "DripSharp.PdfCarton"
    :source-counts {:ordinary 621 :generated 0}
-   :public-contract-rows 7424}
+   ;; netstandard2.0 requires 14 inherited default-interface bodies: nine for
+   ;; COSUpdateInfo, one for ICOSVisitor, three for PDContentStream, and one for
+   ;; PDAppearanceHandler.
+   :public-contract-rows 7438}
   :preflight
   {:profile "pdfcube-preflight"
    :source-module "preflight"

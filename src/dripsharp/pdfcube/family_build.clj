@@ -576,20 +576,48 @@
       :public-stubs (reduce + (map :public-stubs projects))}}))
 
 (defn validate-baseline-public-counts!
-  "Checks live Spoon-derived source rows against the reviewed PdfCarton target
-  record. Kept at the concrete family gate so synthetic structural validators
-  can still exercise small fixtures."
+  "Checks the exact five reviewed PdfCarton counts against both live
+  Spoon-derived source rows and compiled netstandard2.0 contracts. Kept at the
+  concrete family gate so synthetic structural validators can still exercise
+  small fixtures."
   [workspace-root build]
-  (let [root (paths/absolute workspace-root)]
-    (doseq [emission (ordered-emissions (:generation build))
+  (let [root (paths/absolute workspace-root)
+        emissions (ordered-emissions (:generation build))
+        contract (family-contract)
+        baseline-record (baseline/read-baseline root :pdfcube)
+        baseline-profiles (vals (:profiles baseline-record))
+        baseline-names (mapv :profile baseline-profiles)
+        duplicate-names (duplicate-values baseline-names)
+        baseline-by-name (into {} (map (juxt :profile identity))
+                               baseline-profiles)
+        compiled-by-assembly
+        (into {} (map (juxt :assembly identity))
+              (get-in build [:public-surface :assemblies]))]
+    (when (seq duplicate-names)
+      (fail! "PdfCarton target baseline contains duplicate public-contract profiles"
+             {:duplicates duplicate-names}))
+    (exact! "PdfCarton target baseline must contain exactly the product-family profiles"
+            :baseline-public-contract-profiles
+            (:profiles contract) (set baseline-names))
+    (doseq [emission emissions
             :let [profile (:profile emission)
-                  actual (count (get-in emission [:public-metadata :rows]))
+                  assembly (get-in emission [:destination :package :id])
+                  metadata (:public-metadata emission)
                   expected
-                  (:public-contract-rows
-                   (baseline/profile-by-name root :pdfcube profile))]]
+                  (:public-contract-rows (get baseline-by-name profile))
+                  actual (count (:rows metadata))
+                  required (:required-rows metadata)
+                  compiled
+                  (:contract-members (get compiled-by-assembly assembly))]]
       (exact! "PdfCarton public-contract row count differs from the reviewed target baseline"
               [profile :baseline-public-contract-rows]
-              expected actual)))
+              expected actual)
+      (exact! "PdfCarton public metadata weakens the reviewed target baseline"
+              [profile :required-public-contract-rows]
+              expected required)
+      (exact! "PdfCarton compiled contract differs from the reviewed target baseline"
+              [profile :compiled-public-contract-rows]
+              expected compiled)))
   build)
 
 (def ^:private sha256-file util/sha256-file)
