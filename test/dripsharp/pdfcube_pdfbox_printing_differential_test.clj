@@ -1,9 +1,30 @@
 (ns dripsharp.pdfcube-pdfbox-printing-differential-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [dripsharp.paths :as paths]
             [dripsharp.pdfcube.pdfbox-printing-differential
-             :as printing-differential])
+             :as printing-differential]
+            [dripsharp.tree-cleanup :as tree-cleanup])
   (:import [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))
+
+(def ^:private printing-boundary-paths
+  [["validation" "pdfcube-pdfbox-printing" "Program.cs"]
+   ["validation" "pdfcube-pdfbox-printing"
+    "DripSharp.PdfCarton.PrintingHostSmoke.csproj"]
+   ["targets" "pdfcube" "runtime"
+    "DripSharp.PdfCarton.Fonts.Compat.cs"]
+   ["src" "dripsharp" "pdfcube" "java_project.clj"]
+   ["targets" "pdfcube" "destinations" "pdfbox.edn"]])
+
+(defn- copy-printing-boundary! [source-root destination-root]
+  (doseq [relative printing-boundary-paths]
+    (let [source (apply paths/resolve-path source-root relative)
+          destination (apply paths/resolve-path destination-root relative)]
+      (Files/createDirectories (.getParent destination)
+                               (make-array FileAttribute 0))
+      (Files/writeString destination (Files/readString source)
+                         (make-array OpenOption 0)))))
 
 (defn- trace-file [contents]
   (let [file (Files/createTempFile
@@ -52,6 +73,54 @@
               (catch clojure.lang.ExceptionInfo caught caught))]
         (is (= :pdfcube-pdfbox-printing-differential-failed
                (:kind (ex-data error))))))))
+
+(deftest package-comparator-detects-a-deliberate-printing-mismatch
+  (let [oracle (trace-file "failure\tinvalid-input\tIOException\n")
+        perturbed (trace-file "")
+        comparison
+        (printing-differential/prove-mismatch-detection! oracle perturbed)]
+    (is (:mismatch comparison))
+    (is (= 2 (get-in comparison [:mismatch :line])))))
+
+(deftest printing-probe-pins-the-extracted-constant-boundary
+  (let [root (paths/workspace-root)]
+    (is (= {:probe-interface "JavaPrintable"
+            :constant-owner "JavaPrintConstants"
+            :constants {"PAGE_EXISTS" 0
+                        "NO_SUCH_PAGE" 1
+                        "UNKNOWN_NUMBER_OF_PAGES" -1}
+            :production-framework "netstandard2.0"
+            :consumer-framework "net10.0"
+            :consumer-package "DripSharp.PdfCarton"}
+           (printing-differential/validate-printing-boundary! root)))
+    (let [stale-root
+          (Files/createTempDirectory
+           "pdfcube-stale-printing-boundary-"
+           (make-array FileAttribute 0))]
+      (try
+        (copy-printing-boundary! root stale-root)
+        (let [probe
+              (paths/resolve-path stale-root "validation"
+                                  "pdfcube-pdfbox-printing" "Program.cs")
+              current (Files/readString probe)]
+          (Files/writeString
+           probe
+           (str/replace current
+                        "JavaPrintConstants.PAGE_EXISTS;"
+                        "JavaPrintable.PAGE_EXISTS;")
+           (make-array OpenOption 0))
+          (let [error
+                (try
+                  (printing-differential/validate-printing-boundary! stale-root)
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+            (is (= :pdfcube-pdfbox-printing-differential-failed
+                   (:kind (ex-data error))))
+            (is (= :printing-constant-boundary
+                   (:contract (ex-data error))))
+            (is (= :probe (:source (ex-data error))))))
+        (finally
+          (tree-cleanup/delete-tree! stale-root))))))
 
 (deftest supported-host-matrix-is-exact
   (is (= #{["windows" "x64"] ["windows" "arm64"]

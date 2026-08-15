@@ -778,7 +778,7 @@ internal static class Program
             PdfCartonGraphics2D graphics,
             JavaPageFormat pageFormat,
             int pageIndex) =>
-            JavaPrintable.PAGE_EXISTS;
+            JavaPrintConstants.PAGE_EXISTS;
 
         public override string ToString() => name;
     }

@@ -11,7 +11,8 @@
             [dripsharp.util :as util])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files Path StandardCopyOption]
+           [java.nio.file Files OpenOption Path StandardCopyOption
+            StandardOpenOption]
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
@@ -41,6 +42,95 @@
      (if (.isAbsolute path)
        path
        (paths/resolve-path root path)))))
+
+(def ^:private printing-boundary-sources
+  [[:probe ["validation" "pdfcube-pdfbox-printing" "Program.cs"]]
+   [:package-consumer
+    ["validation" "pdfcube-pdfbox-printing"
+     "DripSharp.PdfCarton.PrintingHostSmoke.csproj"]]
+   [:runtime
+    ["targets" "pdfcube" "runtime"
+     "DripSharp.PdfCarton.Fonts.Compat.cs"]]
+   [:mappings ["src" "dripsharp" "pdfcube" "java_project.clj"]]
+   [:destination ["targets" "pdfcube" "destinations" "pdfbox.edn"]]])
+
+(def ^:private printing-boundary-requirements
+  {:probe
+   [["private sealed class NamedPrintable : JavaPrintable" 1]
+    ["JavaPrintConstants.PAGE_EXISTS;" 1]
+    ["JavaPrintable.PAGE_EXISTS" 0]
+    ["JavaPrintable.NO_SUCH_PAGE" 0]]
+   :package-consumer
+   [["<TargetFramework>net10.0</TargetFramework>" 1]
+    ["<TreatWarningsAsErrors>true</TreatWarningsAsErrors>" 1]
+    ["<PackageReference Include=\"DripSharp.PdfCarton\"" 1]
+    ["<ProjectReference" 0]]
+   :runtime
+   [["public interface JavaPrintable" 1]
+    ["int Print(PdfCartonGraphics2D graphics, JavaPageFormat pageFormat, int pageIndex);" 1]
+    ["public static class JavaPrintConstants" 1]
+    ["public const int PAGE_EXISTS = 0;" 1]
+    ["public const int NO_SUCH_PAGE = 1;" 1]
+    ["public const int UNKNOWN_NUMBER_OF_PAGES = -1;" 1]]
+   :mappings
+   [["field:java.awt.print.Printable#PAGE_EXISTS" 1]
+    ["JavaPrintConstants.PAGE_EXISTS" 1]
+    ["field:java.awt.print.Printable#NO_SUCH_PAGE" 1]
+    ["JavaPrintConstants.NO_SUCH_PAGE" 1]
+    ["field:java.awt.print.Pageable#UNKNOWN_NUMBER_OF_PAGES" 1]
+    ["JavaPrintConstants.UNKNOWN_NUMBER_OF_PAGES" 1]
+    ["JavaPrintable.PAGE_EXISTS" 0]
+    ["JavaPrintable.NO_SUCH_PAGE" 0]
+    ["JavaPageable.UNKNOWN_NUMBER_OF_PAGES" 0]]
+   :destination
+   [[":target-framework \"netstandard2.0\"" 1]
+    [":package-consumer" 1]
+    [":project-file \"DripSharp.PdfCarton.PackageConsumer.csproj\"" 1]]})
+
+(defn- fragment-count [source fragment]
+  (count
+   (re-seq
+    (re-pattern (java.util.regex.Pattern/quote fragment))
+    source)))
+
+(defn validate-printing-boundary!
+  "Fails closed unless the target-owned probe, package host, runtime, mapping,
+  and destination sources preserve the netstandard printing-constant boundary."
+  [root]
+  (let [root (paths/absolute root)
+        sources
+        (into
+         {}
+         (map
+          (fn [[id relative]]
+            (let [path (apply paths/resolve-path root relative)]
+              (when-not (paths/regular-file? path)
+                (fail! "Printing boundary source is missing"
+                       {:contract :printing-constant-boundary
+                        :source id
+                        :path (str path)}))
+              [id {:path path :text (Files/readString path)}])))
+         printing-boundary-sources)]
+    (doseq [[source-id requirements] printing-boundary-requirements
+            [fragment expected] requirements]
+      (let [{:keys [path text]} (get sources source-id)
+            actual (fragment-count text fragment)]
+        (when-not (= expected actual)
+          (fail! "PdfCarton printing constant boundary drifted"
+                 {:contract :printing-constant-boundary
+                  :source source-id
+                  :path (str path)
+                  :fragment fragment
+                  :expected-occurrences expected
+                  :actual-occurrences actual}))))
+    {:probe-interface "JavaPrintable"
+     :constant-owner "JavaPrintConstants"
+     :constants {"PAGE_EXISTS" 0
+                 "NO_SUCH_PAGE" 1
+                 "UNKNOWN_NUMBER_OF_PAGES" -1}
+     :production-framework "netstandard2.0"
+     :consumer-framework "net10.0"
+     :consumer-package "DripSharp.PdfCarton"}))
 
 (def ^:private write-text! util/write-text!)
 
@@ -102,6 +192,30 @@
       (fail! "Printing trace coverage differs between runtimes"
              {:expected expected-summary :actual actual-summary}))
     comparison))
+
+(defn prove-mismatch-detection!
+  "Copies a printing oracle trace, deliberately changes it, and requires the
+  shared comparator to report the mismatch."
+  [oracle perturbed]
+  (let [oracle (paths/path oracle)
+        perturbed (paths/path perturbed)]
+    (when-not (paths/regular-file? oracle)
+      (fail! "Printing mismatch control is missing its oracle trace"
+             {:oracle (str oracle)}))
+    (Files/createDirectories (.getParent perturbed)
+                             (make-array FileAttribute 0))
+    (Files/copy oracle perturbed
+                (into-array StandardCopyOption
+                            [StandardCopyOption/REPLACE_EXISTING]))
+    (Files/writeString
+     perturbed
+     "failure\tdeliberate-printing-mismatch\tchanged\n"
+     (into-array OpenOption [StandardOpenOption/APPEND]))
+    (let [comparison (differential/compare-results oracle perturbed)]
+      (when-not (:mismatch comparison)
+        (fail! "Printing comparator missed a deliberate package mismatch"
+               {:oracle (str oracle) :perturbed (str perturbed)}))
+      comparison)))
 
 (defn- java-tools [^Path root generation]
   (let [toolchain (get-in generation [:project-input :java-toolchain])
@@ -207,6 +321,7 @@
      :or {package-fn packaging/verify-package-consumption!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+         _ (validate-printing-boundary! root)
          package-proof
          (package-fn {:workspace-root root
                       :profile "pdfcube-pdfbox"
@@ -224,6 +339,10 @@
       run-command! root package-proof dotnet-trace)
      (let [comparison (assert-match! java-trace dotnet-trace)
            trace (trace-summary java-trace)
+           perturbation
+           (prove-mismatch-detection!
+            java-trace
+            (paths/resolve-path proof-root "deliberate-mismatch.tsv"))
            summary
            {:profile "pdfcube-pdfbox"
             :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
@@ -234,6 +353,10 @@
             :consumer (:dependency-proof package-proof)
             :trace trace
             :comparison comparison
+            :deliberate-mismatch
+            {:line (get-in perturbation [:mismatch :line])
+             :expected (get-in perturbation [:mismatch :expected])
+             :actual (get-in perturbation [:mismatch :actual])}
             :host (current-host)
             :supported-hosts supported-hosts
             :proof-root proof-root}]
