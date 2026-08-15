@@ -765,8 +765,7 @@ sealed class JavaCertificateFactory
         return new JavaCertificateFactory();
     }
 
-    public System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateCertificate(
-        Stream stream)
+    public System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateCertificate(Stream stream)
     {
         var certificates = GenerateCertificates(stream);
         if (certificates.Count == 0)
@@ -782,35 +781,36 @@ sealed class JavaCertificateFactory
         using var bytes = new MemoryStream();
         stream.CopyTo(bytes);
         var encoded = bytes.ToArray();
-        var result =
-            new System.Security.Cryptography.X509Certificates.X509Certificate2Collection();
+        var result = new System.Security.Cryptography.X509Certificates.X509Certificate2Collection();
         if (encoded.Length == 0)
-            return Array.Empty<
-                System.Security.Cryptography.X509Certificates.X509Certificate2>();
+            return Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>();
         var text = Encoding.UTF8.GetString(encoded);
         if (text.Contains("-----BEGIN CERTIFICATE-----", StringComparison.Ordinal))
         {
-            foreach (Match match in Regex.Matches(
-                         text,
+            foreach (Match match in Regex.Matches(text,
                          "-----BEGIN CERTIFICATE-----\\s*(?<data>[A-Za-z0-9+/=\\s]+?)\\s*-----END CERTIFICATE-----",
                          RegexOptions.CultureInvariant))
             {
-                var der = Convert.FromBase64String(
-                    Regex.Replace(match.Groups["data"].Value, @"\s", string.Empty));
-                result.Add(
-                    new System.Security.Cryptography.X509Certificates.X509Certificate2(der));
+                var der = Convert.FromBase64String(Regex.Replace(match.Groups["data"].Value, @"\s", string.Empty));
+                result.Add(LoadCertificate(der));
             }
         }
         else
         {
-#pragma warning disable SYSLIB0057 // net8-compatible certificate construction
-            result.Add(
-                new System.Security.Cryptography.X509Certificates.X509Certificate2(encoded));
-#pragma warning restore SYSLIB0057
+            result.Add(LoadCertificate(encoded));
         }
-        return result
-            .Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>()
-            .ToList();
+        return result.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>().ToList();
+    }
+
+    private static System.Security.Cryptography.X509Certificates.X509Certificate2 LoadCertificate(byte[] encoded)
+    {
+#if NET9_0_OR_GREATER
+        return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(encoded);
+#else
+#pragma warning disable SYSLIB0057 // X509CertificateLoader is unavailable before .NET 9
+        return new System.Security.Cryptography.X509Certificates.X509Certificate2(encoded);
+#pragma warning restore SYSLIB0057
+#endif
     }
 }
 

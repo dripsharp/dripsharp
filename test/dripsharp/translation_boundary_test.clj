@@ -32,6 +32,12 @@
    "DripSharp.JavaCompat.Java.Util.Regex.cs"
    "DripSharp.JavaCompat.Java.Xml.cs"])
 
+(def ^:private java-compat-support-files
+  ["DripSharp.JavaCompat.NetStandard.cs"])
+
+(def ^:private java-compat-runtime-files
+  (into java-compat-area-files java-compat-support-files))
+
 (defn- java-compat-runtime []
   (->> java-compat-area-files
        (map #(slurp (str "runtime/" %)))
@@ -390,6 +396,33 @@
    "    if (fixedCalendar.Offset != global::System.TimeSpan.FromHours(1) ||\n"
    "        JavaCompat.CalendarGet(fixedCalendar, 15) != 60 * 60 * 1000)\n"
    "      throw new global::System.Exception(\"Calendar lost a mutable fixed raw offset\");\n"
+   "    using var certificateKey = global::System.Security.Cryptography.RSA.Create(2048);\n"
+   "    var certificateRequest = new global::System.Security.Cryptography.X509Certificates.CertificateRequest(\n"
+   "      \"CN=DripSharp generic runtime\", certificateKey,\n"
+   "      global::System.Security.Cryptography.HashAlgorithmName.SHA256,\n"
+   "      global::System.Security.Cryptography.RSASignaturePadding.Pkcs1);\n"
+   "    using var sourceCertificate = certificateRequest.CreateSelfSigned(\n"
+   "      global::System.DateTimeOffset.UtcNow.AddMinutes(-1),\n"
+   "      global::System.DateTimeOffset.UtcNow.AddMinutes(5));\n"
+   "    var certificateDer = sourceCertificate.Export(\n"
+   "      global::System.Security.Cryptography.X509Certificates.X509ContentType.Cert);\n"
+   "    var certificateFactory = JavaCertificateFactory.GetInstance(\"X.509\");\n"
+   "    using var derInput = new global::System.IO.MemoryStream(certificateDer);\n"
+   "    using var parsedDer = certificateFactory.GenerateCertificate(derInput);\n"
+   "    if (!global::System.Linq.Enumerable.SequenceEqual(certificateDer, parsedDer.RawData))\n"
+   "      throw new global::System.Exception(\"CertificateFactory changed a DER certificate\");\n"
+   "    var certificatePem = \"-----BEGIN CERTIFICATE-----\\n\" +\n"
+   "      global::System.Convert.ToBase64String(\n"
+   "        certificateDer, global::System.Base64FormattingOptions.InsertLineBreaks) +\n"
+   "      \"\\n-----END CERTIFICATE-----\\n\";\n"
+   "    using var pemInput = new global::System.IO.MemoryStream(\n"
+   "      global::System.Text.Encoding.ASCII.GetBytes(certificatePem));\n"
+   "    var parsedPem = certificateFactory.GenerateCertificates(pemInput);\n"
+   "    if (parsedPem.Count != 1 ||\n"
+   "        !global::System.Linq.Enumerable.SequenceEqual(\n"
+   "          certificateDer, global::System.Linq.Enumerable.First(parsedPem).RawData))\n"
+   "      throw new global::System.Exception(\"CertificateFactory changed a PEM certificate\");\n"
+   "    foreach (var certificate in parsedPem) certificate.Dispose();\n"
    "    var xml = new global::System.Xml.XmlDocument();\n"
    "    xml.LoadXml(\"<root xmlns:stRef='urn:test'><stRef:instanceID /></root>\");\n"
    "    var xmlElement = xml.DocumentElement!.FirstChild!;\n"
@@ -569,7 +602,7 @@
 (deftest generic-runtime-is-independently-product-neutral
   (let [assets (generic-runtime-assets)]
     (is (seq assets))
-    (is (= (sort java-compat-area-files)
+    (is (= (sort java-compat-runtime-files)
            (->> assets
                 (map #(.getName %))
                 (filter #(str/starts-with? % "DripSharp.JavaCompat."))
