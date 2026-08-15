@@ -69,6 +69,7 @@
     (is (str/includes? support "ResetMutableTestArtifactsForContract"))
     (is (str/includes? support "ResetMutableArtifactRoot"))
     (is (str/includes? support "LifecycleContractArtifacts"))
+    (is (str/includes? support "Path.TrimEndingDirectorySeparator"))
     (is (str/includes? generator "VerifyGovernedFixtures"))
     (is (str/includes? generator "verify-built-lifecycle!"))
     (is (str/includes? generator "built-lifecycle-snapshots"))))

@@ -730,8 +730,9 @@ internal static class Support
 
     private static string MutableArtifactRoot(string name)
     {
-        string baseDirectory = global::System.IO.Path.GetFullPath(
-            global::System.AppContext.BaseDirectory);
+        string baseDirectory = global::System.IO.Path.TrimEndingDirectorySeparator(
+            global::System.IO.Path.GetFullPath(
+                global::System.AppContext.BaseDirectory));
         string root = global::System.IO.Path.GetFullPath(
             global::System.IO.Path.Combine(baseDirectory, name));
         if (!root.StartsWith(
