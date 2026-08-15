@@ -38,10 +38,10 @@
    :review-evidence "beads:pkl-nk5q"
    :role :authored-public-api-smoke-test}
   {:path "targets/pkl/consumer-tests/UpstreamContractTests.cs"
-   :sha256 "5578a79642d468106d5e4e97accb950086eb506ae69b7746c3cb14d3483dc713"
-   :lines 605
-   :line-budget 605
-   :review-evidence "beads:pkl-rjf1.1"
+   :sha256 "b01808b62b77bfc1e6017e624eec7bd68f7ead1d11075f88aab3caa8e994480b"
+   :lines 660
+   :line-budget 660
+   :review-evidence "beads:pkl-zysr.29"
    :role :authored-xunit-contract-adapter}
   {:path "targets/pkl/consumer-tests/fixtures/sample.pkl"
    :sha256 "59ca6eaa229aee0998e880122880ed9841bdf6e6bbb9448687e7ba86cc845a78"

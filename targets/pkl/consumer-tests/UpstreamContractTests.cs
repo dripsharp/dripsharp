@@ -14,6 +14,9 @@ public sealed class UpstreamContractTests
     const string ApprovedLanguageExclusion = "outside-epic-approved-exclusion";
     const string CoreExecutionOwner = "complete-pkl-core-runner";
     const string ParserExecutionOwner = "complete-pkl-parser-runner";
+    const string EvaluationTimeoutCase =
+        "pkl-core-junit/41d57e8ca01cb98616d366aedcfab222694eca0e1fe36437c05d0c95acbd52a6";
+    const int EvaluationTimeoutWorkers = 22;
 
     static readonly string Root = FindProductRoot();
     static readonly Lazy<IReadOnlyDictionary<string, LanguageResult>> LanguageResults =
@@ -71,6 +74,7 @@ public sealed class UpstreamContractTests
         CoreResult actual = CoreResults.Value[caseId];
         Assert.Equal(PinnedRevision, actual.Revision);
         Assert.Equal("PASS", actual.Status);
+        if (caseId == EvaluationTimeoutCase) VerifyEvaluationTimeoutStress();
     }
 
     [Theory]
@@ -320,6 +324,57 @@ public sealed class UpstreamContractTests
         Require(rows.Keys.SequenceEqual(CoreContract.Keys, StringComparer.Ordinal),
             "Pkl.Core results do not cover the contract in order.");
         return rows;
+    }
+
+    static void VerifyEvaluationTimeoutStress()
+    {
+        string runner = Runner("DripSharp.Brine.CoreTestRunner");
+        string sourceManifest = ProductPath(
+            "tests", "Contracts", "PklCoreTestContract.tsv");
+        string stressManifest = Temporary("evaluation-timeout-contract.tsv");
+        string output = Temporary("evaluation-timeout-results.tsv");
+        string assemblies = WriteAssemblyManifest(Path.GetDirectoryName(runner)!);
+        string packages = Temporary("evaluation-timeout-packages");
+        string loaded = Temporary("evaluation-timeout-loaded-assemblies.tsv");
+        Directory.CreateDirectory(packages);
+
+        string[] sourceLines = File.ReadAllLines(sourceManifest, Encoding.UTF8);
+        string timeoutRow = sourceLines.Single(line =>
+            line.StartsWith("case\t" + EvaluationTimeoutCase + "\t", StringComparison.Ordinal));
+        string revision = sourceLines.Single(line =>
+            line.StartsWith("meta\tsource-revision\t", StringComparison.Ordinal));
+        string columns = sourceLines.Single(line =>
+            line.StartsWith("case-columns\t", StringComparison.Ordinal));
+        File.WriteAllLines(
+            stressManifest,
+            new[] { sourceLines[0], revision, columns }
+                .Concat(Enumerable.Repeat(timeoutRow, EvaluationTimeoutWorkers)),
+            new UTF8Encoding(false));
+
+        Run(
+            runner, stressManifest, output, assemblies, packages, loaded,
+            "60000", EvaluationTimeoutWorkers.ToString(CultureInfo.InvariantCulture));
+        string[] results = File.ReadAllLines(output, Encoding.UTF8);
+        Assert.Equal(EvaluationTimeoutWorkers + 2, results.Length);
+        for (int index = 0; index < EvaluationTimeoutWorkers; index++)
+        {
+            string[] fields = results[index + 2].Split('\t');
+            string diagnostic = fields.Length == 14 ? Decode(fields[13]) : "malformed result row";
+            string observation = fields.Length == 14 ? Decode(fields[12]) : "";
+            bool stable = fields.Length == 14 &&
+                fields[0] == "case" &&
+                fields[1] == EvaluationTimeoutCase &&
+                fields[3] == PinnedRevision &&
+                fields[11] == "PASS" &&
+                observation == "assertions-succeed" &&
+                diagnostic.Length == 0 &&
+                !diagnostic.Contains("ThreadInterruptedException", StringComparison.Ordinal);
+            Assert.True(
+                stable,
+                $"Evaluation-timeout worker {index} failed closed: " +
+                $"status={(fields.Length > 11 ? fields[11] : "MALFORMED")}, " +
+                $"observation={observation}, diagnostic={diagnostic}");
+        }
     }
 
     static IReadOnlyDictionary<string, ParserResult> RunParserSuite()
