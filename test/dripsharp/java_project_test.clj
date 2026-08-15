@@ -505,6 +505,34 @@
                  (:path (ex-data error))))
           (is (= "a map" (:expected (ex-data error)))))))))
 
+(deftest package-consumer-framework-omissions-are-exact-identities
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pdfcube/destinations/io.edn")
+        omission {:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+        invalid
+        (fn [value]
+          (try
+            (project-emission/validate-configuration!
+             (assoc-in configuration
+                       [:package-consumer :framework-omitted-packages]
+                       value))
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught)))]
+    (is (= [omission]
+           (get-in (project-emission/validate-configuration! configuration)
+                   [:package-consumer :framework-omitted-packages])))
+    (doseq [[label value]
+            [[:empty []]
+             [:missing-version [(dissoc omission :version)]]
+             [:extra-key [(assoc omission :reason :framework-group)]]
+             [:duplicate-id [omission (assoc omission :version "9.0.0")]]]]
+      (testing (name label)
+        (let [error (invalid value)]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error)))))))))
+
 (deftest destination-legal-file-paths-must-be-normalized-and-portable
   (let [configuration
         (project-emission/read-configuration

@@ -1079,9 +1079,12 @@
   "Proves that the generated consumer project has only its selected package
   references and no source/project escape hatch. Partitions the complete
   published dependency closure into the exact execution-framework restore
-  graph and dependencies demonstrably removed by NuGet framework pruning, then
-  verifies every resolved package artifact in the isolated cache."
-  [^Path project-file ^Path assets-file ^Path packages primary-identity identities]
+  graph, dependencies demonstrably removed by NuGet framework pruning, and an
+  exact target-owned set omitted by framework-specific dependency-group
+  selection, then verifies every resolved package artifact in the isolated
+  cache."
+  [^Path project-file ^Path assets-file ^Path packages primary-identity identities
+   & [framework-omitted-identities]]
   (let [project (Files/readString project-file)
         package-references (re-seq #"<PackageReference\s+Include=\"([^\"]+)\"\s+Version=\"([^\"]+)\"\s*/>"
                                    project)
@@ -1137,9 +1140,16 @@
           selected-by-key (exact-identity-map! primary-identities "selected" assets-file)
           library-by-key (restored-identity-map! libraries "libraries" assets-file)
           target-by-key (restored-identity-map! target-entries "targets" assets-file)
+          framework-omitted-by-key
+          (exact-identity-map! (or framework-omitted-identities [])
+                               "framework-omitted" assets-file)
           expected-keys (set (keys expected-by-key))
           selected-keys (set (keys selected-by-key))
           resolved-keys (set (keys library-by-key))
+          expected-framework-omitted-keys
+          (set (keys framework-omitted-by-key))
+          invalid-framework-omitted-keys
+          (set/difference expected-framework-omitted-keys expected-keys)
           unexpected-keys (set/difference resolved-keys expected-keys)
           missing-selected (set/difference selected-keys resolved-keys)
           _ (when-not (= resolved-keys (set (keys target-by-key)))
@@ -1156,22 +1166,52 @@
               (fail! "Restored package graph is missing a selected package identity"
                      {:assets-file (str assets-file)
                       :missing (vec (sort missing-selected))}))
+          _ (when (seq invalid-framework-omitted-keys)
+              (fail! "Framework-omitted package contract is outside the published closure"
+                     {:assets-file (str assets-file)
+                      :unexpected (vec (sort invalid-framework-omitted-keys))
+                      :expected (vec (sort expected-keys))}))
           pruning-ranges
           (pruning-ranges! (get project-frameworks target-framework) assets-file)
           missing-keys (set/difference expected-keys resolved-keys)
+          pruned-keys
+          (set
+           (filter
+            (fn [key]
+              (let [{:keys [id version]} (get expected-by-key key)
+                    range (get pruning-ranges (str/lower-case id))]
+                (and range (nuget-version-in-range? version range))))
+            missing-keys))
+          framework-omitted-keys (set/difference missing-keys pruned-keys)
+          unexplained-keys
+          (set/difference framework-omitted-keys
+                          expected-framework-omitted-keys)
+          _ (when (seq unexplained-keys)
+              (let [key (first (sort unexplained-keys))
+                    {:keys [id version]} (get expected-by-key key)]
+                (fail! "Restored package graph is missing an exact package identity"
+                       {:identity (str id "/" version)
+                        :assets-file (str assets-file)
+                        :packages-to-prune
+                        (get pruning-ranges (str/lower-case id))})))
+          _ (when-not (= expected-framework-omitted-keys
+                         framework-omitted-keys)
+              (fail! "Framework-selected package omissions changed"
+                     {:assets-file (str assets-file)
+                      :expected (vec (sort expected-framework-omitted-keys))
+                      :actual (vec (sort framework-omitted-keys))}))
           pruned
           (mapv
            (fn [key]
              (let [{:keys [id version] :as identity} (get expected-by-key key)
                    range (get pruning-ranges (str/lower-case id))]
-               (when-not (and range (nuget-version-in-range? version range))
-                 (fail! "Restored package graph is missing an exact package identity"
-                        {:identity (str id "/" version)
-                         :assets-file (str assets-file)
-                         :packages-to-prune range}))
                (assoc (select-keys identity [:id :version :sha256])
                       :prune-range range)))
-           (sort missing-keys))
+           (sort pruned-keys))
+          framework-omitted
+          (mapv #(select-keys (get expected-by-key %)
+                              [:id :version :sha256])
+                (sort framework-omitted-keys))
           resolved (mapv expected-by-key (sort resolved-keys))
           _ (doseq [[key {:strs [path]}] libraries]
               (let [[id version] (package-key! key "libraries" assets-file)
@@ -1235,6 +1275,7 @@
        :resolved-packages
        (mapv #(select-keys % [:id :version :sha256]) resolved)
        :pruned-packages pruned
+       :framework-omitted-packages framework-omitted
        :package-folders actual-package-folders
        :assets-file (str assets-file)})))
 
@@ -2217,9 +2258,12 @@
   already packed local feed. `selected-packages` are direct PackageReferences;
   the exact production dependency closure is derived from the proved package
   metadata. When supplied, `expected-packages` is an additional exact-closure
-  assertion used by target-specific family contracts."
+  assertion used by target-specific family contracts, and
+  `framework-omitted-packages` is the exact subset expected to be omitted by
+  execution-framework dependency-group selection rather than packagesToPrune."
   [{:keys [workspace-root package-proof consumer-name consumer-profile
-           selected-packages expected-packages target-framework run-command!]
+           selected-packages expected-packages framework-omitted-packages
+           target-framework run-command!]
     :or {run-command! process/run!}}]
   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
         _ (when-not (and (string? consumer-name)
@@ -2232,6 +2276,9 @@
         asserted-identities
         (when expected-packages
           (exact-identities! available expected-packages))
+        framework-omitted-identities
+        (when framework-omitted-packages
+          (exact-identities! available framework-omitted-packages))
         _ (when (and asserted-identities
                      (not= (set (map identity-key identities))
                            (set (map identity-key asserted-identities))))
@@ -2318,7 +2365,7 @@
            (inspect-consumer-dependencies!
             consumer-project-file
             (paths/resolve-path consumer "obj" "project.assets.json")
-            packages selected identities)
+            packages selected identities framework-omitted-identities)
            :published-packages
            (mapv #(select-keys % [:id :version :sha256]) available))]
       (run-command!
@@ -2380,6 +2427,8 @@
            :consumer-name "primary"
            :consumer-profile consumer-profile
            :selected-packages [{:id id :version version}]
+           :framework-omitted-packages
+           (:framework-omitted-packages consumer-profile)
            :target-framework target-framework
            :run-command! run-command!})
          artifact (:artifact package-proof)

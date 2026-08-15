@@ -82,9 +82,12 @@
     :assembly
     {:name "DripSharp.PdfCarton.IO"
      :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.IO")
-     :dependency-assemblies []}
+    :dependency-assemblies []}
     :dependencies
-    [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
+    [{:id "Microsoft.CSharp" :version "4.7.0"}
+     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 0
     :package-files common-legal-files
     :contract-members (:public-contract-rows io-contract)}
@@ -103,9 +106,13 @@
     :dependencies
     [{:id "DripSharp.PdfCarton.IO"
       :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
+     {:id "Microsoft.CSharp" :version "4.7.0"}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
-     {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
+     {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
+     {:id "System.Formats.Asn1" :version "10.0.0"}
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 93
     :package-files common-legal-files
     :contract-members (:public-contract-rows fontbox-contract)}
@@ -125,10 +132,13 @@
     [{:id "DripSharp.PdfCarton.Fonts"
       :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")}
      {:id "DripSharp.PdfCarton.IO"
-      :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
+     {:id "Microsoft.CSharp" :version "4.7.0"}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
-     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}]
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 22
     :package-files (baseline/package-legal-files :pdfcube [:upstream :codecs])
     :contract-members (:public-contract-rows pdfbox-contract)}})

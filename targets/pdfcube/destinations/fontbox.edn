@@ -36,6 +36,8 @@
  :package-consumer
  {:strategy :source-file
   :project-file "DripSharp.PdfCarton.Fonts.PackageConsumer.csproj"
+  :framework-omitted-packages
+  [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}]
   :source-path
   "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Fonts.FocusedConsumer.cs"
   :success-message "DripSharp.PdfCarton.Fonts focused behavior passed."}

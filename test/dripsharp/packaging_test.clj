@@ -1335,6 +1335,96 @@
     (is (= [selected] (:packages proof)))
     (is (= identities (:expected-packages proof)))))
 
+(deftest independent-net10-consumer-requires-exact-framework-group-omissions
+  (let [root (Files/createTempDirectory "dripsharp-consumer-framework-group"
+                                        (make-array FileAttribute 0))
+        packages (.resolve root "packages")
+        selected-artifact
+        (write-file!
+         (.resolve packages "example.portable/1.0.0/example.portable.1.0.0.nupkg")
+         "netstandard2.0 product package")
+        selected {:id "Example.Portable" :version "1.0.0"
+                  :sha256 (sha256 selected-artifact)}
+        dependency {:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"
+                    :sha256 (apply str (repeat 64 "a"))}
+        identities [selected dependency]
+        project
+        (write-file!
+         (.resolve root "Consumer.csproj")
+         (str "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+              "</PropertyGroup><ItemGroup>"
+              "<PackageReference Include=\"Example.Portable\" Version=\"1.0.0\" />"
+              "</ItemGroup></Project>"))
+        assets-file (.resolve root "obj/project.assets.json")
+        inspect-error
+        (fn [resolved omitted]
+          (write-consumer-assets!
+           assets-file (consumer-assets-map packages resolved {}))
+          (try
+            (packaging/inspect-consumer-dependencies!
+             project assets-file packages selected identities omitted)
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught)))]
+    (write-consumer-assets!
+     assets-file (consumer-assets-map packages [selected] {}))
+    (let [proof
+          (packaging/inspect-consumer-dependencies!
+           project assets-file packages selected identities [dependency])]
+      (is (= [selected] (:resolved-packages proof)))
+      (is (empty? (:pruned-packages proof)))
+      (is (= [dependency] (:framework-omitted-packages proof)))
+      (is (= identities (:expected-packages proof))))
+    (testing "an omitted framework-group dependency requires exact approval"
+      (let [error (inspect-error [selected] [])]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (= "Microsoft.Bcl.AsyncInterfaces/10.0.0"
+               (:identity (ex-data error))))))
+    (testing "an approval at the wrong version is outside the published closure"
+      (let [error (inspect-error
+                   [selected]
+                   [(assoc dependency :version "9.0.0")])]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (seq (:unexpected (ex-data error))))))
+    (testing "an approved omission must actually be absent"
+      (let [error (inspect-error [selected dependency] [dependency])]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (not= (:expected (ex-data error))
+                  (:actual (ex-data error))))))))
+
+(deftest package-consumption-forwards-the-destination-framework-omission-contract
+  (let [root (Files/createTempDirectory "dripsharp-consumer-omission-routing"
+                                        (make-array FileAttribute 0))
+        artifact (write-file! (.resolve root "Example.Portable.1.0.0.nupkg")
+                              "package")
+        omitted [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}]
+        consumer {:strategy :compile-only
+                  :project-file "Example.Portable.Consumer.csproj"
+                  :compile-types ["Example.Portable.PublicType"]
+                  :success-message "passed"
+                  :framework-omitted-packages omitted}
+        request (atom nil)
+        package-proof
+        {:artifact artifact
+         :verification
+         {:generation
+          {:destination
+           {:package {:id "Example.Portable" :version "1.0.0"}
+            :project {:target-framework "netstandard2.0"}
+            :package-consumer consumer}}}}]
+    (with-redefs [packaging/verify-packed-consumer!
+                  (fn [options]
+                    (reset! request options)
+                    {:dependency-proof {:expected-packages []}
+                     :packages-root (.resolve root "packages")
+                     :consumer-root (.resolve root "consumer")
+                     :run {:exit 0}})]
+      (packaging/verify-package-consumption!
+       {:workspace-root root
+        :profile "example-portable"
+        :pack-fn (fn [_] package-proof)})
+      (is (= omitted (:framework-omitted-packages @request)))
+      (is (= consumer (:consumer-profile @request))))))
+
 (deftest independent-consumer-dependency-proof-rejects-project-or-source-reference
   (let [root (Files/createTempDirectory "dripsharp-consumer-leak"
                                         (make-array FileAttribute 0))

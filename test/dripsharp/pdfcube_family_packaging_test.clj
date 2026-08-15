@@ -446,6 +446,24 @@
       (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
       (is (not= (:expected (ex-data error)) (:actual (ex-data error)))))))
 
+(deftest net10-framework-group-omission-contract-is-exact
+  (let [closures @#'family-packaging/restored-closures
+        actual
+        (into {}
+              (map
+               (fn [[id closure]]
+                 [id (set (#'family-packaging/framework-omitted-contract
+                           closure))]))
+              closures)
+        async {:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+        crypto {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}]
+    (is (= {"DripSharp.PdfCarton.IO" #{async}
+            "DripSharp.PdfCarton.Fonts" #{async}
+            "DripSharp.PdfCarton.Xmp" #{async}
+            "DripSharp.PdfCarton" #{async crypto}
+            "DripSharp.PdfCarton.Preflight" #{async crypto}}
+           actual))))
+
 (deftest all-family-consumer-executes-public-runtime-workflows
   (let [consumer @#'family-packaging/aggregate-consumer]
     (is (= :source-file (:strategy consumer)))

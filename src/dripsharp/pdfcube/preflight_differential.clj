@@ -70,8 +70,11 @@
      :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Xmp")}
     {:id "DripSharp.PdfCarton"
      :version (baseline/package-version :pdfcube "DripSharp.PdfCarton")}
+    {:id "Microsoft.CSharp" :version "4.7.0"}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
-    {:id "SkiaSharp" :version "4.150.1"}]
+    {:id "SkiaSharp" :version "4.150.1"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
    :resource-count 0
    :package-files (baseline/package-legal-files :pdfcube [:upstream])
    :public-contract

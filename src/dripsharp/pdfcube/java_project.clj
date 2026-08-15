@@ -2951,6 +2951,8 @@
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.IO.PackageConsumer.csproj"
+     :framework-omitted-packages
+     [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}]
      :source-path
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.IO.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.IO focused behavior passed."}
@@ -2980,6 +2982,8 @@
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.Fonts.PackageConsumer.csproj"
+     :framework-omitted-packages
+     [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}]
      :source-path
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Fonts.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.Fonts focused behavior passed."}
@@ -3006,6 +3010,8 @@
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.Xmp.PackageConsumer.csproj"
+     :framework-omitted-packages
+     [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}]
      :source-path
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Xmp.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.Xmp focused behavior passed."}
@@ -3037,6 +3043,9 @@
     :package-consumer
     {:strategy :compile-only
      :project-file "DripSharp.PdfCarton.PackageConsumer.csproj"
+     :framework-omitted-packages
+     [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+      {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}]
      :compile-types
      ["DripSharp.PdfCarton.Cos.COSDocument"
       "DripSharp.PdfCarton.Pdmodel.PDDocument"]
@@ -3075,6 +3084,9 @@
     :package-consumer
     {:strategy :source-file
      :project-file "DripSharp.PdfCarton.Preflight.PackageConsumer.csproj"
+     :framework-omitted-packages
+     [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+      {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}]
      :source-path
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Preflight.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.Preflight focused behavior passed."}

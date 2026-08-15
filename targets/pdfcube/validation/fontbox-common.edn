@@ -45,9 +45,13 @@
   :assembly-dependencies ["DripSharp.PdfCarton.IO"]
   :dependencies
   [{:id "DripSharp.PdfCarton.IO" :version {:baseline-package "DripSharp.PdfCarton.IO"}}
+   {:id "Microsoft.CSharp" :version "4.7.0"}
    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
    {:id "SkiaSharp" :version "4.150.1"}
-   {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
+   {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
+   {:id "System.Formats.Asn1" :version "10.0.0"}
+   {:id "System.Memory" :version "4.6.3"}
+   {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
   :legal-sets [:upstream]
   :resource-count 93
   :clean-builds 2}

@@ -36,6 +36,9 @@
  :package-consumer
  {:strategy :compile-only
   :project-file "DripSharp.PdfCarton.PackageConsumer.csproj"
+  :framework-omitted-packages
+  [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+   {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}]
   :compile-types
   ["DripSharp.PdfCarton.Cos.COSDocument"
    "DripSharp.PdfCarton.Pdmodel.PDDocument"]

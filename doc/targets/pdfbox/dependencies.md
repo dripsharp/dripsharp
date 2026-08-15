@@ -68,9 +68,21 @@ This is an exact fail-closed proof contract, not a minimum dependency list:
 packing fails when an archive is missing, additional, or restored at another
 version. Each packed component also retains its exact direct NuGet dependencies
 from the corresponding `targets/pdfcube/destinations/*.edn` contract. Fresh
-`net10.0` consumers verify the complete metadata closure while separately
-accounting for dependencies that NuGet legitimately framework-prunes; pruning
-does not remove those archives from the `netstandard2.0` package-proof closure.
+`net10.0` consumers verify the complete published metadata closure while
+partitioning packages absent from the execution restore into exact
+`packagesToPrune` evidence and a target-owned framework dependency-group
+contract. At the current locked versions, the `net10.0` dependency groups omit
+`Microsoft.Bcl.AsyncInterfaces` `10.0.0` from the logging chain and
+`Microsoft.Bcl.Cryptography` `10.0.0` from the PKCS chain. The consumer proof
+requires exactly those omissions when they are in a selected package's
+published closure and rejects a missing, additional, or wrong-version omission.
+Each `targets/pdfcube/destinations/*.edn` package-consumer contract pins the
+applicable identities: I/O, Fonts, and Xmp pin only
+`Microsoft.Bcl.AsyncInterfaces` `10.0.0`; PdfCarton and Preflight pin both
+identities. The complete-family consumer derives the same exact subset from its
+published closure.
+Neither framework pruning nor dependency-group selection removes the archives
+from the exact `netstandard2.0` package-proof closure above.
 
 ## Resolved Production Dependency Mappings
 

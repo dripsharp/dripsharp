@@ -73,9 +73,12 @@
                  [:assembly :dependency-assemblies])))
   (is (= [{:id "DripSharp.PdfCarton.Xmp" :version "3.0.8-alpha.1"}
           {:id "DripSharp.PdfCarton" :version "3.0.8-alpha.1"}
+          {:id "Microsoft.CSharp" :version "4.7.0"}
           {:id "Microsoft.Extensions.Logging.Abstractions"
            :version "10.0.0"}
-          {:id "SkiaSharp" :version "4.150.1"}]
+          {:id "SkiaSharp" :version "4.150.1"}
+          {:id "System.Memory" :version "4.6.3"}
+          {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
          (:dependencies
           preflight-differential/expected-package-contract)))
   (is (= {:strategy :complete-accessible-java-library

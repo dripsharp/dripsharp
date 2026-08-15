@@ -162,6 +162,10 @@
           "System.Security.Cryptography.Cng"
           "System.Security.Cryptography.Pkcs"}))
 
+(def ^:private net10-framework-omitted-package-ids
+  #{"Microsoft.Bcl.AsyncInterfaces"
+    "Microsoft.Bcl.Cryptography"})
+
 (def ^:private restored-closures
   {"DripSharp.PdfCarton.IO"
    (conj base-package-closure "DripSharp.PdfCarton.IO")
@@ -484,6 +488,11 @@
          (first (filter #(= id (:id %)) external-package-contract))))})
    (sort ids)))
 
+(defn- framework-omitted-contract
+  [ids]
+  (identity-contract
+   (set/intersection net10-framework-omitted-package-ids (set ids))))
+
 (defn- validate-consumers!
   [consumer-proofs]
   (let [names (mapv :consumer-name consumer-proofs)
@@ -565,6 +574,8 @@
                 [{:id id :version (package-version id)}]
                 :expected-packages
                 (identity-contract (get restored-closures id))
+                :framework-omitted-packages
+                (framework-omitted-contract (get restored-closures id))
                 :target-framework execution-target-framework
                 :run-command! run-command!})))
           (sort (keys package-contract)))
@@ -578,6 +589,9 @@
            (identity-contract (set (keys package-contract)))
            :expected-packages
            (identity-contract (get restored-closures "DripSharp.PdfCarton.Preflight"))
+           :framework-omitted-packages
+           (framework-omitted-contract
+            (get restored-closures "DripSharp.PdfCarton.Preflight"))
            :target-framework execution-target-framework
            :run-command! run-command!})
          consumption

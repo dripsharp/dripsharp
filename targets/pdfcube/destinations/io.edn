@@ -35,6 +35,8 @@
           :annotation-decisions-file "annotation-decisions.edn"}
  :package-consumer {:strategy :source-file
                     :project-file "DripSharp.PdfCarton.IO.PackageConsumer.csproj"
+                    :framework-omitted-packages
+                    [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}]
                     :source-path
                     "targets/pdfcube/validation/probe/DripSharp.PdfCarton.IO.FocusedConsumer.cs"
                     :success-message "DripSharp.PdfCarton.IO focused behavior passed."}

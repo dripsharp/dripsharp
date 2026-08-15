@@ -595,7 +595,8 @@
     (let [context
           (destination-context "Independent package-consumer contract")
           strategy (:strategy consumer)
-          common #{:strategy :project-file :success-message}]
+          common #{:strategy :project-file :success-message}
+          allowed-common (conj common :framework-omitted-packages)]
       (validation/check! context [:package-consumer] consumer "a map" map?)
       (validation/check! context [:package-consumer :strategy] strategy
                          ":source-file or :compile-only"
@@ -606,8 +607,8 @@
          :compile-only (conj common :compile-types)
          :source-file common)
        (case strategy
-         :compile-only (conj common :compile-types)
-         :source-file (into common [:fixture-file :source-path])))
+         :compile-only (conj allowed-common :compile-types)
+         :source-file (into allowed-common [:fixture-file :source-path])))
       (validation/check!
        context [:package-consumer :project-file] (:project-file consumer)
        "a relative .csproj path"
@@ -619,6 +620,23 @@
        context [:package-consumer :success-message] (:success-message consumer)
        "a non-blank string"
        #(and (string? %) (not (str/blank? %))))
+      (when-let [omitted (:framework-omitted-packages consumer)]
+        (validation/check!
+         context [:package-consumer :framework-omitted-packages] omitted
+         "a nonempty vector of unique exact package identities"
+         #(and (vector? %)
+               (seq %)
+               (= (count %) (count (set (map :id %))))))
+        (doseq [[index identity] (map-indexed vector omitted)]
+          (validation/check!
+           context [:package-consumer :framework-omitted-packages index]
+           identity "an exact package identity"
+           #(and (map? %)
+                 (= #{:id :version} (set (keys %)))
+                 (every? (fn [key]
+                           (let [value (get % key)]
+                             (and (string? value) (not (str/blank? value)))))
+                         [:id :version])))))
       (case strategy
         :compile-only
         (let [types (:compile-types consumer)]
