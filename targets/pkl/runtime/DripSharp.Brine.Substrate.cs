@@ -414,10 +414,11 @@ namespace DripSharp.Brine.Runtime
             lock (lifecycleLock) pending.TryGetValue(key, out work);
             if (work is not null) WaitForTask(work.Task);
             // The scheduler can finish and remove its bookkeeping before the
-            // evaluation thread observes it. Consume a concurrently delivered
-            // Thread.Interrupt even in that race so it cannot escape into the
-            // caller's next unrelated blocking operation.
-            try { System.Threading.Thread.Sleep(0); }
+            // evaluation thread observes it. Enter a positive wait so a
+            // concurrently delivered Thread.Interrupt is guaranteed to be
+            // consumed instead of escaping into the caller's next unrelated
+            // blocking operation.
+            try { System.Threading.Thread.Sleep(1); }
             catch (System.Threading.ThreadInterruptedException) { }
         }
 
