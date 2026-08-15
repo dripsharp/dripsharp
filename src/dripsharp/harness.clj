@@ -9,9 +9,10 @@
             [dripsharp.project-input :as project-input]
             [dripsharp.public-surface :as public-surface]
             [dripsharp.spoon :as spoon]
+            [dripsharp.tree-cleanup :as tree-cleanup]
             [dripsharp.util :as util]
             [dripsharp.validation :as validation])
-  (:import [java.nio.file FileVisitOption Files Path]))
+  (:import [java.nio.file Files Path]))
 
 (defn- non-blank-string? [value]
   (and (string? value) (not (str/blank? value))))
@@ -249,12 +250,7 @@
   "Deletes a directory tree, then recreates the empty directory."
   [directory]
   (let [directory (paths/absolute directory)]
-    (when (paths/exists? directory)
-      (with-open [entries (Files/walk directory (make-array FileVisitOption 0))]
-        (doseq [^Path entry (->> (.toArray entries)
-                                 (map #(cast Path %))
-                                 (sort-by #(.getNameCount ^Path %) >))]
-          (Files/delete entry))))
+    (tree-cleanup/delete-tree! directory)
     (Files/createDirectories directory (make-array java.nio.file.attribute.FileAttribute 0))
     directory))
 

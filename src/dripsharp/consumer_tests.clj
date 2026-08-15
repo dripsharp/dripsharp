@@ -9,6 +9,7 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.project-xml :as project-xml]
+            [dripsharp.tree-cleanup :as tree-cleanup]
             [dripsharp.util :as util])
   (:import [java.nio.file CopyOption FileVisitOption Files OpenOption Path
             StandardCopyOption]
@@ -24,22 +25,10 @@
   [value]
   (str/replace (str value) "\\" "/"))
 
-(defn- delete-tree!
-  [directory]
-  (let [directory (paths/absolute directory)]
-    (when (paths/exists? directory)
-      (with-open [entries (Files/walk directory
-                                      (make-array FileVisitOption 0))]
-        (doseq [^Path entry
-                (->> (.toArray entries)
-                     (map #(cast Path %))
-                     (sort-by #(.getNameCount ^Path %) >))]
-          (Files/delete entry))))))
-
 (defn- clean-directory!
   [directory]
   (let [directory (paths/absolute directory)]
-    (delete-tree! directory)
+    (tree-cleanup/delete-tree! directory)
     (Files/createDirectories directory (make-array FileAttribute 0))
     directory))
 
@@ -338,7 +327,7 @@
                                        (str (.getFileName ^Path %))))
                    (sort-by #(.getNameCount ^Path %) >)
                    vec))]
-      (delete-tree! directory))))
+      (tree-cleanup/delete-tree! directory))))
 
 (defn- render-inventory
   [tests-root inventory-file]

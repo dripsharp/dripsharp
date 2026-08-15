@@ -7,9 +7,10 @@
   disposable product-family root."
   (:require [clojure.string :as str]
             [dripsharp.paths :as paths]
+            [dripsharp.tree-cleanup :as tree-cleanup]
             [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file FileVisitOption Files Path]))
+           [java.nio.file Files Path]))
 
 (def ^:private root-files
   ["LICENSE" "NOTICE" "README.md"])
@@ -19,18 +20,6 @@
   (throw
    (ex-info message
             (assoc data :kind :product-staging-emission-failed))))
-
-(defn- delete-tree!
-  [directory]
-  (when (paths/exists? directory)
-    (with-open [entries
-                (Files/walk (paths/path directory)
-                            (make-array FileVisitOption 0))]
-      (doseq [^Path entry
-              (->> (.toArray entries)
-                   (map #(cast Path %))
-                   (sort-by #(.getNameCount ^Path %) >))]
-        (Files/delete entry)))))
 
 (defn- profile-records
   [target-contract staging]
@@ -300,7 +289,7 @@
                {:reason :build-artifact-escape
                 :staging (str staging)
                 :artifact (str artifact)}))
-      (delete-tree! artifact))
+      (tree-cleanup/delete-tree! artifact))
     {:removed
      (mapv #(str/replace
              (str (.relativize ^Path staging ^Path (paths/absolute %)))

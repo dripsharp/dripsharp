@@ -42,6 +42,7 @@
 
 (def ^:private required-authored-sources
   #{"src/dripsharp/consumer_tests.clj"
+    "src/dripsharp/tree_cleanup.clj"
     "src/dripsharp/pkl/brine_xunit.clj"
     "src/dripsharp/pkl/parser_test_contract.clj"
     "gradle/pkl-parser-test-contract.gradle"

@@ -10,6 +10,7 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.target-directory :as target-directory]
+            [dripsharp.tree-cleanup :as tree-cleanup]
             [dripsharp.util :as util])
   (:import [java.nio.file CopyOption FileVisitOption Files LinkOption Path
             StandardCopyOption]
@@ -633,19 +634,6 @@
      :inventory inventory
      :product-root product}))
 
-(defn- delete-tree!
-  [path]
-  (let [path (paths/absolute path)]
-    (when (existing-no-follow? path)
-      (if (directory-no-follow? path)
-        (with-open [entries (Files/walk path (make-array FileVisitOption 0))]
-          (doseq [^Path entry
-                  (->> (.toArray entries)
-                       (map #(cast Path %))
-                       (sort-by #(.getNameCount ^Path %) >))]
-            (Files/delete entry)))
-        (Files/delete path)))))
-
 (defn- copy-path!
   [staging source destination excluded-paths]
   (if (directory-no-follow? source)
@@ -729,7 +717,7 @@
                                            "Managed staging path")
               destination (safe-contained-path! product relative
                                                 "Managed product path")]
-          (delete-tree! destination)
+          (tree-cleanup/delete-tree! destination)
           (copy-path! staging source destination excluded-paths))))
     (let [destination-inventory
           (managed-inventory product managed-paths excluded-paths)
@@ -896,7 +884,7 @@
       (fail! "Product staging cleanup target escaped target/generated"
              {:reason :cleanup-path-escape
               :path (str staging)}))
-    (delete-tree! staging)
+    (tree-cleanup/delete-tree! staging)
     (Files/createDirectories staging (make-array FileAttribute 0))
     {:target (:target target-contract)
      :staging-path (:staging-path publication)

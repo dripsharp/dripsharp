@@ -2,16 +2,22 @@
  :scope :pkl-generated-xunit
  :sources
  [{:path "src/dripsharp/consumer_tests.clj"
-   :sha256 "b533b87a91b7b7a68de3a50c07bd3b8022d65bf68e6cda22d4005d9120a239a1"
-   :lines 594
+   :sha256 "f59faf6847be37d89942fca48e6757186d9087f1e555f9ad25c45e9813887043"
+   :lines 583
    :line-budget 594
-   :review-evidence "beads:pkl-rjf1.1"
+   :review-evidence "beads:pkl-zysr.34"
    :role :generic-test-emitter}
+  {:path "src/dripsharp/tree_cleanup.clj"
+   :sha256 "6d57a4e97cd8a8cc4010321ecfca4898a10f029e2d8a510a5ee0587b04f9e13a"
+   :lines 131
+   :line-budget 131
+   :review-evidence "beads:pkl-zysr.34"
+   :role :generic-test-cleanup}
   {:path "src/dripsharp/pkl/brine_xunit.clj"
-   :sha256 "df4afc593f0fd6fd3b9930d93dc1b2ecad4dd4771a63ddce0eba9da6efbd25b8"
-   :lines 690
-   :line-budget 690
-   :review-evidence "beads:pkl-rjf1.1"
+   :sha256 "7b6c3cd1090abbcdaf540a764e2451c3246681a756ca9ca7d48be15cff7047cf"
+   :lines 691
+   :line-budget 691
+   :review-evidence "beads:pkl-zysr.34"
    :role :brine-test-generator}
   {:path "src/dripsharp/pkl/parser_test_contract.clj"
    :sha256 "d13afb824a731bfb00731baaa066ca7f1f7dd181d74f615e130c841766987fae"

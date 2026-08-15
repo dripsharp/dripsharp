@@ -15,6 +15,7 @@
     dripsharp.validation-test
     dripsharp.csharp-test
     dripsharp.project-xml-test
+    dripsharp.tree-cleanup-test
     dripsharp.source-accountability-test
     dripsharp.authorship-report-test
     dripsharp.bundle-contract-test
@@ -28,6 +29,7 @@
       :configuration-diagnostics
       :csharp-rendering
       :project-emission
+      :filesystem-cleanup
       :source-accountability
       :bundle-contract}
     :namespaces unit-test-namespaces}})

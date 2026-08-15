@@ -17,6 +17,7 @@
            :configuration-diagnostics
            :csharp-rendering
            :project-emission
+           :filesystem-cleanup
            :source-accountability
            :bundle-contract}
          (get-in runner/test-tiers [:unit :capabilities])))
