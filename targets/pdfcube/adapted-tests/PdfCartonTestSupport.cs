@@ -885,12 +885,14 @@ public sealed class PdfCartonTestSupportContractTests
             "io", "src/test/resources/org/apache/pdfbox/io/RandomAccessReadFile1.txt");
         string testOutput = Support.TestPath(
             "pdfbox", "target/test-output/lifecycle/probe.txt");
+        string separator =
+            global::System.IO.Path.DirectorySeparatorChar.ToString();
         global::Xunit.Assert.Contains(
-            $"{global::System.IO.Path.DirectorySeparatorChar}WritableFixtures{global::System.IO.Path.DirectorySeparatorChar}",
+            separator + "WritableFixtures" + separator,
             writableFixture,
             global::System.StringComparison.Ordinal);
         global::Xunit.Assert.Contains(
-            $"{global::System.IO.Path.DirectorySeparatorChar}TestOutput{global::System.IO.Path.DirectorySeparatorChar}",
+            separator + "TestOutput" + separator,
             testOutput,
             global::System.StringComparison.Ordinal);
 

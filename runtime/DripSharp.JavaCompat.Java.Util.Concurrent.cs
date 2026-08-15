@@ -136,24 +136,35 @@ internal sealed class JavaFuture<T>
 
     internal T Get(long timeout, JavaTimeUnit unit)
     {
+        var cancellation = JavaCancellation.CurrentToken;
         try
         {
             var remaining = JavaTimeUnits.ToTimeSpan(timeout, unit);
-            while (!task.IsCompleted && remaining.TotalMilliseconds > int.MaxValue)
+            while (!task.IsCompleted)
             {
-                if (task.Wait(int.MaxValue, JavaCancellation.CurrentToken)) break;
-                remaining -= TimeSpan.FromMilliseconds(int.MaxValue);
+                if (remaining <= TimeSpan.Zero) throw new TimeoutException();
+                var delayMilliseconds = remaining.TotalMilliseconds > int.MaxValue
+                    ? int.MaxValue
+                    : checked((int)Math.Ceiling(remaining.TotalMilliseconds));
+                using var delayCancellation =
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+                var delay = Task.Delay(delayMilliseconds, delayCancellation.Token);
+                var completed = Task.WhenAny(task, delay).GetAwaiter().GetResult();
+                if (ReferenceEquals(completed, task))
+                {
+                    delayCancellation.Cancel();
+                    break;
+                }
+                if (cancellation.IsCancellationRequested)
+                    throw new JavaCancellationException(cancellation);
+                remaining -= TimeSpan.FromMilliseconds(delayMilliseconds);
+                if (remaining <= TimeSpan.Zero) throw new TimeoutException();
             }
-            if (!task.IsCompleted &&
-                !task.Wait(
-                    checked((int)Math.Ceiling(remaining.TotalMilliseconds)),
-                    JavaCancellation.CurrentToken))
-                throw new TimeoutException();
             return task.GetAwaiter().GetResult();
         }
-        catch (OperationCanceledException) when (JavaCancellation.CurrentToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
-            throw new JavaCancellationException(JavaCancellation.CurrentToken);
+            throw new JavaCancellationException(cancellation);
         }
         catch (TimeoutException)
         {

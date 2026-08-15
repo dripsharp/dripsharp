@@ -3190,6 +3190,67 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest timed-future-get-preserves-timeout-and-single-failure-cause
+  (let [fixture
+        (model! {"example/FutureSemantics.java"
+                 (str "package example; import java.util.concurrent.ExecutionException; "
+                      "import java.util.concurrent.ExecutorService; "
+                      "import java.util.concurrent.Executors; "
+                      "import java.util.concurrent.Future; "
+                      "import java.util.concurrent.TimeUnit; "
+                      "import java.util.concurrent.TimeoutException; "
+                      "public final class FutureSemantics { "
+                      "public static boolean timesOut() throws Exception { "
+                      "ExecutorService executor = Executors.newSingleThreadExecutor(); "
+                      "try { Future<String> future = executor.submit(() -> { "
+                      "Thread.sleep(250); return \"late\"; }); "
+                      "try { future.get(10, TimeUnit.MILLISECONDS); return false; } "
+                      "catch (TimeoutException error) { return true; } "
+                      "} finally { executor.shutdownNow(); } } "
+                      "public static boolean preservesFailureCause() throws Exception { "
+                      "ExecutorService executor = Executors.newSingleThreadExecutor(); "
+                      "try { Future<String> future = executor.submit(() -> { "
+                      "Thread.sleep(100); return fail(); }); "
+                      "try { future.get(5, TimeUnit.SECONDS); return false; } "
+                      "catch (ExecutionException error) { "
+                      "return error.getCause() instanceof IllegalStateException "
+                      "&& error.getCause().getCause() == null; } "
+                      "} finally { executor.shutdownNow(); } } "
+                      "private static String fail() { "
+                      "throw new IllegalStateException(\"boom\"); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        project-root (:project-root emission)
+        generated-project
+        (paths/resolve-path project-root (:project-file emission))
+        runtime-source
+        (slurp (str (paths/resolve-path
+                     project-root
+                     "src/DripSharp/Runtime/JavaCompat/Java.Util.Concurrent.cs")))
+        consumer-root (temp-directory)
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>enable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "if (!global::Example.Java.Library.FutureSemantics.timesOut()) return 1;\n"
+                 "return global::Example.Java.Library.FutureSemantics"
+                 ".preservesFailureCause() ? 0 : 2;\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
+    (is (str/includes? runtime-source "Task.WhenAny(task, delay)"))
+    (is (zero? (:exit result)))))
+
 (deftest neutral-empty-exception-constructor-is-resolved
   (let [fixture
         (model! {"example/Failure.java"
