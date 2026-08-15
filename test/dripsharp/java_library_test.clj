@@ -6064,6 +6064,76 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest public-reference-covariant-overrides-preserve-the-derived-contract
+  (let [fixture
+        (model!
+         {"example/TrueTypeFont.java"
+          "package example; public class TrueTypeFont {}"
+          "example/OpenTypeFont.java"
+          (str "package example; public final class OpenTypeFont extends TrueTypeFont { "
+               "public boolean isPostScript() { return true; } "
+               "public boolean isSupportedOTF() { return true; } "
+               "public boolean hasLayoutTables() { return true; } "
+               "public Object getCFF() { return this; } }")
+          "example/TTFParser.java"
+          (str "package example; public class TTFParser { "
+               "public TrueTypeFont parse() { return parseCore(); } "
+               "protected TrueTypeFont parseCore() { return new TrueTypeFont(); } }")
+          "example/OTFParser.java"
+          (str "package example; public final class OTFParser extends TTFParser { "
+               "@Override public OpenTypeFont parse() { "
+               "return (OpenTypeFont) super.parse(); } "
+               "@Override protected TrueTypeFont parseCore() { "
+               "return new OpenTypeFont(); } }")})
+        emission
+        (emit! fixture 1 #{}
+               {:name-policy {:public-identifiers :csharp
+                              :methods :methods
+                              :fields :fields
+                              :overloads :overloads}})
+        project-root (:project-root emission)
+        source
+        (slurp (str (paths/resolve-path
+                     project-root "src/Example/Java/Library/OTFParser.cs")))
+        consumer-root (temp-directory)
+        generated-project
+        (paths/resolve-path project-root (:project-file emission))
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>enable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "var parser = new global::Example.Java.Library.OTFParser();\n"
+                 "var font = parser.Parse();\n"
+                 "if (!font.IsPostScript() || !font.IsSupportedOTF() || "
+                 "!font.HasLayoutTables() || font.GetCFF() is null) return 1;\n"
+                 "var method = typeof(global::Example.Java.Library.OTFParser)"
+                 ".GetMethod(\"Parse\", global::System.Type.EmptyTypes);\n"
+                 "if (method?.ReturnType != "
+                 "typeof(global::Example.Java.Library.OpenTypeFont)) return 2;\n"
+                 "global::Example.Java.Library.TTFParser baseParser = parser;\n"
+                 "return baseParser.Parse() is "
+                 "global::Example.Java.Library.OpenTypeFont ? 0 : 3;\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
+    (is (str/includes?
+         source
+         (str "public new global::Example.Java.Library.OpenTypeFont "
+              "Parse()")))
+    (is (not (str/includes? source "public override global::Example.Java.Library.TrueTypeFont Parse()")))
+    (is (zero? (:exit result)) (:output result))))
+
 (deftest wildcard-generic-covariant-overrides-use-explicit-hiding
   (let [fixture
         (model!

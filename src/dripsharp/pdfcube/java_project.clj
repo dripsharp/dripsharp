@@ -1774,14 +1774,7 @@
     (call-node target member arguments)))
 
 (def ^:private translated-project-invocation-adaptations
-  {"executable:org.apache.fontbox.ttf.OTFParser#parse(org.apache.pdfbox.io.RandomAccessRead)"
-   (fn [target arguments]
-     (sequence-node
-      [(raw "((global::DripSharp.PdfCarton.Fonts.Ttf.OpenTypeFont)(")
-       (call-node target "Parse" arguments)
-       (raw "))")]))
-
-   "executable:org.apache.fontbox.ttf.TrueTypeCollection#close()"
+  {"executable:org.apache.fontbox.ttf.TrueTypeCollection#close()"
    (direct-instance-adaptation "Dispose")
    "executable:org.apache.fontbox.ttf.TrueTypeFont#close()"
    (direct-instance-adaptation "Dispose")

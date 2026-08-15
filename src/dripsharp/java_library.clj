@@ -746,6 +746,7 @@
     value-node]))
 
 (declare covariant-value-override? netstandard-covariant-override?
+         netstandard-public-covariant-hiding?
          wildcard-generic-covariant-override?
          interface-static-companion-member?
          inherited-default-interface-method?
@@ -6453,9 +6454,14 @@
                                      [:services
                                       :normalized-covariant-invocation-cast-node])]
                     (normalized-covariant-cast element declaration))
-                  (when (netstandard-covariant-override?
-                         (.getDeclaringType ^CtMethod declaration)
-                         declaration)
+                  (when (and
+                         (netstandard-covariant-override?
+                          (.getDeclaringType ^CtMethod declaration)
+                          declaration)
+                         (not
+                          (netstandard-public-covariant-hiding?
+                           (.getDeclaringType ^CtMethod declaration)
+                           declaration)))
                     (type-node @ctx-holder (.getType ^CtMethod declaration)))))
                raw-node
                (if covariant-cast-node
@@ -8878,6 +8884,24 @@
              (not= (mapv str (.getActualTypeArguments source))
                    (mapv str (.getActualTypeArguments destination)))))))
 
+(defn- netstandard-public-covariant-hiding?
+  [^CtType owner ^CtMethod method]
+  ;; netstandard2.0 cannot encode CLR covariant override metadata.  For a
+  ;; concrete base member, retain its virtual slot for base-typed dispatch and
+  ;; expose the Java-facing return contract through an explicitly hidden member.
+  ;; Abstract and non-public families still need invariant override signatures.
+  (let [^CtMethod super-method (superclass-method owner method)
+        ^CtTypeReference source (.getType method)
+        ^CtTypeReference destination (override-family-return-type owner method)]
+    (and (netstandard-covariant-override? owner method)
+         (some? super-method)
+         (not (.hasModifier super-method ModifierKind/ABSTRACT))
+         (.hasModifier method ModifierKind/PUBLIC)
+         (not (.isPrimitive source))
+         (not (.isPrimitive destination))
+         (not= (.getQualifiedName source)
+               (.getQualifiedName destination)))))
+
 (defn- concrete-generic-return-reference
   [^CtTypeReference declared ^CtExpression expression]
   (let [references
@@ -8932,7 +8956,8 @@
 
 (defn- emitted-method-return-type
   [^CtType owner ^CtMethod method]
-  (if (netstandard-covariant-override? owner method)
+  (if (and (netstandard-covariant-override? owner method)
+           (not (netstandard-public-covariant-hiding? owner method)))
     (override-family-return-type owner method)
     (or (concrete-wildcard-method-return method)
         (.getType method))))
@@ -8949,7 +8974,8 @@
 (defn- method-return-type-node
   [ctx ^CtType owner ^CtMethod method]
   (cond
-    (netstandard-covariant-override? owner method)
+    (and (netstandard-covariant-override? owner method)
+         (not (netstandard-public-covariant-hiding? owner method)))
     (let [^CtMethod super-method (superclass-method owner method)
           super-owner (some-> super-method .getDeclaringType)
           owner-reference (when super-owner
@@ -9202,6 +9228,8 @@
          protected-override-family? (protected-override-family? owner method)
          wildcard-generic-covariant-override?
          (wildcard-generic-covariant-override? owner method)
+         netstandard-public-covariant-hiding?
+         (netstandard-public-covariant-hiding? owner method)
          source-override-annotation?
          (some #(= "java.lang.Override"
                    (some-> ^CtAnnotation %
@@ -9212,6 +9240,7 @@
          (and source-override-annotation? external-superclass?)
          override? (and (not static?)
                         (not wildcard-generic-covariant-override?)
+                        (not netstandard-public-covariant-hiding?)
                         (or external-source-override?
                             (destination-object-method? method)
                             (and (java-map-entry-implementation? owner)
@@ -9266,6 +9295,7 @@
               (when override? "override")
               (when (or redeclared-interface-method
                         wildcard-generic-covariant-override?
+                        netstandard-public-covariant-hiding?
                         (and (= "getType" (.getSimpleName method))
                              (empty? (.getParameters method))
                              (csharp-public-names? ctx)

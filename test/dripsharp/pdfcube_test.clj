@@ -978,6 +978,41 @@
               "global::DripSharp.PdfCarton.IO.RandomAccessRead value)")))
     (is (not (str/includes? source "org.apache.pdfbox.io")))))
 
+(deftest generated-otf-parser-preserves-the-public-covariant-return-contract
+  (let [workspace (paths/workspace-root)
+        source
+        (slurp
+         (str
+          (paths/resolve-path
+           workspace
+           "products/pdfcarton/src/DripSharp.PdfCarton.Fonts/src/DripSharp/PdfCarton/Fonts/Ttf/OTFParser.cs")))
+        package-probe
+        (slurp
+         (str
+          (paths/resolve-path
+           workspace
+           "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Fonts.PackageProbe.cs")))]
+    (is (str/includes?
+         source
+         (str "public new global::DripSharp.PdfCarton.Fonts.Ttf.OpenTypeFont "
+              "Parse(global::DripSharp.PdfCarton.IO.RandomAccessRead randomAccessRead)")))
+    (is (not (str/includes?
+              source
+              (str "public override global::DripSharp.PdfCarton.Fonts.Ttf.TrueTypeFont "
+                   "Parse(global::DripSharp.PdfCarton.IO.RandomAccessRead randomAccessRead)"))))
+    (doseq [hook
+            [(str "internal override global::DripSharp.PdfCarton.Fonts.Ttf.TrueTypeFont "
+                  "parse(global::DripSharp.PdfCarton.Fonts.Ttf.TTFDataStream raf)")
+             (str "internal override global::DripSharp.PdfCarton.Fonts.Ttf.TrueTypeFont "
+                  "newFont(global::DripSharp.PdfCarton.Fonts.Ttf.TTFDataStream raf)")]]
+      (is (str/includes? source hook)))
+    (doseq [ordinary-call
+            ["liberation.IsPostScript()"
+             "liberation.IsSupportedOTF()"
+             "liberation.HasLayoutTables()"
+             "sourceSans.GetCFF()"]]
+      (is (str/includes? package-probe ordinary-call)))))
+
 (deftest fontbox-standard-charset-fields-have-complete-batch-mappings
   (let [{destination :destination}
         (read-profile-and-destination "pdfcube-fontbox")
