@@ -1694,14 +1694,14 @@
 
 (defn- verify-core-differential!
   "Runs representative evaluator/value-model cases in isolated upstream and package processes."
-  [{:keys [workspace-root core-package-fn run-command!]
-    :or {core-package-fn packaging/verify-package-consumption!
+  [{:keys [workspace-root package-fn run-command!]
+    :or {package-fn packaging/verify-package-consumption!
          run-command! process/run!}}]
   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
         _ (verify-core-package-probe-adapters! root)
-        package-proof (core-package-fn {:workspace-root root
-                                        :profile "pkl-core-value-model"
-                                        :run-command! run-command!})
+        package-proof (package-fn {:workspace-root root
+                                   :profile "pkl-core-value-model"
+                                   :run-command! run-command!})
         public-contract (verify-public-contract-package!
                          {:root root :package-proof package-proof
                           :run-command! run-command!})

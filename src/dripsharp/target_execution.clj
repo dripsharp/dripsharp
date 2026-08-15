@@ -347,7 +347,6 @@
           :validation-contract contract
           :profile profile
           :package-fn package-fn
-          :core-package-fn package-fn
           :pack-fn
           (fn [pack-options]
             (pack-loaded!

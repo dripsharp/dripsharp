@@ -4,13 +4,71 @@
             [dripsharp.concurrency :as concurrency]
             [dripsharp.package-provenance :as provenance]
             [dripsharp.pkl.differential :as differential]
-            [dripsharp.paths :as paths])
+            [dripsharp.paths :as paths]
+            [dripsharp.target-execution :as target-execution])
   (:import [java.io ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]
            [java.util Base64]
            [java.util.zip GZIPOutputStream]))
+
+(deftest parser-and-core-differentials-use-target-owned-package-execution
+  (let [root (paths/workspace-root)
+        calls (atom [])
+        supplied-options (atom nil)
+        stop-kind ::package-profile-selected
+        package-fn
+        (fn [{:keys [profile target-contract]}]
+          (swap! calls conj
+                 {:profile profile
+                  :target (:target target-contract)
+                  :available-profiles
+                  (set (map :id (get-in target-contract
+                                        [:manifest :profiles])))})
+          (throw (ex-info "Focused package selection completed"
+                          {:kind stop-kind :profile profile})))
+        invoke
+        (fn [stage verify-fn expected-profile options]
+          (let [error
+                (try
+                  (verify-fn options)
+                  nil
+                  (catch clojure.lang.ExceptionInfo value value))]
+            {:stage stage
+             :kind (:kind (ex-data error))
+             :profile (:profile (ex-data error))
+             :expected-profile expected-profile}))]
+    (with-redefs-fn
+      {#'differential/verify-differential!
+       (fn [options]
+         (reset! supplied-options options)
+         [(invoke :parser #'differential/verify-parser-differential!
+                  "pkl-parser" options)
+          (invoke :core #'differential/verify-core-differential!
+                  "pkl-core-value-model" options)])}
+      #(is (= [[{:stage :parser
+                 :kind stop-kind
+                 :profile "pkl-parser"
+                 :expected-profile "pkl-parser"}
+                {:stage :core
+                 :kind stop-kind
+                 :profile "pkl-core-value-model"
+                 :expected-profile "pkl-core-value-model"}]]
+              (target-execution/differential!
+               {:workspace-root root
+                :target :pkl
+                :validation :pkl-differential
+                :package-fn package-fn}))))
+    (is (fn? (:package-fn @supplied-options)))
+    (is (not (contains? @supplied-options :core-package-fn)))
+    (is (= [{:profile "pkl-parser"
+             :target :pkl
+             :available-profiles #{"pkl-parser" "pkl-core-value-model"}}
+            {:profile "pkl-core-value-model"
+             :target :pkl
+             :available-profiles #{"pkl-parser" "pkl-core-value-model"}}]
+           @calls))))
 
 (deftest independent-probes-overlap-and-retain-command-context
   (let [threads (atom #{})
