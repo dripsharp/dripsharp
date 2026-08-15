@@ -14,19 +14,21 @@
    "runtime/DripSharp.JavaCompat.Java.Net.cs"
    "runtime/DripSharp.JavaCompat.Java.Nio.cs"
    "runtime/DripSharp.JavaCompat.Java.Security.cs"
+   "runtime/DripSharp.JavaCompat.Java.Sql.cs"
    "runtime/DripSharp.JavaCompat.Java.Text.cs"
    "runtime/DripSharp.JavaCompat.Java.Time.cs"
    "runtime/DripSharp.JavaCompat.Java.Util.Concurrent.cs"
    "runtime/DripSharp.JavaCompat.Java.Util.Regex.cs"
    "runtime/DripSharp.JavaCompat.Java.Util.cs"
    "runtime/DripSharp.JavaCompat.Java.Xml.cs"
+   "runtime/DripSharp.JavaCompat.NetStandard.cs"
    "runtime/DripSharp.JavaRegexUnicodeData.cs"]}
  :observation
  {:schema-version 1
   :header "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"
   :columns [:family :id :value]
   :required-families ["behavior" "type-contract"]
-  :expected-count 182}
+  :expected-count 195}
  :oracle
  {:source "validation/java-compat/JavaCompatOracle.java"
   :main-class "JavaCompatOracle"
