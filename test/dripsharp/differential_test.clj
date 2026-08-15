@@ -141,7 +141,10 @@
             :generated-production-sources
             (vec (repeat (:generated counts) :generated))}
            :source-project {:revision revision}
-           :destination {:project {:target-framework "net10.0"}}
+           :destination
+           {:project
+            {:target-framework
+             (get-in contract [:package-contract :target-framework])}}
            :emission
            {:public-metadata {:required-rows rows :rows []}}}
           :public-surface
