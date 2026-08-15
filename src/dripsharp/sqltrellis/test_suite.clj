@@ -1480,12 +1480,21 @@
          (sort-by (juxt :source :kind :id))
          vec)))
 
-(defn- portable-plan [project-root plan]
+(defn- portable-plan
+  "Retains complete JUnit plan semantics while making source locations relative
+  to the pinned JSqlParser graph. Any location outside that graph fails closed."
+  [project-root plan]
   (let [root (-> project-root paths/absolute .toFile .getCanonicalFile .toPath)]
     (walk/postwalk
      (fn [value]
        (if-let [file-value
-                (when (map? value)
+                (when (and (map? value)
+                           (some (fn [[key child]]
+                                   (and (= :line key) (integer? child)))
+                                 value)
+                           (some (fn [[key child]]
+                                   (and (= :column key) (integer? child)))
+                                 value))
                   (some (fn [[key child]]
                           (when (and (= :file key) (string? child)) child))
                         value))]
