@@ -5,6 +5,7 @@
             [dripsharp.consumer-tests :as consumer-tests]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
+            [dripsharp.junit-xunit :as junit]
             [dripsharp.maven :as maven]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
@@ -59,6 +60,49 @@
         (map (fn [file]
                [(relative-path root file) (util/sha256-file file)]))
         (:generated-production-sources input)))
+
+(defn- representative-plan [checkout]
+  (let [source (fn [relative line]
+                 {:file (str (paths/resolve-path checkout relative))
+                  :line line
+                  :column 3})]
+    {:schema-version 5
+     :source-model-totals {:types 2 :methods 2}
+     :root-classes ["example.EnabledTest" "example.DisabledTest"]
+     :annotation-inventory
+     (sorted-map "annotation:org.junit.jupiter.api.Disabled" 1
+                 "annotation:org.junit.jupiter.params.ParameterizedTest" 1
+                 "annotation:org.junit.jupiter.api.Test" 1)
+     :classes
+     (sorted-map
+      "example.DisabledTest"
+      {:name "example.DisabledTest"
+       :annotations []
+       :methods
+       [{:id "example.DisabledTest#disabled()"
+         :source (source "src/test/java/example/DisabledTest.java" 17)}]}
+      "example.EnabledTest"
+      {:name "example.EnabledTest"
+       :annotations []
+       :methods
+       [{:id "example.EnabledTest#rows(java.lang.String)"
+         :source (source "src/test/java/example/EnabledTest.java" 11)}]})
+     :cases
+     [{:id "example.EnabledTest#rows(java.lang.String)"
+       :disabled nil
+       :parameters
+       {:kind :inline-rows
+        :rows [{:id "value:0" :arguments ["alpha"]
+                :source (source "src/test/java/example/EnabledTest.java" 10)}
+               {:id "value:1" :arguments ["beta"]
+                :source (source "src/test/java/example/EnabledTest.java" 10)}]}
+       :source (source "src/test/java/example/EnabledTest.java" 11)}
+      {:id "example.DisabledTest#disabled()"
+       :disabled {:symbol "annotation:org.junit.jupiter.api.Disabled"
+                  :reason "upstream reason"
+                  :reason-supplied? true}
+       :parameters nil
+       :source (source "src/test/java/example/DisabledTest.java" 17)}]}))
 
 (defn- copy-source-checkout! [destination]
   (let [source (paths/resolve-path workspace "research/jsqlparser")]
@@ -253,6 +297,40 @@
       (is (= [:sqltrellis-registration :sqltrellis-behavior]
              (:validation-contracts ladder)))
       (is (nil? (:runner ladder))))))
+
+(deftest adapted-suite-plan-accounting-is-checkout-path-independent
+  (let [left-root (paths/resolve-path
+                   workspace "target/plan-checkouts/left/research/jsqlparser")
+        right-root (paths/resolve-path
+                    workspace "target/plan-checkouts/right/research/jsqlparser")
+        left (representative-plan left-root)
+        right (representative-plan right-root)
+        portable-left (#'test-suite/portable-plan left-root left)
+        portable-right (#'test-suite/portable-plan right-root right)
+        ids #(mapv :id (:cases %))
+        enablement #(mapv (fn [test-case]
+                            [(:id test-case) (:disabled test-case)])
+                          (:cases %))
+        parameters #(mapv (fn [test-case]
+                            [(:id test-case) (:parameters test-case)])
+                          (:cases %))
+        rows #(mapv (fn [test-case]
+                      [(:id test-case)
+                       (junit/row-identities test-case)])
+                    (:cases %))
+        digest #(util/sha256-text
+                 (#'test-suite/stable-text %))]
+    (is (not= (digest left) (digest right))
+        "absolute checkout paths reproduce the fresh-checkout digest drift")
+    (is (= portable-left portable-right))
+    (is (= (ids portable-left) (ids portable-right)))
+    (is (= (enablement portable-left) (enablement portable-right)))
+    (is (= (parameters portable-left) (parameters portable-right)))
+    (is (= (rows portable-left) (rows portable-right)))
+    (is (= (digest portable-left) (digest portable-right)))
+    (is (= ["src/test/java/example/EnabledTest.java"
+            "src/test/java/example/DisabledTest.java"]
+           (mapv #(get-in % [:source :file]) (:cases portable-left))))))
 
 (deftest behavior-differential-is-pinned-and-covers-the-required-families
   (let [contract (differential/read-contract workspace behavior-contract-file)

@@ -6,6 +6,7 @@
   declarations are emitted. Verification consumes generated ledgers and never
   invokes Maven, Java, Spoon, or a DripSharp checkout."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
             [dripsharp.csharp :as csharp]
             [dripsharp.harness :as harness]
             [dripsharp.java-library :as java-library]
@@ -1479,11 +1480,31 @@
          (sort-by (juxt :source :kind :id))
          vec)))
 
+(defn- portable-plan [project-root plan]
+  (let [root (-> project-root paths/absolute .toFile .getCanonicalFile .toPath)]
+    (walk/postwalk
+     (fn [value]
+       (if-let [file-value
+                (when (map? value)
+                  (some (fn [[key child]]
+                          (when (and (= :file key) (string? child)) child))
+                        value))]
+         (let [file (-> file-value paths/absolute
+                        .toFile .getCanonicalFile .toPath)]
+           (when-not (.startsWith file root)
+             (fail! "SqlTrellis JUnit plan source is outside the pinned graph"
+                    {:reason :sqltrellis-test-plan-source-path-escape
+                     :root (str root)
+                     :file (str file)}))
+           (assoc value :file (relative-path root file)))
+         value))
+     (junit/serializable-plan plan))))
+
 (defn- accounting [project-root selected resources resolved-model plan]
   (let [sources (source-entries project-root selected)
         fixtures (fixture-entries project-root resources)
         support-fixtures (support-fixture-entries project-root)
-        serializable-plan (junit/serializable-plan plan)
+        serializable-plan (portable-plan project-root plan)
         framework-calls
         (framework-call-rows project-root resolved-model selected)
         helpers (helper-rows project-root plan selected)
@@ -1514,7 +1535,7 @@
         (fail! "SqlTrellis adapted-suite contract has missing or unknown fields"
                {:reason :invalid-sqltrellis-test-suite-contract
                 :contract contract}))
-      (when-not (and (= 1 (:schema-version contract))
+      (when-not (and (= 2 (:schema-version contract))
                      (= :sqltrellis (:target contract))
                      (= revision (:revision contract))
                      (= 214 (:source-count contract))
