@@ -200,6 +200,7 @@
         project (first (:projects suites))
         strategy (first (:strategies suites))
         rendered (#'consumer-tests/render-project target project)
+        fixture-targets (#'test-suite/fixture-targets)
         solution (#'consumer-tests/render-solution target)
         references (#'consumer-tests/project-reference-paths target project)]
     (is (= "DripSharp.SqlTrellis.Tests" (:id project)))
@@ -221,6 +222,20 @@
            references))
     (is (str/includes? rendered "<IsTestProject>true</IsTestProject>"))
     (is (str/includes? rendered "<IsPackable>false</IsPackable>"))
+    (is (str/includes?
+         fixture-targets
+         (str "<None Update=\"Fixtures/**/*\">\n"
+              "      <TargetPath>%(Identity)</TargetPath>\n"
+              "      <CopyToOutputDirectory>PreserveNewest"
+              "</CopyToOutputDirectory>")))
+    (is (str/includes?
+         fixture-targets
+         (str "<None Update=\"src/main/jjtree/**/*\">\n"
+              "      <TargetPath>%(Identity)</TargetPath>\n"
+              "      <CopyToOutputDirectory>PreserveNewest"
+              "</CopyToOutputDirectory>")))
+    (is (= 2 (count (re-seq #"<TargetPath>%\(Identity\)</TargetPath>"
+                            fixture-targets))))
     (is (= [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
             {:id "xunit" :version "2.9.3"}
             {:id "xunit.runner.visualstudio" :version "3.1.4"}

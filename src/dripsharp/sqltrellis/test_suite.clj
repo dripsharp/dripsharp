@@ -1597,9 +1597,11 @@
        "  </PropertyGroup>\n"
        "  <ItemGroup>\n"
        "    <None Update=\"Fixtures/**/*\">\n"
+       "      <TargetPath>%(Identity)</TargetPath>\n"
        "      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>\n"
        "    </None>\n"
        "    <None Update=\"src/main/jjtree/**/*\">\n"
+       "      <TargetPath>%(Identity)</TargetPath>\n"
        "      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>\n"
        "    </None>\n"
        "  </ItemGroup>\n</Project>\n"))
