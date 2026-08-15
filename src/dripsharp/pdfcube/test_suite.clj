@@ -2383,15 +2383,16 @@
      :root-count (count roots)
      :emission emission}))
 
-(defn- emit! [{:keys [workspace-root target-contract project-root]}]
-  (let [workspace-root (paths/absolute workspace-root)
+(defn- emit! [{:keys [target-contract project-root]}]
+  (let [source-workspace-root
+        (paths/absolute (:workspace-root target-contract))
         generated-root project-root
-        {:keys [source-root modules]} (discover-inputs! workspace-root)
-        inventory (inventory! workspace-root)
+        {:keys [source-root modules]} (discover-inputs! source-workspace-root)
+        inventory (inventory! source-workspace-root)
         contract (read-contract! (:target-directory target-contract))
         _ (verify-inventory! contract inventory)
         module-results
-        (mapv #(module-emission! workspace-root generated-root %) modules)
+        (mapv #(module-emission! source-workspace-root generated-root %) modules)
         emission (vec (mapcat :emission module-results))
         fixtures (get-in inventory [:accounting :fixtures])
         sources (get-in inventory [:accounting :sources])]
@@ -2413,7 +2414,7 @@
                 (paths/resolve-path generated-root
                                     "PdfCartonTestPlatformSupport.cs"))
     (doseq [fixture fixtures]
-      (emit-fixture! workspace-root source-root generated-root fixture))
+      (emit-fixture! source-workspace-root source-root generated-root fixture))
     (util/write-text! (paths/resolve-path generated-root
                                           "Directory.Build.targets")
                       (fixture-targets))
