@@ -44,7 +44,10 @@
     :primary? false
     :assembly-dependencies []
     :dependencies
-    [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
+    [{:id "Microsoft.CSharp" :version "4.7.0"}
+     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 0
     :package-files common-legal-files}
 
@@ -54,9 +57,13 @@
     :assembly-dependencies ["DripSharp.PdfCarton.IO"]
     :dependencies
     [{:id "DripSharp.PdfCarton.IO" :version (package-version "DripSharp.PdfCarton.IO")}
+     {:id "Microsoft.CSharp" :version "4.7.0"}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
-     {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
+     {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
+     {:id "System.Formats.Asn1" :version "10.0.0"}
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 93
     :package-files common-legal-files}
 
@@ -65,7 +72,10 @@
     :primary? false
     :assembly-dependencies []
     :dependencies
-    [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
+    [{:id "Microsoft.CSharp" :version "4.7.0"}
+     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 0
     :package-files common-legal-files}
 
@@ -76,9 +86,12 @@
     :dependencies
     [{:id "DripSharp.PdfCarton.Fonts" :version (package-version "DripSharp.PdfCarton.Fonts")}
      {:id "DripSharp.PdfCarton.IO" :version (package-version "DripSharp.PdfCarton.IO")}
+     {:id "Microsoft.CSharp" :version "4.7.0"}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
-     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}]
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 22
     :package-files (into common-legal-files codec-legal-files)}
 
@@ -90,55 +103,86 @@
     :dependencies
     [{:id "DripSharp.PdfCarton.Xmp" :version (package-version "DripSharp.PdfCarton.Xmp")}
      {:id "DripSharp.PdfCarton" :version (package-version "DripSharp.PdfCarton")}
+     {:id "Microsoft.CSharp" :version "4.7.0"}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
-     {:id "SkiaSharp" :version "4.150.1"}]
+     {:id "SkiaSharp" :version "4.150.1"}
+     {:id "System.Memory" :version "4.6.3"}
+     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 0
     :package-files common-legal-files}})
 
 (def ^:private external-package-contract
-  #{{:id "Microsoft.Extensions.DependencyInjection.Abstractions"
+  #{{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+    {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}
+    {:id "Microsoft.CSharp" :version "4.7.0"}
+    {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
      :version "10.0.0"}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "Microsoft.NETCore.Platforms" :version "1.1.0"}
+    {:id "NETStandard.Library" :version "2.0.3"}
     {:id "SkiaSharp" :version "4.150.1"}
     {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
     {:id "SkiaSharp.NativeAssets.macOS" :version "4.150.1"}
     {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}
-    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}})
+    {:id "System.Buffers" :version "4.6.1"}
+    {:id "System.Diagnostics.DiagnosticSource" :version "10.0.0"}
+    {:id "System.Formats.Asn1" :version "10.0.0"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Numerics.Vectors" :version "4.6.1"}
+    {:id "System.Runtime.CompilerServices.Unsafe" :version "6.1.2"}
+    {:id "System.Security.Cryptography.Cng" :version "5.0.0"}
+    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}
+    {:id "System.Threading.Tasks.Extensions" :version "4.6.3"}})
+
+(def ^:private base-package-closure
+  #{"Microsoft.Bcl.AsyncInterfaces"
+    "Microsoft.CSharp"
+    "Microsoft.Extensions.DependencyInjection.Abstractions"
+    "Microsoft.Extensions.Logging.Abstractions"
+    "System.Buffers"
+    "System.Diagnostics.DiagnosticSource"
+    "System.Memory"
+    "System.Numerics.Vectors"
+    "System.Runtime.CompilerServices.Unsafe"
+    "System.Text.Encoding.CodePages"
+    "System.Threading.Tasks.Extensions"})
+
+(def ^:private graphics-package-closure
+  (into base-package-closure
+        #{"SkiaSharp"
+          "SkiaSharp.NativeAssets.Linux"
+          "SkiaSharp.NativeAssets.macOS"
+          "SkiaSharp.NativeAssets.Win32"
+          "System.Formats.Asn1"}))
+
+(def ^:private crypto-package-closure
+  (into graphics-package-closure
+        #{"Microsoft.Bcl.Cryptography"
+          "System.Security.Cryptography.Cng"
+          "System.Security.Cryptography.Pkcs"}))
 
 (def ^:private restored-closures
   {"DripSharp.PdfCarton.IO"
-   #{"DripSharp.PdfCarton.IO"
-     "Microsoft.Extensions.DependencyInjection.Abstractions"
-     "Microsoft.Extensions.Logging.Abstractions"}
+   (conj base-package-closure "DripSharp.PdfCarton.IO")
 
    "DripSharp.PdfCarton.Fonts"
-   #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"
-     "Microsoft.Extensions.DependencyInjection.Abstractions"
-     "Microsoft.Extensions.Logging.Abstractions"
-     "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
-     "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"}
+   (into graphics-package-closure
+         #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"})
 
    "DripSharp.PdfCarton.Xmp"
-   #{"DripSharp.PdfCarton.Xmp"
-     "Microsoft.Extensions.DependencyInjection.Abstractions"
-     "Microsoft.Extensions.Logging.Abstractions"}
+   (conj base-package-closure "DripSharp.PdfCarton.Xmp")
 
    "DripSharp.PdfCarton"
-   #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton"
-     "Microsoft.Extensions.DependencyInjection.Abstractions"
-     "Microsoft.Extensions.Logging.Abstractions"
-     "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
-     "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"
-     "System.Security.Cryptography.Pkcs"}
+   (into crypto-package-closure
+         #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"
+           "DripSharp.PdfCarton"})
 
    "DripSharp.PdfCarton.Preflight"
-   #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Xmp"
-     "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
-     "Microsoft.Extensions.DependencyInjection.Abstractions"
-     "Microsoft.Extensions.Logging.Abstractions"
-     "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
-     "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"
-     "System.Security.Cryptography.Pkcs"}})
+   (into crypto-package-closure
+         #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"
+           "DripSharp.PdfCarton.Xmp" "DripSharp.PdfCarton"
+           "DripSharp.PdfCarton.Preflight"})})
 
 (def ^:private aggregate-consumer
   {:strategy :source-file
@@ -464,20 +508,20 @@
                   expected-direct (if complete?
                                     (set (keys package-contract))
                                     #{name})
-                  restored
+                  published
                   (set (map :id
                             (get-in proof
-                                    [:dependency-proof :packages])))
-                  expected-restored
+                                    [:dependency-proof :expected-packages])))
+                  expected-published
                   (if complete?
                     (get restored-closures "DripSharp.PdfCarton.Preflight")
                     (get restored-closures name))]]
       (when-not (= expected-direct direct)
         (fail! "Fresh PdfCarton consumer has the wrong direct package references"
                {:consumer name :expected expected-direct :actual direct}))
-      (when-not (= expected-restored restored)
-        (fail! "Fresh PdfCarton consumer restored the wrong package closure"
-               {:consumer name :expected expected-restored :actual restored})))
+      (when-not (= expected-published published)
+        (fail! "Fresh PdfCarton consumer has the wrong published package closure"
+               {:consumer name :expected expected-published :actual published})))
     {:consumers (count consumer-proofs)
      :package-caches roots
      :restored

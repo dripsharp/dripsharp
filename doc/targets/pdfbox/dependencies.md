@@ -33,6 +33,45 @@ These are project and assembly references, not separate public NuGet package
 dependencies or compatibility helpers. Their public types and behavior are
 mechanically translated with their owning modules.
 
+## Locked `netstandard2.0` Package-Proof Closure
+
+PdfCarton's dependency-closed package proof copies every external NuGet archive
+selected by the five production projects' `netstandard2.0` restore assets into
+the fresh proof feed. The target-owned package contracts require the following
+complete 21-package set at these exact versions:
+
+| Package | Locked version | Closure role |
+| --- | --- | --- |
+| `Microsoft.Bcl.AsyncInterfaces` | `10.0.0` | Transitive logging dependency. |
+| `Microsoft.Bcl.Cryptography` | `10.0.0` | Transitive PKCS dependency. |
+| `Microsoft.CSharp` | `4.7.0` | Direct `netstandard2.0` compatibility dependency. |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | `10.0.0` | Transitive logging dependency. |
+| `Microsoft.Extensions.Logging.Abstractions` | `10.0.0` | Direct logging mapping. |
+| `Microsoft.NETCore.Platforms` | `1.1.0` | Transitive `NETStandard.Library` platform catalog. |
+| `NETStandard.Library` | `2.0.3` | SDK-selected `netstandard2.0` reference package. |
+| `SkiaSharp` | `4.150.1` | Direct graphics and imaging mapping. |
+| `SkiaSharp.NativeAssets.Linux` | `4.150.1` | Direct Linux native deployment asset. |
+| `SkiaSharp.NativeAssets.macOS` | `4.150.1` | Transitive macOS native deployment asset. |
+| `SkiaSharp.NativeAssets.Win32` | `4.150.1` | Transitive Windows native deployment asset. |
+| `System.Buffers` | `4.6.1` | Transitive memory and logging dependency. |
+| `System.Diagnostics.DiagnosticSource` | `10.0.0` | Transitive logging dependency. |
+| `System.Formats.Asn1` | `10.0.0` | Direct ASN.1 compatibility and transitive PKCS dependency. |
+| `System.Memory` | `4.6.3` | Direct `netstandard2.0` compatibility dependency. |
+| `System.Numerics.Vectors` | `4.6.1` | Transitive memory dependency. |
+| `System.Runtime.CompilerServices.Unsafe` | `6.1.2` | Transitive memory, diagnostics, and task dependency. |
+| `System.Security.Cryptography.Cng` | `5.0.0` | Transitive PKCS dependency. |
+| `System.Security.Cryptography.Pkcs` | `10.0.0` | Direct CMS/PKCS mapping. |
+| `System.Text.Encoding.CodePages` | `10.0.0` | Direct `netstandard2.0` encoding compatibility dependency. |
+| `System.Threading.Tasks.Extensions` | `4.6.3` | Transitive async-interface dependency. |
+
+This is an exact fail-closed proof contract, not a minimum dependency list:
+packing fails when an archive is missing, additional, or restored at another
+version. Each packed component also retains its exact direct NuGet dependencies
+from the corresponding `targets/pdfcube/destinations/*.edn` contract. Fresh
+`net10.0` consumers verify the complete metadata closure while separately
+accounting for dependencies that NuGet legitimately framework-prunes; pruning
+does not remove those archives from the `netstandard2.0` package-proof closure.
+
 ## Resolved Production Dependency Mappings
 
 ### Apache Commons Logging

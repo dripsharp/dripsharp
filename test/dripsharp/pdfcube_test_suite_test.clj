@@ -3,7 +3,27 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.test-suite :as test-suite]
-            [dripsharp.target-directory :as target-directory]))
+            [dripsharp.target-directory :as target-directory]
+            [dripsharp.tree-cleanup :as tree-cleanup]
+            [dripsharp.util :as util])
+  (:import [java.nio.file Files OpenOption Path]
+           [java.nio.file.attribute FileAttribute]))
+
+(defn- temp-directory []
+  (Files/createTempDirectory "dripsharp-pdfcarton-lifecycle-"
+                             (make-array FileAttribute 0)))
+
+(defn- write-file! [^Path path contents]
+  (Files/createDirectories (.getParent path) (make-array FileAttribute 0))
+  (Files/writeString path contents (make-array OpenOption 0))
+  path)
+
+(defn- failure-data [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
 
 (deftest generated-pdfbox-tests-preserve-deterministic-junit-method-order
   (let [source (slurp "src/dripsharp/pdfcube/test_suite.clj")
@@ -47,8 +67,60 @@
          support
          "MutableArtifactCleanupPreservesGovernedFixturesAndBuildInputs"))
     (is (str/includes? support "ResetMutableTestArtifactsForContract"))
+    (is (str/includes? support "ResetMutableArtifactRoot"))
+    (is (str/includes? support "LifecycleContractArtifacts"))
     (is (str/includes? generator "VerifyGovernedFixtures"))
-    (is (str/includes? generator "verify-built-lifecycle!"))))
+    (is (str/includes? generator "verify-built-lifecycle!"))
+    (is (str/includes? generator "built-lifecycle-snapshots"))))
+
+(deftest standalone-lifecycle-rejects-fixture-and-build-output-loss
+  (let [root (temp-directory)
+        project {:id "DripSharp.PdfCarton.Tests"
+                 :assembly-name "DripSharp.PdfCarton.Tests"
+                 :target-framework "net10.0"}
+        contract {:publication {:test-suites {:strategies []}}}
+        output (.resolve root "bin/Release/net10.0")
+        fixture (.resolve output "Fixtures/probe.txt")
+        fixture-sha (util/sha256-bytes (.getBytes "fixture" "UTF-8"))
+        required ["DripSharp.PdfCarton.Tests.dll"
+                  "DripSharp.PdfCarton.Tests.deps.json"
+                  "DripSharp.PdfCarton.Tests.runtimeconfig.json"
+                  "DripSharp.PdfCarton.IO.dll"
+                  "DripSharp.PdfCarton.Fonts.dll"
+                  "DripSharp.PdfCarton.Xmp.dll"
+                  "DripSharp.PdfCarton.dll"
+                  "DripSharp.PdfCarton.Preflight.dll"]
+        options {:target-contract contract
+                 :project project
+                 :project-root root}]
+    (try
+      (write-file!
+       (.resolve root "JAVA-TEST-INVENTORY.edn")
+       (str (pr-str {:accounting
+                     {:fixtures [{:destination "probe.txt"
+                                  :sha256 fixture-sha}]}})
+            "\n"))
+      (write-file! fixture "fixture")
+      (doseq [relative required]
+        (write-file! (.resolve output relative) relative))
+      (write-file! (.resolve root "obj/project.assets.json") "{}")
+
+      (test-suite/strategy! (assoc options :phase :post-build))
+      (Files/delete fixture)
+      (is (= :pdfcarton-suite-fixture-lifecycle-drift
+             (:reason
+              (failure-data
+               #(test-suite/strategy! (assoc options :phase :post-test))))))
+
+      (write-file! fixture "fixture")
+      (test-suite/strategy! (assoc options :phase :post-build))
+      (Files/delete (.resolve output "DripSharp.PdfCarton.Tests.dll"))
+      (is (= :pdfcarton-suite-build-output-lifecycle-drift
+             (:reason
+              (failure-data
+               #(test-suite/strategy! (assoc options :phase :post-test))))))
+      (finally
+        (tree-cleanup/delete-tree! root)))))
 
 (deftest complete-pinned-pdfbox-test-tree-is-losslessly-inventoried
   (let [inventory (test-suite/inventory!)

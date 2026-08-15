@@ -690,8 +690,7 @@ internal static class Support
         {
             if (!WorkingFixturesInitialized)
             {
-                if (global::System.IO.Directory.Exists(root))
-                    global::System.IO.Directory.Delete(root, recursive: true);
+                ResetMutableArtifactRoot("WritableFixtures");
                 global::System.IO.Directory.CreateDirectory(root);
                 WorkingFixturesInitialized = true;
             }
@@ -709,24 +708,24 @@ internal static class Support
         return new global::System.IO.FileInfo(destination);
     }
 
-    internal static void ResetMutableTestArtifactsForContract()
+    internal static string ResetMutableTestArtifactsForContract()
     {
-        lock (WorkingFixtureLock)
-        {
-            foreach (string name in new[]
-                     {
-                         "WritableFixtures",
-                         "TestOutput",
-                         "TestOutputExternal",
-                         "TestInputExternal"
-                     })
-            {
-                string root = MutableArtifactRoot(name);
-                if (global::System.IO.Directory.Exists(root))
-                    global::System.IO.Directory.Delete(root, recursive: true);
-            }
-            WorkingFixturesInitialized = false;
-        }
+        string name = global::System.IO.Path.Combine(
+            "LifecycleContractArtifacts",
+            global::System.Guid.NewGuid().ToString("N"));
+        string probe = MutableArtifactPath(name, "probe.txt");
+        global::System.IO.Directory.CreateDirectory(
+            global::System.IO.Path.GetDirectoryName(probe)!);
+        global::System.IO.File.WriteAllText(probe, "mutable lifecycle probe");
+        ResetMutableArtifactRoot(name);
+        return probe;
+    }
+
+    private static void ResetMutableArtifactRoot(string name)
+    {
+        string root = MutableArtifactRoot(name);
+        if (global::System.IO.Directory.Exists(root))
+            global::System.IO.Directory.Delete(root, recursive: true);
     }
 
     private static string MutableArtifactRoot(string name)
@@ -894,13 +893,10 @@ public sealed class PdfCartonTestSupportContractTests
             $"{global::System.IO.Path.DirectorySeparatorChar}TestOutput{global::System.IO.Path.DirectorySeparatorChar}",
             testOutput,
             global::System.StringComparison.Ordinal);
-        global::System.IO.Directory.CreateDirectory(
-            global::System.IO.Path.GetDirectoryName(testOutput)!);
-        global::System.IO.File.WriteAllText(testOutput, "mutable lifecycle probe");
 
-        Support.ResetMutableTestArtifactsForContract();
+        string lifecycleProbe = Support.ResetMutableTestArtifactsForContract();
 
-        global::Xunit.Assert.False(global::System.IO.File.Exists(testOutput));
+        global::Xunit.Assert.False(global::System.IO.File.Exists(lifecycleProbe));
         GeneratedSuiteIntegrityTests.VerifyGovernedFixtures();
         global::Xunit.Assert.True(global::System.IO.File.Exists(assembly), assembly);
         string restoredFixture = Support.TestPath(

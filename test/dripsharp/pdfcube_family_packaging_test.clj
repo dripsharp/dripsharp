@@ -19,6 +19,72 @@
 (def ^:private copyright
   "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")
 
+(def ^:private complete-external-package-contract
+  #{{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+    {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}
+    {:id "Microsoft.CSharp" :version "4.7.0"}
+    {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
+     :version "10.0.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "Microsoft.NETCore.Platforms" :version "1.1.0"}
+    {:id "NETStandard.Library" :version "2.0.3"}
+    {:id "SkiaSharp" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.macOS" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}
+    {:id "System.Buffers" :version "4.6.1"}
+    {:id "System.Diagnostics.DiagnosticSource" :version "10.0.0"}
+    {:id "System.Formats.Asn1" :version "10.0.0"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Numerics.Vectors" :version "4.6.1"}
+    {:id "System.Runtime.CompilerServices.Unsafe" :version "6.1.2"}
+    {:id "System.Security.Cryptography.Cng" :version "5.0.0"}
+    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}
+    {:id "System.Threading.Tasks.Extensions" :version "4.6.3"}})
+
+(def ^:private package-dependency-contract
+  {"DripSharp.PdfCarton.IO"
+   [{:id "Microsoft.CSharp" :version "4.7.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
+
+   "DripSharp.PdfCarton.Fonts"
+   [{:id "DripSharp.PdfCarton.IO" :version version}
+    {:id "Microsoft.CSharp" :version "4.7.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "SkiaSharp" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
+    {:id "System.Formats.Asn1" :version "10.0.0"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
+
+   "DripSharp.PdfCarton.Xmp"
+   [{:id "Microsoft.CSharp" :version "4.7.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
+
+   "DripSharp.PdfCarton"
+   [{:id "DripSharp.PdfCarton.Fonts" :version version}
+    {:id "DripSharp.PdfCarton.IO" :version version}
+    {:id "Microsoft.CSharp" :version "4.7.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "SkiaSharp" :version "4.150.1"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
+
+   "DripSharp.PdfCarton.Preflight"
+   [{:id "DripSharp.PdfCarton.Xmp" :version version}
+    {:id "DripSharp.PdfCarton" :version version}
+    {:id "Microsoft.CSharp" :version "4.7.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "SkiaSharp" :version "4.150.1"}
+    {:id "System.Memory" :version "4.6.3"}
+    {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]})
+
 (defn- sha256
   [^Path file]
   (let [digest (MessageDigest/getInstance "SHA-256")]
@@ -137,7 +203,7 @@
                      :path "README.md"
                      :sha256 (sha256 readme)})
               :inspection
-              {:dependencies (:dependencies contract)
+              {:dependencies (get package-dependency-contract id)
                :package-files
                (conj (:package-files contract)
                      {:kind :readme
@@ -153,7 +219,7 @@
               :symbol-inspection
               {:pdb-entry (str "lib/netstandard2.0/" id ".pdb")
                :pdb-sha256 pdb-hash
-               :dependencies (:dependencies contract)
+               :dependencies (get package-dependency-contract id)
                :source-link
                {:document-pattern "/_/*"
                 :documents 1
@@ -164,8 +230,7 @@
          (sort-by key contracts))
         external
         (mapv #(external-artifact! feed %)
-              (sort-by :id
-                       @#'family-packaging/external-package-contract))]
+              (sort-by :id complete-external-package-contract))]
     {:proof-root root
      :feed feed
      :packages packages
@@ -196,6 +261,10 @@
             "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp"]
            (get-in @#'family-packaging/package-contract
                    ["DripSharp.PdfCarton.Preflight" :assembly-dependencies])))
+    (is (= package-dependency-contract
+           (into {}
+                 (map (fn [[id contract]] [id (:dependencies contract)]))
+                 @#'family-packaging/package-contract)))
     (is (= #{"Fixture Publisher"}
            (->> (:packages evidence)
                 vals
@@ -212,13 +281,15 @@
                      ((juxt :kind :path) file)))
                 (:package-files %))
          (vals (:packages evidence))))
-    (is (= 17 (get-in evidence [:feed :artifacts])))
+    (is (= complete-external-package-contract
+           (set (:external-packages evidence))))
+    (is (= 31 (get-in evidence [:feed :artifacts])))
     (is (= ["x64" "arm64"]
            (get-in evidence
                    [:native-assets "SkiaSharp.NativeAssets.macOS"
                     :architectures])))))
 
-(deftest family-package-gate-fails-on-leakage-stale-output-and-host-gaps
+(deftest family-package-gate-retains-exact-fail-closed-checks
   (testing "an unapproved dependency is blocking"
     (let [proof (package-proof)
           artifact
@@ -234,6 +305,48 @@
       (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
       (is (contains? (ex-data error) :expected))
       (is (contains? (ex-data error) :actual))))
+  (testing "a missing locked transitive dependency is blocking"
+    (let [proof (package-proof)
+          altered
+          (update proof :external-packages
+                  (fn [packages]
+                    (filterv #(not= "Microsoft.Bcl.AsyncInterfaces" (:id %))
+                             packages)))
+          error (caught #(family-packaging/validate-package-family! altered))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (= 21 (count (:expected (ex-data error)))))
+      (is (= 20 (count (:actual (ex-data error)))))))
+  (testing "a wrong locked transitive dependency version is blocking"
+    (let [proof (package-proof)
+          altered
+          (update proof :external-packages
+                  (fn [packages]
+                    (mapv #(if (= "Microsoft.Bcl.AsyncInterfaces" (:id %))
+                             (assoc % :version "9.0.0")
+                             %)
+                          packages)))
+          error (caught #(family-packaging/validate-package-family! altered))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (some #(= {:id "Microsoft.Bcl.AsyncInterfaces"
+                     :version "9.0.0"}
+                    %)
+                (:actual (ex-data error))))))
+  (testing "a changed direct package dependency is blocking"
+    (let [proof (package-proof)
+          altered
+          (update-in proof [:packages 0 :inspection :dependencies]
+                     conj {:id "Unapproved.Runtime" :version "1.0.0"})
+          error (caught #(family-packaging/validate-package-family! altered))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (contains? (ex-data error) :expected))
+      (is (contains? (ex-data error) :actual))))
+  (testing "a missing exact PdfCarton package is blocking"
+    (let [proof (package-proof)
+          altered (update proof :packages #(vec (rest %)))
+          error (caught #(family-packaging/validate-package-family! altered))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (= 5 (count (:expected (ex-data error)))))
+      (is (= 4 (count (:actual (ex-data error)))))))
   (testing "a stale feed artifact is blocking"
     (let [proof (package-proof)
           _ (write-file! (paths/resolve-path (:feed proof) "stale.0.0.0.nupkg")
@@ -241,6 +354,15 @@
           error (caught #(family-packaging/validate-package-family! proof))]
       (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
       (is (= ["stale.0.0.0.nupkg"] (:stale (ex-data error))))))
+  (testing "a changed artifact hash is blocking"
+    (let [proof (package-proof)
+          artifact (get-in proof [:packages 0 :artifact])
+          _ (write-file! artifact "tampered package")
+          error (caught #(family-packaging/validate-package-family! proof))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (= (get-in proof [:packages 0 :identity :sha256])
+             (:expected (ex-data error))))
+      (is (= (sha256 artifact) (:actual (ex-data error))))))
   (testing "missing packaged README evidence is blocking"
     (let [proof (package-proof)
           altered
@@ -294,6 +416,9 @@
     (mapv (fn [id] [id version]) (sort direct))
     :packages
     (mapv (fn [id] {:id id :version version :sha256 "hash"})
+          (sort restored))
+    :expected-packages
+    (mapv (fn [id] {:id id :version version :sha256 "hash"})
           (sort restored))}})
 
 (deftest separate-and-all-family-consumption-evidence-is-exact
@@ -313,7 +438,13 @@
                            (:packages-root (first proofs)))
           error (caught #(#'family-packaging/validate-consumers! reused))]
       (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
-      (is (= 6 (count (:package-caches (ex-data error))))))))
+      (is (= 6 (count (:package-caches (ex-data error))))))
+    (let [altered
+          (update-in proofs [0 :dependency-proof :expected-packages]
+                     #(vec (rest %)))
+          error (caught #(#'family-packaging/validate-consumers! altered))]
+      (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
+      (is (not= (:expected (ex-data error)) (:actual (ex-data error)))))))
 
 (deftest all-family-consumer-executes-public-runtime-workflows
   (let [consumer @#'family-packaging/aggregate-consumer]

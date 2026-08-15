@@ -6,7 +6,8 @@
   classpath discovery. JUnit planning is reusable and resolved-symbol based;
   this namespace owns only the five PdfCarton modules, PDFBox provenance, and
   the classification of PDFBox test conditions."
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [dripsharp.csharp :as csharp]
             [dripsharp.harness :as harness]
             [dripsharp.java-library :as java-library]
@@ -2412,6 +2413,63 @@
      :root-count (count roots)
      :emission emission}))
 
+(def ^:private mutable-suite-output-roots
+  #{"Fixtures" "LifecycleContractArtifacts" "MaterializedResources"
+    "TestInputExternal" "TestOutput" "TestOutputExternal"
+    "WritableFixtures"})
+
+(def ^:private required-suite-output-files
+  ["DripSharp.PdfCarton.Tests.dll"
+   "DripSharp.PdfCarton.Tests.deps.json"
+   "DripSharp.PdfCarton.Tests.runtimeconfig.json"
+   "DripSharp.PdfCarton.IO.dll"
+   "DripSharp.PdfCarton.Fonts.dll"
+   "DripSharp.PdfCarton.Xmp.dll"
+   "DripSharp.PdfCarton.dll"
+   "DripSharp.PdfCarton.Preflight.dll"])
+
+(defonce ^:private built-lifecycle-snapshots (atom {}))
+
+(defn- lifecycle-build-output-inventory!
+  [phase project-root project]
+  (let [output-root
+        (paths/resolve-path
+         project-root
+         (str "bin/Release/" (:target-framework project)))
+        assets (paths/resolve-path project-root "obj/project.assets.json")]
+    (when-not (paths/directory? output-root)
+      (fail! "PdfCarton standalone suite output directory is missing"
+             {:reason :pdfcarton-suite-build-output-lifecycle-drift
+              :phase phase :path (str output-root)}))
+    (doseq [relative required-suite-output-files]
+      (let [path (paths/resolve-path output-root relative)]
+        (when-not (paths/regular-file? path)
+          (fail! "PdfCarton standalone suite lifecycle removed a required build output"
+                 {:reason :pdfcarton-suite-build-output-lifecycle-drift
+                  :phase phase :path (str path)}))))
+    (when-not (paths/regular-file? assets)
+      (fail! "PdfCarton standalone suite lifecycle removed restored project assets"
+             {:reason :pdfcarton-suite-build-output-lifecycle-drift
+              :phase phase :path (str assets)}))
+    (let [output-files
+          (with-open [entries
+                      (Files/walk
+                       output-root
+                       (make-array java.nio.file.FileVisitOption 0))]
+            (->> (iterator-seq (.iterator entries))
+                 (filter paths/regular-file?)
+                 (remove
+                  (fn [file]
+                    (let [relative (relative-path output-root file)
+                          root (first (str/split relative #"/" 2))]
+                      (contains? mutable-suite-output-roots root))))
+                 vec))]
+      (into
+       (sorted-map)
+       (map (fn [file]
+              [(relative-path project-root file) (util/sha256-file file)]))
+       (conj output-files assets)))))
+
 (defn- emit! [{:keys [target-contract project project-root]}]
   (let [source-workspace-root
         (paths/absolute (:workspace-root target-contract))
@@ -2504,7 +2562,7 @@
          :governed-fixtures (count governed)
          :accounting (:digests inventory)}))))
 
-(defn- verify-built-lifecycle!
+(defn- verify-complete-built-lifecycle!
   [{:keys [phase target-contract project project-root]}]
   (let [inventory-file (paths/resolve-path project-root
                                            "JAVA-TEST-INVENTORY.edn")
@@ -2517,14 +2575,7 @@
         (paths/resolve-path
          project-root
          (str "bin/Release/" (:target-framework project)))
-        required
-        [(paths/resolve-path
-          output-root (str (:assembly-name project) ".dll"))
-         (paths/resolve-path
-          output-root (str (:assembly-name project) ".deps.json"))
-         (paths/resolve-path
-          output-root (str (:assembly-name project) ".runtimeconfig.json"))
-         (paths/resolve-path project-root "obj/project.assets.json")]]
+        snapshot-key (str (paths/absolute project-root))]
     (doseq [{:keys [path sha256]} governed]
       (let [fixture (paths/resolve-path output-root path)
             actual (when (paths/regular-file? fixture)
@@ -2533,14 +2584,39 @@
           (fail! "PdfCarton standalone suite fixture lifecycle changed a governed input"
                  {:reason :pdfcarton-suite-fixture-lifecycle-drift
                   :phase phase :path path :expected sha256 :actual actual}))))
-    (doseq [path required]
-      (when-not (paths/regular-file? path)
-        (fail! "PdfCarton standalone suite lifecycle removed a required build output"
-               {:reason :pdfcarton-suite-build-output-lifecycle-drift
-                :phase phase :path (str path)})))
-    {:phase phase
-     :governed-fixtures (count governed)
-     :required-build-outputs (count required)}))
+    (let [actual (lifecycle-build-output-inventory!
+                  phase project-root project)]
+      (case phase
+        :post-build
+        (swap! built-lifecycle-snapshots assoc snapshot-key actual)
+
+        :post-test
+        (let [expected (get @built-lifecycle-snapshots snapshot-key)]
+          (when-not expected
+            (fail! "PdfCarton standalone suite lifecycle has no post-build baseline"
+                   {:reason :missing-pdfcarton-suite-build-output-baseline
+                    :phase phase :project-root snapshot-key}))
+          (when-not (= expected actual)
+            (let [expected-paths (set (keys expected))
+                  actual-paths (set (keys actual))]
+              (fail! "PdfCarton standalone suite changed required build outputs"
+                     {:reason :pdfcarton-suite-build-output-lifecycle-drift
+                      :phase phase
+                      :missing (sort (set/difference
+                                      expected-paths actual-paths))
+                      :added (sort (set/difference
+                                    actual-paths expected-paths))
+                      :changed
+                      (sort
+                       (filter #(not= (get expected %) (get actual %))
+                               (set/intersection
+                                expected-paths actual-paths)))})))
+          (swap! built-lifecycle-snapshots dissoc snapshot-key)))
+      {:phase phase
+       :governed-fixtures (count governed)
+       :required-build-outputs (count actual)})))
+
+(defn- verify-built-lifecycle! [options] (verify-complete-built-lifecycle! options))
 
 (defn strategy!
   "Target-owned complete adapted-upstream PdfCarton strategy."
