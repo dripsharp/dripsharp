@@ -27,7 +27,7 @@
    {:sources []
     :evidence [:rawhttp-permanent-conformance]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 14585 :total-lines 19560}}
+    :budget {:authored-lines 14596 :total-lines 19571}}
    :required-capabilities #{:java-compat :java-regex-unicode}}]
  :destinations [{:id :core :path "destinations/core.edn"}]
  :mapping-overlays []
