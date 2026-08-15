@@ -1276,6 +1276,7 @@ namespace DripSharp.Brine.Runtime.Polyglot
         private readonly object lifecycleLock = new();
         private readonly System.Threading.CancellationTokenSource cancellation = new();
         private readonly Dictionary<System.Threading.Thread, int> executingThreads = new();
+        private readonly HashSet<System.Threading.Thread> contextInterruptedThreads = new();
         private readonly System.Threading.ManualResetEventSlim noExecutions = new(true);
         private global::DripSharp.Brine.Runtime.VmContext? vmContext;
         private bool initialized;
@@ -1325,6 +1326,7 @@ namespace DripSharp.Brine.Runtime.Polyglot
         }
         public void Leave()
         {
+            var thread = System.Threading.Thread.CurrentThread;
             try
             {
                 global::DripSharp.Brine.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
@@ -1333,13 +1335,12 @@ namespace DripSharp.Brine.Runtime.Polyglot
             finally
             {
                 global::DripSharp.Runtime.JavaCancellation.Pop(this);
-                UnregisterExecution(System.Threading.Thread.CurrentThread);
+                UnregisterExecution(thread);
             }
         }
         public void Close() => Close(false);
         public void Close(bool cancelIfExecuting)
         {
-            System.Threading.Thread[] activeThreads;
             lock (lifecycleLock)
             {
                 if (!closed)
@@ -1348,17 +1349,27 @@ namespace DripSharp.Brine.Runtime.Polyglot
                     initialized = false;
                     vmContext = null;
                 }
-                activeThreads = executingThreads.Keys.ToArray();
             }
             cancellation.Cancel();
             var currentThread = System.Threading.Thread.CurrentThread;
-            foreach (var thread in activeThreads)
+            bool currentThreadIsExecuting;
+            lock (lifecycleLock)
             {
-                if (ReferenceEquals(thread, currentThread)) continue;
-                try { thread.Interrupt(); }
-                catch (System.Threading.ThreadStateException) { }
+                currentThreadIsExecuting = executingThreads.ContainsKey(currentThread);
+                foreach (var thread in executingThreads.Keys)
+                {
+                    if (ReferenceEquals(thread, currentThread)) continue;
+                    // Record context-close-owned interrupts before issuing them
+                    // while holding the same lock used by evaluation teardown.
+                    // Once teardown can unregister the execution, the interrupt
+                    // has either been observed by translated blocking work or
+                    // is pending for that thread's explicit drain below.
+                    contextInterruptedThreads.Add(thread);
+                    try { thread.Interrupt(); }
+                    catch (System.Threading.ThreadStateException) { }
+                }
             }
-            if (cancelIfExecuting && !activeThreads.Contains(currentThread)) noExecutions.Wait();
+            if (cancelIfExecuting && !currentThreadIsExecuting) noExecutions.Wait();
             global::DripSharp.Brine.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
                 typeof(global::DripSharp.Brine.Runtime.VmLanguage), this, removeAll: true);
         }
@@ -1371,13 +1382,25 @@ namespace DripSharp.Brine.Runtime.Polyglot
 
         private void UnregisterExecution(System.Threading.Thread thread)
         {
+            var drainInterrupt = false;
             lock (lifecycleLock)
             {
                 if (!executingThreads.TryGetValue(thread, out var depth)) return;
-                if (depth == 1) executingThreads.Remove(thread);
+                if (depth == 1)
+                {
+                    executingThreads.Remove(thread);
+                    drainInterrupt = contextInterruptedThreads.Remove(thread);
+                }
                 else executingThreads[thread] = depth - 1;
                 if (executingThreads.Count == 0) noExecutions.Set();
             }
+            if (drainInterrupt) DrainInterrupt();
+        }
+
+        private static void DrainInterrupt()
+        {
+            try { System.Threading.Thread.Sleep(1); }
+            catch (System.Threading.ThreadInterruptedException) { }
         }
 
         public sealed class Builder
