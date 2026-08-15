@@ -78,11 +78,11 @@
     :project-id (:source-project-id io-contract)
     :revision pinned-revision
     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")
-    :target-framework "net10.0"
+    :target-framework "netstandard2.0"
     :assembly
     {:name "DripSharp.PdfCarton.IO"
      :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.IO")
-    :dependency-assemblies []}
+     :dependency-assemblies []}
     :dependencies
     [{:id "Microsoft.CSharp" :version "4.7.0"}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
@@ -98,7 +98,7 @@
     :project-id (:source-project-id fontbox-contract)
     :revision pinned-revision
     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")
-    :target-framework "net10.0"
+    :target-framework "netstandard2.0"
     :assembly
     {:name "DripSharp.PdfCarton.Fonts"
      :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.Fonts")
@@ -123,7 +123,7 @@
     :project-id (:source-project-id pdfbox-contract)
     :revision pinned-revision
     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton")
-    :target-framework "net10.0"
+    :target-framework "netstandard2.0"
     :assembly
     {:name "DripSharp.PdfCarton"
      :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton")
@@ -132,7 +132,7 @@
     [{:id "DripSharp.PdfCarton.Fonts"
       :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")}
      {:id "DripSharp.PdfCarton.IO"
-     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
+      :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
      {:id "Microsoft.CSharp" :version "4.7.0"}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}

@@ -13,6 +13,67 @@
     (Files/writeString file contents (make-array OpenOption 0))
     file))
 
+(defn- package-contract-proof
+  [target-framework]
+  (let [contracts pdfbox-differential/expected-package-contract
+        destinations
+        (into
+         {}
+         (map
+          (fn [[id contract]]
+            [id
+             {:package {:id id}
+              :project
+              {:assembly-name (get-in contract [:assembly :name])
+               :target-framework target-framework}
+              :source-project-id (:project-id contract)
+              :mechanical-source {:revision (:revision contract)}}]))
+         contracts)
+        primary-id
+        (->> contracts
+             (keep (fn [[id contract]] (when (:primary? contract) id)))
+             first)
+        dependency-ids (vec (sort (disj (set (keys contracts)) primary-id)))
+        package
+        (fn [[id contract]]
+          {:profile (:profile contract)
+           :primary? (:primary? contract)
+           :identity {:id id :version (:version contract)}
+           :inspection
+           {:dependencies (:dependencies contract)
+            :package-files (:package-files contract)}
+           :resource-proof {:assembly-identity (:assembly contract)}
+           :resources (vec (repeat (:resources contract) :resource))})
+        audit
+        (fn [[_ contract]]
+          {:assembly (get-in contract [:assembly :name])
+           :contract-members (:contract-members contract)})
+        dependency-emission
+        (fn [id]
+          {:profile (get-in contracts [id :profile])
+           :destination (get destinations id)
+           :public-metadata {:rows []}})]
+    {:verification
+     {:generation
+      {:generation-profile {:profile (get-in contracts [primary-id :profile])}
+       :destination (get destinations primary-id)
+       :emission {:public-metadata {:rows []}}
+       :dependency-emissions (mapv dependency-emission dependency-ids)}
+      :public-surface
+      {:strategy :complete-accessible-java-library
+       :assemblies (mapv audit contracts)}}
+     :packages (mapv package contracts)
+     :packing-summary {:clean-builds 2}
+     :dependency-proof
+     {:packages (vec pdfbox-differential/expected-restored-closure)}}))
+
+(defn- caught
+  [thunk]
+  (try
+    (thunk)
+    nil
+    (catch clojure.lang.ExceptionInfo error error)))
+
 (deftest aggregate-workflow-contract-is-exact
   (is (= pdfbox-differential/required-workflows
          (pdfbox-differential/workflow-coverage
@@ -45,9 +106,12 @@
 (deftest package-contract-pins-the-translated-closure
   (is (= #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton"}
          (set (keys pdfbox-differential/expected-package-contract))))
-  (is (= {"DripSharp.PdfCarton.IO" 177
-          "DripSharp.PdfCarton.Fonts" 1440
-          "DripSharp.PdfCarton" 7424}
+  (is (= #{"netstandard2.0"}
+         (set (map :target-framework
+                   (vals pdfbox-differential/expected-package-contract)))))
+  (is (= {"DripSharp.PdfCarton.IO" 214
+          "DripSharp.PdfCarton.Fonts" 1448
+          "DripSharp.PdfCarton" 7438}
          (into {}
                (map (fn [[id contract]]
                       [id (:contract-members contract)]))
@@ -84,6 +148,48 @@
          [{:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
           {:id "SkiaSharp.NativeAssets.macOS" :version "4.150.1"}
           {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}]))))
+
+(deftest package-contract-accepts-netstandard-and-rejects-production-framework-drift
+  (let [valid-proof (package-contract-proof "netstandard2.0")
+        actual (pdfbox-differential/validate-package-contract! valid-proof)]
+    (is (= pdfbox-differential/expected-package-contract
+           (:packages actual)))
+    (is (= pdfbox-differential/expected-restored-closure
+           (:restored-closure actual)))
+    (is (= 0 (:public-stubs actual))))
+  (testing "the former three-package net10.0 mismatch fails in isolation"
+    (let [error
+          (caught
+           #(pdfbox-differential/validate-package-contract!
+             (package-contract-proof "net10.0")))
+          expected (:expected (ex-data error))
+          actual (:actual (ex-data error))
+          without-framework
+          (fn [contract]
+            (update contract :packages
+                    (fn [packages]
+                      (into {}
+                            (map (fn [[id package]]
+                                   [id (dissoc package :target-framework)]))
+                            packages))))]
+      (is (= :pdfcube-pdfbox-differential-failed
+             (:kind (ex-data error))))
+      (is (= #{"netstandard2.0"}
+             (set (map :target-framework (vals (:packages expected))))))
+      (is (= #{"net10.0"}
+             (set (map :target-framework (vals (:packages actual))))))
+      (is (= (without-framework expected)
+             (without-framework actual)))))
+  (testing "missing, extra, and other production framework evidence fail closed"
+    (doseq [target-framework
+            [nil ["netstandard2.0" "net10.0"] "net9.0"]]
+      (let [error
+            (caught
+             #(pdfbox-differential/validate-package-contract!
+               (package-contract-proof target-framework)))]
+        (is (= :pdfcube-pdfbox-differential-failed
+               (:kind (ex-data error)))
+            (pr-str {:target-framework target-framework}))))))
 
 (deftest supported-host-matrix-is-exact
   (is (= #{["windows" "x64"] ["windows" "arm64"]

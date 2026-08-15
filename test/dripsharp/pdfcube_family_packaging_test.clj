@@ -457,6 +457,8 @@
               closures)
         async {:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
         crypto {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}]
+    (is (= "netstandard2.0" @#'family-packaging/target-framework))
+    (is (= "net10.0" @#'family-packaging/execution-target-framework))
     (is (= {"DripSharp.PdfCarton.IO" #{async}
             "DripSharp.PdfCarton.Fonts" #{async}
             "DripSharp.PdfCarton.Xmp" #{async}
