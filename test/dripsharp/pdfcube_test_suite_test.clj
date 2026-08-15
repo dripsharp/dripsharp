@@ -12,6 +12,29 @@
     (is (str/includes? support "UpstreamTestCaseOrderer"))
     (is (str/includes? support "TestMethod?.MethodName"))))
 
+(deftest generated-pdfbox-posix-support-uses-translated-permission-contract
+  (let [generator (slurp "src/dripsharp/pdfcube/test_suite.clj")
+        support (slurp "targets/pdfcube/adapted-tests/PdfCartonTestSupport.cs")
+        permission-names ["UserRead" "UserWrite" "UserExecute"
+                          "GroupRead" "GroupWrite" "GroupExecute"
+                          "OtherRead" "OtherWrite" "OtherExecute"]]
+    (is (str/includes? generator
+                       "adapted-tests/PdfCartonTestSupport.cs"))
+    (is (str/includes?
+         support
+         "global::DripSharp.Runtime.JavaUnixFileMode> GetPosixFilePermissions"))
+    (is (not (str/includes?
+              support
+              "global::System.IO.UnixFileMode> GetPosixFilePermissions")))
+    (is (str/includes? support "PosixPermissionsUseTranslatedJavaContract"))
+    (doseq [permission permission-names]
+      (is (str/includes?
+           support
+           (str "global::System.IO.UnixFileMode." permission)))
+      (is (str/includes?
+           support
+           (str "global::DripSharp.Runtime.JavaUnixFileMode." permission))))))
+
 (deftest complete-pinned-pdfbox-test-tree-is-losslessly-inventoried
   (let [inventory (test-suite/inventory!)
         contract (test-suite/read-contract! (paths/absolute "targets/pdfcube"))

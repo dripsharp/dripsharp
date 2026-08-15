@@ -23,6 +23,29 @@ internal static class Support
     private static readonly object DeleteOnExitLock = new();
     private static readonly global::System.Collections.Generic.HashSet<string>
         DeleteOnExitPaths = new(global::System.StringComparer.Ordinal);
+    private static readonly (
+        global::System.IO.UnixFileMode Source,
+        global::DripSharp.Runtime.JavaUnixFileMode Target)[] PosixPermissionMappings =
+    {
+        (global::System.IO.UnixFileMode.UserRead,
+         global::DripSharp.Runtime.JavaUnixFileMode.UserRead),
+        (global::System.IO.UnixFileMode.UserWrite,
+         global::DripSharp.Runtime.JavaUnixFileMode.UserWrite),
+        (global::System.IO.UnixFileMode.UserExecute,
+         global::DripSharp.Runtime.JavaUnixFileMode.UserExecute),
+        (global::System.IO.UnixFileMode.GroupRead,
+         global::DripSharp.Runtime.JavaUnixFileMode.GroupRead),
+        (global::System.IO.UnixFileMode.GroupWrite,
+         global::DripSharp.Runtime.JavaUnixFileMode.GroupWrite),
+        (global::System.IO.UnixFileMode.GroupExecute,
+         global::DripSharp.Runtime.JavaUnixFileMode.GroupExecute),
+        (global::System.IO.UnixFileMode.OtherRead,
+         global::DripSharp.Runtime.JavaUnixFileMode.OtherRead),
+        (global::System.IO.UnixFileMode.OtherWrite,
+         global::DripSharp.Runtime.JavaUnixFileMode.OtherWrite),
+        (global::System.IO.UnixFileMode.OtherExecute,
+         global::DripSharp.Runtime.JavaUnixFileMode.OtherExecute)
+    };
     private static bool DeleteOnExitRegistered;
     internal static JavaErrorStream ErrorStream { get; } = new();
 
@@ -196,16 +219,21 @@ internal static class Support
         !global::System.OperatingSystem.IsWindows();
 
     internal static global::System.Collections.Generic.ISet<
-        global::System.IO.UnixFileMode> GetPosixFilePermissions(string path)
+        global::DripSharp.Runtime.JavaUnixFileMode> GetPosixFilePermissions(string path) =>
+        ToJavaUnixFileModes(global::System.IO.File.GetUnixFileMode(path));
+
+    internal static global::System.Collections.Generic.ISet<
+        global::DripSharp.Runtime.JavaUnixFileMode> ToJavaUnixFileModes(
+            global::System.IO.UnixFileMode mode)
     {
-        global::System.IO.UnixFileMode mode = global::System.IO.File.GetUnixFileMode(path);
         var result = new global::System.Collections.Generic.HashSet<
-            global::System.IO.UnixFileMode>();
-        foreach (global::System.IO.UnixFileMode permission in
-                 global::System.Enum.GetValues<global::System.IO.UnixFileMode>())
+            global::DripSharp.Runtime.JavaUnixFileMode>();
+        foreach ((global::System.IO.UnixFileMode source,
+                  global::DripSharp.Runtime.JavaUnixFileMode target) in
+                 PosixPermissionMappings)
         {
-            if (permission != 0 && (mode & permission) == permission)
-                result.Add(permission);
+            if ((mode & source) == source)
+                result.Add(target);
         }
         return result;
     }
@@ -788,6 +816,46 @@ internal static class Support
                 path);
         }
         return path;
+    }
+}
+
+public sealed class PdfCartonTestSupportContractTests
+{
+    [global::Xunit.Fact]
+    public void PosixPermissionsUseTranslatedJavaContract()
+    {
+        var mappings = new[]
+        {
+            (global::System.IO.UnixFileMode.UserRead,
+             global::DripSharp.Runtime.JavaUnixFileMode.UserRead),
+            (global::System.IO.UnixFileMode.UserWrite,
+             global::DripSharp.Runtime.JavaUnixFileMode.UserWrite),
+            (global::System.IO.UnixFileMode.UserExecute,
+             global::DripSharp.Runtime.JavaUnixFileMode.UserExecute),
+            (global::System.IO.UnixFileMode.GroupRead,
+             global::DripSharp.Runtime.JavaUnixFileMode.GroupRead),
+            (global::System.IO.UnixFileMode.GroupWrite,
+             global::DripSharp.Runtime.JavaUnixFileMode.GroupWrite),
+            (global::System.IO.UnixFileMode.GroupExecute,
+             global::DripSharp.Runtime.JavaUnixFileMode.GroupExecute),
+            (global::System.IO.UnixFileMode.OtherRead,
+             global::DripSharp.Runtime.JavaUnixFileMode.OtherRead),
+            (global::System.IO.UnixFileMode.OtherWrite,
+             global::DripSharp.Runtime.JavaUnixFileMode.OtherWrite),
+            (global::System.IO.UnixFileMode.OtherExecute,
+             global::DripSharp.Runtime.JavaUnixFileMode.OtherExecute)
+        };
+
+        foreach ((global::System.IO.UnixFileMode source,
+                  global::DripSharp.Runtime.JavaUnixFileMode expected) in mappings)
+        {
+            global::System.Collections.Generic.ISet<
+                global::DripSharp.Runtime.JavaUnixFileMode> actual =
+                Support.ToJavaUnixFileModes(source);
+
+            global::Xunit.Assert.Single(actual);
+            global::Xunit.Assert.Contains(expected, actual);
+        }
     }
 }
 
