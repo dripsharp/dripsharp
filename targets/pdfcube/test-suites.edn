@@ -51,4 +51,5 @@
    :kind :adapted-upstream
    :policy :shipped
    :project "DripSharp.PdfCarton.Tests"
+   :lifecycle-phases [:post-build :post-test]
    :handler dripsharp.pdfcube.test-suite/strategy!}]}

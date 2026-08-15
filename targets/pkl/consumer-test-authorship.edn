@@ -2,10 +2,10 @@
  :scope :pkl-generated-xunit
  :sources
  [{:path "src/dripsharp/consumer_tests.clj"
-   :sha256 "f59faf6847be37d89942fca48e6757186d9087f1e555f9ad25c45e9813887043"
-   :lines 583
+   :sha256 "3fe6ee811d285378296ae36ab30895e0ece1eca552c263630a71430dc8d76fa8"
+   :lines 594
    :line-budget 594
-   :review-evidence "beads:pkl-zysr.34"
+   :review-evidence "beads:pkl-zysr.37"
    :role :generic-test-emitter}
   {:path "src/dripsharp/tree_cleanup.clj"
    :sha256 "6d57a4e97cd8a8cc4010321ecfca4898a10f029e2d8a510a5ee0587b04f9e13a"

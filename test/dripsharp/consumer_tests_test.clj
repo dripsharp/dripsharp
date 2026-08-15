@@ -210,13 +210,16 @@
          :kind :adapted-upstream
          :policy :validation-only
          :project "DripSharp.PdfCarton.Validation.Tests"
+         :lifecycle-phases [:post-build :post-test]
          :handler 'dripsharp.consumer-tests-test/probe-strategy!}
         contract
         (-> contract
             (update-in [:publication :test-suites :projects]
                        conj probe-project)
             (update-in [:publication :test-suites :strategies]
-                       conj probe-strategy))]
+                       (fn [strategies]
+                         (conj (mapv #(dissoc % :lifecycle-phases) strategies)
+                               probe-strategy))))]
     (try
       (reset! probe-calls [])
       (let [emitted (consumer-tests/emit!
@@ -230,7 +233,10 @@
               :run-command! (fn [request]
                               (swap! calls conj request)
                               {:exit 0 :output ""})})]
-        (is (= [[:emit :dispatch-probe] [:verify :dispatch-probe]]
+        (is (= [[:emit :dispatch-probe]
+                [:verify :dispatch-probe]
+                [:post-build :dispatch-probe]
+                [:post-test :dispatch-probe]]
                @probe-calls))
         (is (= #{"DripSharp.PdfCarton.Tests"
                  "DripSharp.PdfCarton.Validation.Tests"}

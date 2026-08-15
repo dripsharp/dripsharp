@@ -163,6 +163,9 @@
 (def ^:private test-suite-policies
   #{:shipped :validation-only})
 
+(def ^:private test-suite-lifecycle-phases
+  #{:post-build :post-test})
+
 (defn- fail!
   [message data]
   (throw (ex-info message (assoc data :kind :invalid-target-directory))))
@@ -1768,13 +1771,17 @@
       (doseq [[index strategy] (map-indexed vector strategies)]
         (let [{:keys [id kind policy project handler]} strategy
               strategy-path [:publication :test-suites :strategies index]
-              expected-keys (case kind
-                              :focused-consumer focused-consumer-strategy-keys
-                              :adapted-upstream
-                              (if (contains? strategy :suite)
-                                adapted-upstream-strategy-keys
-                                test-suite-strategy-keys)
-                              test-suite-strategy-keys)]
+              expected-keys
+              (cond->
+               (case kind
+                 :focused-consumer focused-consumer-strategy-keys
+                 :adapted-upstream
+                 (if (contains? strategy :suite)
+                   adapted-upstream-strategy-keys
+                   test-suite-strategy-keys)
+                 test-suite-strategy-keys)
+                (contains? strategy :lifecycle-phases)
+                (conj :lifecycle-phases))]
           (exact-keys! "Test-suite strategy" strategy-path
                        expected-keys strategy)
           (validation/check! context (conj strategy-path :id) id
@@ -1789,6 +1796,14 @@
                              "an exact declared test project identity"
                              project-ids)
           (resolve-test-suite-handler! handler id)
+          (when-let [phases (:lifecycle-phases strategy)]
+            (validation/check!
+             context (conj strategy-path :lifecycle-phases) phases
+             "a distinct vector of supported post-command lifecycle phases"
+             #(and (vector? %)
+                   (= (count %) (count (distinct %)))
+                   (seq %)
+                   (every? test-suite-lifecycle-phases %))))
           (when-let [suite (:suite strategy)]
             (validate-adapted-upstream-suite!
              target-root (conj strategy-path :suite) suite))

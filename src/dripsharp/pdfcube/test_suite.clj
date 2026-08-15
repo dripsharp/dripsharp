@@ -2323,22 +2323,48 @@
        "    </None>\n"
        "  </ItemGroup>\n</Project>\n"))
 
+(defn governed-fixtures!
+  "Returns every checksum-governed fixture shipped by one PdfCarton test project."
+  [target-contract project-id upstream-fixtures]
+  (let [upstream
+        (mapv (fn [{:keys [destination sha256]}]
+                {:path (str "Fixtures/" destination) :sha256 sha256})
+              upstream-fixtures)
+        strategy-fixtures
+        (->> (get-in target-contract [:publication :test-suites :strategies])
+             (filter #(= project-id (:project %)))
+             (mapcat :fixtures)
+             (mapv #(select-keys % [:destination :sha256])))
+        governed
+        (->> (concat upstream
+                     (map (fn [{:keys [destination sha256]}]
+                            {:path destination :sha256 sha256})
+                          strategy-fixtures))
+             (sort-by :path)
+             vec)
+        paths (mapv :path governed)]
+    (when-not (= (count paths) (count (distinct paths)))
+      (fail! "PdfCarton governed fixtures contain duplicate destinations"
+             {:reason :duplicate-pdfcarton-governed-fixture
+              :paths paths}))
+    governed))
+
 (defn- render-integrity-test [fixtures]
   (str
    "// SPDX-FileCopyrightText: 2026 Isak Sky\n"
    "// SPDX-License-Identifier: Apache-2.0\n\n"
    "namespace DripSharp.PdfCarton.Tests;\n\n"
    "public sealed class GeneratedSuiteIntegrityTests\n{\n"
-   "    [Xunit.Fact]\n"
-   "    public void EveryUpstreamFixtureIsPresentAndPinned()\n    {\n"
-   "        (string Path, string Sha256)[] fixtures = new[]\n        {\n"
+   "    private static readonly (string Path, string Sha256)[] GovernedFixtures =\n"
+   "        new[]\n        {\n"
    (apply str
-          (for [{:keys [destination sha256]} fixtures]
-            (str "            (" (csharp-string (str "Fixtures/" destination))
+          (for [{:keys [path sha256]} fixtures]
+            (str "            (" (csharp-string path)
                  ", " (csharp-string sha256) "),\n")))
-   "        };\n"
-   "        Xunit.Assert.Equal(" (count fixtures) ", fixtures.Length);\n"
-   "        foreach ((string relative, string expected) in fixtures)\n        {\n"
+   "        };\n\n"
+   "    public static void VerifyGovernedFixtures()\n    {\n"
+   "        Xunit.Assert.Equal(" (count fixtures) ", GovernedFixtures.Length);\n"
+   "        foreach ((string relative, string expected) in GovernedFixtures)\n        {\n"
    "            string path = global::System.IO.Path.Combine(\n"
    "                global::System.AppContext.BaseDirectory, relative);\n"
    "            Xunit.Assert.True(global::System.IO.File.Exists(path), path);\n"
@@ -2346,7 +2372,10 @@
    "                global::System.Security.Cryptography.SHA256.HashData(\n"
    "                    global::System.IO.File.ReadAllBytes(path))).ToLowerInvariant();\n"
    "            Xunit.Assert.Equal(expected, actual);\n"
-   "        }\n    }\n}\n"))
+   "        }\n    }\n\n"
+   "    [Xunit.Fact]\n"
+   "    public void EveryShippedFixtureIsPresentAndPinned() =>\n"
+   "        VerifyGovernedFixtures();\n}\n"))
 
 (defn- render-provenance [source-root source-entries emission]
   (let [by-source (group-by :source-file emission)]
@@ -2383,7 +2412,7 @@
      :root-count (count roots)
      :emission emission}))
 
-(defn- emit! [{:keys [target-contract project-root]}]
+(defn- emit! [{:keys [target-contract project project-root]}]
   (let [source-workspace-root
         (paths/absolute (:workspace-root target-contract))
         generated-root project-root
@@ -2395,6 +2424,8 @@
         (mapv #(module-emission! source-workspace-root generated-root %) modules)
         emission (vec (mapcat :emission module-results))
         fixtures (get-in inventory [:accounting :fixtures])
+        governed-fixtures
+        (governed-fixtures! target-contract (:id project) fixtures)
         sources (get-in inventory [:accounting :sources])]
     (util/write-text!
      (paths/resolve-path generated-root "GeneratedSuiteAssembly.cs")
@@ -2420,7 +2451,7 @@
                       (fixture-targets))
     (util/write-text! (paths/resolve-path generated-root
                                           "GeneratedSuiteIntegrityTests.cs")
-                      (render-integrity-test fixtures))
+                      (render-integrity-test governed-fixtures))
     (util/write-text! (paths/resolve-path generated-root
                                           "JAVA-TEST-INVENTORY.edn")
                       (stable-text
@@ -2436,9 +2467,11 @@
      :roots (reduce + (map :root-count module-results))
      :cases (reduce + (map :case-count module-results))
      :fixtures (count fixtures)
+     :governed-fixtures (count governed-fixtures)
      :accounting (:digests inventory)}))
 
-(defn- verify-generated! [project-root]
+(defn- verify-generated!
+  [{:keys [target-contract project project-root]}]
   (let [inventory-file (paths/resolve-path project-root
                                            "JAVA-TEST-INVENTORY.edn")
         contract-file (paths/resolve-path project-root "SUITE-CONTRACT.edn")]
@@ -2453,27 +2486,70 @@
           contract (util/read-single-edn-string!
                     (slurp (str contract-file)))]
       (verify-inventory! contract inventory)
-      (doseq [{:keys [destination sha256]}
-              (get-in inventory [:accounting :fixtures])]
-        (let [file (paths/resolve-path project-root
-                                       (str "Fixtures/" destination))
-              actual (when (paths/regular-file? file)
-                       (util/sha256-file file))]
-          (when-not (= sha256 actual)
-            (fail! "Generated PdfCarton test fixture is missing or changed"
-                   {:reason :generated-pdfcarton-test-fixture-drift
-                    :path destination :expected sha256 :actual actual}))))
-      {:sources (get-in inventory [:totals :source-count])
-       :cases (get-in inventory [:totals :case-count])
-       :fixtures (get-in inventory [:totals :fixture-count])
-       :accounting (:digests inventory)})))
+      (let [governed
+            (governed-fixtures!
+             target-contract (:id project)
+             (get-in inventory [:accounting :fixtures]))]
+        (doseq [{:keys [path sha256]} governed]
+          (let [file (paths/resolve-path project-root path)
+                actual (when (paths/regular-file? file)
+                         (util/sha256-file file))]
+            (when-not (= sha256 actual)
+              (fail! "Generated PdfCarton test fixture is missing or changed"
+                     {:reason :generated-pdfcarton-test-fixture-drift
+                      :path path :expected sha256 :actual actual}))))
+        {:sources (get-in inventory [:totals :source-count])
+         :cases (get-in inventory [:totals :case-count])
+         :fixtures (get-in inventory [:totals :fixture-count])
+         :governed-fixtures (count governed)
+         :accounting (:digests inventory)}))))
+
+(defn- verify-built-lifecycle!
+  [{:keys [phase target-contract project project-root]}]
+  (let [inventory-file (paths/resolve-path project-root
+                                           "JAVA-TEST-INVENTORY.edn")
+        inventory (util/read-single-edn-string! (slurp (str inventory-file)))
+        governed
+        (governed-fixtures!
+         target-contract (:id project)
+         (get-in inventory [:accounting :fixtures]))
+        output-root
+        (paths/resolve-path
+         project-root
+         (str "bin/Release/" (:target-framework project)))
+        required
+        [(paths/resolve-path
+          output-root (str (:assembly-name project) ".dll"))
+         (paths/resolve-path
+          output-root (str (:assembly-name project) ".deps.json"))
+         (paths/resolve-path
+          output-root (str (:assembly-name project) ".runtimeconfig.json"))
+         (paths/resolve-path project-root "obj/project.assets.json")]]
+    (doseq [{:keys [path sha256]} governed]
+      (let [fixture (paths/resolve-path output-root path)
+            actual (when (paths/regular-file? fixture)
+                     (util/sha256-file fixture))]
+        (when-not (= sha256 actual)
+          (fail! "PdfCarton standalone suite fixture lifecycle changed a governed input"
+                 {:reason :pdfcarton-suite-fixture-lifecycle-drift
+                  :phase phase :path path :expected sha256 :actual actual}))))
+    (doseq [path required]
+      (when-not (paths/regular-file? path)
+        (fail! "PdfCarton standalone suite lifecycle removed a required build output"
+               {:reason :pdfcarton-suite-build-output-lifecycle-drift
+                :phase phase :path (str path)})))
+    {:phase phase
+     :governed-fixtures (count governed)
+     :required-build-outputs (count required)}))
 
 (defn strategy!
   "Target-owned complete adapted-upstream PdfCarton strategy."
   [{:keys [phase] :as options}]
   (case phase
     :emit (emit! options)
-    :verify (verify-generated! (:project-root options))
+    :verify (verify-generated! options)
+    :post-build (verify-built-lifecycle! options)
+    :post-test (verify-built-lifecycle! options)
     (fail! "PdfCarton adapted suite received an unsupported phase"
            {:reason :unsupported-pdfcarton-test-suite-phase
             :phase phase})))

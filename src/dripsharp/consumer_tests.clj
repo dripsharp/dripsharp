@@ -567,11 +567,22 @@
           :tests-root (paths/resolve-path staging "tests")
           :project-root project-root})))
     (try
-      (doseq [[_project phases] commands
+      (doseq [[project-id phases] commands
               phase [:restore :build :test]]
         (run-command! {:command (get phases phase)
                        :directory staging
-                       :timeout-ms timeout-ms}))
+                       :timeout-ms timeout-ms})
+        (when-let [lifecycle-phase ({:build :post-build :test :post-test} phase)]
+          (doseq [strategy (strategies target-contract)
+                  :when (and (= project-id (:project strategy))
+                             (some #{lifecycle-phase} (:lifecycle-phases strategy)))]
+            (invoke-strategy!
+             strategy
+             {:phase lifecycle-phase
+              :workspace-root root
+              :target-contract target-contract
+              :tests-root (paths/resolve-path staging "tests")
+              :project-root (:project-root (get projects-by-id project-id))}))))
       (finally
         (delete-build-artifacts! (paths/resolve-path staging "tests"))))
     (verify-inventory! (paths/resolve-path staging "tests"))

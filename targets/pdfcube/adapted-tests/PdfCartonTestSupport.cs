@@ -662,13 +662,21 @@ internal static class Support
                 : global::System.IO.Path.Combine("modules", module, path);
             return ContainedFixturePath(relative, allowDirectory: true);
         }
-        const string outputPrefix = "target/test-output";
-        if (path.Equals(outputPrefix, global::System.StringComparison.Ordinal) ||
-            path.StartsWith(outputPrefix + "/", global::System.StringComparison.Ordinal))
+        (string Prefix, string Root)[] mutablePaths =
         {
-            string relative = path.Substring(outputPrefix.Length).TrimStart('/');
-            return global::System.IO.Path.GetFullPath(global::System.IO.Path.Combine(
-                global::System.AppContext.BaseDirectory, "TestOutput", relative));
+            ("target/test-output-ext", "TestOutputExternal"),
+            ("target/test-input-ext", "TestInputExternal"),
+            ("target/test-output", "TestOutput")
+        };
+        foreach ((string prefix, string root) in mutablePaths)
+        {
+            if (!path.Equals(prefix, global::System.StringComparison.Ordinal) &&
+                !path.StartsWith(prefix + "/", global::System.StringComparison.Ordinal))
+            {
+                continue;
+            }
+            string relative = path.Substring(prefix.Length).TrimStart('/');
+            return MutableArtifactPath(root, relative);
         }
         return path;
     }
@@ -676,17 +684,8 @@ internal static class Support
     private static global::System.IO.FileInfo WritableFixture(string relative)
     {
         string source = ContainedFixturePath(relative, allowDirectory: true);
-        string root = global::System.IO.Path.GetFullPath(global::System.IO.Path.Combine(
-            global::System.AppContext.BaseDirectory, "WritableFixtures"));
-        string destination = global::System.IO.Path.GetFullPath(
-            global::System.IO.Path.Combine(root, relative));
-        if (!destination.StartsWith(
-                root + global::System.IO.Path.DirectorySeparatorChar,
-                global::System.StringComparison.Ordinal))
-        {
-            throw new global::System.IO.IOException(
-                $"Writable fixture path escapes its contained root: {relative}");
-        }
+        string root = MutableArtifactRoot("WritableFixtures");
+        string destination = MutableArtifactPath("WritableFixtures", relative);
         lock (WorkingFixtureLock)
         {
             if (!WorkingFixturesInitialized)
@@ -708,6 +707,61 @@ internal static class Support
             }
         }
         return new global::System.IO.FileInfo(destination);
+    }
+
+    internal static void ResetMutableTestArtifactsForContract()
+    {
+        lock (WorkingFixtureLock)
+        {
+            foreach (string name in new[]
+                     {
+                         "WritableFixtures",
+                         "TestOutput",
+                         "TestOutputExternal",
+                         "TestInputExternal"
+                     })
+            {
+                string root = MutableArtifactRoot(name);
+                if (global::System.IO.Directory.Exists(root))
+                    global::System.IO.Directory.Delete(root, recursive: true);
+            }
+            WorkingFixturesInitialized = false;
+        }
+    }
+
+    private static string MutableArtifactRoot(string name)
+    {
+        string baseDirectory = global::System.IO.Path.GetFullPath(
+            global::System.AppContext.BaseDirectory);
+        string root = global::System.IO.Path.GetFullPath(
+            global::System.IO.Path.Combine(baseDirectory, name));
+        if (!root.StartsWith(
+                baseDirectory + global::System.IO.Path.DirectorySeparatorChar,
+                global::System.StringComparison.Ordinal) ||
+            root.Equals(
+                global::System.IO.Path.Combine(baseDirectory, "Fixtures"),
+                global::System.StringComparison.Ordinal))
+        {
+            throw new global::System.IO.IOException(
+                $"Mutable test artifact root escapes the test output: {name}");
+        }
+        return root;
+    }
+
+    private static string MutableArtifactPath(string rootName, string relative)
+    {
+        string root = MutableArtifactRoot(rootName);
+        string path = global::System.IO.Path.GetFullPath(
+            global::System.IO.Path.Combine(root, relative));
+        if (!path.Equals(root, global::System.StringComparison.Ordinal) &&
+            !path.StartsWith(
+                root + global::System.IO.Path.DirectorySeparatorChar,
+                global::System.StringComparison.Ordinal))
+        {
+            throw new global::System.IO.IOException(
+                $"Mutable test artifact path escapes its contained root: {relative}");
+        }
+        return path;
     }
 
     private static void CopyFixtureDirectory(string source, string destination)
@@ -821,6 +875,40 @@ internal static class Support
 
 public sealed class PdfCartonTestSupportContractTests
 {
+    [global::Xunit.Fact]
+    public void MutableArtifactCleanupPreservesGovernedFixturesAndBuildInputs()
+    {
+        GeneratedSuiteIntegrityTests.VerifyGovernedFixtures();
+        string assembly = typeof(PdfCartonTestSupportContractTests).Assembly.Location;
+        global::Xunit.Assert.True(global::System.IO.File.Exists(assembly), assembly);
+
+        string writableFixture = Support.TestPath(
+            "io", "src/test/resources/org/apache/pdfbox/io/RandomAccessReadFile1.txt");
+        string testOutput = Support.TestPath(
+            "pdfbox", "target/test-output/lifecycle/probe.txt");
+        global::Xunit.Assert.Contains(
+            $"{global::System.IO.Path.DirectorySeparatorChar}WritableFixtures{global::System.IO.Path.DirectorySeparatorChar}",
+            writableFixture,
+            global::System.StringComparison.Ordinal);
+        global::Xunit.Assert.Contains(
+            $"{global::System.IO.Path.DirectorySeparatorChar}TestOutput{global::System.IO.Path.DirectorySeparatorChar}",
+            testOutput,
+            global::System.StringComparison.Ordinal);
+        global::System.IO.Directory.CreateDirectory(
+            global::System.IO.Path.GetDirectoryName(testOutput)!);
+        global::System.IO.File.WriteAllText(testOutput, "mutable lifecycle probe");
+
+        Support.ResetMutableTestArtifactsForContract();
+
+        global::Xunit.Assert.False(global::System.IO.File.Exists(testOutput));
+        GeneratedSuiteIntegrityTests.VerifyGovernedFixtures();
+        global::Xunit.Assert.True(global::System.IO.File.Exists(assembly), assembly);
+        string restoredFixture = Support.TestPath(
+            "io", "src/test/resources/org/apache/pdfbox/io/RandomAccessReadFile1.txt");
+        global::Xunit.Assert.True(
+            global::System.IO.File.Exists(restoredFixture), restoredFixture);
+    }
+
     [global::Xunit.Fact]
     public void PosixPermissionsUseTranslatedJavaContract()
     {

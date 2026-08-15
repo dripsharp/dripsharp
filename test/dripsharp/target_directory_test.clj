@@ -673,6 +673,7 @@
                                      :kind :adapted-upstream
                                      :policy :validation-only
                                      :project "DripSharp.Acme.Validation.Tests"
+                                     :lifecycle-phases [:post-build :post-test]
                                      :handler
                                      'dripsharp.consumer-tests/focused-consumer-strategy!}))))
          (let [contract (target-directory/read-target root :acme)]
@@ -683,7 +684,28 @@
            (is (= #{:shipped :validation-only}
                   (set (map :policy
                             (get-in contract
-                                    [:publication :test-suites :strategies]))))))))
+                                    [:publication :test-suites :strategies])))))
+           (is (= [:post-build :post-test]
+                  (get-in contract
+                          [:publication :test-suites :strategies 1
+                           :lifecycle-phases]))))))
+     (testing "lifecycle phases reject unknown or duplicate hooks"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/test-suites.edn"
+                    assoc-in [:strategies 0 :lifecycle-phases]
+                    [:post-build :post-build])
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme)))))
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/test-suites.edn"
+                    assoc-in [:strategies 0 :lifecycle-phases]
+                    [:before-test])
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme))))))
      (testing "shared adapted Java strategies pin their suite declaration"
        (create-target-workspace! root)
        (let [suite-text "{:schema-version 1}\n"
