@@ -22,6 +22,18 @@
    "reserved/slash.pkl" "name = \"reserved\"\n"
    "雪.pkl" "name = \"unicode\"\n"})
 
+(def ^:private keystore-relative
+  "pkl-commons-test/build/keystore")
+
+(def ^:private keystore-sha256
+  {"localhost.p12"
+   "cd43752faa963e7366440d98465c5efca8482df1a9fa39ec124b3854ad33fbb1"
+   "localhost.pem"
+   "f619edc6fc47477be15be4130c84df496856211cb97512a5ecd43f413143bb14"})
+
+(def ^:private keystore-files
+  (vec (sort (keys keystore-sha256))))
+
 (def ^:private provenance-columns
   ["path" "class" "upstream-revision" "source-path" "source-sha256"
    "transformation" "emitted-sha256" "license" "notice"
@@ -39,6 +51,15 @@
   (Files/writeString (paths/path path) text StandardCharsets/UTF_8
                      (make-array OpenOption 0))
   path)
+
+(defn- copy-file!
+  [source destination]
+  (Files/createDirectories (.getParent (paths/path destination))
+                           (make-array FileAttribute 0))
+  (Files/copy (paths/path source) (paths/path destination)
+              (into-array java.nio.file.StandardCopyOption
+                          [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+  destination)
 
 (defn- portable
   [value]
@@ -111,12 +132,31 @@
             :when (not= (paths/absolute inventory) (paths/absolute file))]
         (str (util/sha256-file file) "  " (relative tests-root file) "\n"))))))
 
+(defn- rewrite-provenance-row!
+  [ledger output-path transform]
+  (let [prefix (str output-path "\t")
+        lines (str/split-lines (Files/readString ledger))]
+    (write-text!
+     ledger
+     (str (str/join "\n"
+                    (map #(if (str/starts-with? % prefix)
+                            (transform %)
+                            %)
+                         lines))
+          "\n"))))
+
 (defn- seed-governed-product!
   [root]
   (let [tests-root (paths/resolve-path root "products/brine/tests")
         directory
         (paths/resolve-path tests-root "Fixtures/pkl" encoded-package-relative)
-        archive (paths/resolve-path directory "encoded-assets@1.0.0.zip")]
+        archive (paths/resolve-path directory "encoded-assets@1.0.0.zip")
+        keystore-directory
+        (paths/resolve-path tests-root "Fixtures/pkl" keystore-relative)
+        governed-keystore
+        (paths/resolve-path (paths/workspace-root)
+                            "products/brine/tests/Fixtures/pkl"
+                            keystore-relative)]
     (doseq [[name contents] encoded-sources]
       (write-text! (paths/resolve-path directory "encoded-source" name)
                    contents))
@@ -129,14 +169,23 @@
           "  \"packageZipChecksums\": {\"sha256\": \""
           (util/sha256-file archive) "\"}\n"
           "}\n"))
-    (let [fixture-files (regular-files directory)]
+    (doseq [file keystore-files]
+      (copy-file! (paths/resolve-path governed-keystore file)
+                  (paths/resolve-path keystore-directory file)))
+    (let [fixture-files
+          (regular-files (paths/resolve-path tests-root "Fixtures/pkl"))]
       (write-text! (paths/resolve-path tests-root "TEST-PROVENANCE.tsv")
                    (render-provenance tests-root fixture-files))
       (write-inventory! tests-root))
     {:tests-root tests-root
      :product-directory directory
+     :keystore-product-directory keystore-directory
      :upstream-directory
-     (paths/resolve-path root "research/pkl" encoded-package-relative)}))
+     (paths/resolve-path root "research/pkl" encoded-package-relative)
+     :upstream-build-directory
+     (paths/resolve-path root "research/pkl/pkl-commons-test/build")
+     :upstream-keystore-directory
+     (paths/resolve-path root "research/pkl" keystore-relative)}))
 
 (defn- failure-data
   [f]
@@ -213,14 +262,118 @@
           {:keys [tests-root]} (seed-governed-product! root)
           ledger (paths/resolve-path tests-root "TEST-PROVENANCE.tsv")]
       (try
-        (write-text! ledger
-                     (str/replace-first (Files/readString ledger)
-                                        "\tApache-2.0\t"
-                                        "\t\t"))
+        (rewrite-provenance-row!
+         ledger
+         (str "Fixtures/pkl/" encoded-package-relative
+              "/encoded-assets@1.0.0.json")
+         #(str/replace-first % "\tApache-2.0\t" "\t\t"))
         (write-inventory! tests-root)
         (is (= :encoded-package-governance-drift
                (:reason
                 (failure-data
                  #(brine-xunit/materialize-encoded-package-fixture! root)))))
+        (finally
+          (tree-cleanup/delete-tree! root))))))
+
+(deftest cold-keystore-is-materialized-repeatably
+  (let [root (temp-directory)
+        {:keys [keystore-product-directory upstream-build-directory
+                upstream-keystore-directory]}
+        (seed-governed-product! root)]
+    (try
+      (dotimes [_ 2]
+        (tree-cleanup/delete-tree! upstream-build-directory)
+        (is (not (paths/exists? upstream-build-directory)))
+        (let [result (brine-xunit/materialize-keystore-fixture! root)]
+          (is (= 2 (:fixtures result)))
+          (is (= upstream-keystore-directory (:destination result)))
+          (is (= keystore-files
+                 (mapv #(relative keystore-product-directory %)
+                       (regular-files keystore-product-directory))))
+          (is (= keystore-files
+                 (mapv #(relative upstream-keystore-directory %)
+                       (regular-files upstream-keystore-directory))))
+          (is (= (mapv util/sha256-file
+                       (regular-files keystore-product-directory))
+                 (mapv util/sha256-file
+                       (regular-files upstream-keystore-directory))))))
+      (testing "freshly randomized Gradle output is replaced, not accepted"
+        (write-text! (paths/resolve-path upstream-keystore-directory
+                                         "localhost.p12")
+                     "randomized Gradle keystore\n")
+        (write-text! (paths/resolve-path upstream-keystore-directory
+                                         "localhost.pem")
+                     "randomized Gradle certificate\n")
+        (brine-xunit/materialize-keystore-fixture! root)
+        (is (= (mapv util/sha256-file
+                     (regular-files keystore-product-directory))
+               (mapv util/sha256-file
+                     (regular-files upstream-keystore-directory)))))
+      (finally
+        (tree-cleanup/delete-tree! root)))))
+
+(deftest keystore-governed-input-fails-closed
+  (testing "a missing checksum-governed keystore source is rejected"
+    (let [root (temp-directory)
+          {:keys [keystore-product-directory]} (seed-governed-product! root)]
+      (try
+        (Files/delete
+         (paths/resolve-path keystore-product-directory "localhost.p12"))
+        (is (= :keystore-governed-source-drift
+               (:reason
+                (failure-data
+                 #(brine-xunit/materialize-keystore-fixture! root)))))
+        (finally
+          (tree-cleanup/delete-tree! root)))))
+  (testing "changed governed keystore content is rejected"
+    (let [root (temp-directory)
+          {:keys [keystore-product-directory]} (seed-governed-product! root)]
+      (try
+        (write-text! (paths/resolve-path keystore-product-directory
+                                         "localhost.pem")
+                     "changed governed certificate\n")
+        (is (= :keystore-governed-source-drift
+               (:reason
+                (failure-data
+                 #(brine-xunit/materialize-keystore-fixture! root)))))
+        (finally
+          (tree-cleanup/delete-tree! root)))))
+  (testing "the pinned checksum inventory cannot bless different bytes"
+    (let [root (temp-directory)
+          {:keys [tests-root]} (seed-governed-product! root)
+          inventory (paths/resolve-path tests-root "SHA256SUMS")]
+      (try
+        (write-text!
+         inventory
+         (str/replace-first
+          (Files/readString inventory)
+          (get keystore-sha256 "localhost.p12")
+          (apply str (repeat 64 "0"))))
+        (is (= :keystore-checksum-drift
+               (:reason
+                (failure-data
+                 #(brine-xunit/materialize-keystore-fixture! root)))))
+        (finally
+          (tree-cleanup/delete-tree! root)))))
+  (testing "pinned checksum, authorship class, license, and provenance are exact"
+    (let [root (temp-directory)
+          {:keys [tests-root]} (seed-governed-product! root)
+          ledger (paths/resolve-path tests-root "TEST-PROVENANCE.tsv")]
+      (try
+        (rewrite-provenance-row!
+         ledger
+         (str "Fixtures/pkl/" keystore-relative "/localhost.p12")
+         #(str/replace-first
+           (str/replace-first
+            %
+            "\tvendored-third-party\t"
+            "\tdripsharp-authored-test-infrastructure\t")
+           "\tApache-2.0\t"
+           "\t\t"))
+        (write-inventory! tests-root)
+        (is (= :keystore-governance-drift
+               (:reason
+                (failure-data
+                 #(brine-xunit/materialize-keystore-fixture! root)))))
         (finally
           (tree-cleanup/delete-tree! root))))))

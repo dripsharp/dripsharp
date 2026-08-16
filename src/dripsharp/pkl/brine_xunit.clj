@@ -49,6 +49,15 @@
     "encoded-source/reserved/slash.pkl"
     "encoded-source/雪.pkl"})
 
+(def ^:private keystore-relative
+  "pkl-commons-test/build/keystore")
+
+(def ^:private keystore-files
+  {"localhost.p12"
+   "cd43752faa963e7366440d98465c5efca8482df1a9fa39ec124b3854ad33fbb1"
+   "localhost.pem"
+   "f619edc6fc47477be15be4130c84df496856211cb97512a5ecd43f413143bb14"})
+
 (def ^:private zip-epoch
   (LocalDateTime/of 1980 1 1 0 0))
 
@@ -623,6 +632,117 @@
      :source product-tests
      :destination upstream-directory}))
 
+(defn- keystore-governance!
+  [product-tests]
+  (let [inventory-file (paths/resolve-path product-tests "SHA256SUMS")
+        ledger-file (paths/resolve-path product-tests "TEST-PROVENANCE.tsv")
+        inventory (parse-checksum-inventory! inventory-file)
+        rows (parse-ledger! ledger-file)
+        output-prefix (str "Fixtures/pkl/" keystore-relative "/")
+        expected-paths (set (map #(str output-prefix %) (keys keystore-files)))
+        fixture-rows (->> rows
+                          (filter #(str/starts-with? (get % "path")
+                                                     output-prefix))
+                          (map (juxt #(get % "path") identity))
+                          (into {}))
+        actual-paths (set (keys fixture-rows))]
+    (when-not (= expected-paths actual-paths)
+      (fail! "Pinned Brine keystore fixture boundary changed"
+             {:reason :keystore-governance-boundary-drift
+              :expected (vec (sort expected-paths))
+              :actual (vec (sort actual-paths))}))
+    (let [files
+          (mapv
+           (fn [[relative expected-sha256]]
+             (let [output-path (str output-prefix relative)
+                   source-path (str keystore-relative "/" relative)
+                   source (paths/resolve-path product-tests output-path)
+                   inventory-sha256 (get inventory output-path)
+                   actual-sha256 (when (paths/regular-file? source)
+                                   (util/sha256-file source))
+                   row (get fixture-rows output-path)
+                   expected-row
+                   {"path" output-path
+                    "class" "vendored-third-party"
+                    "upstream-revision"
+                    language-contract/pinned-upstream-revision
+                    "source-path" source-path
+                    "source-sha256" expected-sha256
+                    "transformation" "materialized-byte-for-byte-fixture-copy"
+                    "emitted-sha256" expected-sha256
+                    "license" "Apache-2.0"
+                    "notice"
+                    (str "Copyright Apple Inc.; vendored from apple/pkl "
+                         "under Apache-2.0.")
+                    "durable-source" "-"
+                    "authored-lines" "-"
+                    "review-evidence" "-"
+                    "line-budget" "-"}]
+               (when-not (= expected-sha256 inventory-sha256)
+                 (fail! "Pinned Brine keystore checksum changed"
+                        {:reason :keystore-checksum-drift
+                         :path output-path
+                         :expected expected-sha256
+                         :actual inventory-sha256
+                         :inventory (str inventory-file)}))
+               (when-not (= expected-sha256 actual-sha256)
+                 (fail! "Pinned Brine keystore fixture source changed"
+                        {:reason :keystore-governed-source-drift
+                         :path (str source)
+                         :expected expected-sha256
+                         :actual actual-sha256}))
+               (when-not (= expected-row row)
+                 (fail! "Pinned Brine keystore governance changed"
+                        {:reason :keystore-governance-drift
+                         :path output-path
+                         :expected expected-row
+                         :actual row}))
+               {:relative relative
+                :source source
+                :source-path source-path
+                :sha256 expected-sha256}))
+           (sort-by key keystore-files))]
+      (consumer-tests/verify-inventory! product-tests)
+      (verify-provenance! product-tests)
+      files)))
+
+(defn materialize-keystore-fixture!
+  "Restores the ignored Pkl test keystore from Brine's pinned, checksum- and
+  provenance-governed fixture bytes. Random Gradle output is always replaced."
+  [workspace-root]
+  (let [root (paths/absolute workspace-root)
+        product-tests (paths/resolve-path root "products/brine/tests")
+        upstream-directory
+        (paths/resolve-path root "research/pkl" keystore-relative)
+        files (keystore-governance! product-tests)
+        unexpected-files
+        (if (paths/directory? upstream-directory)
+          (->> (regular-files upstream-directory)
+               (map #(relative upstream-directory %))
+               (remove (set (keys keystore-files)))
+               vec)
+          [])]
+    (when (seq unexpected-files)
+      (fail! "Materialized Brine keystore fixture boundary changed"
+             {:reason :materialized-keystore-boundary-drift
+              :unexpected unexpected-files}))
+    (doseq [{:keys [relative source]} files
+            :let [destination (paths/resolve-path upstream-directory relative)]]
+      (copy-file! source destination))
+    (doseq [{:keys [relative sha256]} files
+            :let [destination (paths/resolve-path upstream-directory relative)
+                  actual (when (paths/regular-file? destination)
+                           (util/sha256-file destination))]]
+      (when-not (= sha256 actual)
+        (fail! "Materialized Brine keystore fixture changed"
+               {:reason :materialized-keystore-drift
+                :path (str destination)
+                :expected sha256
+                :actual actual})))
+    {:fixtures (count files)
+     :source product-tests
+     :destination upstream-directory}))
+
 (defn- add-existing-rows!
   [root tests-root generator rows]
   (let [authored
@@ -656,6 +776,7 @@
   (let [root (paths/workspace-root (:target-directory target-contract))
         tests-root (paths/absolute tests-root)
         upstream (paths/resolve-path root "research" "pkl")
+        _ (materialize-keystore-fixture! root)
         _ (materialize-encoded-package-fixture! root)
         revision language-contract/pinned-upstream-revision
         language-manifest (paths/resolve-path
