@@ -20,6 +20,12 @@ internal static class Support
     private static readonly object WorkingFixtureLock = new();
     private static bool WorkingFixturesInitialized;
     private static readonly object MaterializedResourceLock = new();
+    private static readonly (string Prefix, string Root)[] MutablePathMappings =
+    {
+        ("target/test-output-ext", "TestOutputExternal"),
+        ("target/test-input-ext", "TestInputExternal"),
+        ("target/test-output", "TestOutput")
+    };
     private static readonly object DeleteOnExitLock = new();
     private static readonly global::System.Collections.Generic.HashSet<string>
         DeleteOnExitPaths = new(global::System.StringComparer.Ordinal);
@@ -54,6 +60,10 @@ internal static class Support
     {
         global::System.Environment.SetEnvironmentVariable("TZ", "UTC");
         global::System.TimeZoneInfo.ClearCachedData();
+        foreach ((string _, string root) in MutablePathMappings)
+        {
+            global::System.IO.Directory.CreateDirectory(MutableArtifactRoot(root));
+        }
     }
 
     internal static void CloseQuietly(object? closeable)
@@ -662,13 +672,7 @@ internal static class Support
                 : global::System.IO.Path.Combine("modules", module, path);
             return ContainedFixturePath(relative, allowDirectory: true);
         }
-        (string Prefix, string Root)[] mutablePaths =
-        {
-            ("target/test-output-ext", "TestOutputExternal"),
-            ("target/test-input-ext", "TestInputExternal"),
-            ("target/test-output", "TestOutput")
-        };
-        foreach ((string prefix, string root) in mutablePaths)
+        foreach ((string prefix, string root) in MutablePathMappings)
         {
             if (!path.Equals(prefix, global::System.StringComparison.Ordinal) &&
                 !path.StartsWith(prefix + "/", global::System.StringComparison.Ordinal))
@@ -878,6 +882,23 @@ public sealed class PdfCartonTestSupportContractTests
     [global::Xunit.Fact]
     public void MutableArtifactCleanupPreservesGovernedFixturesAndBuildInputs()
     {
+        string[] mappedMutableRoots =
+        {
+            Support.TestPath("pdfbox", "target/test-output-ext"),
+            Support.TestPath("pdfbox", "target/test-input-ext"),
+            Support.TestPath("pdfbox", "target/test-output")
+        };
+        foreach (string root in mappedMutableRoots)
+        {
+            if (global::System.IO.Directory.Exists(root))
+                global::System.IO.Directory.Delete(root, recursive: true);
+            global::Xunit.Assert.False(global::System.IO.Directory.Exists(root), root);
+        }
+        Support.InitializeTestEnvironment();
+        Support.InitializeTestEnvironment();
+        foreach (string root in mappedMutableRoots)
+            global::Xunit.Assert.True(global::System.IO.Directory.Exists(root), root);
+
         GeneratedSuiteIntegrityTests.VerifyGovernedFixtures();
         string assembly = typeof(PdfCartonTestSupportContractTests).Assembly.Location;
         global::Xunit.Assert.True(global::System.IO.File.Exists(assembly), assembly);

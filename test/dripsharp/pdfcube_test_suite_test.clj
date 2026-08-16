@@ -63,6 +63,12 @@
     (is (str/includes? support "WritableFixtures"))
     (is (str/includes? support "TestOutputExternal"))
     (is (str/includes? support "TestInputExternal"))
+    (is (str/includes? support "MutablePathMappings"))
+    (is (str/includes?
+         support
+         "Directory.CreateDirectory(MutableArtifactRoot(root))"))
+    (is (str/includes? support "mappedMutableRoots"))
+    (is (str/includes? support "Support.InitializeTestEnvironment();"))
     (is (str/includes?
          support
          "MutableArtifactCleanupPreservesGovernedFixturesAndBuildInputs"))
