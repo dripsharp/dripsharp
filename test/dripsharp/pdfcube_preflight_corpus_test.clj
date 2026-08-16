@@ -1,6 +1,6 @@
 (ns dripsharp.pdfcube-preflight-corpus-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.preflight-corpus :as corpus])
   (:import [java.nio.charset StandardCharsets]
@@ -50,6 +50,87 @@
         :document-closed "true"
         :diagnostic ""}))
    (:cases validated)))
+
+(def ^:private exact-preflight-assembly-dependencies
+  [{:assembly-name "DripSharp.PdfCarton"
+    :package-id "DripSharp.PdfCarton"
+    :version "3.0.8-alpha.1"
+    :target-framework "netstandard2.0"}
+   {:assembly-name "DripSharp.PdfCarton.Fonts"
+    :package-id "DripSharp.PdfCarton.Fonts"
+    :version "3.0.8-alpha.1"
+    :target-framework "netstandard2.0"}
+   {:assembly-name "DripSharp.PdfCarton.IO"
+    :package-id "DripSharp.PdfCarton.IO"
+    :version "3.0.8-alpha.1"
+    :target-framework "netstandard2.0"}
+   {:assembly-name "DripSharp.PdfCarton.Xmp"
+    :package-id "DripSharp.PdfCarton.Xmp"
+    :version "3.0.8-alpha.1"
+    :target-framework "netstandard2.0"}])
+
+(defn- preflight-dependencies
+  [expected]
+  (#'corpus/preflight-assembly-dependencies
+   "DripSharp.PdfCarton.Preflight" expected))
+
+(defn- caught
+  [thunk]
+  (try
+    (thunk)
+    nil
+    (catch clojure.lang.ExceptionInfo error error)))
+
+(deftest packed-preflight-dependency-entries-are-exactly-netstandard
+  (let [actual (preflight-dependencies exact-preflight-assembly-dependencies)]
+    (is (= exact-preflight-assembly-dependencies actual))
+    (is (= ["lib/netstandard2.0/DripSharp.PdfCarton.dll"
+            "lib/netstandard2.0/DripSharp.PdfCarton.Fonts.dll"
+            "lib/netstandard2.0/DripSharp.PdfCarton.IO.dll"
+            "lib/netstandard2.0/DripSharp.PdfCarton.Xmp.dll"]
+           (mapv
+            (fn [{:keys [assembly-name target-framework]}]
+              (str "lib/" target-framework "/" assembly-name ".dll"))
+            actual)))))
+
+(deftest packed-preflight-dependency-contract-fails-closed
+  (testing "the former IO and Fonts net10.0 package paths are rejected"
+    (doseq [assembly-name
+            ["DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"]]
+      (let [stale
+            (mapv
+             (fn [dependency]
+               (if (= assembly-name (:assembly-name dependency))
+                 (assoc dependency :target-framework "net10.0")
+                 dependency))
+             exact-preflight-assembly-dependencies)
+            error (caught #(preflight-dependencies stale))]
+        (is (= :invalid-preflight-assembly-dependencies
+               (:kind (ex-data error)))
+            assembly-name)
+        (is (= stale (:actual (ex-data error))) assembly-name))))
+  (testing "missing, extra, and otherwise incorrect dependency evidence is rejected"
+    (doseq [[label changed]
+            [["missing" (pop exact-preflight-assembly-dependencies)]
+             ["extra"
+              (conj exact-preflight-assembly-dependencies
+                    {:assembly-name "DripSharp.PdfCarton.Unexpected"
+                     :package-id "DripSharp.PdfCarton.Unexpected"
+                     :version "3.0.8-alpha.1"
+                     :target-framework "netstandard2.0"})]
+             ["framework"
+              (assoc-in exact-preflight-assembly-dependencies
+                        [0 :target-framework] "net9.0")]
+             ["package"
+              (assoc-in exact-preflight-assembly-dependencies
+                        [0 :package-id] "DripSharp.PdfCarton.Unexpected")]]]
+      (let [error (caught #(preflight-dependencies changed))]
+        (is (= :invalid-preflight-assembly-dependencies
+               (:kind (ex-data error)))
+            label)
+        (is (= exact-preflight-assembly-dependencies
+               (:expected (ex-data error)))
+            label)))))
 
 (deftest durable-corpus-covers-the-supported-preflight-contract
   (let [validated (validated-manifest)

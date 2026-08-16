@@ -800,26 +800,30 @@
   (into (mapv :identity (:packages package-proof))
         (:external-packages package-proof)))
 
+(def ^:private preflight-assembly-dependency-contract
+  (mapv
+   (fn [assembly-name]
+     {:assembly-name assembly-name
+      :package-id assembly-name
+      :version (baseline/package-version :pdfcube assembly-name)
+      :target-framework "netstandard2.0"})
+   ["DripSharp.PdfCarton"
+    "DripSharp.PdfCarton.Fonts"
+    "DripSharp.PdfCarton.IO"
+    "DripSharp.PdfCarton.Xmp"]))
+
 (defn- preflight-assembly-dependencies
   [assembly-name expected]
   (if-not (= "DripSharp.PdfCarton.Preflight" assembly-name)
     expected
-    (->> (concat
-          expected
-          [{:assembly-name "DripSharp.PdfCarton.IO"
-            :package-id "DripSharp.PdfCarton.IO"
-            :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")
-            :target-framework "net10.0"}
-           {:assembly-name "DripSharp.PdfCarton.Fonts"
-            :package-id "DripSharp.PdfCarton.Fonts"
-            :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")
-            :target-framework "net10.0"}])
-         (reduce
-          (fn [by-assembly dependency]
-            (assoc by-assembly (:assembly-name dependency) dependency))
-          (sorted-map))
-         vals
-         vec)))
+    (let [actual (vec expected)]
+      (when-not (= preflight-assembly-dependency-contract actual)
+        (fail!
+         "Preflight packed assembly dependencies differ from the exact netstandard2.0 contract"
+         {:kind :invalid-preflight-assembly-dependencies
+          :expected preflight-assembly-dependency-contract
+          :actual actual}))
+      actual)))
 
 (defn- inspect-preflight-package-assembly!
   [run-command! root artifact assembly-entry assembly-name verified-assembly
