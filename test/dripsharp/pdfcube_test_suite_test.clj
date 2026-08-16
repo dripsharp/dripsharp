@@ -25,6 +25,79 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
+(deftest clean-pdfbox-fixtures-are-materialized-without-a-warm-cache
+  (let [root (temp-directory)
+        target-root (paths/resolve-path root "targets/pdfcube")
+        product-root
+        (paths/resolve-path
+         root "products/pdfcarton/tests/DripSharp.PdfCarton.Tests")
+        source "fontbox/target/fonts/PinnedFixture.otf"
+        destination (str "modules/" source)
+        contents "checksum-pinned-font-fixture"
+        sha256 (util/sha256-text contents)
+        fixture {:module :fontbox
+                 :source source
+                 :destination destination
+                 :source-sha256 sha256
+                 :sha256 sha256
+                 :license "OFL-1.1"
+                 :authorship :third-party-test-fixture
+                 :attribution "Pinned fixture attribution."}
+        contract {:schema-version 1
+                  :target :pdfcube
+                  :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+                  :modules {}
+                  :totals {}
+                  :digests {}}
+        inventory {:modules {}
+                   :totals {}
+                   :digests {}
+                   :accounting {:fixtures [fixture]}}
+        source-file (paths/resolve-path root "research/pdfbox" source)
+        product-file (paths/resolve-path product-root "Fixtures" destination)]
+    (try
+      (write-file!
+       (paths/resolve-path target-root "adapted-tests/suite-contract.edn")
+       (str (pr-str contract) "\n"))
+      (write-file! (paths/resolve-path product-root "SUITE-CONTRACT.edn")
+                   (str (pr-str contract) "\n"))
+      (write-file! (paths/resolve-path product-root "JAVA-TEST-INVENTORY.edn")
+                   (str (pr-str inventory) "\n"))
+      (write-file! product-file contents)
+      (dotimes [_ 2]
+        (when (paths/exists? (.getParent (.getParent source-file)))
+          (tree-cleanup/delete-tree! (.getParent (.getParent source-file))))
+        (is (not (paths/exists? source-file)))
+        (is (= 1 (:fixtures
+                  (test-suite/materialize-pinned-fixtures! root))))
+        (is (= contents (Files/readString source-file))))
+      (write-file! source-file "changed residue")
+      (is (= :pdfcarton-materialized-fixture-drift
+             (:reason
+              (failure-data
+               #(test-suite/materialize-pinned-fixtures! root)))))
+      (tree-cleanup/delete-tree! (.getParent (.getParent source-file)))
+      (write-file! product-file "changed pinned source")
+      (is (= :pdfcarton-pinned-fixture-source-drift
+             (:reason
+              (failure-data
+               #(test-suite/materialize-pinned-fixtures! root)))))
+      (finally
+        (tree-cleanup/delete-tree! root)))))
+
+(deftest pdfbox-fixture-governance-fails-closed
+  (is (= {:reason :pdfcarton-fixture-governance-missing
+          :missing [:license :attribution]}
+         (select-keys
+          (failure-data
+           #(#'test-suite/validate-fixture-governance!
+             {:module :fontbox
+              :source "fontbox/target/fonts/probe.otf"
+              :destination "modules/fontbox/target/fonts/probe.otf"
+              :license ""
+              :authorship :third-party-test-fixture}))
+          [:reason :missing]))))
+
 (deftest generated-pdfbox-tests-preserve-deterministic-junit-method-order
   (let [source (slurp "src/dripsharp/pdfcube/test_suite.clj")
         support (slurp "targets/pdfcube/adapted-tests/PdfCartonTestSupport.cs")]

@@ -29,6 +29,8 @@
 (def ^:private revision "9286e47d89d6877005c9d2d0f2fd38793a62519a")
 (def ^:private suite-contract-file "adapted-tests/suite-contract.edn")
 
+(declare materialize-pinned-fixtures!)
+
 (def ^:private module-specs
   [{:id :io
     :source-directory "io"
@@ -371,6 +373,7 @@
                                                      (:profile %)))
                        module-specs)
         source-root (paths/resolve-path workspace-root "research/pdfbox")
+        _ (materialize-pinned-fixtures! workspace-root)
         _ (project/verify-checkout!
            {:workspace-root workspace-root
             :project-root source-root
@@ -568,6 +571,24 @@
        (sort-by :destination)
        vec))
 
+(defn- validate-fixture-governance! [fixture]
+  (let [missing
+        (->> [:license :authorship :attribution]
+             (filter
+              (fn [field]
+                (let [value (get fixture field)]
+                  (or (nil? value)
+                      (and (string? value) (str/blank? value))))))
+             vec)]
+    (when (seq missing)
+      (fail! "PdfCarton test fixture governance is incomplete"
+             {:reason :pdfcarton-fixture-governance-missing
+              :module (:module fixture)
+              :source (:source fixture)
+              :destination (:destination fixture)
+              :missing missing}))
+    fixture))
+
 (defn- selected-file? [selected-files location]
   (contains? selected-files
              (some-> location :file paths/absolute str)))
@@ -688,9 +709,11 @@
      :sources (mapv #(source-entry source-root id plan %) sources)
      :fixtures
      (vec
-      (sort-by :destination
-               (concat (map #(fixture-entry source-root id input %) resources)
-                       additional-fixtures)))
+      (map validate-fixture-governance!
+           (sort-by :destination
+                    (concat
+                     (map #(fixture-entry source-root id input %) resources)
+                     additional-fixtures))))
      :cases (mapv #(assoc % :module id) serializable-cases)
      :parameter-rows (parameter-row-records id cases)
      :helpers (mapv #(assoc % :module id)
@@ -809,6 +832,111 @@
               :expected (get contract field)
               :actual (get inventory field)})))
   inventory)
+
+(defn- materialized-target-fixture? [{:keys [source destination]}]
+  (and (string? source)
+       (boolean
+        (re-matches #"(?:fontbox|pdfbox|preflight)/target/.+" source))
+       (= destination (str "modules/" source))))
+
+(defn materialize-pinned-fixtures!
+  "Restores ignored PDFBox Maven-target fixture inputs from the pinned,
+  checksum-governed shipped suite in the PdfCarton product checkout."
+  [workspace-root]
+  (let [workspace-root (paths/absolute workspace-root)
+        source-root (paths/resolve-path workspace-root "research/pdfbox")
+        target-root (paths/resolve-path workspace-root "targets/pdfcube")
+        product-root
+        (paths/resolve-path
+         workspace-root
+         "products/pdfcarton/tests/DripSharp.PdfCarton.Tests")
+        product-inventory-file
+        (paths/resolve-path product-root "JAVA-TEST-INVENTORY.edn")
+        product-contract-file
+        (paths/resolve-path product-root "SUITE-CONTRACT.edn")]
+    (when-not (and (paths/regular-file? product-inventory-file)
+                   (paths/regular-file? product-contract-file))
+      (fail! "Pinned PdfCarton suite fixture source is unavailable"
+             {:reason :pdfcarton-pinned-fixture-source-missing
+              :product-root (str product-root)
+              :inventory (str product-inventory-file)
+              :contract (str product-contract-file)}))
+    (let [contract (read-contract! target-root)
+          product-contract
+          (util/read-single-edn-string! (slurp (str product-contract-file)))
+          product-inventory
+          (util/read-single-edn-string! (slurp (str product-inventory-file)))]
+      (when-not (= contract product-contract)
+        (fail! "Pinned PdfCarton suite fixture contract changed"
+               {:reason :pdfcarton-pinned-fixture-contract-drift
+                :expected contract
+                :actual product-contract}))
+      (verify-inventory! contract product-inventory)
+      (let [fixtures
+            (->> (get-in product-inventory [:accounting :fixtures])
+                 (filter materialized-target-fixture?)
+                 (map validate-fixture-governance!)
+                 (sort-by :source)
+                 vec)]
+        (when-not (seq fixtures)
+          (fail! "Pinned PdfCarton suite contains no Maven-target fixtures"
+                 {:reason :pdfcarton-pinned-fixture-source-empty
+                  :inventory (str product-inventory-file)}))
+        (doseq [{:keys [source destination sha256 source-sha256] :as fixture}
+                fixtures]
+          (let [expected (or source-sha256 sha256)
+                product-source
+                (paths/resolve-path product-root "Fixtures" destination)
+                source-file (paths/resolve-path source-root source)]
+            (when-not (and (.startsWith (paths/absolute product-source)
+                                        (paths/absolute product-root))
+                           (.startsWith (paths/absolute source-file)
+                                        (paths/absolute source-root)))
+              (fail! "Pinned PdfCarton suite fixture path escapes its root"
+                     {:reason :pdfcarton-pinned-fixture-path-escape
+                      :source source
+                      :destination destination}))
+            (when-not (and (string? expected)
+                           (re-matches #"[0-9a-f]{64}" expected)
+                           (or (nil? source-sha256) (= source-sha256 sha256)))
+              (fail! "Pinned PdfCarton suite fixture checksum is invalid"
+                     {:reason :pdfcarton-pinned-fixture-checksum-invalid
+                      :fixture fixture}))
+            (let [product-sha256
+                  (when (paths/regular-file? product-source)
+                    (util/sha256-file product-source))]
+              (when-not (= expected product-sha256)
+                (fail! "Pinned PdfCarton suite fixture source changed"
+                       {:reason :pdfcarton-pinned-fixture-source-drift
+                        :source (str product-source)
+                        :expected expected
+                        :actual product-sha256})))
+            (if (paths/exists? source-file)
+              (let [actual (when (paths/regular-file? source-file)
+                             (util/sha256-file source-file))]
+                (when-not (= expected actual)
+                  (fail! "Materialized PdfCarton suite fixture changed"
+                         {:reason :pdfcarton-materialized-fixture-drift
+                          :source (str source-file)
+                          :expected expected
+                          :actual actual})))
+              (do
+                (Files/createDirectories
+                 (.getParent source-file)
+                 (make-array java.nio.file.attribute.FileAttribute 0))
+                (Files/copy
+                 product-source source-file
+                 (into-array CopyOption
+                             [StandardCopyOption/COPY_ATTRIBUTES]))
+                (when-not (= expected (util/sha256-file source-file))
+                  (fail! "Materialized PdfCarton suite fixture checksum changed"
+                         {:reason :pdfcarton-materialized-fixture-copy-drift
+                          :source (str source-file)
+                          :expected expected
+                          :actual (util/sha256-file source-file)}))))))
+        {:fixtures (count fixtures)
+         :source product-root
+         :destination source-root}))))
 
 (defn- selected-root-types [resolved-model selected]
   (let [selected-files (set (map (comp str paths/absolute) selected))
