@@ -1345,9 +1345,14 @@
          "netstandard2.0 product package")
         selected {:id "Example.Portable" :version "1.0.0"
                   :sha256 (sha256 selected-artifact)}
-        dependency {:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"
-                    :sha256 (apply str (repeat 64 "a"))}
-        identities [selected dependency]
+        async-interfaces
+        {:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"
+         :sha256 (apply str (repeat 64 "a"))}
+        cryptography
+        {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"
+         :sha256 (apply str (repeat 64 "b"))}
+        dependencies [async-interfaces cryptography]
+        identities (into [selected] dependencies)
         project
         (write-file!
          (.resolve root "Consumer.csproj")
@@ -1369,24 +1374,30 @@
      assets-file (consumer-assets-map packages [selected] {}))
     (let [proof
           (packaging/inspect-consumer-dependencies!
-           project assets-file packages selected identities [dependency])]
+           project assets-file packages selected identities dependencies)]
       (is (= [selected] (:resolved-packages proof)))
       (is (empty? (:pruned-packages proof)))
-      (is (= [dependency] (:framework-omitted-packages proof)))
+      (is (= dependencies (:framework-omitted-packages proof)))
       (is (= identities (:expected-packages proof))))
     (testing "an omitted framework-group dependency requires exact approval"
-      (let [error (inspect-error [selected] [])]
+      (let [error (inspect-error [selected] [cryptography])]
         (is (= :package-consumption-failed (:kind (ex-data error))))
         (is (= "Microsoft.Bcl.AsyncInterfaces/10.0.0"
                (:identity (ex-data error))))))
     (testing "an approval at the wrong version is outside the published closure"
       (let [error (inspect-error
                    [selected]
-                   [(assoc dependency :version "9.0.0")])]
+                   [(assoc async-interfaces :version "9.0.0") cryptography])]
         (is (= :package-consumption-failed (:kind (ex-data error))))
         (is (seq (:unexpected (ex-data error))))))
+    (testing "duplicate approvals are rejected"
+      (let [error (inspect-error
+                   [selected]
+                   [async-interfaces async-interfaces cryptography])]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (= "framework-omitted" (:location (ex-data error))))))
     (testing "an approved omission must actually be absent"
-      (let [error (inspect-error [selected dependency] [dependency])]
+      (let [error (inspect-error [selected async-interfaces] dependencies)]
         (is (= :package-consumption-failed (:kind (ex-data error))))
         (is (not= (:expected (ex-data error))
                   (:actual (ex-data error))))))))

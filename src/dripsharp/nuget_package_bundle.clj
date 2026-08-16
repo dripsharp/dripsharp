@@ -290,6 +290,7 @@
                                   [StandardCopyOption/REPLACE_EXISTING]))
         profile-destination
         (get-in plan [:contract :profiles profile :destination :configuration])
+        consumer-profile (:package-consumer profile-destination)
         bundle-package
         (-> base
             (assoc :profile profile
@@ -325,8 +326,10 @@
           {:workspace-root workspace-root
            :package-proof package-proof
            :consumer-name "public-bundle"
-           :consumer-profile (:package-consumer profile-destination)
+           :consumer-profile consumer-profile
            :selected-packages [{:id package-id :version version}]
+           :framework-omitted-packages
+           (:framework-omitted-packages consumer-profile)
            :target-framework
            (or (get-in contract [:frameworks :execution]) target-framework)}
            run-command! (assoc :run-command! run-command!)))]
