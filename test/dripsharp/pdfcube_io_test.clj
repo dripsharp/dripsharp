@@ -88,7 +88,10 @@
     (try
       (testing "clean generation and warnings-as-errors compilation are complete"
         (is (= 18 (:compilation-units summary)))
-        (is (= 33 (:generated-files summary)))
+        ;; The 18 translated units plus 15 shared runtime sources total 35.
+        ;; Java.Sql and NetStandard are the two runtime additions since the
+        ;; previous 33-file expectation.
+        (is (= 35 (:generated-files summary)))
         (is (= 321 (:declarations summary)))
         (is (= 0 (:skipped-source-units summary)))
         (is (= 0 (:hard-failures summary)))
@@ -99,7 +102,9 @@
                          [:blocked :unsupported-elements :missing-mappings
                           :missing-occurrences :fallback])))
         (is (empty? (:diagnostics verification)))
-        (is (= 177 (get-in verification
+        ;; netstandard2.0 adds 37 inherited RandomAccessRead default-interface
+        ;; bodies to the 177 mechanically translated Java contract rows.
+        (is (= 214 (get-in verification
                            [:public-surface :assemblies 0 :contract-members]))))
 
       (Files/createDirectories packages (make-array FileAttribute 0))
