@@ -19,6 +19,52 @@
             (str family "\tcase-" index "\tvalue\n"))
           (sort preflight-differential/required-trace-families))))
 
+(defn- package-contract-proof
+  [production-target-framework consumer-target-framework]
+  (let [contract preflight-differential/expected-package-contract
+        public-contract (:public-contract contract)]
+    {:verification
+     {:generation
+      {:project-input
+       {:project-id (:project-id contract)
+        :production-sources
+        (vec (repeat (:production-sources contract) :source))
+        :generated-production-sources
+        (vec (repeat (:generated-production-sources contract) :source))}
+       :source-project {:revision (:revision contract)}
+       :destination
+       {:project {:target-framework production-target-framework}}
+       :emission
+       {:public-metadata
+        {:required-rows (:required-rows public-contract)
+         :rows []}}}
+      :public-surface
+      {:strategy (:strategy public-contract)
+       :assemblies
+       [{:assembly (get-in contract [:assembly :name])
+         :contract-members (:compiled-contract-members public-contract)}]}}
+     :identity
+     {:id (:package-id contract) :version (:version contract)}
+     :inspection
+     {:dependencies (:dependencies contract)
+      :package-files (:package-files contract)}
+     :packages
+     [{:primary? true
+       :resource-proof {:assembly-identity (:assembly contract)}
+       :resources (vec (repeat (:resource-count contract) :resource))}]
+     :packing-summary {:clean-builds (:clean-builds contract)}
+     :dependency-proof
+     {:target-framework consumer-target-framework
+      :packages
+      (vec preflight-differential/expected-restored-closure)}}))
+
+(defn- caught
+  [thunk]
+  (try
+    (thunk)
+    nil
+    (catch clojure.lang.ExceptionInfo error error)))
+
 (deftest trace-validation-accepts-the-selected-preflight-contract
   (let [summary
         (preflight-differential/trace-summary (trace-file (complete-trace)))]
@@ -67,6 +113,9 @@
 (deftest package-contract-pins-preflight-and-its-restored-closure
   (is (= "DripSharp.PdfCarton.Preflight"
          (:package-id preflight-differential/expected-package-contract)))
+  (is (= "netstandard2.0"
+         (:target-framework
+          preflight-differential/expected-package-contract)))
   (is (= ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Fonts"
           "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp"]
          (get-in preflight-differential/expected-package-contract
@@ -89,6 +138,65 @@
           preflight-differential/expected-package-contract)))
   (is (= 12
          (count preflight-differential/expected-restored-closure))))
+
+(deftest package-contract-accepts-netstandard-and-rejects-production-framework-drift
+  (let [valid-proof
+        (package-contract-proof
+         "netstandard2.0"
+         preflight-differential/expected-consumer-target-framework)
+        actual
+        (preflight-differential/validate-package-contract! valid-proof)]
+    (is (= (assoc preflight-differential/expected-package-contract
+                  :restored-closure
+                  preflight-differential/expected-restored-closure
+                  :consumer-target-framework
+                  preflight-differential/expected-consumer-target-framework)
+           actual)))
+  (testing "the former Preflight net10.0 production mismatch fails in isolation"
+    (let [error
+          (caught
+           #(preflight-differential/validate-package-contract!
+             (package-contract-proof
+              "net10.0"
+              preflight-differential/expected-consumer-target-framework)))
+          expected (:expected (ex-data error))
+          actual (:actual (ex-data error))]
+      (is (= :pdfcube-preflight-differential-failed
+             (:kind (ex-data error))))
+      (is (= "netstandard2.0" (:target-framework expected)))
+      (is (= "net10.0" (:target-framework actual)))
+      (is (= (dissoc expected :target-framework)
+             (dissoc actual :target-framework)))))
+  (testing "missing, extra, and other production framework evidence fail closed"
+    (doseq [target-framework
+            [nil ["netstandard2.0" "net10.0"] "net9.0"]]
+      (let [error
+            (caught
+             #(preflight-differential/validate-package-contract!
+               (package-contract-proof
+                target-framework
+                preflight-differential/expected-consumer-target-framework)))]
+        (is (= :pdfcube-preflight-differential-failed
+               (:kind (ex-data error)))
+            (pr-str {:target-framework target-framework}))))))
+
+(deftest package-execution-framework-remains-net10
+  (is (= "net10.0"
+         preflight-differential/expected-consumer-target-framework))
+  (doseq [project
+          ["validation/pdfcube-preflight/DripSharp.PdfCarton.Preflight.HostSmoke.csproj"
+           "validation/pdfcube-preflight/DripSharp.PdfCarton.Preflight.ExecutionProbe.csproj"]]
+    (is (str/includes? (slurp project)
+                       "<TargetFramework>net10.0</TargetFramework>")))
+  (testing "missing or incorrect executable consumer evidence fails closed"
+    (doseq [target-framework [nil "netstandard2.0" "net9.0"]]
+      (let [error
+            (caught
+             #(preflight-differential/validate-package-contract!
+               (package-contract-proof "netstandard2.0" target-framework)))]
+        (is (= :pdfcube-preflight-differential-failed
+               (:kind (ex-data error)))
+            (pr-str {:consumer-target-framework target-framework}))))))
 
 (deftest package-consumer-calls-the-erased-position-api
   (let [source (slurp "validation/pdfcube-preflight/Program.cs")]

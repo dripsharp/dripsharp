@@ -50,6 +50,9 @@
     {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}
     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}})
 
+(def expected-consumer-target-framework
+  "net10.0")
+
 (def expected-package-contract
   {:project-id (:source-project-id preflight-contract)
    :revision pinned-revision
@@ -59,7 +62,7 @@
    :clean-builds 2
    :package-id "DripSharp.PdfCarton.Preflight"
    :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Preflight")
-   :target-framework "net10.0"
+   :target-framework "netstandard2.0"
    :assembly
    {:name "DripSharp.PdfCarton.Preflight"
     :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.Preflight")
@@ -141,7 +144,8 @@
              set)
         expected
         (assoc expected-package-contract
-               :restored-closure expected-restored-closure)
+               :restored-closure expected-restored-closure
+               :consumer-target-framework expected-consumer-target-framework)
         actual
         {:project-id (:project-id project-input)
          :revision (get-in generation [:source-project :revision])
@@ -162,7 +166,9 @@
           :required-rows (:required-rows public-metadata)
           :compiled-contract-members (:contract-members preflight-surface)
           :public-stubs public-stubs}
-         :restored-closure restored}]
+         :restored-closure restored
+         :consumer-target-framework
+         (get-in package-proof [:dependency-proof :target-framework])}]
     (when-not (= expected actual)
       (fail! "Packed DripSharp.PdfCarton.Preflight violates its exact target contract"
              {:expected expected :actual actual}))
