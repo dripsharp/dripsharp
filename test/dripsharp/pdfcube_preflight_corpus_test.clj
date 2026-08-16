@@ -2,8 +2,10 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.paths :as paths]
-            [dripsharp.pdfcube.preflight-corpus :as corpus])
-  (:import [java.nio.charset StandardCharsets]
+            [dripsharp.pdfcube.preflight-corpus :as corpus]
+            [dripsharp.util :as util])
+  (:import [com.fasterxml.jackson.databind ObjectMapper]
+           [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]))
 
@@ -69,6 +71,87 @@
     :version "3.0.8-alpha.1"
     :target-framework "netstandard2.0"}])
 
+(def ^:private exact-preflight-framework-omissions
+  [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
+   {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}])
+
+(def ^:private test-json-mapper (ObjectMapper.))
+
+(defn- consumer-assets
+  [^Path packages resolved]
+  (let [target-framework "net10.0"
+        package-entries
+        (into {}
+              (for [{:keys [id version]} resolved]
+                [(str id "/" version)
+                 {"type" "package"
+                  "compile" {(str "lib/netstandard2.0/" id ".dll") {}}}]))
+        libraries
+        (into {}
+              (for [{:keys [id version]} resolved]
+                [(str id "/" version)
+                 {"type" "package"
+                  "path" (str (str/lower-case id) "/" version)}]))
+        packages-path (str (paths/absolute packages))]
+    {"version" 3
+     "targets" {target-framework package-entries}
+     "libraries" libraries
+     "packageFolders" {packages-path {}}
+     "project"
+     {"restore"
+      {"packagesPath" packages-path
+       "originalTargetFrameworks" [target-framework]
+       "frameworks" {target-framework {"targetAlias" target-framework}}}
+      "frameworks"
+      {target-framework
+       {"targetAlias" target-framework
+        "packagesToPrune" {}}}}}))
+
+(defn- inspect-corpus-consumer
+  [framework-omitted-packages]
+  (let [root (temp-dir)
+        packages (.resolve root "packages")
+        primary-id "DripSharp.PdfCarton.Preflight"
+        primary-version "3.0.8-alpha.1"
+        package-root
+        (.resolve packages
+                  (str (str/lower-case primary-id) "/" primary-version))
+        artifact
+        (write! (.resolve package-root
+                          (str (str/lower-case primary-id) "."
+                               primary-version ".nupkg"))
+                "packed preflight package")
+        primary {:id primary-id
+                 :version primary-version
+                 :sha256 (util/sha256-file artifact)}
+        external
+        (mapv #(assoc % :sha256 (apply str (repeat 64 "a")))
+              exact-preflight-framework-omissions)
+        project
+        (write!
+         (.resolve root "DripSharp.PdfCarton.Preflight.CorpusRunner.csproj")
+         (str "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+              "</PropertyGroup><ItemGroup><PackageReference Include=\""
+              primary-id "\" Version=\"" primary-version
+              "\" /></ItemGroup></Project>"))
+        assets-file
+        (write!
+         (.resolve root "obj/project.assets.json")
+         (.writeValueAsString test-json-mapper
+                              (consumer-assets packages [primary])))
+        package-proof
+        {:identity primary
+         :packages [{:identity primary}]
+         :external-packages external
+         :verification
+         {:generation
+          {:destination
+           {:project {:target-framework "netstandard2.0"}
+            :package-consumer
+            {:framework-omitted-packages framework-omitted-packages}}}}}]
+    (#'corpus/inspect-corpus-consumer-dependencies!
+     project assets-file packages package-proof)))
+
 (defn- preflight-dependencies
   [expected]
   (#'corpus/preflight-assembly-dependencies
@@ -131,6 +214,35 @@
         (is (= exact-preflight-assembly-dependencies
                (:expected (ex-data error)))
             label)))))
+
+(deftest preflight-corpus-forwards-exact-net10-framework-omissions
+  (let [proof (inspect-corpus-consumer exact-preflight-framework-omissions)]
+    (is (= "net10.0" (:target-framework proof)))
+    (is (= exact-preflight-framework-omissions
+           (mapv #(select-keys % [:id :version])
+                 (:framework-omitted-packages proof))))
+    (is (= 3 (count (:expected-packages proof))))
+    (is (= 1 (count (:resolved-packages proof))))
+    (is (empty? (:pruned-packages proof))))
+  (testing "the former unforwarded contract reproduces the missing-identity failure"
+    (let [error (caught #(inspect-corpus-consumer []))]
+      (is (= :package-consumption-failed (:kind (ex-data error))))
+      (is (= "Microsoft.Bcl.AsyncInterfaces/10.0.0"
+             (:identity (ex-data error))))))
+  (testing "extra, duplicate, and wrong-version omission evidence is rejected"
+    (doseq [[label omissions]
+            [["extra"
+              (conj exact-preflight-framework-omissions
+                    {:id "Unexpected.Package" :version "1.0.0"})]
+             ["duplicate"
+              (conj exact-preflight-framework-omissions
+                    (first exact-preflight-framework-omissions))]
+             ["wrong-version"
+              (assoc-in exact-preflight-framework-omissions
+                        [0 :version] "9.0.0")]]]
+      (let [error (caught #(inspect-corpus-consumer omissions))]
+        (is (= :package-consumption-failed (:kind (ex-data error))) label)
+        (is (some? error) label)))))
 
 (deftest durable-corpus-covers-the-supported-preflight-contract
   (let [validated (validated-manifest)

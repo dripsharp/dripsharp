@@ -800,6 +800,18 @@
   (into (mapv :identity (:packages package-proof))
         (:external-packages package-proof)))
 
+(defn- inspect-corpus-consumer-dependencies!
+  [project assets-file packages package-proof]
+  (let [identity (:identity package-proof)
+        identities (package-identities package-proof)
+        framework-omitted-packages
+        (get-in package-proof
+                [:verification :generation :destination :package-consumer
+                 :framework-omitted-packages])]
+    (packaging/inspect-consumer-dependencies!
+     project assets-file packages identity identities
+     framework-omitted-packages)))
+
 (def ^:private preflight-assembly-dependency-contract
   (mapv
    (fn [assembly-name]
@@ -955,10 +967,10 @@
         :timeout-ms process-timeout-ms
         :environment environment})
       (let [dependency-proof
-            (packaging/inspect-consumer-dependencies!
+            (inspect-corpus-consumer-dependencies!
              project
              (paths/resolve-path consumer-root "obj" "project.assets.json")
-             packages identity identities)]
+             packages package-proof)]
         (run-command!
          {:command ["dotnet" "build" (str project)
                     "--configuration" "Release"
