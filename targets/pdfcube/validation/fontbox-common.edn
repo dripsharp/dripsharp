@@ -10,7 +10,7 @@
   :required-families
   ["afm" "cff" "cmap" "collection" "discovery" "encoding" "failure" "gsub"
    "lifecycle" "opentype" "pfb" "subsetting" "tables" "truetype" "type1"]
-  :expected-count 55}
+  :expected-count 56}
  :runner
  {:profile "pdfcube-fontbox"
   :output-directory "pdfcube-fontbox-differential"

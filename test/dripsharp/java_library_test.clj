@@ -6134,6 +6134,124 @@
     (is (not (str/includes? source "public override global::Example.Java.Library.TrueTypeFont Parse()")))
     (is (zero? (:exit result)) (:output result))))
 
+(deftest public-reference-covariance-over-an-abstract-base-uses-a-dispatch-bridge
+  (let [fixture
+        (model!
+         {"example/Type2CharString.java"
+          "package example; public class Type2CharString {}"
+          "example/CIDKeyedType2CharString.java"
+          (str "package example; public final class CIDKeyedType2CharString "
+               "extends Type2CharString {}")
+          "example/CFFFont.java"
+          (str "package example; public abstract class CFFFont { "
+               "public abstract Type2CharString getType2CharString(int cid); }")
+          "example/CFFCIDFont.java"
+          (str "package example; public final class CFFCIDFont extends CFFFont { "
+               "private final CIDKeyedType2CharString cached = "
+               "new CIDKeyedType2CharString(); "
+               "@Override public CIDKeyedType2CharString "
+               "getType2CharString(int cid) { return cached; } }")
+          "example/CFFType1Font.java"
+          (str "package example; public final class CFFType1Font extends CFFFont { "
+               "private final Type2CharString cached = new Type2CharString(); "
+               "@Override public Type2CharString "
+               "getType2CharString(int gid) { return cached; } }")})
+        emission
+        (emit! fixture 1 #{}
+               {:name-policy {:public-identifiers :csharp
+                              :methods :methods
+                              :fields :fields
+                              :overloads :overloads}})
+        project-root (:project-root emission)
+        surface-strategy (java-library/public-surface-strategy)
+        selected-surface
+        ((:validate-selected! surface-strategy)
+         (paths/workspace-root)
+         ((:read! surface-strategy) (paths/workspace-root) {})
+         (:model fixture))
+        public-metadata
+        ((:validate-generated! surface-strategy) selected-surface emission)
+        bridge-rows
+        (filterv
+         #(= :netstandard-abstract-covariant-return-bridge
+             (:systematic-adaptation %))
+         (:rows public-metadata))
+        base-source
+        (slurp (str (paths/resolve-path
+                     project-root "src/Example/Java/Library/CFFFont.cs")))
+        cid-source
+        (slurp (str (paths/resolve-path
+                     project-root "src/Example/Java/Library/CFFCIDFont.cs")))
+        type1-source
+        (slurp (str (paths/resolve-path
+                     project-root "src/Example/Java/Library/CFFType1Font.cs")))
+        consumer-root (temp-directory)
+        generated-project
+        (paths/resolve-path project-root (:project-file emission))
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>enable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "var cidFont = new global::Example.Java.Library.CFFCIDFont();\n"
+                 "var exact = cidFont.GetType2CharString(7);\n"
+                 "global::Example.Java.Library.CFFFont baseFont = cidFont;\n"
+                 "var throughBase = baseFont.GetType2CharString(7);\n"
+                 "if (!global::System.Object.ReferenceEquals(exact, throughBase)) return 1;\n"
+                 "var method = typeof(global::Example.Java.Library.CFFCIDFont)"
+                 ".GetMethod(\"GetType2CharString\", "
+                 "global::System.Reflection.BindingFlags.Public | "
+                 "global::System.Reflection.BindingFlags.Instance | "
+                 "global::System.Reflection.BindingFlags.DeclaredOnly, "
+                 "null, new[] { typeof(int) }, null);\n"
+                 "if (method?.ReturnType != typeof(global::Example.Java.Library."
+                 "CIDKeyedType2CharString)) return 2;\n"
+                 "global::Example.Java.Library.CFFFont type1 = "
+                 "new global::Example.Java.Library.CFFType1Font();\n"
+                 "return type1.GetType2CharString(9) is "
+                 "global::Example.Java.Library.Type2CharString ? 0 : 3;\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
+    (is (str/includes?
+         base-source
+         (str "public virtual global::Example.Java.Library.Type2CharString "
+              "GetType2CharString(int cid)")))
+    (is (str/includes?
+         base-source
+         (str "protected abstract global::Example.Java.Library.Type2CharString "
+              "__DripSharpCovariantBridgeGetType2CharString(int cid);")))
+    (is (str/includes?
+         cid-source
+         (str "public new global::Example.Java.Library.CIDKeyedType2CharString "
+              "GetType2CharString(int cid)")))
+    (is (str/includes?
+         cid-source
+         (str "protected override global::Example.Java.Library.Type2CharString "
+              "__DripSharpCovariantBridgeGetType2CharString(int cid)")))
+    (is (str/includes?
+         type1-source
+         (str "protected override global::Example.Java.Library.Type2CharString "
+              "__DripSharpCovariantBridgeGetType2CharString(int gid)")))
+    (is (= 3 (count bridge-rows)))
+    (is (= #{"protected"}
+           (set (map #(get-in % [:row :visibility]) bridge-rows))))
+    (is (string?
+         (get-in public-metadata
+                 [:systematic-adaptations
+                  :netstandard-abstract-covariant-return-bridge])))
+    (is (zero? (:exit result)) (:output result))))
+
 (deftest wildcard-generic-covariant-overrides-use-explicit-hiding
   (let [fixture
         (model!

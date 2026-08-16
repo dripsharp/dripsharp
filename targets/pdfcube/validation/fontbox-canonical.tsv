@@ -28,6 +28,7 @@ lifecycle	owned-copy-after-source-close	true|0,1,0,0|410712
 lifecycle	selective-header-scan	true|null|liberationsans|liberation sans|regular|0|400
 opentype	truetype-outlines-and-layout	false|true|true|[dflt, bopo, copt, cyrl, grek, hebr, latn]
 opentype	cff-outlines	sourcesanspro-bold|true|true|true|sourcesanspro-bold|824|unsupported
+opentype	cid-covariant-return	cidkeyedtype2charstring|cidkeyedtype2charstring|628|true
 tables	multiple-cmap-codes	[19981, 63847]|[19981, 63847]|[19981, 63847]
 gsub	scripts-and-features	[dflt, bopo, copt, cyrl, grek, hebr, latn]|latn|cyrl|[subs, sups]|true
 gsub	bengali-model	bengali|bng2|[abvs, akhn, blwf, blws, half, haln, init, nukt, pres, pstf, rphf, vatu]|2

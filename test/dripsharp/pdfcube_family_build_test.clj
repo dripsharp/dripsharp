@@ -17,8 +17,8 @@
 
 (def ^:private approved-public-contract-counts
   {"pdfcube-io" 214
-   "pdfcube-fontbox" 1448
-   "pdfcube-xmpbox" 1199
+   "pdfcube-fontbox" 1451
+   "pdfcube-xmpbox" 1205
    "pdfcube-pdfbox" 7438
    "pdfcube-preflight" 946})
 

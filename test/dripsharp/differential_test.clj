@@ -40,7 +40,7 @@
   (doseq [[file expected-id expected-count]
           [["targets/pdfcube/validation/io.edn" :pdfcube-io 25]
            ["targets/pdfcube/validation/fontbox-common.edn"
-            :pdfcube-fontbox 55]
+            :pdfcube-fontbox 56]
            ["targets/pdfcube/validation/xmpbox.edn"
             :pdfcube-xmpbox-metadata 57]]
           :let [contract (differential/read-contract file)]]

@@ -22,10 +22,13 @@ import org.apache.fontbox.afm.CharMetric;
 import org.apache.fontbox.afm.FontMetrics;
 import org.apache.fontbox.cff.CFFExpertCharset;
 import org.apache.fontbox.cff.CFFExpertEncoding;
+import org.apache.fontbox.cff.CFFCIDFont;
 import org.apache.fontbox.cff.CFFFont;
 import org.apache.fontbox.cff.CFFParser;
 import org.apache.fontbox.cff.CFFStandardEncoding;
 import org.apache.fontbox.cff.CFFType1Font;
+import org.apache.fontbox.cff.CIDKeyedType2CharString;
+import org.apache.fontbox.cff.Type2CharString;
 import org.apache.fontbox.cff.Type1FontUtil;
 import org.apache.fontbox.cmap.CMap;
 import org.apache.fontbox.cmap.CMapParser;
@@ -507,6 +510,22 @@ public final class FontBoxUpstreamOracle {
         new OTFParser(false)
             .parse(new RandomAccessReadBufferedFile(new File(fonts, "NotoSansSC-Regular.otf")));
     try {
+      CFFCIDFont cidFont = (CFFCIDFont) noto.getCFF().getFont();
+      CIDKeyedType2CharString exactCharString = cidFont.getType2CharString(628);
+      CFFFont baseFont = cidFont;
+      Type2CharString baseCharString = baseFont.getType2CharString(628);
+      observe(
+          "opentype",
+          "cid-covariant-return",
+          join(
+              CFFCIDFont.class
+                  .getMethod("getType2CharString", Integer.TYPE)
+                  .getReturnType()
+                  .getSimpleName(),
+              exactCharString.getClass().getSimpleName(),
+              exactCharString.getCID(),
+              exactCharString == baseCharString));
+
       int gid = 8712;
       observe(
           "tables",

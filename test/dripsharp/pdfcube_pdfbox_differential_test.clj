@@ -110,7 +110,7 @@
          (set (map :target-framework
                    (vals pdfbox-differential/expected-package-contract)))))
   (is (= {"DripSharp.PdfCarton.IO" 214
-          "DripSharp.PdfCarton.Fonts" 1448
+          "DripSharp.PdfCarton.Fonts" 1451
           "DripSharp.PdfCarton" 7438}
          (into {}
                (map (fn [[id contract]]

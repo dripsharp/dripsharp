@@ -1021,6 +1021,50 @@
              "sourceSans.GetCFF()"]]
       (is (str/includes? package-probe ordinary-call)))))
 
+(deftest generated-cff-cid-font-preserves-abstract-base-covariance
+  (let [workspace (paths/workspace-root)
+        generated-root
+        (paths/resolve-path
+         workspace
+         "products/pdfcarton/src/DripSharp.PdfCarton.Fonts/src/DripSharp/PdfCarton/Fonts/Cff")
+        base-source
+        (slurp (str (paths/resolve-path generated-root "CFFFont.cs")))
+        cid-source
+        (slurp (str (paths/resolve-path generated-root "CFFCIDFont.cs")))
+        package-probe
+        (slurp
+         (str
+          (paths/resolve-path
+           workspace
+           "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Fonts.PackageProbe.cs")))]
+    (is (str/includes?
+         base-source
+         (str "public virtual global::DripSharp.PdfCarton.Fonts.Cff.Type2CharString "
+              "GetType2CharString(int cidOrGid)")))
+    (is (str/includes?
+         base-source
+         (str "protected abstract global::DripSharp.PdfCarton.Fonts.Cff.Type2CharString "
+              "__DripSharpCovariantBridgeGetType2CharString(int cidOrGid);")))
+    (is (str/includes?
+         cid-source
+         (str "public new virtual global::DripSharp.PdfCarton.Fonts.Cff.CIDKeyedType2CharString "
+              "GetType2CharString(int cid)")))
+    (is (str/includes?
+         cid-source
+         (str "protected override global::DripSharp.PdfCarton.Fonts.Cff.Type2CharString "
+              "__DripSharpCovariantBridgeGetType2CharString(int cid)")))
+    (is (not (str/includes?
+              cid-source
+              (str "public override global::DripSharp.PdfCarton.Fonts.Cff.Type2CharString "
+                   "GetType2CharString(int cid)"))))
+    (doseq [contract
+            ["BindingFlags.DeclaredOnly"
+             "!.ReturnType.Name"
+             "exactCharString.GetCID()"
+             "CFFFont baseFont = cidFont"
+             "ReferenceEquals(exactCharString, baseCharString)"]]
+      (is (str/includes? package-probe contract)))))
+
 (deftest fontbox-standard-charset-fields-have-complete-batch-mappings
   (let [{destination :destination}
         (read-profile-and-destination "pdfcube-fontbox")

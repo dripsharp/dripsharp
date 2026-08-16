@@ -72,8 +72,8 @@
    :package-id "DripSharp.PdfCarton.Fonts"
    :source-counts {:ordinary 143 :generated 0}
    ;; netstandard2.0 requires eight inherited DataInput default-interface bodies
-   ;; across DataInputByteArray and DataInputRandomAccessRead.
-   :public-contract-rows 1448}
+   ;; and three invariant dispatch hooks for the abstract CFF covariance family.
+   :public-contract-rows 1451}
   :xmpbox
   {:profile "pdfcube-xmpbox"
    :source-module "xmpbox"
@@ -82,7 +82,9 @@
    :source-project-dependencies []
    :package-id "DripSharp.PdfCarton.Xmp"
    :source-counts {:ordinary 74 :generated 0}
-   :public-contract-rows 1199}
+   ;; netstandard2.0 requires six invariant dispatch hooks for public
+   ;; reference-covariant returns over abstract base members.
+   :public-contract-rows 1205}
   :pdfbox
   {:profile "pdfcube-pdfbox"
    :source-module "pdfbox"

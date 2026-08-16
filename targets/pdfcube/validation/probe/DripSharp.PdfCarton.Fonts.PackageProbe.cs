@@ -486,6 +486,24 @@ internal static class Program
             new RandomAccessReadBufferedFile(Path.Combine(fonts, "NotoSansSC-Regular.otf")));
         try
         {
+            var cidFont = (CFFCIDFont)noto.GetCFF().GetFont();
+            var exactCharString = cidFont.GetType2CharString(628);
+            CFFFont baseFont = cidFont;
+            var baseCharString = baseFont.GetType2CharString(628);
+            Observe(
+                "opentype",
+                "cid-covariant-return",
+                Join(
+                    typeof(CFFCIDFont).GetMethod(
+                        "GetType2CharString",
+                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                        null,
+                        [typeof(int)],
+                        null)!.ReturnType.Name,
+                    exactCharString.GetType().Name,
+                    exactCharString.GetCID(),
+                    ReferenceEquals(exactCharString, baseCharString)));
+
             const int gid = 8712;
             Observe(
                 "tables",

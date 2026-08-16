@@ -8872,6 +8872,12 @@
       (.getType interface-method)
       (.getType method))))
 
+(defn- override-family-root [^CtType owner ^CtMethod method]
+  (loop [current-owner owner current-method method]
+    (if-let [parent-method (superclass-method current-owner current-method)]
+      (recur (.getDeclaringType ^CtMethod parent-method) parent-method)
+      [current-owner current-method])))
+
 (defn- netstandard-covariant-override?
   [^CtType owner ^CtMethod method]
   (let [source (.getType method)
@@ -8884,23 +8890,59 @@
              (not= (mapv str (.getActualTypeArguments source))
                    (mapv str (.getActualTypeArguments destination)))))))
 
-(defn- netstandard-public-covariant-hiding?
+(defn- netstandard-public-reference-covariant-override?
   [^CtType owner ^CtMethod method]
-  ;; netstandard2.0 cannot encode CLR covariant override metadata.  For a
-  ;; concrete base member, retain its virtual slot for base-typed dispatch and
-  ;; expose the Java-facing return contract through an explicitly hidden member.
-  ;; Abstract and non-public families still need invariant override signatures.
-  (let [^CtMethod super-method (superclass-method owner method)
-        ^CtTypeReference source (.getType method)
+  (let [^CtTypeReference source (.getType method)
         ^CtTypeReference destination (override-family-return-type owner method)]
     (and (netstandard-covariant-override? owner method)
-         (some? super-method)
-         (not (.hasModifier super-method ModifierKind/ABSTRACT))
          (.hasModifier method ModifierKind/PUBLIC)
          (not (.isPrimitive source))
          (not (.isPrimitive destination))
          (not= (.getQualifiedName source)
                (.getQualifiedName destination)))))
+
+(defn- same-override-family?
+  [^CtType root-owner ^CtMethod root-method
+   ^CtType candidate-owner ^CtMethod candidate-method]
+  (let [[candidate-root-owner candidate-root-method]
+        (override-family-root candidate-owner candidate-method)]
+    (and (= (.getQualifiedName root-owner)
+            (.getQualifiedName ^CtType candidate-root-owner))
+         (= (.getSignature root-method)
+            (.getSignature ^CtMethod candidate-root-method)))))
+
+(defn- abstract-base-covariant-bridge-family?
+  [^CtType owner ^CtMethod method]
+  (let [[^CtType root-owner ^CtMethod root-method]
+        (override-family-root owner method)]
+    (and (.hasModifier root-method ModifierKind/ABSTRACT)
+         (boolean
+          (some
+           (fn [^CtType candidate-owner]
+             (some
+              (fn [^CtMethod candidate-method]
+                (and
+                 (netstandard-public-reference-covariant-override?
+                  candidate-owner candidate-method)
+                 (same-override-family? root-owner root-method
+                                        candidate-owner candidate-method)))
+              (.getMethodsByName candidate-owner
+                                 (.getSimpleName root-method))))
+           (model-all-types (.getModel (.getFactory owner))))))))
+
+(defn- netstandard-public-covariant-hiding?
+  [^CtType owner ^CtMethod method]
+  ;; netstandard2.0 cannot encode CLR covariant override metadata.  For a
+  ;; concrete base member, retain its virtual slot for base-typed dispatch.  An
+  ;; abstract family uses a generated invariant hook for that slot instead.
+  ;; Either shape can expose the Java-facing return contract through an
+  ;; explicitly hidden member.
+  (let [^CtMethod super-method (superclass-method owner method)
+        [_ ^CtMethod root-method] (override-family-root owner method)]
+    (and (netstandard-public-reference-covariant-override? owner method)
+         (some? super-method)
+         (or (not (.hasModifier super-method ModifierKind/ABSTRACT))
+             (.hasModifier root-method ModifierKind/ABSTRACT)))))
 
 (defn- concrete-generic-return-reference
   [^CtTypeReference declared ^CtExpression expression]
@@ -8971,31 +9013,37 @@
          (or (empty? arguments)
              (every? #(instance? CtWildcardReference %) arguments)))))
 
+(defn- override-family-return-type-node
+  [ctx ^CtType owner ^CtMethod method]
+  (let [^CtMethod super-method (superclass-method owner method)
+        super-owner (some-> super-method .getDeclaringType)
+        [root-owner] (override-family-root owner method)
+        super-owner (or super-owner root-owner)
+        owner-reference (when super-owner
+                          (superclass-reference-to owner super-owner))
+        formals (if super-owner
+                  (vec (.getFormalCtTypeParameters ^CtType super-owner))
+                  [])
+        actuals (if owner-reference
+                  (vec (.getActualTypeArguments ^CtTypeReference owner-reference))
+                  [])
+        overrides
+        (when (= (count formals) (count actuals))
+          (into {}
+                (map (fn [[^CtTypeParameter formal ^CtTypeReference actual]]
+                       [(.getSimpleName formal)
+                        (:text (csharp/render (type-node ctx actual)))]))
+                (map vector formals actuals)))]
+    (binding [*destination-type-parameter-overrides* overrides]
+      (declaration-type-node ctx method
+                             (override-family-return-type owner method)))))
+
 (defn- method-return-type-node
   [ctx ^CtType owner ^CtMethod method]
   (cond
     (and (netstandard-covariant-override? owner method)
          (not (netstandard-public-covariant-hiding? owner method)))
-    (let [^CtMethod super-method (superclass-method owner method)
-          super-owner (some-> super-method .getDeclaringType)
-          owner-reference (when super-owner
-                            (superclass-reference-to owner super-owner))
-          formals (if super-owner
-                    (vec (.getFormalCtTypeParameters ^CtType super-owner))
-                    [])
-          actuals (if owner-reference
-                    (vec (.getActualTypeArguments ^CtTypeReference owner-reference))
-                    [])
-          overrides
-          (when (= (count formals) (count actuals))
-            (into {}
-                  (map (fn [[^CtTypeParameter formal ^CtTypeReference actual]]
-                         [(.getSimpleName formal)
-                          (:text (csharp/render (type-node ctx actual)))]))
-                  (map vector formals actuals)))]
-      (binding [*destination-type-parameter-overrides* overrides]
-        (declaration-type-node ctx method
-                               (emitted-method-return-type owner method))))
+    (override-family-return-type-node ctx owner method)
     (self-generic-method-return? owner method)
     (owner-type-node ctx owner)
     :else
@@ -9157,12 +9205,6 @@
             (when (instance? CtClass declaration)
               (recur (.getSuperclass ^CtClass declaration))))))))
 
-(defn- override-family-root [^CtType owner ^CtMethod method]
-  (loop [current-owner owner current-method method]
-    (if-let [parent-method (superclass-method current-owner current-method)]
-      (recur (.getDeclaringType ^CtMethod parent-method) parent-method)
-      [current-owner current-method])))
-
 (defn- override-family-has-modifier?
   [^CtType owner ^CtMethod method modifier]
   (let [[root-owner root-method] (override-family-root owner method)
@@ -9200,8 +9242,13 @@
    (method-words nil owner method))
   ([ctx ^CtType owner ^CtMethod method]
    (let [static? (.hasModifier method ModifierKind/STATIC)
-         abstract? (and (not (interface-type? owner))
-                        (.hasModifier method ModifierKind/ABSTRACT))
+         source-abstract? (and (not (interface-type? owner))
+                               (.hasModifier method ModifierKind/ABSTRACT))
+         abstract-covariant-bridge?
+         (and source-abstract?
+              (abstract-base-covariant-bridge-family? owner method))
+         abstract? (and source-abstract?
+                        (not abstract-covariant-bridge?))
          superclass-reference (when (instance? CtClass owner)
                                 (.getSuperclass ^CtClass owner))
          superclass-declaration (some-> superclass-reference
@@ -9304,7 +9351,7 @@
               (when virtual? "virtual")]))))
 
 (declare member-node emit-root emit-anonymous-type owner-type-node
-         derived-body-context)
+         derived-body-context abstract-covariant-forwarding-body-node)
 
 (defn- enclosing-executable [^CtElement element]
   (loop [current (when (.isParentInitialized element) (.getParent element))]
@@ -9645,15 +9692,22 @@
         anonymous-types (mapv #(emit-anonymous-type ctx owner %)
                               (executable-anonymous-calls ctx method))
         body (.getBody method)
+        abstract-covariant-bridge?
+        (and (.hasModifier method ModifierKind/ABSTRACT)
+             (abstract-base-covariant-bridge-family? owner method))
         ;; netstandard2.0 cannot carry default-interface implementations.  The
         ;; same Java body is materialized on each concrete implementor by
         ;; interface-contract-nodes below, while the interface retains the
         ;; ordinary abstract contract that net48 and modern runtimes share.
-        body-node (when (and body
-                             (not (and (interface-type? owner)
-                                       (not (.hasModifier method
-                                                          ModifierKind/STATIC)))))
-                    (translated-node ctx body))
+        body-node
+        (cond
+          abstract-covariant-bridge?
+          (abstract-covariant-forwarding-body-node ctx owner method)
+
+          (and body
+               (not (and (interface-type? owner)
+                         (not (.hasModifier method ModifierKind/STATIC)))))
+          (translated-node ctx body))
         name (method-name ctx owner method)
         rule :java-library.declaration/method
         words (method-words ctx owner method)
@@ -10189,6 +10243,86 @@
   (if (.hasModifier initializer ModifierKind/STATIC)
     (static-initializer-node ctx owner initializer)
     (instance-initializer-node ctx owner initializer)))
+
+(defn- abstract-covariant-bridge-name
+  [_ctx ^CtType owner ^CtMethod method]
+  (let [[^CtType root-owner ^CtMethod root-method]
+        (override-family-root owner method)
+        emitted-name (pascal (.getSimpleName root-method))
+        base (str "__DripSharpCovariantBridge" emitted-name)
+        reserved
+        (->> (model-all-types (.getModel (.getFactory owner)))
+             (mapcat
+              (fn [^CtType candidate-owner]
+                (mapcat
+                 (fn [^CtMethod candidate-method]
+                   (let [source-name (.getSimpleName candidate-method)]
+                     [(identifier source-name) (pascal source-name)]))
+                 (.getMethods candidate-owner))))
+             set)]
+    (loop [suffix nil]
+      (let [candidate (str base suffix)]
+        (if (contains? reserved candidate)
+          (recur (if suffix (inc suffix) 2))
+          candidate)))))
+
+(defn- method-argument-nodes [^CtMethod method]
+  (mapv #(raw (identifier (.getSimpleName ^CtParameter %)))
+        (.getParameters method)))
+
+(defn- abstract-covariant-forwarding-body-node
+  [ctx ^CtType owner ^CtMethod method]
+  (let [lifted (wildcard-method-type-parameters method)]
+    (csharp/block
+     [(sequence-node
+       [(raw "return ((")
+        (method-return-type-node ctx owner method)
+        (raw ")(this.")
+        (raw (abstract-covariant-bridge-name ctx owner method))
+        (method-formals-node method lifted)
+        (raw "(")
+        (sequence-node (method-argument-nodes method) ", ")
+        (raw ")));")])])))
+
+(defn- abstract-covariant-bridge-hook-node
+  [ctx ^CtType owner ^CtMethod method]
+  (let [source-abstract? (.hasModifier method ModifierKind/ABSTRACT)
+        override? (some? (superclass-method owner method))
+        lifted (wildcard-method-type-parameters method)
+        formals (vec (.getFormalCtTypeParameters method))
+        signature
+        (sequence-node
+         [(raw (str "protected "
+                    (when source-abstract? "abstract ")
+                    (when override? "override ")))
+          (override-family-return-type-node ctx owner method)
+          (raw (str " " (abstract-covariant-bridge-name ctx owner method)))
+          (method-formals-node method lifted)
+          (raw "(")
+          (sequence-node
+           (mapv #(parameter-node ctx % lifted) (.getParameters method)) ", ")
+          (raw ")")
+          (when-not override?
+            (sequence-node
+             [(constraints-node ctx formals)
+              (lifted-wildcard-constraints-node ctx lifted)]))])
+        body
+        (when-not source-abstract?
+          (csharp/block
+           [(sequence-node
+             [(raw "return this.")
+              (raw (method-name ctx owner method))
+              (method-formals-node method lifted)
+              (raw "(")
+              (sequence-node (method-argument-nodes method) ", ")
+              (raw ");")])]))]
+    (csharp/declaration
+     signature body
+     {:declaration-kind :covariant-bridge
+      :name (abstract-covariant-bridge-name ctx owner method)
+      :source-name (.getSimpleName method)
+      :source-qualified-name (.getQualifiedName owner)
+      :parameter-count (count (.getParameters method))})))
 
 (defn- member-node [ctx ^CtType owner member]
   (cond
@@ -10902,6 +11036,13 @@
         member-nodes (if-let [emit-members (:emit-members ctx)]
                        (emit-members member-ctx type members)
                        (mapv #(member-node member-ctx type %) members))
+        abstract-covariant-bridge-hook-nodes
+        (->> members
+             (filter #(and (instance? CtMethod %)
+                           (abstract-base-covariant-bridge-family?
+                            type ^CtMethod %)))
+             (mapv #(abstract-covariant-bridge-hook-node
+                     member-ctx type ^CtMethod %)))
         static-companion-member-nodes
         (mapv #(member-node
                 (assoc member-ctx :interface-static-companion? true)
@@ -10930,7 +11071,8 @@
                       members))
         member-nodes
         (cond-> (into (vec member-nodes)
-                      (concat interface-contracts
+                      (concat abstract-covariant-bridge-hook-nodes
+                              interface-contracts
                               interface-redeclaration-contracts
                               runtime-interface-contracts
                               java-map-entry-contracts))
@@ -11441,22 +11583,25 @@
      (assoc shape :identity identity))))
 
 (defn- synthetic-surface-entry
-  [^CtType type name parameter-count systematic-adaptation]
-  (let [adaptation-kind
-        (if (map? systematic-adaptation)
-          (:kind systematic-adaptation)
-          systematic-adaptation)
-        shape
-        {:kind "method"
-         :owner (canonical-owner (.getQualifiedName type))
-         :name name
-         :parameter-count parameter-count
-         :visibility "public"}]
-    {:declaration type
-     :synthetic? true
-     :systematic-adaptation adaptation-kind
-     :shape shape
-     :row (surface-row type shape systematic-adaptation)}))
+  ([^CtType type name parameter-count systematic-adaptation]
+   (synthetic-surface-entry
+    type name parameter-count "public" systematic-adaptation))
+  ([^CtType type name parameter-count visibility systematic-adaptation]
+   (let [adaptation-kind
+         (if (map? systematic-adaptation)
+           (:kind systematic-adaptation)
+           systematic-adaptation)
+         shape
+         {:kind "method"
+          :owner (canonical-owner (.getQualifiedName type))
+          :name name
+          :parameter-count parameter-count
+          :visibility visibility}]
+     {:declaration type
+      :synthetic? true
+      :systematic-adaptation adaptation-kind
+      :shape shape
+      :row (surface-row type shape systematic-adaptation)})))
 
 (defn- closure-declaration-selected?
   [resolved-model ^CtElement declaration]
@@ -11613,6 +11758,24 @@
                       (when (instance? CtClass type)
                         (concat
                          (map
+                          (fn [^CtMethod method]
+                            (synthetic-surface-entry
+                             type
+                             (abstract-covariant-bridge-name nil type method)
+                             (count (.getParameters method))
+                             "protected"
+                             {:kind :netstandard-abstract-covariant-return-bridge
+                              :identity
+                              (str
+                               "netstandard-abstract-covariant-return-bridge:"
+                               (spoon/declaration-key method))}))
+                          (filter
+                           #(and
+                             (instance? CtMethod %)
+                             (abstract-base-covariant-bridge-family?
+                              type ^CtMethod %))
+                           (closure-type-members resolved-model type)))
+                         (map
                           (fn [^CtTypeReference reference]
                             (synthetic-surface-entry
                              type "op_Implicit" 1
@@ -11745,6 +11908,8 @@
    "A Java class receives a public CLR method containing an inherited Java interface default body."
    :java-runtime-abstract-interface-contract
    "A Java abstract class receives CLR abstract declarations for mapped runtime-interface members."
+   :netstandard-abstract-covariant-return-bridge
+   "A Java covariant return over an abstract base member receives a protected invariant CLR dispatch hook for netstandard2.0."
    :java-public-base-type-promotion
    "A package-visible Java base class is public in CLR metadata when required by a public subclass."
    :java-public-signature-type-promotion
@@ -11862,6 +12027,8 @@
                                             ^CtMethod interface-method)
                                            interface-method)
                                           (get-in evidence [:row :name]))
+                                        :visibility
+                                        (get-in evidence [:row :visibility])
                                         :parameter-count
                                         (str (get-in evidence
                                                      [:row :parameter-count]))))))

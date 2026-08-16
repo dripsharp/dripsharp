@@ -20,10 +20,10 @@
                             "targets" "pdfcube" "validation"
                             "fontbox-canonical.tsv")
         summary (fontbox-differential/trace-summary canonical)]
-    (is (= 55 (:observations summary)))
+    (is (= 56 (:observations summary)))
     (is (= fontbox-differential/required-trace-families
            (set (:families summary))))
-    (is (= 55 (count (set (:identities summary)))))))
+    (is (= 56 (count (set (:identities summary)))))))
 
 (deftest trace-validation-fails-closed
   (testing "a missing behavior family is rejected"
