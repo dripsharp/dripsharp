@@ -88,7 +88,13 @@
        (fn [package-id]
          {:id package-id :version family-workflows/package-version
           :sha256 (str package-id "-hash")})
-       (sort (conj closure-ids "External.Common")))}
+       (sort (conj closure-ids "External.Common")))
+      :expected-packages
+      (mapv
+       (fn [package-id]
+         {:id package-id :version family-workflows/package-version
+          :sha256 (str package-id "-hash")})
+       (sort (into closure-ids ["External.Common" "External.Pruned"])))}
      :consumer-root (paths/path (str "/proof/consumer-" index))
      :packages-root (paths/path (str "/proof/cache-" index))
      :run {:output (str id " passed")}}))
@@ -110,7 +116,9 @@
          profile-order)}}
       :packages packages
       :external-packages
-      [{:id "External.Common" :version "1.0.0" :sha256 "external"}]
+      [{:id "External.Common" :version "1.0.0" :sha256 "external"}
+       {:id "External.Pruned" :version "1.0.0" :sha256 "pruned"}
+       {:id "Feed.Only" :version "1.0.0" :sha256 "feed"}]
       :feed (paths/path "/proof/feed")
       :proof-root (paths/path "/proof")
       :summary {:clean-builds 2}}
@@ -166,7 +174,7 @@
              (get-in generation [:generation-profile :profile])))
       (is (= (set (get dependencies profile))
              (set (map :profile (:dependency-emissions generation)))))
-      (is (= ["External.Common"]
+      (is (= ["External.Common" "External.Pruned"]
              (mapv :id (:external-packages view)))))
     (is (= 5
            (count

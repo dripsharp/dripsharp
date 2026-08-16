@@ -2245,6 +2245,14 @@
                    (conj visited key))))
         (mapv by-key (sort visited))))))
 
+(defn published-dependency-closure!
+  "Derives the exact transitive dependency closure for selected package
+  identities from the inspected metadata in a fresh packed-package proof."
+  [package-proof selected-packages]
+  (let [available (available-identities package-proof)
+        selected (exact-identities! available selected-packages)]
+    (dependency-closure! available selected)))
+
 (defn- consumer-fixture-source
   [root consumer-profile]
   (when (= :source-file (:strategy consumer-profile))
@@ -2272,7 +2280,8 @@
                    {:consumer-name consumer-name}))
         available (available-identities package-proof)
         selected (exact-identities! available selected-packages)
-        identities (dependency-closure! available selected)
+        identities
+        (published-dependency-closure! package-proof selected-packages)
         asserted-identities
         (when expected-packages
           (exact-identities! available expected-packages))

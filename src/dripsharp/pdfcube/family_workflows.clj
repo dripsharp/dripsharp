@@ -200,13 +200,13 @@
                  (or (get consumers-by-name package-id)
                      (fail! "Family workflow input omitted an isolated consumer"
                             {:profile profile :package package-id}))
-                 restored-ids
+                 expected-ids
                  (set (map :id
                            (get-in consumer
-                                   [:dependency-proof :packages])))
+                                   [:dependency-proof :expected-packages])))
                  external-packages
                  (->> (:external-packages package-proof)
-                      (filter #(contains? restored-ids (:id %)))
+                      (filter #(contains? expected-ids (:id %)))
                       vec)
                  packages
                  (->> (:packages package-proof)

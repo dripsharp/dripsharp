@@ -797,8 +797,8 @@
 
 (defn- package-identities
   [package-proof]
-  (into (mapv :identity (:packages package-proof))
-        (:external-packages package-proof)))
+  (packaging/published-dependency-closure!
+   package-proof [(:identity package-proof)]))
 
 (defn- inspect-corpus-consumer-dependencies!
   [project assets-file packages package-proof]
