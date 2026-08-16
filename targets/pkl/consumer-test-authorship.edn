@@ -14,10 +14,10 @@
    :review-evidence "beads:pkl-zysr.34"
    :role :generic-test-cleanup}
   {:path "src/dripsharp/pkl/brine_xunit.clj"
-   :sha256 "7b6c3cd1090abbcdaf540a764e2451c3246681a756ca9ca7d48be15cff7047cf"
-   :lines 691
-   :line-budget 691
-   :review-evidence "beads:pkl-zysr.34"
+   :sha256 "344a783cff2ec0e4ac989a3126309d6f340e392cade58618efe1ad2aeb694ba1"
+   :lines 837
+   :line-budget 837
+   :review-evidence "beads:pkl-zysr.58"
    :role :brine-test-generator}
   {:path "src/dripsharp/pkl/parser_test_contract.clj"
    :sha256 "d13afb824a731bfb00731baaa066ca7f1f7dd181d74f615e130c841766987fae"

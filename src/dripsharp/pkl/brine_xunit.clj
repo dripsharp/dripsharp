@@ -5,6 +5,7 @@
   authored package adapters and deterministic project/wrapper glue."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
+            [dripsharp.consumer-tests :as consumer-tests]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.core-test-contract :as core-contract]
             [dripsharp.pkl.language-snippet-contract :as language-contract]
@@ -36,6 +37,17 @@
 
 (def ^:private encoded-package-entries
   #{"hash#query?.pkl" "hello world.pkl" "reserved/slash.pkl" "雪.pkl"})
+
+(def ^:private encoded-package-relative
+  "pkl-commons-test/build/test-packages/encoded-assets@1.0.0")
+
+(def ^:private encoded-package-files
+  #{"encoded-assets@1.0.0.json"
+    "encoded-assets@1.0.0.zip"
+    "encoded-source/hash#query?.pkl"
+    "encoded-source/hello world.pkl"
+    "encoded-source/reserved/slash.pkl"
+    "encoded-source/雪.pkl"})
 
 (def ^:private zip-epoch
   (LocalDateTime/of 1980 1 1 0 0))
@@ -349,6 +361,30 @@
      (range)
      (rest lines))))
 
+(defn- parse-checksum-inventory!
+  [inventory]
+  (when-not (paths/regular-file? inventory)
+    (fail! "Pinned Brine test checksum inventory is missing"
+           {:reason :missing-brine-test-checksum-inventory
+            :path (str inventory)}))
+  (let [entries
+        (mapv
+         (fn [line]
+           (if-let [[_ sha256 relative]
+                    (re-matches #"([0-9a-f]{64})  (.+)" line)]
+             [relative sha256]
+             (fail! "Pinned Brine test checksum inventory is malformed"
+                    {:reason :malformed-brine-test-checksum-inventory
+                     :path (str inventory)
+                     :line line})))
+         (str/split-lines
+          (Files/readString (paths/path inventory) StandardCharsets/UTF_8)))]
+    (when-not (= (count entries) (count (distinct (map first entries))))
+      (fail! "Pinned Brine test checksum inventory contains duplicate paths"
+             {:reason :duplicate-brine-test-checksum-path
+              :path (str inventory)}))
+    (into (sorted-map) entries)))
+
 (defn verify-provenance!
   "Rejects missing, duplicate, contradictory, unknown, falsely mechanical, or
   hash-drifted generated test provenance."
@@ -477,6 +513,116 @@
         (finally
           (Files/deleteIfExists temporary))))))
 
+(defn- encoded-package-governance!
+  [product-tests]
+  (let [inventory-file (paths/resolve-path product-tests "SHA256SUMS")
+        ledger-file (paths/resolve-path product-tests "TEST-PROVENANCE.tsv")
+        inventory (parse-checksum-inventory! inventory-file)
+        rows (parse-ledger! ledger-file)
+        output-prefix (str "Fixtures/pkl/" encoded-package-relative "/")
+        expected-paths (set (map #(str output-prefix %) encoded-package-files))
+        fixture-rows (->> rows
+                          (filter #(str/starts-with? (get % "path")
+                                                     output-prefix))
+                          (map (juxt #(get % "path") identity))
+                          (into {}))
+        actual-paths (set (keys fixture-rows))]
+    (when-not (= expected-paths actual-paths)
+      (fail! "Pinned Brine encoded package fixture boundary changed"
+             {:reason :encoded-package-governance-boundary-drift
+              :expected (vec (sort expected-paths))
+              :actual (vec (sort actual-paths))}))
+    (let [files
+          (mapv
+           (fn [relative]
+             (let [output-path (str output-prefix relative)
+                   source-path (str encoded-package-relative "/" relative)
+                   source (paths/resolve-path product-tests output-path)
+                   expected-sha256 (get inventory output-path)
+                   actual-sha256 (when (paths/regular-file? source)
+                                   (util/sha256-file source))
+                   row (get fixture-rows output-path)
+                   expected-row
+                   {"path" output-path
+                    "class" "vendored-third-party"
+                    "upstream-revision"
+                    language-contract/pinned-upstream-revision
+                    "source-path" source-path
+                    "source-sha256" expected-sha256
+                    "transformation" "materialized-byte-for-byte-fixture-copy"
+                    "emitted-sha256" expected-sha256
+                    "license" "Apache-2.0"
+                    "notice"
+                    (str "Copyright Apple Inc.; vendored from apple/pkl "
+                         "under Apache-2.0.")
+                    "durable-source" "-"
+                    "authored-lines" "-"
+                    "review-evidence" "-"
+                    "line-budget" "-"}]
+               (when-not (and (string? expected-sha256)
+                              (re-matches #"[0-9a-f]{64}" expected-sha256))
+                 (fail! "Pinned Brine encoded package checksum is missing"
+                        {:reason :encoded-package-checksum-missing
+                         :path output-path
+                         :inventory (str inventory-file)}))
+               (when-not (= expected-sha256 actual-sha256)
+                 (fail! "Pinned Brine encoded package fixture source changed"
+                        {:reason :encoded-package-governed-source-drift
+                         :path (str source)
+                         :expected expected-sha256
+                         :actual actual-sha256}))
+               (when-not (= expected-row row)
+                 (fail! "Pinned Brine encoded package governance changed"
+                        {:reason :encoded-package-governance-drift
+                         :path output-path
+                         :expected expected-row
+                         :actual row}))
+               {:relative relative
+                :source source
+                :source-path source-path
+                :sha256 expected-sha256}))
+           (sort encoded-package-files))]
+      (consumer-tests/verify-inventory! product-tests)
+      (verify-provenance! product-tests)
+      files)))
+
+(defn materialize-encoded-package-fixture!
+  "Restores the ignored synthetic encoded-assets package from the pinned,
+  checksum- and provenance-governed Brine suite in the product checkout."
+  [workspace-root]
+  (let [root (paths/absolute workspace-root)
+        product-tests (paths/resolve-path root "products/brine/tests")
+        upstream-directory
+        (paths/resolve-path root "research/pkl" encoded-package-relative)
+        files (encoded-package-governance! product-tests)]
+    (doseq [{:keys [relative source]} files
+            :let [destination (paths/resolve-path upstream-directory relative)]]
+      (when-not (paths/exists? destination)
+        (copy-file! source destination)))
+    (normalize-encoded-package! (paths/resolve-path root "research/pkl"))
+    (let [actual-files
+          (->> (regular-files upstream-directory)
+               (map #(relative upstream-directory %))
+               set)]
+      (when-not (= encoded-package-files actual-files)
+        (fail! "Materialized Brine encoded package fixture boundary changed"
+               {:reason :materialized-encoded-package-boundary-drift
+                :expected (vec (sort encoded-package-files))
+                :actual (vec (sort actual-files))})))
+    (doseq [{:keys [relative sha256]} files
+            :let [destination (paths/resolve-path upstream-directory relative)
+                  actual (when (paths/regular-file? destination)
+                           (util/sha256-file destination))]]
+      (when-not (= sha256 actual)
+        (fail! "Materialized Brine encoded package fixture changed"
+               {:reason :materialized-encoded-package-drift
+                :path (str destination)
+                :expected sha256
+                :actual actual})))
+    {:fixtures (count files)
+     :source product-tests
+     :destination upstream-directory}))
+
 (defn- add-existing-rows!
   [root tests-root generator rows]
   (let [authored
@@ -510,6 +656,7 @@
   (let [root (paths/workspace-root (:target-directory target-contract))
         tests-root (paths/absolute tests-root)
         upstream (paths/resolve-path root "research" "pkl")
+        _ (materialize-encoded-package-fixture! root)
         revision language-contract/pinned-upstream-revision
         language-manifest (paths/resolve-path
                            root "validation/language-snippet-contract"
@@ -592,7 +739,6 @@
         (copy-file! source output)
         (swap! rows conj (authored-row root tests-root source output))))
     (let [fixture-root (paths/resolve-path tests-root "Fixtures" "pkl")]
-      (normalize-encoded-package! upstream)
       (doseq [[source-relative destination-relative]
               [["pkl-core/src/test/files/LanguageSnippetTests/input"
                 "pkl-core/src/test/files/LanguageSnippetTests/input"]
