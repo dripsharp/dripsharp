@@ -8,6 +8,7 @@
   the classification of PDFBox test conditions."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [dripsharp.csharp :as csharp]
             [dripsharp.harness :as harness]
             [dripsharp.java-library :as java-library]
@@ -667,6 +668,24 @@
                (junit/row-identities test-case))))
        vec))
 
+(defn- portable-case-source-locations
+  [source-root cases]
+  (let [source-root (paths/absolute source-root)]
+    (walk/postwalk
+     (fn [value]
+       (if (and (map? value)
+                (= #{:column :file :line} (set (keys value)))
+                (string? (:file value)))
+         (let [source-file (paths/absolute (:file value))]
+           (when-not (.startsWith source-file source-root)
+             (fail! "PdfCarton test case source escapes the pinned checkout"
+                    {:reason :pdfcarton-test-case-source-path-escape
+                     :source-root (str source-root)
+                     :source (:file value)}))
+           (assoc value :file (relative-path source-root source-file)))
+         value))
+     cases)))
+
 (defn- module-inventory [workspace-root source-root specification]
   (validate-selected-counts! specification)
   (let [{:keys [id input]} specification
@@ -696,8 +715,10 @@
             (fail! "PdfCarton JUnit plan includes cases outside test sources"
                    {:reason :pdfcarton-test-case-source-drift
                     :module id :cases unexpected}))
-        serializable-cases (:cases (junit/serializable-plan
-                                    (assoc plan :cases cases)))
+        serializable-cases
+        (portable-case-source-locations
+         source-root
+         (:cases (junit/serializable-plan (assoc plan :cases cases))))
         framework-calls
         (occurrence-rows source-root selected-files resolved-model
                          framework-call?)

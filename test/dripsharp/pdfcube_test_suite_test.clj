@@ -98,6 +98,40 @@
               :authorship :third-party-test-fixture}))
           [:reason :missing]))))
 
+(deftest pdfbox-case-accounting-uses-portable-source-locations
+  (let [root-a (temp-directory)
+        root-b (temp-directory)
+        relative "pdfbox/src/test/java/org/apache/pdfbox/PortableTest.java"
+        cases-for
+        (fn [root]
+          [{:id "org.apache.pdfbox.PortableTest#portable()"
+            :source {:file (str (paths/resolve-path root relative))
+                     :line 42
+                     :column 9}
+            :parameters
+            {:source {:file (str (paths/resolve-path root relative))
+                      :line 43
+                      :column 13}}}])]
+    (try
+      (let [portable-a
+            (#'test-suite/portable-case-source-locations
+             root-a (cases-for root-a))
+            portable-b
+            (#'test-suite/portable-case-source-locations
+             root-b (cases-for root-b))]
+        (is (= portable-a portable-b))
+        (is (= relative (get-in portable-a [0 :source :file])))
+        (is (= relative
+               (get-in portable-a [0 :parameters :source :file]))))
+      (is (= :pdfcarton-test-case-source-path-escape
+             (:reason
+              (failure-data
+               #(#'test-suite/portable-case-source-locations
+                 root-a (cases-for root-b))))))
+      (finally
+        (tree-cleanup/delete-tree! root-a)
+        (tree-cleanup/delete-tree! root-b)))))
+
 (deftest generated-pdfbox-tests-preserve-deterministic-junit-method-order
   (let [source (slurp "src/dripsharp/pdfcube/test_suite.clj")
         support (slurp "targets/pdfcube/adapted-tests/PdfCartonTestSupport.cs")]
