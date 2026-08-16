@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using DripSharp.SqlTrellis;
 using DripSharp.SqlTrellis.Expression;
+using DripSharp.SqlTrellis.Expression.Operators.Arithmetic;
 using DripSharp.SqlTrellis.Expression.Operators.Relational;
 using DripSharp.SqlTrellis.Parser;
 using DripSharp.SqlTrellis.Schema;
@@ -27,6 +29,25 @@ internal static class Program
         Equal("7", value.ToString(), "mutated lexical value");
         Equal("long:7", value.accept(new LongVisitor(), "long"),
             "generic expression visitor");
+
+        var addition = new Addition();
+        var left = new LongValue(2);
+        Addition exactAddition = addition.withLeftExpression(left);
+        Same(addition, exactAddition,
+            "binary expression exact fluent mutation");
+        var exactFluent = typeof(Addition).GetMethod(
+            nameof(Addition.withLeftExpression),
+            BindingFlags.Public | BindingFlags.Instance |
+                BindingFlags.DeclaredOnly,
+            null, [typeof(Expression)], null);
+        Equal(typeof(Addition), exactFluent?.ReturnType,
+            "binary expression exact fluent return metadata");
+        BinaryExpression baseAddition = addition;
+        var right = new LongValue(3);
+        Same(addition, baseAddition.withRightExpression(right),
+            "binary expression base fluent dispatch");
+        Same(right, addition.getRightExpression(),
+            "binary expression base fluent mutation");
 
         var table = new Table("public", "orders");
         Equal("public.orders", table.getFullyQualifiedName(), "table name");

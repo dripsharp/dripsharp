@@ -21,6 +21,8 @@
 (def ^:private build-input-file "targets/sqltrellis/maven-build-inputs.edn")
 (def ^:private behavior-contract-file
   "targets/sqltrellis/validation/behavior.edn")
+(def ^:private compiled-surface-contract-file
+  "targets/sqltrellis/validation/contracts/CompiledPublicSurface.tsv")
 (def ^:private revision "8a9479a05c75fcb73d0ed167a822b9b18ab7abaa")
 
 (defn- input-options [project-root local-repository]
@@ -357,6 +359,82 @@
              "targets/sqltrellis/validation/oracle/SqlTrellisBehaviorOracle.java"
              "targets/sqltrellis/validation/probe/SqlTrellisBehaviorPackageProbe.cs"]]
       (is (paths/regular-file? (paths/resolve-path workspace relative)) relative))))
+
+(deftest binary-expression-fluent-covariance-is-retained-end-to-end
+  (let [upstream
+        (slurp
+         (str
+          (paths/resolve-path
+           workspace
+           (str "research/jsqlparser/src/main/java/net/sf/jsqlparser/expression/"
+                "operators/arithmetic/Addition.java"))))
+        generated-root
+        (paths/resolve-path
+         workspace
+         (str "products/sqltrellis/src/DripSharp.SqlTrellis/src/DripSharp/"
+              "SqlTrellis/Expression/Operators/Arithmetic"))
+        generated (slurp (str (paths/resolve-path generated-root "Addition.cs")))
+        public-metadata
+        (util/read-single-edn-string!
+         (slurp
+          (str
+           (paths/resolve-path
+            workspace
+            "products/sqltrellis/src/DripSharp.SqlTrellis/public-metadata.edn"))))
+        declaration-prefix
+        "executable:net.sf.jsqlparser.expression.operators.arithmetic.Addition#"
+        expected-declarations
+        #{(str declaration-prefix
+               "withLeftExpression(net.sf.jsqlparser.expression.Expression)")
+          (str declaration-prefix
+               "withRightExpression(net.sf.jsqlparser.expression.Expression)")}
+        metadata-rows
+        (->> (:rows public-metadata)
+             (filter #(contains? expected-declarations (:declaration-key %)))
+             vec)
+        contract-lines
+        (->> (str/split-lines
+              (slurp
+               (str (paths/resolve-path workspace
+                                        compiled-surface-contract-file))))
+             (remove #(or (str/blank? %) (str/starts-with? % "#"))))
+        columns (mapv keyword (str/split (first contract-lines) #"\t" -1))
+        contract-rows
+        (->> (rest contract-lines)
+             (map #(zipmap columns (str/split % #"\t" -1)))
+             (filter #(and
+                       (= (str "DripSharp.SqlTrellis.Expression.Operators."
+                               "Arithmetic.Addition")
+                          (:owner %))
+                       (contains? #{"withLeftExpression" "withRightExpression"}
+                                  (:name %))))
+             (sort-by :name)
+             vec)]
+    (doseq [method ["withLeftExpression" "withRightExpression"]]
+      (is (str/includes?
+           upstream
+           (str "public Addition " method "(Expression arg0)")))
+      (is (str/includes?
+           generated
+           (str "public new virtual global::DripSharp.SqlTrellis.Expression.Operators."
+                "Arithmetic.Addition " method
+                "(global::DripSharp.SqlTrellis.Expression.Expression arg0)"))))
+    (is (= expected-declarations
+           (set (map :declaration-key metadata-rows))))
+    (is (= #{"withLeftExpression" "withRightExpression"}
+           (set (map #(get-in % [:generated :destination :name])
+                     metadata-rows))))
+    (is (= #{"DripSharp.SqlTrellis.Expression.Operators.Arithmetic.Addition"}
+           (set (map #(get-in % [:generated :destination :owner])
+                     metadata-rows))))
+    (is (= ["withLeftExpression" "withRightExpression"]
+           (mapv :name contract-rows)))
+    (is (= #{"0x1C6"} (set (map :metadata-flags contract-rows))))
+    (is (every?
+         #(str/starts-with?
+           (:signature %)
+           "DripSharp.SqlTrellis.Expression.Operators.Arithmetic.Addition ")
+         contract-rows))))
 
 (deftest clean-isolated-maven-generation-is-cache-independent
   (let [temporary (Files/createTempDirectory
