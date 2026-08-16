@@ -152,6 +152,10 @@
         symbol-names (archive-names (:symbol-artifact package))
         package-nuspec (archive-text (:artifact package)
                                      "Example.Core.nuspec")
+        symbol-nuspec (archive-text (:symbol-artifact package)
+                                    "Example.Core.nuspec")
+        canonical-group
+        "<group targetFramework=\".NETStandard2.0\">"
         consumer-package-proof (:package-proof @consumer-call)
         published-closure
         (packaging/published-dependency-closure!
@@ -166,6 +170,18 @@
     (is (= #{"lib/netstandard2.0/Example.Support.pdb"
              "lib/netstandard2.0/Example.Core.pdb"}
            (set (filter #(str/ends-with? % ".pdb") symbol-names))))
+    (is (= "netstandard2.0"
+           (get-in package [:destination :project :target-framework])))
+    (is (= 1 (count (re-seq
+                     (re-pattern (java.util.regex.Pattern/quote canonical-group))
+                     package-nuspec))))
+    (is (= 1 (count (re-seq
+                     (re-pattern (java.util.regex.Pattern/quote canonical-group))
+                     symbol-nuspec))))
+    (is (not (str/includes? package-nuspec
+                            "targetFramework=\"netstandard2.0\"")))
+    (is (not (str/includes? symbol-nuspec
+                            "targetFramework=\"netstandard2.0\"")))
     (is (str/includes? package-nuspec "Example.Logging"))
     (is (not (str/includes? package-nuspec
                             "<dependency id=\"Example.Support\"")))

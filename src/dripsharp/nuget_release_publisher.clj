@@ -7,6 +7,7 @@
   command options; display commands and results redact credential values."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.nuget-framework :as nuget-framework]
             [dripsharp.nuget-release-preparation :as preparation]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
@@ -505,6 +506,9 @@
         (fail! "NuGet release artifact identity differs from the proved manifest"
                {:package package-id}))
       (let [group (first groups)
+            dependency-framework
+            (nuget-framework/canonical-dependency-framework
+             (:target-framework expected))
             dependencies
             (->> (child-elements group)
                  (mapv
@@ -518,7 +522,7 @@
                  (sort-by (juxt :id :version))
                  vec)]
         (when-not (and (= namespace (.getNamespaceURI ^Element group))
-                       (= (:target-framework expected)
+                       (= dependency-framework
                           (.getAttribute ^Element group "targetFramework"))
                        (= (:dependencies expected) dependencies))
           (fail! "NuGet release artifact dependency edges differ from the proved manifest"

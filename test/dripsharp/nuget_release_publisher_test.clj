@@ -2,6 +2,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [dripsharp.nuget-framework :as nuget-framework]
             [dripsharp.nuget-release-publisher :as publisher]
             [dripsharp.paths :as paths]
             [dripsharp.target-directory :as target-directory]
@@ -10,7 +11,7 @@
            [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [java.util UUID]
-           [java.util.zip ZipEntry ZipOutputStream]))
+           [java.util.zip ZipEntry ZipFile ZipOutputStream]))
 
 (defn- failure
   [f]
@@ -50,6 +51,19 @@
       (.write output (.getBytes (str value) StandardCharsets/UTF_8))
       (.closeEntry output)))
   file)
+
+(def ^:private dependency-group-pattern
+  #"(?s)<group targetFramework=\"[^\"]+\">.*?</group>")
+
+(def ^:dynamic *dependency-group-mutation* nil)
+
+(defn- dependency-group-frameworks
+  [^Path artifact package-id]
+  (with-open [archive (ZipFile. (str artifact))]
+    (let [entry (.getEntry archive (str package-id ".nuspec"))
+          xml (with-open [input (.getInputStream archive entry)]
+                (String. (.readAllBytes input) StandardCharsets/UTF_8))]
+      (mapv second (re-seq #"targetFramework=\"([^\"]+)\"" xml)))))
 
 (defn- topological-order
   [records id-fn dependencies-fn]
@@ -170,10 +184,19 @@
         package-filename (str id "." version ".nupkg")
         symbol-filename (str id "." version ".snupkg")
         nuspec-entry (str id ".nuspec")
+        canonical-nuspec
+        (nuspec id version
+                (nuget-framework/canonical-dependency-framework
+                 target-framework)
+                dependencies)
+        package-nuspec
+        (if *dependency-group-mutation*
+          (*dependency-group-mutation* canonical-nuspec)
+          canonical-nuspec)
         package-path
         (zip-file!
          (paths/resolve-path directory package-filename)
-         {nuspec-entry (nuspec id version target-framework dependencies)})
+         {nuspec-entry package-nuspec})
         pdbs
         (mapv (fn [entry]
                 {:entry entry
@@ -184,7 +207,7 @@
           (zip-file!
            (paths/resolve-path directory symbol-filename)
            (into
-            {nuspec-entry (nuspec id version target-framework dependencies)}
+            {nuspec-entry package-nuspec}
             (map (juxt :entry :bytes))
             pdbs)))]
     (sorted-map
@@ -400,6 +423,49 @@
       (is (not (str/includes? (str (ex-message error) (ex-data error))
                               sensitive-value))))
     (write-manifest! manifest)))
+
+(deftest raw-manifest-framework-requires-canonical-artifact-groups
+  (let [{:keys [manifest options root]} (fixture!)
+        directory (paths/resolve-path root "target" "nuget-release" "all")]
+    (is (= (repeat 4 "netstandard2.0")
+           (map :target-framework (:packages manifest))))
+    (doseq [package (:packages manifest)
+            artifact-kind [:package :symbols]
+            :let [filename (get-in package [:files artifact-kind :filename])]
+            :when filename]
+      (is (= [".NETStandard2.0"]
+             (dependency-group-frameworks
+              (paths/resolve-path directory filename)
+              (:id package)))))
+    (is (= :nuget-release-preflight
+           (:kind (publisher/preflight! options)))))
+  (doseq [[label group-mutation]
+          [["lowercase noncanonical group"
+            #(str/replace % ".NETStandard2.0" "netstandard2.0")]
+           ["wrong group"
+            #(str/replace % ".NETStandard2.0" ".NETStandard2.1")]
+           ["missing group"
+            #(str/replace % dependency-group-pattern "")]
+           ["duplicate group"
+            #(str/replace % dependency-group-pattern
+                          (fn [group] (str group group)))]
+           ["extra group"
+            #(str/replace
+              % "</dependencies>"
+              (str "<group targetFramework=\"net8.0\"></group>"
+                   "</dependencies>"))]
+           ["changed dependency edges"
+            #(str/replace
+              % "</group>"
+              (str "<dependency id=\"Unexpected.Dependency\" "
+                   "version=\"1.0.0\" exclude=\"Build,Analyzers\" />"
+                   "</group>"))]]]
+    (testing label
+      (let [{:keys [options]}
+            (binding [*dependency-group-mutation* group-mutation]
+              (fixture!))
+            error (failure #(publisher/preflight! options))]
+        (is (= :nuget-release-publish-failed (:kind (ex-data error))))))))
 
 (deftest complete-local-preflight-rejects-every-release-set-hazard
   (doseq [[label mutate]

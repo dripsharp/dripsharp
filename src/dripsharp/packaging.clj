@@ -8,6 +8,7 @@
             [dripsharp.compiler :as compiler]
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as java-project]
+            [dripsharp.nuget-framework :as nuget-framework]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.util :as util])
@@ -195,11 +196,6 @@
 (def ^:private dependency-nuspec-namespace
   "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd")
 
-(defn- canonical-nuget-framework [target-framework]
-  (if-let [[_ version] (re-matches #"netstandard(\d+\.\d+)" target-framework)]
-    (str ".NETStandard" version)
-    target-framework))
-
 (def ^:private content-types-namespace
   "http://schemas.openxmlformats.org/package/2006/content-types")
 
@@ -324,7 +320,8 @@
   [nuspec package target-framework expected-dependencies]
   (let [document (parse-xml! nuspec :nuspec)
         root (.getDocumentElement document)
-        dependency-framework (canonical-nuget-framework target-framework)
+        dependency-framework
+        (nuget-framework/canonical-dependency-framework target-framework)
         expected-namespace (if (seq expected-dependencies)
                              dependency-nuspec-namespace
                              base-nuspec-namespace)]
@@ -586,7 +583,8 @@
   [nuspec package target-framework expected-dependencies]
   (let [document (parse-xml! nuspec :symbol-nuspec)
         root (.getDocumentElement document)
-        dependency-framework (canonical-nuget-framework target-framework)
+        dependency-framework
+        (nuget-framework/canonical-dependency-framework target-framework)
         expected-namespace (if (seq expected-dependencies)
                              dependency-nuspec-namespace
                              base-nuspec-namespace)]

@@ -2,6 +2,7 @@
   "Deterministically consolidates a proved component package closure into one
   public NuGet package without changing the generated assembly boundaries."
   (:require [clojure.string :as str]
+            [dripsharp.nuget-framework :as nuget-framework]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
             [dripsharp.util :as util])
@@ -83,7 +84,8 @@
   [target-framework dependencies]
   (str "<dependencies>\n"
        "      <group targetFramework=\""
-       (util/xml-escape target-framework)
+       (util/xml-escape
+        (nuget-framework/canonical-dependency-framework target-framework))
        "\">\n"
        (apply
         str
