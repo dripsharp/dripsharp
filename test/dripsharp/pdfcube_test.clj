@@ -11,7 +11,8 @@
             [dripsharp.pdfcube.source-sync :as source-sync]
             [dripsharp.process :as process]
             [dripsharp.public-surface :as public-surface]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.target-directory :as target-directory])
   (:import [java.nio.file Files OpenOption Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]
            [javax.tools ToolProvider]))
@@ -661,6 +662,7 @@
 
 (deftest five-configurations-match-the-approved-pdfcarton-family
   (let [workspace (paths/workspace-root)
+        target (target-directory/read-target workspace :pdfcube)
         family (pdfcube/product-family)
         prepared (mapv read-profile-and-destination profile-names)
         destinations (mapv :destination prepared)
@@ -675,6 +677,11 @@
                 [:orchestration :validate-profile!])]
     (is (= 1 (:schema-version family)))
     (is (= :pdfcarton (:product-family family)))
+    (is (= {:production "netstandard2.0"
+            :execution "net10.0"
+            :net48-compatibility :inferred-from-netstandard2.0
+            :net48-runtime-tested? false}
+           (:frameworks target)))
     (is (= 5 (count (:products family)) (count destinations)))
     (is (= #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Xmp"
              "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
@@ -719,7 +726,8 @@
               (:destination (read-profile-and-destination profile))))))
     (doseq [{:keys [profile destination]} prepared]
       (is (= :maven (:build-tool profile)))
-      (is (= "net10.0" (get-in destination [:project :target-framework])))
+      (is (= "netstandard2.0"
+             (get-in destination [:project :target-framework])))
       (is (= "disable" (get-in destination [:project :nullable])))
       (is (true? (get-in destination [:project :warnings-as-errors])))
       (is (= "Isak Sky" (get-in destination [:package :authors])))
