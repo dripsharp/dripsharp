@@ -8,10 +8,10 @@ every command from the root of `dripsharp/dripsharp`.
 
 The release set contains exactly these four production packages:
 
-| Position | Package | First approved version | Internal dependencies |
+| Position | Package | Approved release version | Internal dependencies |
 | ---: | --- | --- | --- |
 | 0 | `DripSharp.Brine.Parser` | `0.32.0-alpha.1` | none |
-| 1 | `DripSharp.PdfCarton` | `3.0.8-alpha.1` | none within DripSharp; contains the IO, Fonts, XMP, PDFBox, and Preflight assemblies |
+| 1 | `DripSharp.PdfCarton` | `3.0.8-alpha.2` | none within DripSharp; contains the IO, Fonts, XMP, PDFBox, and Preflight assemblies |
 | 2 | `DripSharp.SqlTrellis` | `5.3.0-alpha.1` | none |
 | 3 | `DripSharp.Brine` | `0.32.0-alpha.1` | `DripSharp.Brine.Parser` at the exact version |
 
@@ -21,7 +21,7 @@ dependencies are also recorded and inspected in each package entry.
 
 A target-specific manifest is also a complete release boundary for that target.
 For PdfCarton, `nuget-release-prepare pdfcube` emits exactly one `.nupkg` and
-one `.snupkg`, both named `DripSharp.PdfCarton.3.0.8-alpha.1`, and the same
+one `.snupkg`, both named `DripSharp.PdfCarton.3.0.8-alpha.2`, and the same
 preflight and publisher accept that one-package manifest without requiring a
 simultaneous Brine or SqlTrellis release.
 
@@ -216,8 +216,8 @@ DripSharp.Brine.0.32.0-alpha.1.nupkg
 DripSharp.Brine.0.32.0-alpha.1.snupkg
 DripSharp.Brine.Parser.0.32.0-alpha.1.nupkg
 DripSharp.Brine.Parser.0.32.0-alpha.1.snupkg
-DripSharp.PdfCarton.3.0.8-alpha.1.nupkg
-DripSharp.PdfCarton.3.0.8-alpha.1.snupkg
+DripSharp.PdfCarton.3.0.8-alpha.2.nupkg
+DripSharp.PdfCarton.3.0.8-alpha.2.snupkg
 DripSharp.SqlTrellis.5.3.0-alpha.1.nupkg
 DripSharp.SqlTrellis.5.3.0-alpha.1.snupkg
 release-manifest.edn
@@ -376,7 +376,7 @@ NUGET_VERIFY_PROJECT="$NUGET_VERIFY_ROOT/ReleaseConsumer/ReleaseConsumer.csproj"
 export NUGET_VERIFY_ROOT NUGET_VERIFY_PROJECT
 dotnet new classlib --name ReleaseConsumer --framework net10.0 --output "$NUGET_VERIFY_ROOT/ReleaseConsumer"
 dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.Brine --version 0.32.0-alpha.1 --no-restore
-dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.PdfCarton --version 3.0.8-alpha.1 --no-restore
+dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.PdfCarton --version 3.0.8-alpha.2 --no-restore
 dotnet add "$NUGET_VERIFY_PROJECT" package DripSharp.SqlTrellis --version 5.3.0-alpha.1 --no-restore
 printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<configuration>' '  <packageSources>' '    <clear />' '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />' '  </packageSources>' '</configuration>' > "$NUGET_VERIFY_ROOT/NuGet.Config"
 NUGET_PACKAGES="$NUGET_VERIFY_ROOT/packages" NUGET_HTTP_CACHE_PATH="$NUGET_VERIFY_ROOT/http-cache" NUGET_PLUGINS_CACHE_PATH="$NUGET_VERIFY_ROOT/plugins-cache" NUGET_SCRATCH="$NUGET_VERIFY_ROOT/scratch" dotnet restore "$NUGET_VERIFY_PROJECT" --configfile "$NUGET_VERIFY_ROOT/NuGet.Config" --packages "$NUGET_VERIFY_ROOT/packages" --no-http-cache --force --verbosity normal
@@ -393,7 +393,7 @@ transitively:
 ```text
 DripSharp.Brine.Parser 0.32.0-alpha.1
 DripSharp.Brine 0.32.0-alpha.1
-DripSharp.PdfCarton 3.0.8-alpha.1
+DripSharp.PdfCarton 3.0.8-alpha.2
 DripSharp.SqlTrellis 5.3.0-alpha.1
 ```
 

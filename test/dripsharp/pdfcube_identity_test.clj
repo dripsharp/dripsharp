@@ -165,7 +165,7 @@
       (is (= approved-package-metadata
              (select-keys (:package destination)
                           (keys approved-package-metadata)))))
-    (is (= #{"3.0.8-alpha.1"}
+    (is (= #{"3.0.8-alpha.2"}
            (set (map :version (vals (:packages @baseline))))))
     (is (= (set (keys (:packages @baseline)))
            (set (keys (get-in @target [:publication :nuget :packages])))))))

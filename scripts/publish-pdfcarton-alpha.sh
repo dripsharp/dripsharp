@@ -78,11 +78,11 @@ if [[ -z "$NUGET_API_KEY" ]]; then
   exit 1
 fi
 
-printf 'Publishing DripSharp.PdfCarton 3.0.8-alpha.1 to nuget.org...\n'
+printf 'Publishing DripSharp.PdfCarton 3.0.8-alpha.2 to nuget.org...\n'
 NUGET_API_KEY="$NUGET_API_KEY" clojure -M:run \
   nuget-release-publish "$RELEASE_MANIFEST" \
   --live \
   --authorize-publish \
   --source "$NUGET_SOURCE"
 
-printf 'DripSharp.PdfCarton 3.0.8-alpha.1 publication completed.\n'
+printf 'DripSharp.PdfCarton 3.0.8-alpha.2 publication completed.\n'

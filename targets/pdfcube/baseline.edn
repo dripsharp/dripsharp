@@ -46,11 +46,11 @@
     :package-path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
     :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}]}
  :packages
- {"DripSharp.PdfCarton.IO" {:version "3.0.8-alpha.1" :assembly-version "3.0.8.0"}
-  "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.1" :assembly-version "3.0.8.0"}
-  "DripSharp.PdfCarton.Xmp" {:version "3.0.8-alpha.1" :assembly-version "3.0.8.0"}
-  "DripSharp.PdfCarton" {:version "3.0.8-alpha.1" :assembly-version "3.0.8.0"}
-  "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.1" :assembly-version "3.0.8.0"}}
+ {"DripSharp.PdfCarton.IO" {:version "3.0.8-alpha.2" :assembly-version "3.0.8.0"}
+  "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.2" :assembly-version "3.0.8.0"}
+  "DripSharp.PdfCarton.Xmp" {:version "3.0.8-alpha.2" :assembly-version "3.0.8.0"}
+  "DripSharp.PdfCarton" {:version "3.0.8-alpha.2" :assembly-version "3.0.8.0"}
+  "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.2" :assembly-version "3.0.8.0"}}
  :profiles
  {:io
   {:profile "pdfcube-io"

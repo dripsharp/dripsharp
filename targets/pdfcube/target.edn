@@ -174,18 +174,18 @@
     :package-format :snupkg
     :source-link :exact-generated-product-commit}
    :version-policy {:kind :upstream-alpha-revision
-                    :translator-revision 1}
+                    :translator-revision 2}
    :readme "README.md"
    :icon
    {:status :deferred
     :reason
     "A package icon is deferred until a shared DripSharp visual identity is approved; omission is value-neutral and does not imply upstream or publisher branding."}
    :packages
-   {"DripSharp.PdfCarton.IO" {:version "3.0.8-alpha.1"}
-    "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.1"}
-    "DripSharp.PdfCarton.Xmp" {:version "3.0.8-alpha.1"}
-    "DripSharp.PdfCarton" {:version "3.0.8-alpha.1"}
-    "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.1"}}
+   {"DripSharp.PdfCarton.IO" {:version "3.0.8-alpha.2"}
+    "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.2"}
+    "DripSharp.PdfCarton.Xmp" {:version "3.0.8-alpha.2"}
+    "DripSharp.PdfCarton" {:version "3.0.8-alpha.2"}
+    "DripSharp.PdfCarton.Preflight" {:version "3.0.8-alpha.2"}}
    :bundle
    {:package-id "DripSharp.PdfCarton"
     :profile "pdfcube-preflight"

@@ -58,26 +58,26 @@
 (def ^:private exact-preflight-assembly-dependencies
   [{:assembly-name "DripSharp.PdfCarton"
     :package-id "DripSharp.PdfCarton"
-    :version "3.0.8-alpha.1"
+    :version "3.0.8-alpha.2"
     :target-framework "netstandard2.0"}
    {:assembly-name "DripSharp.PdfCarton.Fonts"
     :package-id "DripSharp.PdfCarton.Fonts"
-    :version "3.0.8-alpha.1"
+    :version "3.0.8-alpha.2"
     :target-framework "netstandard2.0"}
    {:assembly-name "DripSharp.PdfCarton.IO"
     :package-id "DripSharp.PdfCarton.IO"
-    :version "3.0.8-alpha.1"
+    :version "3.0.8-alpha.2"
     :target-framework "netstandard2.0"}
    {:assembly-name "DripSharp.PdfCarton.Xmp"
     :package-id "DripSharp.PdfCarton.Xmp"
-    :version "3.0.8-alpha.1"
+    :version "3.0.8-alpha.2"
     :target-framework "netstandard2.0"}])
 
 (def ^:private exact-preflight-framework-omissions
   [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
    {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}])
 
-(def ^:private preflight-version "3.0.8-alpha.1")
+(def ^:private preflight-version "3.0.8-alpha.2")
 
 (def ^:private product-package-ids
   ["DripSharp.PdfCarton"
@@ -386,7 +386,7 @@
               (conj exact-preflight-assembly-dependencies
                     {:assembly-name "DripSharp.PdfCarton.Unexpected"
                      :package-id "DripSharp.PdfCarton.Unexpected"
-                     :version "3.0.8-alpha.1"
+                     :version "3.0.8-alpha.2"
                      :target-framework "netstandard2.0"})]
              ["framework"
               (assoc-in exact-preflight-assembly-dependencies
