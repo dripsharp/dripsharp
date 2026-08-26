@@ -122,6 +122,65 @@
     (is (= ["consumer-tests/fixtures/metadata.xmp"]
            (mapv :source (:fixtures strategy))))))
 
+(deftest sqltrellis-release-smoke-is-an-isolated-shipped-project
+  (let [contract (target-directory/read-target :sqltrellis)
+        suites (get-in contract [:publication :test-suites])
+        project
+        (some #(when (= "DripSharp.SqlTrellis.ReleaseSmoke" (:id %)) %)
+              (:projects suites))
+        strategy (some #(when (= :release-smoke (:id %)) %)
+                       (:strategies suites))
+        source (get-in strategy [:profile-tests "sqltrellis" :source])]
+    (is (= {:directory "tests/DripSharp.SqlTrellis.ReleaseSmoke"
+            :profiles #{"sqltrellis"}
+            :project-references []
+            :solution-inclusion true}
+           {:directory (:directory project)
+            :profiles (set (:profile-references project))
+            :project-references (:project-references project)
+            :solution-inclusion (:solution-inclusion project)}))
+    (is (= :focused-consumer (:kind strategy)))
+    (is (= :shipped (:policy strategy)))
+    (is (= "DripSharp.SqlTrellis.ReleaseSmoke" (:project strategy)))
+    (is (= "consumer-tests/ReleaseSmokeTests.cs" source))
+    (is (empty? (:fixtures strategy)))
+    (is (str/includes?
+         (slurp (str (:target-directory contract) "/" source))
+         "does not replace"))))
+
+(deftest sqltrellis-release-smoke-emits-a-stable-product-command
+  (let [workspace (temp-directory)]
+    (try
+      (let [contract (target-directory/read-target :sqltrellis)
+            suites (get-in contract [:publication :test-suites])
+            project
+            (some #(when (= "DripSharp.SqlTrellis.ReleaseSmoke" (:id %)) %)
+                  (:projects suites))
+            strategy (some #(when (= :release-smoke (:id %)) %)
+                           (:strategies suites))
+            focused-contract
+            (assoc-in contract [:publication :test-suites]
+                      (assoc suites
+                             :projects [project]
+                             :strategies [strategy]))
+            result (consumer-tests/emit!
+                    {:workspace-root workspace
+                     :target-contract focused-contract})
+            readme (Files/readString
+                    (.resolve ^Path (:tests-root result) "README.md"))
+            generated-source
+            (Files/readString
+             (.resolve ^Path (:tests-root result)
+                       "DripSharp.SqlTrellis.ReleaseSmoke/ReleaseSmokeTests.cs"))]
+        (is (str/includes?
+             readme
+             (str "dotnet test tests/DripSharp.SqlTrellis.ReleaseSmoke/"
+                  "DripSharp.SqlTrellis.ReleaseSmoke.csproj "
+                  "--configuration Release --no-restore --no-build")))
+        (is (str/includes? generated-source "does not replace")))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest emission-is-repository-local-inventoried-and-deterministic
   (doseq [target [:pkl :pdfcube]]
     (let [workspace (temp-directory)]
