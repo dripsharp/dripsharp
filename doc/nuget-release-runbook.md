@@ -463,16 +463,31 @@ also a separate external mutation and is never part of release rollback.
 
 ## GitHub Actions trusted-publishing handoff
 
-No GitHub Actions workflow is supplied by this runbook. A later workflow needs
-separate approval and must remain a thin orchestration layer over the same
-tested Clojure boundaries:
+Each generated product repository supplies a manually dispatched
+`.github/workflows/nuget-release.yml` workflow. The workflow checks out the
+authoritative `dripsharp/dripsharp` repository, requires its product gitlink to
+equal the product workflow commit, and runs the target-specific release driver.
 
-1. Check out `dripsharp/dripsharp` and its exact generated-product submodules,
-   install the approved Java, Clojure, and .NET toolchains, allocate the same 28
-   GiB heap and 22 workers, and invoke `nuget-release-prepare all` exactly as
-   above.
-2. Retain `target/nuget-release/all` as one hash-bound artifact and invoke the
-   same offline `nuget-release-preflight` and default
+The product workflows set
+`DRIPSHARP_NUGET_RELEASE_SKIP_TESTS=1` to fit GitHub's free four-core public
+runner. The driver honors that value only when `GITHUB_ACTIONS=true`. It skips
+the target's exhaustive proof ladders and records
+`:test-verification :skipped-for-github-free-runner` in the release manifest.
+This reduced release path does not count as a complete target proof and does
+not change any product goal, exclusion, or completion criterion. It retains
+clean Release generation and compilation, two-pack reproducibility, package and
+symbol inspection, fresh-feed consumer validation, repository synchronization,
+remote version availability checks, and fail-closed publication.
+
+The workflows remain thin orchestration layers over the tested Clojure
+boundaries:
+
+1. Check out `dripsharp/dripsharp`, the selected generated-product submodule,
+   and its pinned upstream source; install the approved Java, Clojure, and .NET
+   toolchains; allocate a 10 GiB heap and four workers; and invoke
+   `nuget-release-prepare <target>` with the explicit GitHub test-skip flag.
+2. Retain `target/nuget-release/<target>` as one hash-bound artifact and invoke
+   the same offline `nuget-release-preflight` and default
    `nuget-release-publish` dry-run. YAML must not discover packages, rebuild the
    dependency graph, enumerate four pushes, inspect archives, or implement
    retry/skip logic.
@@ -494,12 +509,18 @@ tested Clojure boundaries:
    The command remains:
 
    ```sh
-   clojure -M:run nuget-release-publish target/nuget-release/all/release-manifest.edn --live --authorize-publish --source https://api.nuget.org/v3/index.json
+   clojure -M:run nuget-release-publish target/nuget-release/<target>/release-manifest.edn --live --authorize-publish --source https://api.nuget.org/v3/index.json
    ```
 
 6. Run the same isolated nuget.org-only restore verification after indexing.
    Workflow retries must follow the immutable-version and partial-failure
    procedure above; the workflow must never turn a collision into success.
+
+Before the first run in each product repository, create a protected GitHub
+environment named `release` with required reviewers. Create a corresponding
+nuget.org trusted-publishing policy for profile `isaksky`, repository owner
+`dripsharp`, workflow file `nuget-release.yml`, environment `release`, and the
+repository name `brine`, `pdfcarton`, or `sqltrellis`.
 
 NuGet's [trusted-publishing contract][nuget-trusted-publishing] explains the
 OIDC policy and short-lived key exchange. GitHub's

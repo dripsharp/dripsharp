@@ -20,7 +20,10 @@
            [java.nio.file FileVisitOption Files Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]))
 
-(def schema-version 3)
+(def schema-version 4)
+(def skip-tests-environment-variable
+  "DRIPSHARP_NUGET_RELEASE_SKIP_TESTS")
+(def ^:private github-actions-environment-variable "GITHUB_ACTIONS")
 
 (def ^:private commit-pattern #"[0-9a-f]{40}|[0-9a-f]{64}")
 (def ^:private sha256-pattern #"[0-9a-f]{64}")
@@ -37,6 +40,27 @@
   (throw
    (ex-info message
             (assoc data :kind :nuget-release-preparation-failed))))
+
+(defn- test-verification-mode!
+  [getenv-fn]
+  (let [selection (getenv-fn skip-tests-environment-variable)]
+    (cond
+      (or (nil? selection) (= "" selection) (= "0" selection))
+      :complete
+
+      (= "1" selection)
+      (if (= "true"
+             (some-> (getenv-fn github-actions-environment-variable)
+                     str/lower-case))
+        :skipped-for-github-free-runner
+        (fail! "NuGet release tests may be skipped only in GitHub Actions"
+               {:environment-variable skip-tests-environment-variable
+                :reason :skip-tests-outside-github-actions}))
+
+      :else
+      (fail! "NuGet release test-skip selection is malformed"
+             {:environment-variable skip-tests-environment-variable
+              :reason :invalid-skip-tests-selection}))))
 
 (defn- regular-files
   [^Path directory]
@@ -640,7 +664,7 @@
      :target (:target contract))))
 
 (defn- deterministic-manifest
-  [selection product-records packages]
+  [selection test-verification product-records packages]
   (let [publish-order (topological-publish-order! packages)
         ordered-packages
         (mapv
@@ -659,7 +683,8 @@
      :publish-order publish-order
      :remote-availability :not-checked
      :schema-version schema-version
-     :selection selection)))
+     :selection selection
+     :test-verification test-verification)))
 
 (defn- output-root!
   [^Path workspace-root selection output-root]
@@ -750,18 +775,21 @@
 
 (defn prepare!
   "Runs aggregate credential-free NuGet release preparation for one target or
-  `all`. The CLI supplies only `selection`; dependency injection options exist
-  for focused verification and do not add publication operations."
+  `all`. In GitHub Actions only, DRIPSHARP_NUGET_RELEASE_SKIP_TESTS=1 skips the
+  exhaustive proof ladders and records that reduced verification in the
+  manifest. Dependency injection options exist for focused verification and do
+  not add publication operations."
   ([] (prepare! {}))
   ([{:keys [workspace-root selection output-root read-target-fn proof-fn
             bundle-fn package-fn repository-proof-fn run-command!
-            test-suite-report-fn]
+            test-suite-report-fn getenv-fn]
      :or {read-target-fn target-directory/read-target
           bundle-fn nuget-package-bundle/bundle!
           proof-fn target-execution/proof!
           package-fn target-execution/package!
           repository-proof-fn product-repository/verify-synchronized!
-          test-suite-report-fn authorship-report/test-suite-report!}
+          test-suite-report-fn authorship-report/test-suite-report!
+          getenv-fn #(System/getenv %)}
      :as options}]
    (let [credential-options (set/intersection forbidden-option-keys
                                               (set (keys options)))]
@@ -770,6 +798,7 @@
               {:forbidden-options (vec (sort credential-options))})))
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          selection (some-> (or selection "all") str str/trim)
+         test-verification (test-verification-mode! getenv-fn)
          products
          (selected-products!
           (discover-products! {:workspace-root root
@@ -792,10 +821,25 @@
                         (f (cond-> value
                              run-command! (assoc :run-command! run-command!))))
                       proof
-                      (exact-proof!
-                       contract
-                       (invoke proof-fn
-                               {:workspace-root root :target target}))
+                      (if (= :complete test-verification)
+                        (exact-proof!
+                         contract
+                         (invoke proof-fn
+                                 {:workspace-root root :target target}))
+                        (do
+                          (println
+                           "Skipping exhaustive NuGet release proof ladders in GitHub Actions:"
+                           target)
+                          (exact-proof!
+                           contract
+                           (mapv
+                            (fn [{:keys [id resource-class]}]
+                              {:id id
+                               :resource-class resource-class
+                               :result
+                               {:reason :github-free-runner
+                                :status :skipped}})
+                            (get-in contract [:proof :ladders])))))
                       _ proof
                       initial-repository
                       (exact-repository-proof!
@@ -874,7 +918,8 @@
                :product-records []}
               plans)
              manifest
-             (deterministic-manifest selection product-records packages)
+             (deterministic-manifest selection test-verification
+                                     product-records packages)
              manifest-file (paths/resolve-path staging "release-manifest.edn")
              _ (util/write-text! manifest-file (str (pr-str manifest) "\n"))
              test-suites
@@ -911,7 +956,8 @@
               :authorship-report-sha256 (:markdown-sha256 authorship-result)
               :products (:product-count manifest)
               :packages (:package-count manifest)
-              :publish-order (:publish-order manifest)}]
+              :publish-order (:publish-order manifest)
+              :test-verification test-verification}]
          (println "Credential-free NuGet release preparation passed:"
                   (pr-str summary))
          {:artifact-directory output

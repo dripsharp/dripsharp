@@ -301,8 +301,9 @@
          :publication-credentials-accepted false
          :publish-order publish-order
          :remote-availability :not-checked
-         :schema-version 3
-         :selection "all")
+         :schema-version 4
+         :selection "all"
+         :test-verification :complete)
         manifest-file (paths/resolve-path directory "release-manifest.edn")
         write-manifest!
         (fn [value]
@@ -368,6 +369,15 @@
     (is (empty? @push-calls))
     (is (str/includes? output "NuGet publication dry-run plan:"))
     (is (str/includes? output "DripSharp.Brine.Parser"))))
+
+(deftest github-free-runner-test-skip-is-preserved-by-preflight
+  (let [{:keys [manifest options write-manifest!]} (fixture!)
+        _ (write-manifest!
+           (assoc manifest
+                  :test-verification :skipped-for-github-free-runner))
+        report (publisher/preflight! options)]
+    (is (= :skipped-for-github-free-runner
+           (:test-verification report)))))
 
 (deftest one-product-manifest-is-a-complete-selected-release
   (let [{:keys [contracts manifest]} (fixture!)

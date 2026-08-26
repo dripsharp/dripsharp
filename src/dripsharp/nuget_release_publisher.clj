@@ -1,5 +1,5 @@
 (ns dripsharp.nuget-release-publisher
-  "Fail-closed local publication of a proved NuGet release manifest.
+  "Fail-closed local publication of a verified NuGet release manifest.
 
   Dry-run is the default. Live publication requires independent authorization,
   a target-approved HTTPS source, and an API key supplied to the publisher
@@ -48,7 +48,7 @@
 (def ^:private manifest-keys
   #{:configuration :kind :network-mutations :package-count :packages
     :product-count :products :publication-credentials-accepted :publish-order
-    :remote-availability :schema-version :selection})
+    :remote-availability :schema-version :selection :test-verification})
 (def ^:private product-keys
   #{:component-package-ids :package-ids :product-commit :product-family :proof-ladders
     :repository-url :source-commit :source-repository :target})
@@ -343,6 +343,8 @@
                  (= [] (:network-mutations manifest))
                  (false? (:publication-credentials-accepted manifest))
                  (= :not-checked (:remote-availability manifest))
+                 (contains? #{:complete :skipped-for-github-free-runner}
+                            (:test-verification manifest))
                  (string? (:selection manifest))
                  (or (= "all" (:selection manifest))
                      (boolean (re-matches #"[a-z][a-z0-9-]*"
@@ -1108,6 +1110,7 @@
          :package-count (count packages)
          :publish-order (:publish-order manifest-data)
          :remote-availability remote
+         :test-verification (:test-verification manifest-data)
          :size-limit-bytes max-package-bytes}]
     {:contracts contracts
      :directory directory

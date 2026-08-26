@@ -326,6 +326,39 @@
     (is (= [["pdfcube" "pdfcube-preflight"]]
            @(:package-calls fixture)))))
 
+(deftest github-actions-can-explicitly-skip-exhaustive-release-tests
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-skip-tests-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        result
+        (preparation/prepare!
+         (assoc (:options fixture)
+                :selection "sqltrellis"
+                :getenv-fn
+                {"DRIPSHARP_NUGET_RELEASE_SKIP_TESTS" "1"
+                 "GITHUB_ACTIONS" "true"}))]
+    (is (= :skipped-for-github-free-runner
+           (get-in result [:manifest :test-verification])))
+    (is (empty? @(:proof-calls fixture)))
+    (is (= [["sqltrellis" "sqltrellis"]]
+           @(:package-calls fixture)))))
+
+(deftest release-test-skipping-is-restricted-to-github-actions
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-local-skip-tests-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        failure
+        (failure-data
+         #(preparation/prepare!
+           (assoc (:options fixture)
+                  :selection "sqltrellis"
+                  :getenv-fn
+                  {"DRIPSHARP_NUGET_RELEASE_SKIP_TESTS" "1"})))]
+    (is (= :skip-tests-outside-github-actions (:reason failure)))
+    (is (empty? @(:proof-calls fixture)))))
+
 (deftest aggregate-preparation-is-deterministic-and-credential-free
   (let [root (Files/createTempDirectory
               "dripsharp-nuget-release-preparation-test-"
@@ -362,6 +395,7 @@
     (is (= 4 (get-in first-result [:manifest :package-count])))
     (is (= 3 (get-in first-result [:manifest :product-count])))
     (is (= [] (get-in first-result [:manifest :network-mutations])))
+    (is (= :complete (get-in first-result [:manifest :test-verification])))
     (is (= :not-checked
            (get-in first-result [:manifest :remote-availability])))
     (is (false? (get-in first-result
