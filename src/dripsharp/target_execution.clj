@@ -178,9 +178,7 @@
           :differential-fn :proof-fn :synchronize-fn :prepare-fn
           :test-suites-fn :consumer-tests-fn :staging-cleanup-fn
           :repository-proof-fn
-          :release-fn :build-fn :framework-assemblies :inventory
-          :branch :commit-message :pull-request-title :pull-request-body
-          :authorized-tag :product-commit :platform-ids :output-root))
+          :branch :commit-message :pull-request-title :pull-request-body))
 
 (defn- generate-loaded!
   [execution options generate-fn]
