@@ -94,6 +94,34 @@
            (set (map :source (vals (:profile-tests strategy))))))
     (is (empty? (:fixtures strategy)))))
 
+(deftest pdfcarton-release-smoke-is-an-isolated-shipped-project
+  (let [contract (target-directory/read-target :pdfcube)
+        suites (get-in contract [:publication :test-suites])
+        project
+        (some #(when (= "DripSharp.PdfCarton.ReleaseSmoke" (:id %)) %)
+              (:projects suites))
+        strategy (some #(when (= :release-smoke (:id %)) %)
+                       (:strategies suites))]
+    (is (= {:directory "tests/DripSharp.PdfCarton.ReleaseSmoke"
+            :profiles
+            #{"pdfcube-io" "pdfcube-fontbox" "pdfcube-xmpbox"
+              "pdfcube-pdfbox" "pdfcube-preflight"}
+            :project-references []}
+           {:directory (:directory project)
+            :profiles (set (:profile-references project))
+            :project-references (:project-references project)}))
+    (is (= :focused-consumer (:kind strategy)))
+    (is (= :shipped (:policy strategy)))
+    (is (= "DripSharp.PdfCarton.ReleaseSmoke" (:project strategy)))
+    (is (= #{"consumer-tests/ReleaseSmokeIoTests.cs"
+             "consumer-tests/ReleaseSmokeFontsTests.cs"
+             "consumer-tests/ReleaseSmokeXmpTests.cs"
+             "consumer-tests/ReleaseSmokePdfTests.cs"
+             "consumer-tests/ReleaseSmokePreflightTests.cs"}
+           (set (map :source (vals (:profile-tests strategy))))))
+    (is (= ["consumer-tests/fixtures/metadata.xmp"]
+           (mapv :source (:fixtures strategy))))))
+
 (deftest emission-is-repository-local-inventoried-and-deterministic
   (doseq [target [:pkl :pdfcube]]
     (let [workspace (temp-directory)]
@@ -153,6 +181,13 @@
                  (Files/readString
                   (.resolve ^Path (:tests-root second) "README.md"))
                  "does not replace")))
+          (when (= :pdfcube target)
+            (is (str/includes?
+                 (Files/readString
+                  (.resolve ^Path (:tests-root second) "README.md"))
+                 (str "dotnet test tests/DripSharp.PdfCarton.ReleaseSmoke/"
+                      "DripSharp.PdfCarton.ReleaseSmoke.csproj "
+                      "--configuration Release"))))
           (is (not (str/includes? inventory-first "SHA256SUMS")))
           (is (str/includes?
                (Files/readString

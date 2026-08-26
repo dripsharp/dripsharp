@@ -13,7 +13,19 @@
    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
     {:id "xunit.v3" :version "3.2.2"}
     {:id "xunit.runner.visualstudio" :version "3.1.5"}
-    {:id "Castle.Core" :version "5.1.1"}]}]
+    {:id "Castle.Core" :version "5.1.1"}]}
+  {:id "DripSharp.PdfCarton.ReleaseSmoke"
+   :directory "tests/DripSharp.PdfCarton.ReleaseSmoke"
+   :assembly-name "DripSharp.PdfCarton.ReleaseSmoke"
+   :target-framework "net10.0"
+   :profile-references
+   ["pdfcube-io" "pdfcube-fontbox" "pdfcube-xmpbox"
+    "pdfcube-pdfbox" "pdfcube-preflight"]
+   :project-references []
+   :packages
+   [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
+    {:id "xunit.v3" :version "3.2.2"}
+    {:id "xunit.runner.visualstudio" :version "3.1.5"}]}]
  :strategies
  [{:id :focused-consumer
    :kind :focused-consumer
@@ -47,6 +59,38 @@
      :sha256 "e0e15a9c1ad91ba8389c1e23e3fd598e299aa28c73b45dee49b923e054464fc6"
      :license "Apache-2.0"
      :attribution "Authored for the PdfCarton generated consumer suite."}]}
+  {:id :release-smoke
+   :kind :focused-consumer
+   :policy :shipped
+   :project "DripSharp.PdfCarton.ReleaseSmoke"
+   :handler dripsharp.consumer-tests/focused-consumer-strategy!
+   :profile-tests
+   {"pdfcube-io"
+    {:source "consumer-tests/ReleaseSmokeIoTests.cs"
+     :destination "ReleaseSmokeIoTests.cs"
+     :sha256 "33672f6fd99718eb54e276fc5cb4eb92eb5aab7a690e9dff5ae8b15899e33e0b"}
+    "pdfcube-fontbox"
+    {:source "consumer-tests/ReleaseSmokeFontsTests.cs"
+     :destination "ReleaseSmokeFontsTests.cs"
+     :sha256 "c6c0ef16a6ce861cd285a232703d0566117815393e58f848c167a5d98c1e24f3"}
+    "pdfcube-xmpbox"
+    {:source "consumer-tests/ReleaseSmokeXmpTests.cs"
+     :destination "ReleaseSmokeXmpTests.cs"
+     :sha256 "5771086c68848009fe94ecc89e49808ec2ffcbc1a2d00096759068d6b4b0bc42"}
+    "pdfcube-pdfbox"
+    {:source "consumer-tests/ReleaseSmokePdfTests.cs"
+     :destination "ReleaseSmokePdfTests.cs"
+     :sha256 "240eb20586cce16ccd5f0b9ffa1d9ae6ae6c6093acf0f832b0176e1b9a12be1e"}
+    "pdfcube-preflight"
+    {:source "consumer-tests/ReleaseSmokePreflightTests.cs"
+     :destination "ReleaseSmokePreflightTests.cs"
+     :sha256 "561b3c31d3e13355afa9e348b499c5ff5586d61ac035bf679aecb5ce2cb249f7"}}
+   :fixtures
+   [{:source "consumer-tests/fixtures/metadata.xmp"
+     :destination "Fixtures/metadata.xmp"
+     :sha256 "e0e15a9c1ad91ba8389c1e23e3fd598e299aa28c73b45dee49b923e054464fc6"
+     :license "Apache-2.0"
+     :attribution "Authored for the PdfCarton release smoke suite."}]}
   {:id :pdfcarton-adapted-upstream
    :kind :adapted-upstream
    :policy :shipped
