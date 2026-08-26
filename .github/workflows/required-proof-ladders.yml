@@ -11,6 +11,21 @@ permissions:
   contents: read
 
 jobs:
+  product-release-workflow-contracts:
+    name: Product release workflow contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the product workflow commits
+        run: >-
+          git submodule update --init --depth 1
+          products/brine products/pdfcarton products/sqltrellis
+
+      - name: Check the product-owned release workflow structure
+        run: python3 scripts/check-product-release-workflows.py
+
   java-compat-conformance:
     name: Shared JavaCompat conformance
     runs-on: [self-hosted, linux, x64]
