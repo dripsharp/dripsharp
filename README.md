@@ -80,6 +80,7 @@ clojure -J-Xmx8g -M:run differential rawhttp
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof rawhttp
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pdfcube
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof sqltrellis
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run authorship-report all
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pdfcube
@@ -191,55 +192,28 @@ exercises the public parser package; `pkl-core-value-model`
 exercises the packed evaluator and value-model surface plus its exact package
 dependency on `DripSharp.Brine.Parser`.
 
-`nuget-release-prepare <pkl|pdfcube|sqltrellis|all>` is the credential-free
-local NuGet release entry point. It discovers only target-owned production
-package inventories, runs the selected targets' complete proof ladders, and
-passes every package closure through the clean twice-pack, exact inspection,
-fresh-feed, and isolated-consumer gates. It writes byte-stable `.nupkg` and
-`.snupkg` files plus `release-manifest.edn` under
-`target/nuget-release/<selection>`. The command accepts no publication
-credential and performs no tag, release, upload, ownership, or network
-mutation. Its deterministic manifest records remote availability as
-`:not-checked`. The same run writes `product-authorship-report.edn` and
-`product-authorship-report.md` under `target/authorship-report/<selection>`.
-Those reports aggregate the package-inspected mechanical, shared authored,
-product-authored, and vendored source classes, deduplicate shared authored
-inputs, list their durable provenance and linked proofs, and report generated
-test-suite provenance separately from production percentages.
-
 `authorship-report <pkl|pdfcube|sqltrellis|all>` is the explicit reporting
-entry point. Because an exact report requires reconciled package inputs, it
-runs the same credential-free proof and package preparation as
-`nuget-release-prepare`; it is not a shortcut over stale generated files.
+entry point. It runs each selected product's complete proof and obtains the
+dependency-closed package evidence from the shared packaging path before
+writing `product-authorship-report.edn` and `product-authorship-report.md`
+under `target/authorship-report/<selection>`. It produces no release artifact
+or publication operation and is not a shortcut over stale generated files.
 "Authored" in the report means reviewed non-mechanical DripSharp source. It
 does not attempt to infer whether an LLM or a human typed an individual line,
 and deterministic source-mapped adaptations performed by the translator remain
 classified as mechanical.
 
-`nuget-release-preflight <manifest> [--check-nuget-org]` requires the complete
-target-selected release set and revalidates exact target-owned identities,
-versions, dependency closure and order, hashes, symbol pairing, and the
-configured 250 MiB nuget.org artifact limit. Offline mode performs no network
-request and reports every ID/version as not checked. The optional nuget.org
-check uses bounded credential-free GET requests and fails the release on an
-existing exact ID/version or an indeterminate response.
-
-`nuget-release-publish <manifest>` revalidates that proved manifest, its exact
-target-selected package graph, every package and symbol digest, and
-the package metadata before printing the ordered push plan. Dry-run is the
-default and performs no network operation. Live publication first requires a
-successful remote availability preflight and additionally requires
-`--live --authorize-publish --source <https-source>`; the source must equal the
-target-owned HTTPS source and the key must be injected through `NUGET_API_KEY`
-(and is forwarded to the symbol push as `NUGET_SYMBOL_API_KEY`). The key is
-never accepted as an argument, printed, or written to release evidence. Remote
-collisions and push-time conflicts are hard failures; the command never uses
-skip-duplicate behavior.
-
-The [local NuGet release runbook](doc/nuget-release-runbook.md) gives the exact
-operator commands, expected evidence, nuget.org ownership boundary,
-immutable-version recovery rules, isolated post-publish restore, and the
-contract for a later GitHub Actions trusted-publishing handoff.
+NuGet publication is product-owned. Brine, PdfCarton, and SqlTrellis each have
+one manually dispatched workflow in their generated product repository. Each
+workflow builds its triggering `master` commit, runs a bounded release proof,
+packs once, verifies essential package facts through an isolated external
+consumer, transfers the exact tested package and symbol files with SHA-256
+checksums to a protected publish job, and authenticates through NuGet trusted
+publishing. This bounded release gate does not replace `proof <target>` or
+change product completion. The [NuGet release
+runbook](doc/nuget-release-runbook.md) gives the complete per-product operator
+procedure, fixed dependency orders, approval boundary, and immutable-version
+recovery rules.
 
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.

@@ -18,10 +18,10 @@ These documents apply to every Java-to-C# target:
   profiles, mappings, runtime assets, baselines, and validation evidence.
 * [Product Repository Contract](product-repositories.md) defines the GitHub
   repository, Git submodule, staging, and generated-publication model.
-* [Local NuGet Release Runbook](nuget-release-runbook.md) defines the
-  credential-free preparation and inspection flow, the separately authorized
-  local publication boundary, recovery rules, and the later trusted-publishing
-  handoff.
+* [NuGet Release Runbook](nuget-release-runbook.md) defines the three
+  independent product-owned release workflows, their bounded verification and
+  checksum handoff, the protected trusted-publishing boundary, and recovery
+  rules while preserving the separate full local proofs.
 * [Repository Work History](repository-history.md) reconstructs the project's
   major development phases, rewinds, progress loops, product expansion, and
   recent stabilization from the Git history.
