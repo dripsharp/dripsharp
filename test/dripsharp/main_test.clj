@@ -1,10 +1,8 @@
 (ns dripsharp.main-test
-  (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is]]
+            [dripsharp.authorship-portfolio :as authorship-portfolio]
             [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.main :as main]
-            [dripsharp.nuget-release-preparation :as nuget-release-preparation]
-            [dripsharp.nuget-release-publisher :as nuget-release-publisher]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
             [dripsharp.rebaseline :as rebaseline]
@@ -40,21 +38,9 @@
                   (fn [options]
                     (swap! calls conj [:product-prepare options])
                     :ok)
-                  target-execution/prepare-alpha-release!
+                  authorship-portfolio/write!
                   (fn [options]
-                    (swap! calls conj [:alpha-release-prepare options])
-                    :ok)
-                  nuget-release-preparation/prepare!
-                  (fn [options]
-                    (swap! calls conj [:nuget-release-prepare options])
-                    :ok)
-                  nuget-release-publisher/preflight!
-                  (fn [options]
-                    (swap! calls conj [:nuget-release-preflight options])
-                    :ok)
-                  nuget-release-publisher/publish!
-                  (fn [options]
-                    (swap! calls conj [:nuget-release-publish options])
+                    (swap! calls conj [:authorship-report options])
                     :ok)
                   java-compat-differential/verify!
                   (fn []
@@ -85,35 +71,7 @@
               ["product-prepare" "acme" "generated/acme"
                "Publish Acme"])))
       (is (= :ok
-             (main/dispatch!
-              ["alpha-release-prepare" "acme"
-               "v0.1.0-alpha.1"
-               "0123456789abcdef0123456789abcdef01234567"])))
-      (is (= :ok
-             (main/dispatch!
-              ["alpha-release-prepare" "acme"
-               "v0.1.0-alpha.1"
-               "0123456789abcdef0123456789abcdef01234567"
-               "osx-x64,osx-arm64"])))
-      (is (= :ok
-             (main/dispatch! ["nuget-release-prepare" "all"])))
-      (is (= :ok
              (main/dispatch! ["authorship-report" "all"])))
-      (is (= :ok
-             (main/dispatch!
-              ["nuget-release-preflight" "release-manifest.edn"])))
-      (is (= :ok
-             (main/dispatch!
-              ["nuget-release-preflight" "release-manifest.edn"
-               "--check-nuget-org"])))
-      (is (= :ok
-             (main/dispatch!
-              ["nuget-release-publish" "release-manifest.edn"])))
-      (is (= :ok
-             (main/dispatch!
-              ["nuget-release-publish" "release-manifest.edn"
-               "--live" "--authorize-publish" "--source"
-               "https://api.nuget.org/v3/index.json"])))
       (is (= :ok
              (main/dispatch! ["java-compat-differential"])))
       (is (= :ok
@@ -130,31 +88,7 @@
                {:target "acme"
                 :branch "generated/acme"
                 :commit-message "Publish Acme"}]
-              [:alpha-release-prepare
-               {:target "acme"
-                :authorized-tag "v0.1.0-alpha.1"
-                :product-commit
-                "0123456789abcdef0123456789abcdef01234567"}]
-              [:alpha-release-prepare
-               {:target "acme"
-                :authorized-tag "v0.1.0-alpha.1"
-                :product-commit
-                "0123456789abcdef0123456789abcdef01234567"
-                :platform-ids ["osx-x64" "osx-arm64"]}]
-              [:nuget-release-prepare {:selection "all"}]
-              [:nuget-release-prepare {:selection "all"}]
-              [:nuget-release-preflight
-               {:manifest "release-manifest.edn"}]
-              [:nuget-release-preflight
-               {:manifest "release-manifest.edn"
-                :check-nuget-org? true}]
-              [:nuget-release-publish
-               {:manifest "release-manifest.edn"}]
-              [:nuget-release-publish
-               {:manifest "release-manifest.edn"
-                :live? true
-                :authorized? true
-                :source "https://api.nuget.org/v3/index.json"}]
+              [:authorship-report {:selection "all"}]
               [:java-compat-differential]
               [:pdfcube-family-host-matrix "evidence" "output"]
               [:rebaseline
@@ -173,26 +107,8 @@
                 ["product-prepare" "pkl"]
                 ["product-prepare" "pkl" "generated/pkl"]
                 ["product-prepare" "pkl" "generated/pkl" "message" "extra"]
-                ["alpha-release-prepare"]
-                ["alpha-release-prepare" "pkl"]
-                ["alpha-release-prepare" "pkl" "v0.1.0-alpha.1"]
-                ["alpha-release-prepare" "pkl" "v0.1.0-alpha.1"
-                 "0123456789abcdef0123456789abcdef01234567"
-                 "osx-x64,osx-arm64" "extra"]
-                ["nuget-release-prepare"]
-                ["nuget-release-prepare" "all" "extra"]
                 ["authorship-report"]
                 ["authorship-report" "all" "extra"]
-                ["nuget-release-preflight"]
-                ["nuget-release-preflight" "release-manifest.edn" "--live"]
-                ["nuget-release-preflight" "release-manifest.edn"
-                 "--check-nuget-org" "extra"]
-                ["nuget-release-publish"]
-                ["nuget-release-publish" "release-manifest.edn" "--live"]
-                ["nuget-release-publish" "release-manifest.edn" "--live"
-                 "--authorize-publish" "--source"]
-                ["nuget-release-publish" "release-manifest.edn" "--api-key"
-                 "must-be-redacted"]
                 ["java-compat-differential" "pkl"]
                 ["pdfcube-family-host-matrix"]
                 ["pdfcube-family-host-matrix" "evidence"]
@@ -213,17 +129,3 @@
     (is (re-find
          #"\|rebaseline <pkl\|pdfcube\|rawhttp> \[--approve <token>\]"
          (ex-message error)))))
-
-(deftest rejected-nuget-publication-arguments-are-redacted
-  (let [value (str "fixture-" (random-uuid))
-        error
-        (try
-          (main/dispatch!
-           ["nuget-release-publish" "release-manifest.edn"
-            "--api-key" value])
-          nil
-          (catch clojure.lang.ExceptionInfo error
-            error))]
-    (is (= :invalid-command-line (:kind (ex-data error))))
-    (is (= :redacted (:arguments (ex-data error))))
-    (is (not (str/includes? (str (ex-message error) (ex-data error)) value)))))

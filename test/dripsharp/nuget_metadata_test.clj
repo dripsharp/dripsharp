@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.baseline :as baseline]
             [dripsharp.java-project :as java-project]
+            [dripsharp.nuget-framework :as nuget-framework]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
             [dripsharp.target-directory :as target-directory]
@@ -106,7 +107,9 @@
   [{:keys [package target-framework dependencies]}]
   (let [namespace (if (seq dependencies)
                     dependency-nuspec-namespace
-                    base-nuspec-namespace)]
+                    base-nuspec-namespace)
+        dependency-framework
+        (nuget-framework/canonical-dependency-framework target-framework)]
     (str
      "<package xmlns=\"" namespace "\"><metadata>"
      "<id>" (xml-escape (:id package)) "</id>"
@@ -123,7 +126,7 @@
      "<repository type=\"" (xml-escape (:repository-type package))
      "\" url=\"" (xml-escape (:repository-url package))
      "\" commit=\"" (:repository-commit package) "\" />"
-     "<dependencies><group targetFramework=\"" target-framework "\">"
+     "<dependencies><group targetFramework=\"" dependency-framework "\">"
      (apply str
             (for [{:keys [id version]} dependencies]
               (str "<dependency id=\"" (xml-escape id)

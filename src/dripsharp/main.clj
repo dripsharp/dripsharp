@@ -1,8 +1,7 @@
 (ns dripsharp.main
   (:require [clojure.string :as str]
+            [dripsharp.authorship-portfolio :as authorship-portfolio]
             [dripsharp.java-compat-differential :as java-compat-differential]
-            [dripsharp.nuget-release-preparation :as nuget-release-preparation]
-            [dripsharp.nuget-release-publisher :as nuget-release-publisher]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
             [dripsharp.rebaseline :as rebaseline]
@@ -17,13 +16,7 @@
    "|proof <target>"
    "|product-sync <target>"
    "|product-prepare <target> <branch> <commit-message>"
-   "|alpha-release-prepare <target> <authorized-alpha-tag> <product-commit> "
-   "[platform-id,...]"
    "|authorship-report <pkl|pdfcube|sqltrellis|all>"
-   "|nuget-release-prepare <pkl|pdfcube|sqltrellis|all>"
-   "|nuget-release-preflight <manifest> [--check-nuget-org]"
-   "|nuget-release-publish <manifest> "
-   "[--live --authorize-publish --source <https-source>]"
    "|java-compat-differential"
    "|pdfcube-family-host-matrix <evidence-root> <output-root>"
    "|rebaseline <pkl|pdfcube|rawhttp> [--approve <token>]"))
@@ -73,61 +66,11 @@
         :branch selector
         :commit-message (first extra)})
 
-      (and (= "alpha-release-prepare" command)
-           target
-           selector
-           (contains? #{1 2} (count extra)))
-      (target-execution/prepare-alpha-release!
-       (cond->
-        {:target target
-         :authorized-tag selector
-         :product-commit (first extra)}
-         (= 2 (count extra))
-         (assoc :platform-ids
-                (str/split (second extra) #"," -1))))
-
-      (and (= "nuget-release-prepare" command)
-           target
-           (nil? selector)
-           (empty? extra))
-      (nuget-release-preparation/prepare! {:selection target})
-
       (and (= "authorship-report" command)
            target
            (nil? selector)
            (empty? extra))
-      (nuget-release-preparation/prepare! {:selection target})
-
-      (and (= "nuget-release-preflight" command)
-           target
-           (nil? selector)
-           (empty? extra))
-      (nuget-release-publisher/preflight! {:manifest target})
-
-      (and (= "nuget-release-preflight" command)
-           target
-           (= "--check-nuget-org" selector)
-           (empty? extra))
-      (nuget-release-publisher/preflight!
-       {:manifest target :check-nuget-org? true})
-
-      (and (= "nuget-release-publish" command)
-           target
-           (nil? selector)
-           (empty? extra))
-      (nuget-release-publisher/publish! {:manifest target})
-
-      (and (= "nuget-release-publish" command)
-           target
-           (= "--live" selector)
-           (= ["--authorize-publish" "--source"]
-              (vec (butlast extra)))
-           (= 3 (count extra)))
-      (nuget-release-publisher/publish!
-       {:manifest target
-        :live? true
-        :authorized? true
-        :source (last extra)})
+      (authorship-portfolio/write! {:selection target})
 
       (and (= "java-compat-differential" command)
            (nil? target)
@@ -146,11 +89,6 @@
                (and (= 4 (count args))
                     (= "--approve" selector))))
       (rebaseline/run! (paths/workspace-root) (rest args))
-
-      (contains? #{"nuget-release-preflight" "nuget-release-publish"}
-                 command)
-      (throw (ex-info usage {:kind :invalid-command-line
-                             :arguments :redacted}))
 
       :else
       (throw (ex-info usage {:kind :invalid-command-line

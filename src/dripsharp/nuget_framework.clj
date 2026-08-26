@@ -3,7 +3,7 @@
 
 (defn canonical-dependency-framework
   "Derives the exact NuGet nuspec dependency-group identifier without changing
-  the project, asset-path, or release-manifest TFM that supplied it."
+  the project or asset-path TFM that supplied it."
   [target-framework]
   (if-let [[_ version] (re-matches #"netstandard(\d+\.\d+)" target-framework)]
     (str ".NETStandard" version)
