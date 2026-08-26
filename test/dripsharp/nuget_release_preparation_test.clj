@@ -264,6 +264,10 @@
                (fn [{:keys [target]}]
                  (swap! reduced-proof-calls conj target)
                  {:exit 0 :output ""})
+               :pdfcarton-reduced-proof-fn
+               (fn [{:keys [target]}]
+                 (swap! reduced-proof-calls conj target)
+                 {:exit 0 :output ""})
                :bundle-fn bundle-fn
                :package-fn package-fn
                :test-suite-report-fn
@@ -441,6 +445,97 @@
     (is (= 0 (:exit result)))
     (is (str/includes? (:output result)
                        "Brine release-verification controls passed."))))
+
+(deftest pdfcarton-releases-use-the-product-owned-bounded-verifier
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-reduced-pdfcarton-tests-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        result
+        (preparation/prepare!
+         (assoc (:options fixture)
+                :selection "pdfcube"
+                :getenv-fn
+                {"PDFCARTON_RELEASE_REDUCED_TESTS" "1"}))]
+    (is (= :reduced-pdfcarton-release
+           (get-in result [:manifest :test-verification])))
+    (is (empty? @(:proof-calls fixture)))
+    (is (= ["pdfcube"] @(:reduced-proof-calls fixture)))
+    (is (= [["pdfcube" "pdfcube-preflight"]]
+           @(:package-calls fixture)))))
+
+(deftest the-legacy-whole-ladder-skip-is-disabled-for-pdfcarton
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-pdfcarton-old-skip-tests-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        failure
+        (failure-data
+         #(preparation/prepare!
+           (assoc (:options fixture)
+                  :selection "pdfcube"
+                  :getenv-fn
+                  {"DRIPSHARP_NUGET_RELEASE_SKIP_TESTS" "1"
+                   "GITHUB_ACTIONS" "true"})))]
+    (is (= :pdfcarton-whole-ladder-skip-disabled (:reason failure)))
+    (is (empty? @(:proof-calls fixture)))
+    (is (empty? @(:reduced-proof-calls fixture)))
+    (is (empty? @(:package-calls fixture)))))
+
+(deftest reduced-pdfcarton-mode-rejects-a-non-heavy-proof-ladder
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-pdfcarton-non-heavy-tests-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        contract
+        (-> (get (:contracts fixture) :pdfcube)
+            (assoc-in [:proof :ladders 0 :kind] :target-validations)
+            (assoc-in [:proof :ladders 0 :resource-class] :standard))
+        failure
+        (failure-data
+         #(preparation/prepare!
+           (assoc (:options fixture)
+                  :selection "pdfcube"
+                  :getenv-fn
+                  {"PDFCARTON_RELEASE_REDUCED_TESTS" "1"}
+                  :read-target-fn (fn [_ _] contract))))]
+    (is (= :non-heavy-proof-ladder-in-reduced-mode (:reason failure)))
+    (is (empty? @(:proof-calls fixture)))
+    (is (empty? @(:reduced-proof-calls fixture)))
+    (is (empty? @(:package-calls fixture)))))
+
+(deftest a-pdfcarton-release-smoke-failure-stays-fatal-in-reduced-mode
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-pdfcarton-smoke-failure-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        failure
+        (failure-data
+         #(preparation/prepare!
+           (assoc (:options fixture)
+                  :selection "pdfcube"
+                  :getenv-fn
+                  {"PDFCARTON_RELEASE_REDUCED_TESTS" "1"}
+                  :pdfcarton-reduced-proof-fn
+                  (fn [_]
+                    (throw
+                     (ex-info "Mandatory PdfCarton release smoke failed"
+                              {:kind :command-failed :exit 23}))))))]
+    (is (= :command-failed (:kind failure)))
+    (is (= 23 (:exit failure)))
+    (is (empty? @(:proof-calls fixture)))
+    (is (empty? @(:package-calls fixture)))))
+
+(deftest pdfcarton-release-verifier-command-contract-is-fail-closed
+  (let [root (paths/workspace-root)
+        product (paths/resolve-path root "products/pdfcarton")
+        result
+        (process/run!
+         {:command ["bash" "eng/test-verify-release.sh"]
+          :directory product})]
+    (is (= 0 (:exit result)))
+    (is (str/includes? (:output result)
+                       "PdfCarton release-verification controls passed."))))
 
 (deftest release-test-skipping-is-restricted-to-github-actions
   (let [root (Files/createTempDirectory

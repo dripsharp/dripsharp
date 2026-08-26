@@ -26,6 +26,8 @@
   "DRIPSHARP_NUGET_RELEASE_SKIP_TESTS")
 (def brine-reduced-tests-environment-variable
   "BRINE_RELEASE_REDUCED_TESTS")
+(def pdfcarton-reduced-tests-environment-variable
+  "PDFCARTON_RELEASE_REDUCED_TESTS")
 (def ^:private github-actions-environment-variable "GITHUB_ACTIONS")
 
 (def ^:private commit-pattern #"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -64,13 +66,22 @@
         reduced-brine?
         (environment-flag! getenv-fn
                            brine-reduced-tests-environment-variable
-                           :invalid-brine-reduced-tests-selection)]
+                           :invalid-brine-reduced-tests-selection)
+        reduced-pdfcarton?
+        (environment-flag! getenv-fn
+                           pdfcarton-reduced-tests-environment-variable
+                           :invalid-pdfcarton-reduced-tests-selection)
+        selected-environment-variables
+        (cond-> []
+          skip-all? (conj skip-tests-environment-variable)
+          reduced-brine? (conj brine-reduced-tests-environment-variable)
+          reduced-pdfcarton?
+          (conj pdfcarton-reduced-tests-environment-variable))]
     (cond
-      (and skip-all? reduced-brine?)
+      (> (count selected-environment-variables) 1)
       (fail! "NuGet release test selections conflict"
              {:environment-variables
-              [skip-tests-environment-variable
-               brine-reduced-tests-environment-variable]
+              selected-environment-variables
               :reason :conflicting-release-test-selections})
 
       reduced-brine?
@@ -82,10 +93,24 @@
                 :reason :brine-reduced-tests-without-exclusive-brine
                 :targets (vec (sort targets))}))
 
+      reduced-pdfcarton?
+      (if (= #{:pdfcube} targets)
+        :reduced-pdfcarton-release
+        (fail! "Reduced PdfCarton verification requires the PdfCarton target alone"
+               {:environment-variable
+                pdfcarton-reduced-tests-environment-variable
+                :reason :pdfcarton-reduced-tests-without-exclusive-pdfcarton
+                :targets (vec (sort targets))}))
+
       (and skip-all? (contains? targets :pkl))
       (fail! "The whole-ladder test skip is disabled for Brine releases"
              {:environment-variable skip-tests-environment-variable
               :reason :brine-whole-ladder-skip-disabled})
+
+      (and skip-all? (contains? targets :pdfcube))
+      (fail! "The whole-ladder test skip is disabled for PdfCarton releases"
+             {:environment-variable skip-tests-environment-variable
+              :reason :pdfcarton-whole-ladder-skip-disabled})
 
       skip-all?
       (if (= "true"
@@ -99,16 +124,17 @@
       :else :complete)))
 
 (def ^:private reduced-proof-kinds
-  #{:differential :differential-tests :exhaustive :exhaustive-tests
-    :upstream :upstream-tests})
+  #{:corpus :corpus-tests :differential :differential-tests
+    :exhaustive :exhaustive-tests :upstream :upstream-tests})
 
 (defn- reduced-proof-records!
-  [contract]
+  [contract product-name skip-reason]
   (mapv
    (fn [{:keys [id kind resource-class]}]
      (when-not (or (= :high-memory resource-class)
                    (contains? reduced-proof-kinds kind))
-       (fail! "Reduced Brine verification cannot omit this proof ladder"
+       (fail! (str "Reduced " product-name
+                   " verification cannot omit this proof ladder")
               {:id id
                :kind kind
                :reason :non-heavy-proof-ladder-in-reduced-mode
@@ -116,7 +142,7 @@
                :target (:target contract)}))
      {:id id
       :resource-class resource-class
-      :result {:reason :bounded-brine-release-verification
+      :result {:reason skip-reason
                :status :skipped}})
    (get-in contract [:proof :ladders])))
 
@@ -129,6 +155,22 @@
       (fail! "The Brine-owned release verifier is missing"
              {:path (str verifier)
               :reason :missing-brine-release-verifier}))
+    (let [result
+          (run-command! {:command ["bash" "eng/verify-release.sh"]
+                         :directory product})]
+      (when (seq (:output result))
+        (print (:output result)))
+      result)))
+
+(defn- run-pdfcarton-reduced-verification!
+  [{:keys [workspace-root run-command!]
+    :or {run-command! process/run!}}]
+  (let [product (paths/resolve-path workspace-root "products/pdfcarton")
+        verifier (paths/resolve-path product "eng/verify-release.sh")]
+    (when-not (paths/regular-file? verifier)
+      (fail! "The PdfCarton-owned release verifier is missing"
+             {:path (str verifier)
+              :reason :missing-pdfcarton-release-verifier}))
     (let [result
           (run-command! {:command ["bash" "eng/verify-release.sh"]
                          :directory product})]
@@ -849,15 +891,17 @@
 
 (defn prepare!
   "Runs aggregate credential-free NuGet release preparation for one target or
-  `all`. BRINE_RELEASE_REDUCED_TESTS=1 selects Brine's product-owned bounded
-  verifier, which always builds the publishable projects and runs the mandatory
-  release smoke suite. The legacy GitHub-only whole-ladder skip is rejected for
-  Brine. Dependency injection options exist for focused verification and do not
-  add publication operations."
+  `all`. BRINE_RELEASE_REDUCED_TESTS=1 or
+  PDFCARTON_RELEASE_REDUCED_TESTS=1 selects that product's bounded verifier,
+  which always builds every publishable project and runs the mandatory release
+  smoke suite. The legacy GitHub-only whole-ladder skip is rejected for both
+  products. Dependency injection options exist for focused verification and do
+  not add publication operations."
   ([] (prepare! {}))
   ([{:keys [workspace-root selection output-root read-target-fn proof-fn
             bundle-fn package-fn repository-proof-fn run-command!
-            test-suite-report-fn getenv-fn reduced-proof-fn]
+            test-suite-report-fn getenv-fn reduced-proof-fn
+            pdfcarton-reduced-proof-fn]
      :or {read-target-fn target-directory/read-target
           bundle-fn nuget-package-bundle/bundle!
           proof-fn target-execution/proof!
@@ -865,6 +909,7 @@
           repository-proof-fn product-repository/verify-synchronized!
           test-suite-report-fn authorship-report/test-suite-report!
           reduced-proof-fn run-brine-reduced-verification!
+          pdfcarton-reduced-proof-fn run-pdfcarton-reduced-verification!
           getenv-fn #(System/getenv %)}
      :as options}]
    (let [credential-options (set/intersection forbidden-option-keys
@@ -906,11 +951,25 @@
 
                         :reduced-brine-release
                         (let [reduced-proof
-                              (reduced-proof-records! contract)]
+                              (reduced-proof-records!
+                               contract "Brine"
+                               :bounded-brine-release-verification)]
                           (invoke reduced-proof-fn
                                   {:workspace-root root :target target})
                           (println
                            "Brine's bounded release verification passed; omitting only declared heavy proof ladders:"
+                           target)
+                          (exact-proof! contract reduced-proof))
+
+                        :reduced-pdfcarton-release
+                        (let [reduced-proof
+                              (reduced-proof-records!
+                               contract "PdfCarton"
+                               :bounded-pdfcarton-release-verification)]
+                          (invoke pdfcarton-reduced-proof-fn
+                                  {:workspace-root root :target target})
+                          (println
+                           "PdfCarton's bounded release verification passed; omitting only declared heavy proof ladders:"
                            target)
                           (exact-proof! contract reduced-proof))
 

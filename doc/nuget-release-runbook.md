@@ -468,24 +468,33 @@ Each generated product repository supplies a manually dispatched
 authoritative `dripsharp/dripsharp` repository, requires its product gitlink to
 equal the product workflow commit, and runs the target-specific release driver.
 
-The product workflows set
-`DRIPSHARP_NUGET_RELEASE_SKIP_TESTS=1` to fit GitHub's free four-core public
-runner. The driver honors that value only when `GITHUB_ACTIONS=true`. It skips
-the target's exhaustive proof ladders and records
-`:test-verification :skipped-for-github-free-runner` in the release manifest.
-This reduced release path does not count as a complete target proof and does
-not change any product goal, exclusion, or completion criterion. It retains
-clean Release generation and compilation, two-pack reproducibility, package and
-symbol inspection, fresh-feed consumer validation, repository synchronization,
-remote version availability checks, and fail-closed publication.
+The PdfCarton workflow sets exactly
+`PDFCARTON_RELEASE_REDUCED_TESTS=1` to fit GitHub's free four-core public
+runner. The release driver accepts that product-owned value only when PdfCarton
+is the sole selected target and invokes `products/pdfcarton/eng/verify-release.sh`.
+That verifier always restores and compiles all five published projects, runs
+the mandatory release smoke suite and the five focused consumer classes, and
+omits only its documented exhaustive adapted-upstream, fixture-integrity,
+differential, corpus, and high-memory proof work. The manifest records
+`:test-verification :reduced-pdfcarton-release`. The former
+`DRIPSHARP_NUGET_RELEASE_SKIP_TESTS=1` whole-ladder path is rejected for
+PdfCarton (as it is for Brine); SqlTrellis is the only product workflow that
+still uses that legacy GitHub-only mode.
+
+Bounded release verification does not count as a complete target proof and
+does not change any product goal, exclusion, or completion criterion. The
+release flow retains clean Release compilation, two-pack reproducibility,
+package and symbol inspection, fresh-feed consumer validation, repository
+synchronization, remote version availability checks, and fail-closed
+publication.
 
 The workflows remain thin orchestration layers over the tested Clojure
 boundaries:
 
 1. Check out `dripsharp/dripsharp`, the selected generated-product submodule,
    and its pinned upstream source; install the approved Java, Clojure, and .NET
-   toolchains; allocate a 10 GiB heap and four workers; and invoke
-   `nuget-release-prepare <target>` with the explicit GitHub test-skip flag.
+   toolchains; allocate a 10 GiB heap and four workers; and invoke the
+   target-specific release preparation with its explicit reduced-test flag.
 2. Retain `target/nuget-release/<target>` as one hash-bound artifact and invoke
    the same offline `nuget-release-preflight` and default
    `nuget-release-publish` dry-run. YAML must not discover packages, rebuild the

@@ -344,6 +344,7 @@
                  (false? (:publication-credentials-accepted manifest))
                  (= :not-checked (:remote-availability manifest))
                  (contains? #{:complete :reduced-brine-release
+                              :reduced-pdfcarton-release
                               :skipped-for-github-free-runner}
                             (:test-verification manifest))
                  (string? (:selection manifest))
