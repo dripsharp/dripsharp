@@ -379,6 +379,13 @@
     (is (= :skipped-for-github-free-runner
            (:test-verification report)))))
 
+(deftest bounded-brine-test-mode-is-preserved-by-preflight
+  (let [{:keys [manifest options write-manifest!]} (fixture!)
+        _ (write-manifest!
+           (assoc manifest :test-verification :reduced-brine-release))
+        report (publisher/preflight! options)]
+    (is (= :reduced-brine-release (:test-verification report)))))
+
 (deftest one-product-manifest-is-a-complete-selected-release
   (let [{:keys [contracts manifest]} (fixture!)
         contract (first (filter #(= :pdfcube (:target %)) contracts))

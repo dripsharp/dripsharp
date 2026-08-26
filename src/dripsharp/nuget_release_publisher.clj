@@ -343,7 +343,8 @@
                  (= [] (:network-mutations manifest))
                  (false? (:publication-credentials-accepted manifest))
                  (= :not-checked (:remote-availability manifest))
-                 (contains? #{:complete :skipped-for-github-free-runner}
+                 (contains? #{:complete :reduced-brine-release
+                              :skipped-for-github-free-runner}
                             (:test-verification manifest))
                  (string? (:selection manifest))
                  (or (= "all" (:selection manifest))

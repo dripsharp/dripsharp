@@ -12,6 +12,7 @@
             [dripsharp.harness :as harness]
             [dripsharp.nuget-package-bundle :as nuget-package-bundle]
             [dripsharp.paths :as paths]
+            [dripsharp.process :as process]
             [dripsharp.product-repository :as product-repository]
             [dripsharp.target-directory :as target-directory]
             [dripsharp.target-execution :as target-execution]
@@ -23,6 +24,8 @@
 (def schema-version 4)
 (def skip-tests-environment-variable
   "DRIPSHARP_NUGET_RELEASE_SKIP_TESTS")
+(def brine-reduced-tests-environment-variable
+  "BRINE_RELEASE_REDUCED_TESTS")
 (def ^:private github-actions-environment-variable "GITHUB_ACTIONS")
 
 (def ^:private commit-pattern #"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -41,14 +44,50 @@
    (ex-info message
             (assoc data :kind :nuget-release-preparation-failed))))
 
-(defn- test-verification-mode!
-  [getenv-fn]
-  (let [selection (getenv-fn skip-tests-environment-variable)]
+(defn- environment-flag!
+  [getenv-fn variable invalid-reason]
+  (let [selection (getenv-fn variable)]
     (cond
-      (or (nil? selection) (= "" selection) (= "0" selection))
-      :complete
+      (or (nil? selection) (= "" selection) (= "0" selection)) false
+      (= "1" selection) true
+      :else
+      (fail! "NuGet release test selection is malformed"
+             {:environment-variable variable
+              :reason invalid-reason}))))
 
-      (= "1" selection)
+(defn- test-verification-mode!
+  [getenv-fn products]
+  (let [targets (set (map :target products))
+        skip-all?
+        (environment-flag! getenv-fn skip-tests-environment-variable
+                           :invalid-skip-tests-selection)
+        reduced-brine?
+        (environment-flag! getenv-fn
+                           brine-reduced-tests-environment-variable
+                           :invalid-brine-reduced-tests-selection)]
+    (cond
+      (and skip-all? reduced-brine?)
+      (fail! "NuGet release test selections conflict"
+             {:environment-variables
+              [skip-tests-environment-variable
+               brine-reduced-tests-environment-variable]
+              :reason :conflicting-release-test-selections})
+
+      reduced-brine?
+      (if (= #{:pkl} targets)
+        :reduced-brine-release
+        (fail! "Reduced Brine verification requires the Brine target alone"
+               {:environment-variable
+                brine-reduced-tests-environment-variable
+                :reason :brine-reduced-tests-without-exclusive-brine
+                :targets (vec (sort targets))}))
+
+      (and skip-all? (contains? targets :pkl))
+      (fail! "The whole-ladder test skip is disabled for Brine releases"
+             {:environment-variable skip-tests-environment-variable
+              :reason :brine-whole-ladder-skip-disabled})
+
+      skip-all?
       (if (= "true"
              (some-> (getenv-fn github-actions-environment-variable)
                      str/lower-case))
@@ -57,10 +96,45 @@
                {:environment-variable skip-tests-environment-variable
                 :reason :skip-tests-outside-github-actions}))
 
-      :else
-      (fail! "NuGet release test-skip selection is malformed"
-             {:environment-variable skip-tests-environment-variable
-              :reason :invalid-skip-tests-selection}))))
+      :else :complete)))
+
+(def ^:private reduced-proof-kinds
+  #{:differential :differential-tests :exhaustive :exhaustive-tests
+    :upstream :upstream-tests})
+
+(defn- reduced-proof-records!
+  [contract]
+  (mapv
+   (fn [{:keys [id kind resource-class]}]
+     (when-not (or (= :high-memory resource-class)
+                   (contains? reduced-proof-kinds kind))
+       (fail! "Reduced Brine verification cannot omit this proof ladder"
+              {:id id
+               :kind kind
+               :reason :non-heavy-proof-ladder-in-reduced-mode
+               :resource-class resource-class
+               :target (:target contract)}))
+     {:id id
+      :resource-class resource-class
+      :result {:reason :bounded-brine-release-verification
+               :status :skipped}})
+   (get-in contract [:proof :ladders])))
+
+(defn- run-brine-reduced-verification!
+  [{:keys [workspace-root run-command!]
+    :or {run-command! process/run!}}]
+  (let [product (paths/resolve-path workspace-root "products/brine")
+        verifier (paths/resolve-path product "eng/verify-release.sh")]
+    (when-not (paths/regular-file? verifier)
+      (fail! "The Brine-owned release verifier is missing"
+             {:path (str verifier)
+              :reason :missing-brine-release-verifier}))
+    (let [result
+          (run-command! {:command ["bash" "eng/verify-release.sh"]
+                         :directory product})]
+      (when (seq (:output result))
+        (print (:output result)))
+      result)))
 
 (defn- regular-files
   [^Path directory]
@@ -775,20 +849,22 @@
 
 (defn prepare!
   "Runs aggregate credential-free NuGet release preparation for one target or
-  `all`. In GitHub Actions only, DRIPSHARP_NUGET_RELEASE_SKIP_TESTS=1 skips the
-  exhaustive proof ladders and records that reduced verification in the
-  manifest. Dependency injection options exist for focused verification and do
-  not add publication operations."
+  `all`. BRINE_RELEASE_REDUCED_TESTS=1 selects Brine's product-owned bounded
+  verifier, which always builds the publishable projects and runs the mandatory
+  release smoke suite. The legacy GitHub-only whole-ladder skip is rejected for
+  Brine. Dependency injection options exist for focused verification and do not
+  add publication operations."
   ([] (prepare! {}))
   ([{:keys [workspace-root selection output-root read-target-fn proof-fn
             bundle-fn package-fn repository-proof-fn run-command!
-            test-suite-report-fn getenv-fn]
+            test-suite-report-fn getenv-fn reduced-proof-fn]
      :or {read-target-fn target-directory/read-target
           bundle-fn nuget-package-bundle/bundle!
           proof-fn target-execution/proof!
           package-fn target-execution/package!
           repository-proof-fn product-repository/verify-synchronized!
           test-suite-report-fn authorship-report/test-suite-report!
+          reduced-proof-fn run-brine-reduced-verification!
           getenv-fn #(System/getenv %)}
      :as options}]
    (let [credential-options (set/intersection forbidden-option-keys
@@ -798,12 +874,12 @@
               {:forbidden-options (vec (sort credential-options))})))
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          selection (some-> (or selection "all") str str/trim)
-         test-verification (test-verification-mode! getenv-fn)
          products
          (selected-products!
           (discover-products! {:workspace-root root
                                :read-target-fn read-target-fn})
           selection)
+         test-verification (test-verification-mode! getenv-fn products)
          plans (mapv production-plan! products)
          output (output-root! root selection output-root)
          staging
@@ -821,11 +897,23 @@
                         (f (cond-> value
                              run-command! (assoc :run-command! run-command!))))
                       proof
-                      (if (= :complete test-verification)
+                      (case test-verification
+                        :complete
                         (exact-proof!
                          contract
                          (invoke proof-fn
                                  {:workspace-root root :target target}))
+
+                        :reduced-brine-release
+                        (let [reduced-proof
+                              (reduced-proof-records! contract)]
+                          (invoke reduced-proof-fn
+                                  {:workspace-root root :target target})
+                          (println
+                           "Brine's bounded release verification passed; omitting only declared heavy proof ladders:"
+                           target)
+                          (exact-proof! contract reduced-proof))
+
                         (do
                           (println
                            "Skipping exhaustive NuGet release proof ladders in GitHub Actions:"
