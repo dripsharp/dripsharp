@@ -69,6 +69,8 @@
     "gradle/pkl-parser-test-contract.gradle"
     "targets/pkl/consumer-tests/CoreConsumerTests.cs"
     "targets/pkl/consumer-tests/ParserConsumerTests.cs"
+    "targets/pkl/consumer-tests/ReleaseSmokeCoreTests.cs"
+    "targets/pkl/consumer-tests/ReleaseSmokeParserTests.cs"
     "targets/pkl/consumer-tests/UpstreamContractTests.cs"
     "targets/pkl/consumer-tests/fixtures/sample.pkl"
     "targets/pkl/validation/oracle/UpstreamOracle.java"
@@ -103,6 +105,16 @@
     (write-text!
      readme
      (str text
+          "\n## Brine NuGet release smoke\n\n"
+          "From the product-repository root, the stable Release command is:\n\n"
+          "```sh\n"
+          "dotnet test tests/DripSharp.Brine.ReleaseSmoke/"
+          "DripSharp.Brine.ReleaseSmoke.csproj --configuration Release\n"
+          "```\n\n"
+          "This mandatory bounded suite checks representative public package "
+          "behavior for a publication decision. It does not replace the "
+          "complete shipped adapted-upstream suite, differential validation, "
+          "or the full local product proof.\n"
           "\nThe upstream-derived Brine suite exposes independently named "
           "xUnit rows from the pinned LanguageSnippet, Pkl.Core, and "
           "pkl-parser contracts. "
@@ -247,6 +259,18 @@
      "authored-lines" (str lines)
      "review-evidence" "beads:pkl-nk5q"
      "line-budget" (str lines)}))
+
+(defn- reviewed-authored-row
+  [root tests-root authorship source output]
+  (let [source-path (relative root source)
+        entry (get-in authorship [:by-path source-path])]
+    (when-not entry
+      (fail! "Authored Brine test output has no reviewed source entry"
+             {:reason :missing-test-authorship-source
+              :path source-path}))
+    (assoc (authored-row root tests-root source output)
+           "review-evidence" (:review-evidence entry)
+           "line-budget" (str (:line-budget entry)))))
 
 (defn- mechanical-row
   [tests-root revision source-path source-sha transformation output]
@@ -744,7 +768,7 @@
      :destination upstream-directory}))
 
 (defn- add-existing-rows!
-  [root tests-root generator rows]
+  [root tests-root generator authorship rows]
   (let [authored
         [["targets/pkl/consumer-tests/CoreConsumerTests.cs"
           "DripSharp.Brine.Tests/CoreConsumerTests.cs"]
@@ -752,8 +776,15 @@
           "DripSharp.Brine.Tests/ParserConsumerTests.cs"]
          ["targets/pkl/consumer-tests/fixtures/sample.pkl"
           "DripSharp.Brine.Tests/Fixtures/sample.pkl"]]
+        reviewed
+        [["targets/pkl/consumer-tests/ReleaseSmokeCoreTests.cs"
+          "DripSharp.Brine.ReleaseSmoke/ReleaseSmokeCoreTests.cs"]
+         ["targets/pkl/consumer-tests/ReleaseSmokeParserTests.cs"
+          "DripSharp.Brine.ReleaseSmoke/ReleaseSmokeParserTests.cs"]]
         generated
         [["consumer-test-project" "DripSharp.Brine.Tests/DripSharp.Brine.Tests.csproj"]
+         ["release-smoke-project"
+          "DripSharp.Brine.ReleaseSmoke/DripSharp.Brine.ReleaseSmoke.csproj"]
          ["consumer-test-readme" "README.md"]
          ["consumer-test-notice" "NOTICE.md"]]]
     (doseq [[source output] authored]
@@ -761,6 +792,11 @@
              (authored-row root tests-root
                            (paths/resolve-path root source)
                            (paths/resolve-path tests-root output))))
+    (doseq [[source output] reviewed]
+      (swap! rows conj
+             (reviewed-authored-row root tests-root authorship
+                                    (paths/resolve-path root source)
+                                    (paths/resolve-path tests-root output))))
     (doseq [[source-path output] generated]
       (swap! rows conj
              (generated-row tests-root generator source-path
@@ -810,7 +846,7 @@
         expected-output
         (paths/resolve-path contracts "LanguageSnippetExpected.tsv")
         symlinks (atom [])]
-    (add-existing-rows! root tests-root generator rows)
+    (add-existing-rows! root tests-root generator authorship rows)
     (doseq [[source output source-path transformation]
             [[language-manifest language-contract-output
               "validation/language-snippet-contract/LanguageSnippetContract.tsv"

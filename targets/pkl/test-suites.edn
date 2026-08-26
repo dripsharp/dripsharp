@@ -12,6 +12,16 @@
    :packages
    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
     {:id "xunit" :version "2.9.3"}
+    {:id "xunit.runner.visualstudio" :version "3.1.4"}]}
+  {:id "DripSharp.Brine.ReleaseSmoke"
+   :directory "tests/DripSharp.Brine.ReleaseSmoke"
+   :assembly-name "DripSharp.Brine.ReleaseSmoke"
+   :target-framework "net10.0"
+   :profile-references ["pkl-parser" "pkl-core-value-model"]
+   :project-references []
+   :packages
+   [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
+    {:id "xunit" :version "2.9.3"}
     {:id "xunit.runner.visualstudio" :version "3.1.4"}]}]
  :strategies
  [{:id :focused-consumer
@@ -34,6 +44,21 @@
      :sha256 "59ca6eaa229aee0998e880122880ed9841bdf6e6bbb9448687e7ba86cc845a78"
      :license "Apache-2.0"
      :attribution "Authored for the Brine generated consumer suite."}]}
+  {:id :release-smoke
+   :kind :focused-consumer
+   :policy :shipped
+   :project "DripSharp.Brine.ReleaseSmoke"
+   :handler dripsharp.consumer-tests/focused-consumer-strategy!
+   :profile-tests
+   {"pkl-parser"
+    {:source "consumer-tests/ReleaseSmokeParserTests.cs"
+     :destination "ReleaseSmokeParserTests.cs"
+     :sha256 "f5f0da2ba3cba31caca305471a0c852bfc1ed39f551781b7556609b79ffbcc47"}
+    "pkl-core-value-model"
+    {:source "consumer-tests/ReleaseSmokeCoreTests.cs"
+     :destination "ReleaseSmokeCoreTests.cs"
+     :sha256 "0d2d14acdba86781c9cd763a555834c8544e4b57ddbe46425d18fb7c9d3d4065"}}
+   :fixtures []}
   {:id :brine-adapted-upstream
    :kind :adapted-upstream
    :policy :shipped

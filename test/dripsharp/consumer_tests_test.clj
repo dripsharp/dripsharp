@@ -73,17 +73,42 @@
                   (concat (vals (:profile-tests focused))
                           (:fixtures focused)))))))
 
+(deftest brine-release-smoke-is-an-isolated-shipped-project
+  (let [contract (target-directory/read-target :pkl)
+        suites (get-in contract [:publication :test-suites])
+        project (some #(when (= "DripSharp.Brine.ReleaseSmoke" (:id %)) %)
+                      (:projects suites))
+        strategy (some #(when (= :release-smoke (:id %)) %)
+                       (:strategies suites))]
+    (is (= {:directory "tests/DripSharp.Brine.ReleaseSmoke"
+            :profiles #{"pkl-parser" "pkl-core-value-model"}
+            :project-references []}
+           {:directory (:directory project)
+            :profiles (set (:profile-references project))
+            :project-references (:project-references project)}))
+    (is (= :focused-consumer (:kind strategy)))
+    (is (= :shipped (:policy strategy)))
+    (is (= "DripSharp.Brine.ReleaseSmoke" (:project strategy)))
+    (is (= #{"consumer-tests/ReleaseSmokeCoreTests.cs"
+             "consumer-tests/ReleaseSmokeParserTests.cs"}
+           (set (map :source (vals (:profile-tests strategy))))))
+    (is (empty? (:fixtures strategy)))))
+
 (deftest emission-is-repository-local-inventoried-and-deterministic
   (doseq [target [:pkl :pdfcube]]
     (let [workspace (temp-directory)]
       (try
         (let [{:keys [contract result]} (emission workspace target)
-              project-file (:project-file result)
+              primary-id
+              (:id (first (get-in contract
+                                  [:publication :test-suites :projects])))
+              project-file (get (:project-files result) primary-id)
               project-first (Files/readString project-file)
               inventory-first
               (Files/readString (:inventory-file result))
               second (:result (emission workspace target))
-              project-second (Files/readString (:project-file second))
+              project-second
+              (Files/readString (get (:project-files second) primary-id))
               inventory-second
               (Files/readString (:inventory-file second))
               project-reference-count
@@ -117,7 +142,17 @@
             (is (str/includes?
                  (Files/readString
                   (.resolve ^Path (:tests-root second) "README.md"))
-                 "TEST-BOUNDARY.md")))
+                 "TEST-BOUNDARY.md"))
+            (is (str/includes?
+                 (Files/readString
+                  (.resolve ^Path (:tests-root second) "README.md"))
+                 (str "dotnet test tests/DripSharp.Brine.ReleaseSmoke/"
+                      "DripSharp.Brine.ReleaseSmoke.csproj "
+                      "--configuration Release")))
+            (is (str/includes?
+                 (Files/readString
+                  (.resolve ^Path (:tests-root second) "README.md"))
+                 "does not replace")))
           (is (not (str/includes? inventory-first "SHA256SUMS")))
           (is (str/includes?
                (Files/readString
@@ -139,17 +174,18 @@
             (swap! calls conj request)
             {:exit 0 :output ""})})]
     (try
-      (is (= ["restore" "build" "test"]
+      (is (= ["restore" "build" "test" "restore" "build" "test"]
              (mapv #(second (:command %)) @calls)))
       (is (every? #(= 300000 (:timeout-ms %)) @calls))
       (is (every? #(= (.resolve workspace
                                 "target/generated/brine")
                       (:directory %))
                   @calls))
+      (is (nil? (:project-file result)))
       (is (str/ends-with?
-           (str (:project-file result))
+           (str (get (:project-files result) "DripSharp.Brine.Tests"))
            "tests/DripSharp.Brine.Tests/DripSharp.Brine.Tests.csproj"))
-      (is (= #{"DripSharp.Brine.Tests"}
+      (is (= #{"DripSharp.Brine.ReleaseSmoke" "DripSharp.Brine.Tests"}
              (set (keys (:project-files result)))))
       (finally
         (delete-tree! workspace)))))
@@ -278,7 +314,7 @@
             ledger (.resolve ^Path tests-root "TEST-PROVENANCE.tsv")
             original (Files/readString ledger)
             proof (brine-xunit/verify-provenance! tests-root)]
-        (is (= 1132 (count (:rows proof))))
+        (is (= 1135 (count (:rows proof))))
         (is (= 4 (count (:counts proof))))
         (Files/writeString
          ledger

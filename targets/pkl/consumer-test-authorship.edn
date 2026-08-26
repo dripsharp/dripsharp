@@ -14,10 +14,10 @@
    :review-evidence "beads:pkl-zysr.34"
    :role :generic-test-cleanup}
   {:path "src/dripsharp/pkl/brine_xunit.clj"
-   :sha256 "02f4d1a8f079a56036b2a1f55b03c72f93a87f0e72ea6957aecb8ade7d287b14"
-   :lines 958
-   :line-budget 958
-   :review-evidence "beads:pkl-zysr.59"
+   :sha256 "a1196889a61586e31925d6ac9b9d43c26d058ed13ab943424198d8c77262d2d0"
+   :lines 994
+   :line-budget 994
+   :review-evidence "beads:pkl-hz7y.1"
    :role :brine-test-generator}
   {:path "src/dripsharp/pkl/parser_test_contract.clj"
    :sha256 "d13afb824a731bfb00731baaa066ca7f1f7dd181d74f615e130c841766987fae"
@@ -43,6 +43,18 @@
    :line-budget 41
    :review-evidence "beads:pkl-nk5q"
    :role :authored-public-api-smoke-test}
+  {:path "targets/pkl/consumer-tests/ReleaseSmokeCoreTests.cs"
+   :sha256 "0d2d14acdba86781c9cd763a555834c8544e4b57ddbe46425d18fb7c9d3d4065"
+   :lines 84
+   :line-budget 84
+   :review-evidence "beads:pkl-hz7y.1"
+   :role :authored-release-smoke-test}
+  {:path "targets/pkl/consumer-tests/ReleaseSmokeParserTests.cs"
+   :sha256 "f5f0da2ba3cba31caca305471a0c852bfc1ed39f551781b7556609b79ffbcc47"
+   :lines 74
+   :line-budget 74
+   :review-evidence "beads:pkl-hz7y.1"
+   :role :authored-release-smoke-test}
   {:path "targets/pkl/consumer-tests/UpstreamContractTests.cs"
    :sha256 "b01808b62b77bfc1e6017e624eec7bd68f7ead1d11075f88aab3caa8e994480b"
    :lines 660
