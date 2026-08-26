@@ -468,18 +468,22 @@ Each generated product repository supplies a manually dispatched
 authoritative `dripsharp/dripsharp` repository, requires its product gitlink to
 equal the product workflow commit, and runs the target-specific release driver.
 
-The PdfCarton workflow sets exactly
-`PDFCARTON_RELEASE_REDUCED_TESTS=1` to fit GitHub's free four-core public
-runner. The release driver accepts that product-owned value only when PdfCarton
-is the sole selected target and invokes `products/pdfcarton/eng/verify-release.sh`.
-That verifier always restores and compiles all five published projects, runs
-the mandatory release smoke suite and the five focused consumer classes, and
-omits only its documented exhaustive adapted-upstream, fixture-integrity,
-differential, corpus, and high-memory proof work. The manifest records
-`:test-verification :reduced-pdfcarton-release`. The former
-`DRIPSHARP_NUGET_RELEASE_SKIP_TESTS=1` whole-ladder path is rejected for
-PdfCarton (as it is for Brine); SqlTrellis is the only product workflow that
-still uses that legacy GitHub-only mode.
+The SqlTrellis workflow sets exactly
+`SQLTRELLIS_RELEASE_REDUCED_TESTS=1` to fit GitHub's free four-core public
+runner. The release driver accepts that product-owned value only when
+SqlTrellis is the sole selected target and invokes
+`products/sqltrellis/eng/verify-release.sh`. That verifier always restores and
+compiles the published project and shipped adapted-test project, runs the
+mandatory release smoke suite, and omits only its documented exhaustive
+adapted-upstream suite and the declared high-memory proof containing the
+differential and corpus work. The manifest records
+`:test-verification :reduced-sqltrellis-release`.
+
+Brine and PdfCarton use the equivalent
+`BRINE_RELEASE_REDUCED_TESTS=1` and
+`PDFCARTON_RELEASE_REDUCED_TESTS=1` product-owned modes. The former
+`DRIPSHARP_NUGET_RELEASE_SKIP_TESTS=1` whole-ladder path is rejected for all
+three products and is no longer selected by any product release workflow.
 
 Bounded release verification does not count as a complete target proof and
 does not change any product goal, exclusion, or completion criterion. The

@@ -268,6 +268,10 @@
                (fn [{:keys [target]}]
                  (swap! reduced-proof-calls conj target)
                  {:exit 0 :output ""})
+               :sqltrellis-reduced-proof-fn
+               (fn [{:keys [target]}]
+                 (swap! reduced-proof-calls conj target)
+                 {:exit 0 :output ""})
                :bundle-fn bundle-fn
                :package-fn package-fn
                :test-suite-report-fn
@@ -338,9 +342,9 @@
     (is (= [["pdfcube" "pdfcube-preflight"]]
            @(:package-calls fixture)))))
 
-(deftest github-actions-can-explicitly-skip-exhaustive-release-tests
+(deftest sqltrellis-releases-use-the-product-owned-bounded-verifier
   (let [root (Files/createTempDirectory
-              "dripsharp-nuget-release-skip-tests-"
+              "dripsharp-nuget-release-reduced-sqltrellis-tests-"
               (make-array FileAttribute 0))
         fixture (fake-workflow root)
         result
@@ -348,13 +352,86 @@
          (assoc (:options fixture)
                 :selection "sqltrellis"
                 :getenv-fn
-                {"DRIPSHARP_NUGET_RELEASE_SKIP_TESTS" "1"
-                 "GITHUB_ACTIONS" "true"}))]
-    (is (= :skipped-for-github-free-runner
+                {"SQLTRELLIS_RELEASE_REDUCED_TESTS" "1"}))]
+    (is (= :reduced-sqltrellis-release
            (get-in result [:manifest :test-verification])))
     (is (empty? @(:proof-calls fixture)))
+    (is (= ["sqltrellis"] @(:reduced-proof-calls fixture)))
     (is (= [["sqltrellis" "sqltrellis"]]
            @(:package-calls fixture)))))
+
+(deftest the-legacy-whole-ladder-skip-is-disabled-for-sqltrellis
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-sqltrellis-old-skip-tests-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        failure
+        (failure-data
+         #(preparation/prepare!
+           (assoc (:options fixture)
+                  :selection "sqltrellis"
+                  :getenv-fn
+                  {"DRIPSHARP_NUGET_RELEASE_SKIP_TESTS" "1"
+                   "GITHUB_ACTIONS" "true"})))]
+    (is (= :sqltrellis-whole-ladder-skip-disabled (:reason failure)))
+    (is (empty? @(:proof-calls fixture)))
+    (is (empty? @(:reduced-proof-calls fixture)))
+    (is (empty? @(:package-calls fixture)))))
+
+(deftest reduced-sqltrellis-mode-rejects-a-non-heavy-proof-ladder
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-sqltrellis-non-heavy-tests-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        contract
+        (-> (get (:contracts fixture) :sqltrellis)
+            (assoc-in [:proof :ladders 0 :kind] :target-validations)
+            (assoc-in [:proof :ladders 0 :resource-class] :standard))
+        failure
+        (failure-data
+         #(preparation/prepare!
+           (assoc (:options fixture)
+                  :selection "sqltrellis"
+                  :getenv-fn
+                  {"SQLTRELLIS_RELEASE_REDUCED_TESTS" "1"}
+                  :read-target-fn (fn [_ _] contract))))]
+    (is (= :non-heavy-proof-ladder-in-reduced-mode (:reason failure)))
+    (is (empty? @(:proof-calls fixture)))
+    (is (empty? @(:reduced-proof-calls fixture)))
+    (is (empty? @(:package-calls fixture)))))
+
+(deftest a-sqltrellis-release-smoke-failure-stays-fatal-in-reduced-mode
+  (let [root (Files/createTempDirectory
+              "dripsharp-nuget-release-sqltrellis-smoke-failure-"
+              (make-array FileAttribute 0))
+        fixture (fake-workflow root)
+        failure
+        (failure-data
+         #(preparation/prepare!
+           (assoc (:options fixture)
+                  :selection "sqltrellis"
+                  :getenv-fn
+                  {"SQLTRELLIS_RELEASE_REDUCED_TESTS" "1"}
+                  :sqltrellis-reduced-proof-fn
+                  (fn [_]
+                    (throw
+                     (ex-info "Mandatory SqlTrellis release smoke failed"
+                              {:kind :command-failed :exit 23}))))))]
+    (is (= :command-failed (:kind failure)))
+    (is (= 23 (:exit failure)))
+    (is (empty? @(:proof-calls fixture)))
+    (is (empty? @(:package-calls fixture)))))
+
+(deftest sqltrellis-release-verifier-command-contract-is-fail-closed
+  (let [root (paths/workspace-root)
+        product (paths/resolve-path root "products/sqltrellis")
+        result
+        (process/run!
+         {:command ["bash" "eng/test-verify-release.sh"]
+          :directory product})]
+    (is (= 0 (:exit result)))
+    (is (str/includes? (:output result)
+                       "SqlTrellis release-verification controls passed."))))
 
 (deftest brine-releases-use-the-product-owned-bounded-verifier
   (let [root (Files/createTempDirectory
@@ -537,20 +614,23 @@
     (is (str/includes? (:output result)
                        "PdfCarton release-verification controls passed."))))
 
-(deftest release-test-skipping-is-restricted-to-github-actions
+(deftest reduced-sqltrellis-mode-requires-exclusive-selection
   (let [root (Files/createTempDirectory
-              "dripsharp-nuget-release-local-skip-tests-"
+              "dripsharp-nuget-release-sqltrellis-exclusive-tests-"
               (make-array FileAttribute 0))
         fixture (fake-workflow root)
         failure
         (failure-data
          #(preparation/prepare!
            (assoc (:options fixture)
-                  :selection "sqltrellis"
+                  :selection "all"
                   :getenv-fn
-                  {"DRIPSHARP_NUGET_RELEASE_SKIP_TESTS" "1"})))]
-    (is (= :skip-tests-outside-github-actions (:reason failure)))
-    (is (empty? @(:proof-calls fixture)))))
+                  {"SQLTRELLIS_RELEASE_REDUCED_TESTS" "1"})))]
+    (is (= :sqltrellis-reduced-tests-without-exclusive-sqltrellis
+           (:reason failure)))
+    (is (empty? @(:proof-calls fixture)))
+    (is (empty? @(:reduced-proof-calls fixture)))
+    (is (empty? @(:package-calls fixture)))))
 
 (deftest aggregate-preparation-is-deterministic-and-credential-free
   (let [root (Files/createTempDirectory
