@@ -143,6 +143,12 @@
        package-title " (`" target-framework "`, version `" package-version
        "`)\n"))
 
+(defn- nuget-badge
+  [{:keys [package-id]}]
+  (str "[![" package-id " on NuGet](https://img.shields.io/nuget/vpre/"
+       package-id "?logo=nuget&label=" package-id ")]"
+       "(https://www.nuget.org/packages/" package-id ")\n"))
+
 (defn- render-readme
   [target-contract records]
   (let [primary (first (sort-by (comp count :assembly-name) records))
@@ -173,6 +179,9 @@
                     [:nuget :packages (:package-id bundle) :version])}]
           records)]
     (str "# " (:package-title primary) "\n\n"
+         (apply str (map nuget-badge
+                         (sort-by :package-id install-records)))
+         "\n"
          (:package-description primary) "\n\n"
          "This is a generated publication repository. Durable source, "
          "translation, runtime, and test changes belong in "

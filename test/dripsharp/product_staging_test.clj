@@ -84,6 +84,15 @@
                 (paths/resolve-path (:staging first) "NOTICE"))))
         (is (str/includes? first-readme "# Brine — Pkl for .NET"))
         (is (str/includes? first-readme "DripSharp.Brine.Parser"))
+        (is (str/includes?
+             first-readme
+             "https://img.shields.io/nuget/vpre/DripSharp.Brine?logo=nuget&label=DripSharp.Brine"))
+        (is (str/includes?
+             first-readme
+             "https://img.shields.io/nuget/vpre/DripSharp.Brine.Parser?logo=nuget&label=DripSharp.Brine.Parser"))
+        (is (str/includes?
+             first-readme
+             "https://www.nuget.org/packages/DripSharp.Brine.Parser"))
         (is (str/includes? first-readme
                            "Every production library has one target framework: `netstandard2.0`"))
         (is (str/includes? first-readme
