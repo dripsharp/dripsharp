@@ -153,7 +153,7 @@ NuGet trusted publishing, and pushes in this fixed order:
 | Product | Package order |
 | --- | --- |
 | Brine | `DripSharp.Brine.Parser`, then `DripSharp.Brine` |
-| PdfCarton | `DripSharp.PdfCarton.IO`, `DripSharp.PdfCarton.Fonts`, `DripSharp.PdfCarton.Xmp`, `DripSharp.PdfCarton`, then `DripSharp.PdfCarton.Preflight` |
+| PdfCarton | `DripSharp.PdfCarton`, containing the IO, Fonts, Xmp, PdfCarton, and Preflight assemblies |
 | SqlTrellis | `DripSharp.SqlTrellis` |
 
 The bounded GitHub gate does not replace the target's full local proof or

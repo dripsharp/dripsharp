@@ -9,12 +9,21 @@ manually dispatched workflow at `.github/workflows/nuget-release.yml`:
 | Product | Repository | Workflow name | Packages, in publish order |
 | --- | --- | --- | --- |
 | Brine | [`dripsharp/brine`](https://github.com/dripsharp/brine) | `Release Brine to NuGet` | `DripSharp.Brine.Parser`, then `DripSharp.Brine` |
-| PdfCarton | [`dripsharp/pdfcarton`](https://github.com/dripsharp/pdfcarton) | `Release PdfCarton to NuGet` | `DripSharp.PdfCarton.IO`, `DripSharp.PdfCarton.Fonts`, `DripSharp.PdfCarton.Xmp`, `DripSharp.PdfCarton`, then `DripSharp.PdfCarton.Preflight` |
+| PdfCarton | [`dripsharp/pdfcarton`](https://github.com/dripsharp/pdfcarton) | `Release PdfCarton to NuGet` | `DripSharp.PdfCarton` |
 | SqlTrellis | [`dripsharp/sqltrellis`](https://github.com/dripsharp/sqltrellis) | `Release SqlTrellis to NuGet` | `DripSharp.SqlTrellis` |
+
+The canonical public inventory is exactly four package IDs:
+`DripSharp.Brine.Parser`, `DripSharp.Brine`, `DripSharp.PdfCarton`, and
+`DripSharp.SqlTrellis`. Its only public dependency edge is
+`DripSharp.Brine.Parser` before `DripSharp.Brine`; PdfCarton and SqlTrellis are
+independent of the other public packages. `DripSharp.PdfCarton` contains the
+IO, Fonts, Xmp, PdfCarton, and Preflight production assemblies. Those five
+project and assembly boundaries remain part of the product and its proof, but
+they are not separate public package IDs.
 
 Release one product at a time. There is no cross-product release set or
 required order among the three workflows. The order in the last column is
-fixed within a product family and follows its package dependencies.
+fixed within a product family and follows the public dependency graph.
 
 Brine, PdfCarton, and SqlTrellis remain governed by their respective
 [Pkl](targets/pkl/product-goal.md),
@@ -58,14 +67,17 @@ new generated product commit is needed.
 The release workflow starts later, from an existing product-repository commit
 on `master`. Its `prepare` job always:
 
-1. restores and builds every published project once in `Release`, with warnings
+1. restores and builds every production project once in `Release`, with warnings
    as errors;
 2. restores, builds, and runs the mandatory product-owned release smoke tests;
 3. compiles the shipped test projects and runs only the product's retained
    bounded test selection;
-4. packs every published project once, without rebuilding;
-5. checks the package ID, version, `netstandard2.0` target framework, exact
-   dependency metadata, and expected production assembly;
+4. packs each production project once, without rebuilding, then applies any
+   target-owned public bundle contract; PdfCarton's five component packages are
+   internal proof inputs and only its single public package pair leaves the
+   prepare boundary;
+5. checks the exact public package inventory, ID, version, `netstandard2.0`
+   target framework, dependency metadata, and production assembly/PDB set;
 6. restores, builds, and runs a temporary package-reference-only consumer from
    an isolated local feed outside the product source tree; and
 7. hands the exact tested `.nupkg` and `.snupkg` files to the publish job with a
@@ -157,7 +169,7 @@ GitHub's [environment protection documentation][github-environments].
 Do not approve publication unless the `prepare` job is green. Review its normal
 logs for all of the following product-owned evidence:
 
-* every published project restored and compiled in `Release` with zero errors;
+* every production project restored and compiled in `Release` with zero errors;
 * the mandatory release smoke suite passed;
 * the documented bounded test selection passed;
 * the essential package metadata and production-assembly check passed;
@@ -169,7 +181,7 @@ The artifacts are deliberately small and direct:
 | Product | Artifact | Tested package files before `SHA256SUMS` |
 | --- | --- | ---: |
 | Brine | `brine-nuget-release` | two `.nupkg` and two `.snupkg` files |
-| PdfCarton | `pdfcarton-nuget-release` | five `.nupkg` and five `.snupkg` files |
+| PdfCarton | `pdfcarton-nuget-release` | one `.nupkg` and one `.snupkg` file; the pair contains all five production DLL/PDB pairs |
 | SqlTrellis | `sqltrellis-nuget-release` | one `.nupkg` and one `.snupkg` file |
 
 The prepare job fails if package counts differ or unrelated files appear. It

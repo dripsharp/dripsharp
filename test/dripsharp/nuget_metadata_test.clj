@@ -208,6 +208,52 @@
         (.closeEntry output)))
     artifact))
 
+(deftest canonical-public-release-inventory-collapses-the-pdfcarton-components
+  (let [contracts (production-package-contracts)
+        publications
+        (into {}
+              (for [target [:pkl :pdfcube :sqltrellis]
+                    :let [target-contract
+                          (target-directory/read-target
+                           (paths/workspace-root) target)]]
+                [target (get-in target-contract [:publication :nuget])]))
+        public-package-ids
+        (set
+         (mapcat
+          (fn [[_ publication]]
+            (if-let [bundle (:bundle publication)]
+              [(:package-id bundle)]
+              (keys (:packages publication))))
+          publications))
+        public-dependency-edges
+        (set
+         (for [{:keys [target package destination]} contracts
+               :when (nil? (get-in publications [target :bundle]))
+               project-reference (:project-references destination)
+               :let [dependency-id
+                     (-> project-reference
+                         (str/split #"/")
+                         last
+                         (str/replace #"[.]csproj$" ""))]
+               :when (contains? public-package-ids dependency-id)]
+           [dependency-id (:id package)]))]
+    (is (= {:package-id "DripSharp.PdfCarton"
+            :profile "pdfcube-preflight"
+            :component-package-ids
+            ["DripSharp.PdfCarton.IO"
+             "DripSharp.PdfCarton.Fonts"
+             "DripSharp.PdfCarton.Xmp"
+             "DripSharp.PdfCarton"
+             "DripSharp.PdfCarton.Preflight"]}
+           (get-in publications [:pdfcube :bundle])))
+    (is (= #{"DripSharp.Brine.Parser"
+             "DripSharp.Brine"
+             "DripSharp.PdfCarton"
+             "DripSharp.SqlTrellis"}
+           public-package-ids))
+    (is (= #{["DripSharp.Brine.Parser" "DripSharp.Brine"]}
+           public-dependency-edges))))
+
 (deftest all-production-packages-emit-and-inspect-exact-gallery-metadata
   (let [contracts (production-package-contracts)]
     (is (= #{"DripSharp.Brine.Parser" "DripSharp.Brine"

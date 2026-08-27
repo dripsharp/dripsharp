@@ -49,11 +49,18 @@ PRODUCTS = (
         "build_command_count": 1,
         "pack_command_count": 1,
         "pushes": (
-            'dotnet nuget push "${{ steps.packages.outputs.io }}"',
-            'dotnet nuget push "${{ steps.packages.outputs.fonts }}"',
-            'dotnet nuget push "${{ steps.packages.outputs.xmp }}"',
             'dotnet nuget push "${{ steps.packages.outputs.pdfcarton }}"',
-            'dotnet nuget push "${{ steps.packages.outputs.preflight }}"',
+        ),
+        "required_packer_markers": ("bundle-release-packages.py",),
+        "forbidden_workflow_markers": (
+            "DripSharp.PdfCarton.IO.*.nupkg",
+            "DripSharp.PdfCarton.Fonts.*.nupkg",
+            "DripSharp.PdfCarton.Xmp.*.nupkg",
+            "DripSharp.PdfCarton.Preflight.*.nupkg",
+            "steps.packages.outputs.io",
+            "steps.packages.outputs.fonts",
+            "steps.packages.outputs.xmp",
+            "steps.packages.outputs.preflight",
         ),
     },
     {
@@ -222,6 +229,14 @@ def check_product(contract):
     )
     require_absent(errors, verifier, ("dotnet pack ",), "verifier must not pack")
     require_absent(errors, packer, ("dotnet build ",), "packer must not rebuild")
+    for marker in contract.get("required_packer_markers", ()):
+        require_counts(errors, packer, ((marker, 1, f"packer marker {marker}"),))
+    require_absent(
+        errors,
+        workflow,
+        contract.get("forbidden_workflow_markers", ()),
+        "non-public package workflow inventory",
+    )
 
     publish_marker = "\n  publish:\n"
     if publish_marker not in workflow:
