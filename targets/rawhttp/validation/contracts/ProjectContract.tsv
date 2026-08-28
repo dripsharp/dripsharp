@@ -16,6 +16,7 @@ baseline-file	targets/rawhttp/baseline.edn
 inventory-file	targets/rawhttp/validation/contracts/GradleInventory.tsv
 observations-file	targets/rawhttp/validation/contracts/JavaObservations.tsv
 public-surface-file	targets/rawhttp/validation/contracts/PublicSurface.tsv
+systematic-surface-file	targets/rawhttp/validation/contracts/SystematicSurface.tsv
 compiled-public-surface-file	targets/rawhttp/validation/contracts/CompiledPublicSurface.tsv
 body-review-file	targets/rawhttp/validation/contracts/BodyReview.tsv
 oracle-source	targets/rawhttp/validation/oracle/RawHttpContractOracle.java
@@ -31,11 +32,13 @@ observation-count	28
 successful-observation-count	16
 failure-observation-count	12
 public-surface-row-count	510
-compiled-public-surface-type-count	139
-compiled-public-surface-member-count	787
-compiled-public-surface-row-count	926
-compiled-public-surface-sha256	1a79d93d789d60e911b8f306a959209083e8fdad679647568b1b1391e16a6d42
-package-inspector-public-surface-sha256	a86ed95025bcb19a2b27875b5f3278eb70aacd1234975eb13e5b117028fd13e3
+systematic-surface-row-count	18
+selected-surface-row-count	528
+compiled-public-surface-type-count	149
+compiled-public-surface-member-count	852
+compiled-public-surface-row-count	1001
+compiled-public-surface-sha256	93e38ab863819b47df608b26ea0de87856b6005029fe632a3b5d589ee76e6ed4
+package-inspector-public-surface-sha256	a545b0c6696fdb37d86ffdff7b726824f04e4e13156545e9a86f10c68f63370b
 external-dependency	com.google.code.findbugs:jsr305:3.0.2
 external-dependency-scope	compile
 external-dependency-artifact	jsr305-3.0.2.jar

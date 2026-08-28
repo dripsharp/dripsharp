@@ -9238,6 +9238,15 @@
                     (.getSuperInterfaces ^CtClass declaration))
               (recur (.getSuperclass ^CtClass declaration))))))))
 
+(defn- interface-redeclares-closeable?
+  [^CtType owner ^CtMethod method]
+  (and (interface-type? owner)
+       (= "close" (.getSimpleName method))
+       (empty? (.getParameters method))
+       (some #(= "java.io.Closeable"
+                 (.getQualifiedName ^CtTypeReference %))
+             (.getSuperInterfaces owner))))
+
 (defn- method-words
   ([^CtType owner ^CtMethod method]
    (method-words nil owner method))
@@ -9342,6 +9351,7 @@
               (when abstract? "abstract")
               (when override? "override")
               (when (or redeclared-interface-method
+                        (interface-redeclares-closeable? owner method)
                         wildcard-generic-covariant-override?
                         netstandard-public-covariant-hiding?
                         (and (= "getType" (.getSimpleName method))
@@ -11400,6 +11410,16 @@
 (def ^:private surface-header
   "DRIPSHARP_JAVA_LIBRARY_PUBLIC_SURFACE_V1")
 
+(def ^:private adaptation-surface-header
+  "DRIPSHARP_JAVA_LIBRARY_SYSTEMATIC_SURFACE_V1")
+
+(def ^:private adaptation-surface-columns
+  ["kind" "owner" "name" "parameter-count" "visibility"
+   "systematic-adaptation" "identity"])
+
+(def ^:private adaptation-surface-keys
+  (set (map keyword adaptation-surface-columns)))
+
 (def ^:private surface-shape-keys
   [:kind :owner :name :parameter-count :visibility])
 
@@ -11449,11 +11469,77 @@
                  {:kind :unknown-java-library-surface-kind :row decoded}))]
     (assoc row :identity decoded)))
 
+(defn- read-adaptation-surface! [workspace adaptation-contract-file]
+  (if-not adaptation-contract-file
+    {:adaptation-rows []}
+    (let [file (paths/resolve-path (paths/absolute workspace)
+                                   adaptation-contract-file)]
+      (when-not (paths/regular-file? file)
+        (fail! "Java library systematic-surface contract is missing"
+               {:kind :missing-java-library-systematic-surface
+                :file (str file)}))
+      (let [[magic columns & lines]
+            (str/split-lines (Files/readString file StandardCharsets/UTF_8))
+            parsed-columns (some-> columns (str/split #"\t" -1) vec)
+            rows
+            (mapv
+             (fn [line]
+               (let [values (str/split line #"\t" -1)]
+                 (when-not (= (count adaptation-surface-columns)
+                              (count values))
+                   (fail! "Malformed Java library systematic-surface row"
+                          {:kind :malformed-java-library-systematic-surface-row
+                           :file (str file) :line line}))
+                 (let [row (zipmap (map keyword adaptation-surface-columns)
+                                   values)
+                       parameter-count (parse-long (:parameter-count row))]
+                   (when-not (and (= "method" (:kind row))
+                                  (not (str/blank? (:owner row)))
+                                  (not (str/blank? (:name row)))
+                                  (some? parameter-count)
+                                  (not (neg? parameter-count))
+                                  (contains? #{"public" "protected"
+                                               "protected-internal"}
+                                             (:visibility row))
+                                  (not (str/blank?
+                                        (:systematic-adaptation row)))
+                                  (not (str/blank? (:identity row))))
+                     (fail! "Invalid Java library systematic-surface row"
+                            {:kind :invalid-java-library-systematic-surface-row
+                             :file (str file) :row row}))
+                   (assoc row
+                          :parameter-count parameter-count
+                          :systematic-adaptation
+                          (keyword (:systematic-adaptation row))))))
+             (remove str/blank? lines))
+            identities (mapv :identity rows)]
+        (when-not (= adaptation-surface-header magic)
+          (fail! "Unsupported Java library systematic-surface contract"
+                 {:kind :unsupported-java-library-systematic-surface
+                  :file (str file) :header magic}))
+        (when-not (= adaptation-surface-columns parsed-columns)
+          (fail! "Java library systematic-surface contract has invalid columns"
+                 {:kind :invalid-java-library-systematic-surface-columns
+                  :file (str file) :expected adaptation-surface-columns
+                  :actual parsed-columns}))
+        (when-not (and (seq rows)
+                       (= identities (vec (sort identities)))
+                       (= (count identities) (count (distinct identities))))
+          (fail! "Java library systematic-surface rows are empty, duplicate, or unsorted"
+                 {:kind :nondeterministic-java-library-systematic-surface
+                  :file (str file) :rows (count rows)}))
+        {:adaptation-contract-file file
+         :adaptation-rows rows}))))
+
 (defn- read-retained-surface!
-  [workspace {:keys [contract-file compiled-contract-file] :as specification}]
+  [workspace {:keys [contract-file adaptation-contract-file
+                     compiled-contract-file] :as specification}]
   (let [keys (set (keys specification))]
     (when-not (or (empty? keys)
-                  (= #{:contract-file :compiled-contract-file} keys))
+                  (= #{:contract-file :compiled-contract-file} keys)
+                  (= #{:contract-file :adaptation-contract-file
+                       :compiled-contract-file}
+                     keys))
       (fail! "Invalid Java library public-surface specification"
              {:kind :invalid-java-library-surface-specification
               :specification specification}))
@@ -11493,11 +11579,13 @@
             (fail! "Java library public-surface rows are empty, duplicate, or unsorted"
                    {:kind :nondeterministic-java-library-surface
                     :rows (count rows)}))
-          {:derivation :retained-contract
-           :contract-file file
-           :compiled-contract-file compiled-file
-           :rows rows
-           :seeds []})))))
+          (merge
+           {:derivation :retained-contract
+            :contract-file file
+            :compiled-contract-file compiled-file
+            :rows rows
+            :seeds []}
+           (read-adaptation-surface! workspace adaptation-contract-file)))))))
 
 (defn- read-surface!
   [workspace {:keys [compiled-contract-file] :as specification}]
@@ -11833,13 +11921,60 @@
                       #(spoon/declaration-key (:declaration %))))
        vec))
 
+(defn- retained-adaptation-row [{:keys [row systematic-adaptation]}]
+  (assoc (select-keys row (disj adaptation-surface-keys
+                                :systematic-adaptation))
+         :systematic-adaptation systematic-adaptation))
+
+(defn- duplicate-identities [rows]
+  (->> rows
+       (map :identity)
+       frequencies
+       (keep (fn [[identity count]]
+               (when (< 1 count) identity)))
+       sort
+       vec))
+
+(defn- validate-retained-adaptations! [expected live]
+  (let [adaptations (set (map :systematic-adaptation expected))
+        actual (->> live
+                    (filter #(contains? adaptations
+                                        (:systematic-adaptation %)))
+                    (mapv retained-adaptation-row))
+        duplicates (duplicate-identities actual)
+        expected-frequencies
+        (frequencies (map #(select-keys % adaptation-surface-keys) expected))
+        actual-frequencies
+        (frequencies (map #(select-keys % adaptation-surface-keys) actual))]
+    (when (seq duplicates)
+      (fail! "Resolved Java library systematic surface has duplicate identities"
+             {:kind :duplicate-java-library-systematic-surface-identities
+              :derivation :retained-contract
+              :duplicates duplicates}))
+    (when-not (= expected-frequencies actual-frequencies)
+      (fail! "Resolved Java library systematic surface differs from its retained contract"
+             {:kind :java-library-selected-surface-mismatch
+              :derivation :retained-contract
+              :scope :systematic-adaptations
+              :missing
+              (vec (take 30 (remove (fn [[row count]]
+                                      (= count (get actual-frequencies row)))
+                                    expected-frequencies)))
+              :unexpected
+              (vec (take 30 (remove (fn [[row count]]
+                                      (= count (get expected-frequencies row)))
+                                    actual-frequencies)))}))
+    (mapv #(dissoc % :systematic-adaptation) expected)))
+
 (defn- validate-selected! [_workspace surface resolved-model]
   (let [live (live-surface resolved-model)
         actual (frequencies (map :shape live))
         derived? (= :resolved-spoon-model (:derivation surface))
         rows (if derived?
                (mapv :row live)
-               (:rows surface))
+               (into (:rows surface)
+                     (validate-retained-adaptations!
+                      (:adaptation-rows surface) live)))
         expected (frequencies (map #(select-keys % surface-shape-keys) rows))
         identities (mapv :identity rows)]
     (when-not (seq rows)

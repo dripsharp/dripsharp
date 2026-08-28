@@ -44,6 +44,7 @@ baseline_file="$workspace_root/$(contract_value baseline-file)"
 inventory_file="$workspace_root/$(contract_value inventory-file)"
 observations_file="$workspace_root/$(contract_value observations-file)"
 surface_file="$workspace_root/$(contract_value public-surface-file)"
+systematic_surface_file="$workspace_root/$(contract_value systematic-surface-file)"
 compiled_surface_file="$workspace_root/$(contract_value compiled-public-surface-file)"
 body_review_file="$workspace_root/$(contract_value body-review-file)"
 oracle_source="$workspace_root/$(contract_value oracle-source)"
@@ -77,6 +78,8 @@ grep -Fq ":assembly-name \"$(contract_value destination-assembly)\"" "$destinati
   || fail "destination assembly does not match the project contract"
 grep -Fq ":root-namespace \"$(contract_value destination-root-namespace)\"" "$destination_file" \
   || fail "destination namespace does not match the project contract"
+grep -Fq "\"$(contract_value systematic-surface-file)\"" "$destination_file" \
+  || fail "destination does not select the retained systematic-surface contract"
 grep -Fq ':identity-guard {:forbidden-fragments ["pkl"]}' "$profile_file" \
   || fail "profile does not explicitly reject Pkl identity leaks"
 if {
@@ -162,8 +165,16 @@ awk -F '\t' -v wanted="$resource_record" '$1 == "resource" && $2 == wanted { fou
 
 [ "$(sed -n '1p' "$body_review_file")" = "DRIPSHARP_RAWHTTP_BODY_REVIEW_V1" ] \
   || fail "unsupported RawHTTP body-review contract header"
+[ "$(sed -n '1p' "$systematic_surface_file")" = "DRIPSHARP_JAVA_LIBRARY_SYSTEMATIC_SURFACE_V1" ] \
+  || fail "unsupported RawHTTP systematic-surface contract header"
+systematic_surface_count=$(awk 'END { print NR - 2 }' "$systematic_surface_file")
+assert_equal "systematic surface row count" \
+  "$(contract_value systematic-surface-row-count)" "$systematic_surface_count"
+assert_equal "selected surface row count" \
+  "$(contract_value selected-surface-row-count)" \
+  "$(( $(contract_value public-surface-row-count) + systematic_surface_count ))"
 body_review_count=$(awk 'NR > 2 && NF { count++ } END { print count + 0 }' "$body_review_file")
-assert_equal "authoritative Java body review count" "4" "$body_review_count"
+assert_equal "authoritative Java body review count" "2" "$body_review_count"
 
 oracle_classes="$work/oracle-classes"
 mkdir -p "$oracle_classes"

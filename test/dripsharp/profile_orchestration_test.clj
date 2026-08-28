@@ -155,6 +155,11 @@
            (:destination-bundle profile)
            (:destination-bundle destination)))
     (is (= 510 (count (:rows surface))))
+    (is (= 18 (count (:adaptation-rows surface))))
+    (is (= (paths/resolve-path
+            workspace
+            "targets/rawhttp/validation/contracts/SystematicSurface.tsv")
+           (:adaptation-contract-file surface)))
     (is (= "targets/rawhttp/validation/contracts/CompiledPublicSurface.tsv"
            (get-in destination [:public-surface :compiled-contract-file])))
     (is (empty? (:seeds surface))

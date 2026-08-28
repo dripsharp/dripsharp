@@ -90,7 +90,7 @@
               :emission {:project-root root
                          :public-metadata {:rows []}}}}}
            {}
-           {"public-surface-row-count" "0"}))]
+           {"selected-surface-row-count" "0"}))]
     (is (= :trailing-data (:reason (ex-data error))))))
 
 (deftest non-pkl-boundary-is-an-artifact-contract-not-a-loaded-namespace-check

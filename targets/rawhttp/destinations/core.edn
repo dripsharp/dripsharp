@@ -52,6 +52,8 @@
  :public-surface {:strategy dripsharp.java-library/public-surface-strategy
                   :contract-file
                   "targets/rawhttp/validation/contracts/PublicSurface.tsv"
+                  :adaptation-contract-file
+                  "targets/rawhttp/validation/contracts/SystematicSurface.tsv"
                   :compiled-contract-file
                   "targets/rawhttp/validation/contracts/CompiledPublicSurface.tsv"}
  :package-consumer {:strategy :source-file

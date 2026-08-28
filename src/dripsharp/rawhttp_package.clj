@@ -302,7 +302,7 @@
         emission (:emission generation)
         metadata (:public-metadata emission)
         selected (:rows metadata)
-        expected-rows (parse-long (get contract "public-surface-row-count"))
+        expected-rows (parse-long (get contract "selected-surface-row-count"))
         source-map-file (paths/resolve-path
                          (:project-root emission)
                          (get-in generation [:destination :output :source-map-file]))

@@ -58,6 +58,67 @@
                                "test/dripsharp/java_library_test.clj")
            (:compiled-contract-file compiled-only)))))
 
+(deftest rawhttp-retained-systematic-surface-fails-closed
+  (let [workspace (paths/workspace-root)
+        strategy (java-library/public-surface-strategy)
+        surface
+        ((:read! strategy)
+         workspace
+         {:contract-file
+          "targets/rawhttp/validation/contracts/PublicSurface.tsv"
+          :adaptation-contract-file
+          "targets/rawhttp/validation/contracts/SystematicSurface.tsv"
+          :compiled-contract-file
+          "targets/rawhttp/validation/contracts/CompiledPublicSurface.tsv"})
+        expected (:adaptation-rows surface)
+        live
+        (mapv (fn [row]
+                {:row (dissoc row :systematic-adaptation)
+                 :systematic-adaptation (:systematic-adaptation row)})
+              expected)
+        validate! (deref #'java-library/validate-retained-adaptations!)
+        failure (fn [candidate]
+                  (try
+                    (validate! expected candidate)
+                    nil
+                    (catch clojure.lang.ExceptionInfo error error)))
+        missing (failure (pop live))
+        unexpected-row
+        (-> (first live)
+            (assoc-in [:row :name] "__DripSharpCovariantBridgeUnexpected")
+            (update-in [:row :identity] str ":unexpected"))
+        unexpected (failure (conj live unexpected-row))
+        duplicate (failure (conj live (first live)))
+        wrong-visibility
+        (failure (assoc-in live [0 :row :visibility] "public"))
+        bridges (filter #(= :netstandard-abstract-covariant-return-bridge
+                            (:systematic-adaptation %))
+                        expected)
+        callbacks (filter #(= :java-inherited-default-interface-contract
+                              (:systematic-adaptation %))
+                          expected)]
+    (is (= 18 (count expected)))
+    (is (= 16 (count bridges)))
+    (is (= #{"protected"} (set (map :visibility bridges))))
+    (is (= #{["rawhttp.core.client.TcpRawHttpClient.DefaultOptions"
+              "onRequest" 1 "public"]
+             ["rawhttp.core.client.TcpRawHttpClient.DefaultOptions"
+              "shouldContinue" 1 "public"]}
+           (set (map (juxt :owner :name :parameter-count :visibility)
+                     callbacks))))
+    (is (= (mapv #(dissoc % :systematic-adaptation) expected)
+           (validate! expected live)))
+    (doseq [error [missing unexpected wrong-visibility]]
+      (is (= :java-library-selected-surface-mismatch
+             (:kind (ex-data error))))
+      (is (= :systematic-adaptations (:scope (ex-data error)))))
+    (is (seq (:missing (ex-data missing))))
+    (is (seq (:unexpected (ex-data unexpected))))
+    (is (seq (:missing (ex-data wrong-visibility))))
+    (is (seq (:unexpected (ex-data wrong-visibility))))
+    (is (= :duplicate-java-library-systematic-surface-identities
+           (:kind (ex-data duplicate))))))
+
 (defn- write-sources! [source-root sources]
   (mapv
    (fn [[relative content]]
@@ -8554,6 +8615,9 @@
          {"example/Provider.java"
           (str "package example; public interface Provider { "
                "int read(char[] buffer); void close(); }")
+          "example/CloseableProvider.java"
+          (str "package example; public interface CloseableProvider "
+               "extends java.io.Closeable { default void close() {} }")
           "example/Options.java"
           (str "package example; import java.util.function.UnaryOperator; "
                "public enum Options implements UnaryOperator<String> { "
@@ -8579,6 +8643,10 @@
         root (:project-root emission)
         provider (slurp (str (paths/resolve-path root
                                                  "src/Example/Java/Library/Provider.cs")))
+        closeable-provider
+        (slurp (str (paths/resolve-path
+                     root
+                     "src/Example/Java/Library/CloseableProvider.cs")))
         options (slurp (str (paths/resolve-path root
                                                 "src/Example/Java/Library/Options.cs")))
         quiet (slurp (str (paths/resolve-path root
@@ -8589,6 +8657,8 @@
                                                      "src/Example/Java/Library/ChildFields.cs")))]
     (is (contains-csharp? provider "public void Dispose();"))
     (is (not (str/includes? provider "public new void Dispose();")))
+    (is (contains-csharp? closeable-provider
+                          "public new void Dispose();"))
     (is (contains-csharp? options "public static readonly global::Example.Java.Library.Options __field_values"))
     (is (not (str/includes? options " : global::System.Func")))
     (is (contains-csharp? options "public static implicit operator global::System.Func<string, string>"))
