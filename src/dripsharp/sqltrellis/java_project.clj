@@ -263,10 +263,10 @@
                   (or (get substitutions (.getSimpleName argument))
                       (when-let [formal
                                  (some #(when (= (.getSimpleName
-                                                 ^CtTypeParameter %)
-                                                (.getSimpleName
-                                                 ^CtTypeParameterReference
-                                                 argument))
+                                                  ^CtTypeParameter %)
+                                                 (.getSimpleName
+                                                  ^CtTypeParameterReference
+                                                  argument))
                                           %)
                                        formals)]
                         (first
@@ -377,7 +377,7 @@
                  (= (count resolved-arguments) (count expected-arguments)))
           (let [rendered
                 (:text
-                 (csharp/render
+                 (csharp/render-raw
                   (java-library/type-node destination-context target-reference)))
                 separator (.lastIndexOf ^String rendered "<")]
             (if (pos? separator)

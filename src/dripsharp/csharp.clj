@@ -4,11 +4,37 @@
   Nodes retain their nesting and precedence until rendering.  Source metadata is
   attached to nodes, so mappings are derived from the destination structure
   rather than reconstructed from emitted text."
-  (:require [clojure.string :as str]))
+  (:refer-clojure :exclude [cast])
+  (:require [clojure.string :as str]
+            [dripsharp.csharp-presentation :as presentation]))
 
 (def ^:private atom-precedence 100)
 (def ^:private postfix-precedence 90)
 (def ^:private prefix-precedence 80)
+(def ^:private assignment-precedence 10)
+(def ^:private conditional-precedence 20)
+(def ^:private binary-precedences
+  {"||" 30
+   "&&" 35
+   "|" 40
+   "^" 45
+   "&" 50
+   "==" 55
+   "!=" 55
+   "<" 60
+   "<=" 60
+   ">" 60
+   ">=" 60
+   "is" 60
+   "is not" 60
+   "<<" 65
+   ">>" 65
+   ">>>" 65
+   "+" 70
+   "-" 70
+   "*" 75
+   "/" 75
+   "%" 75})
 (def ^:private namespace-pattern
   #"@?[A-Za-z_][A-Za-z0-9_]*(?:[.]@?[A-Za-z_][A-Za-z0-9_]*)*")
 
@@ -106,18 +132,24 @@
   "Creates a binary expression with an explicit precedence.  Equal-precedence
   right children are parenthesized, preserving the frontend tree even for
   non-associative operators."
-  [operator precedence left right]
-  (when-not (and (string? operator) (not (str/blank? operator))
-                 (integer? precedence) (pos? precedence))
-    (throw (ex-info "Invalid C# binary operator"
-                    {:kind :invalid-csharp-binary
-                     :operator operator
-                     :precedence precedence})))
-  {:kind :binary
-   :operator operator
-   :precedence precedence
-   :left (node! left)
-   :right (node! right)})
+  ([operator left right]
+   (if-let [precedence (get binary-precedences operator)]
+     (binary operator precedence left right)
+     (throw (ex-info "C# binary operator has no presentation precedence"
+                     {:kind :unknown-csharp-binary-precedence
+                      :operator operator}))))
+  ([operator precedence left right]
+   (when-not (and (string? operator) (not (str/blank? operator))
+                  (integer? precedence) (pos? precedence))
+     (throw (ex-info "Invalid C# binary operator"
+                     {:kind :invalid-csharp-binary
+                      :operator operator
+                      :precedence precedence})))
+   {:kind :binary
+    :operator operator
+    :precedence precedence
+    :left (node! left)
+    :right (node! right)}))
 
 (defn prefix
   [operator operand]
@@ -128,6 +160,59 @@
    :operator operator
    :operand (node! operand)
    :precedence prefix-precedence})
+
+(defn postfix
+  "Creates a postfix unary expression."
+  [operand operator]
+  (when-not (and (string? operator) (not (str/blank? operator)))
+    (throw (ex-info "Invalid C# postfix operator"
+                    {:kind :invalid-csharp-postfix :operator operator})))
+  {:kind :postfix
+   :operator operator
+   :operand (node! operand)
+   :precedence postfix-precedence})
+
+(defn conditional
+  "Creates a right-associative conditional expression."
+  [condition then-expression else-expression]
+  {:kind :conditional
+   :condition (node! condition)
+   :then (node! then-expression)
+   :else (node! else-expression)
+   :precedence conditional-precedence})
+
+(defn cast
+  "Creates a destination cast whose operand is parenthesized only when its
+  precedence requires it."
+  [type operand]
+  {:kind :cast
+   :type (node! type)
+   :operand (node! operand)
+   :precedence prefix-precedence})
+
+(defn assignment
+  "Creates a right-associative assignment expression."
+  ([target value] (assignment "=" target value))
+  ([operator target value]
+   (when-not (and (string? operator) (not (str/blank? operator)))
+     (throw (ex-info "Invalid C# assignment operator"
+                     {:kind :invalid-csharp-assignment
+                      :operator operator})))
+   {:kind :assignment
+    :operator operator
+    :target (node! target)
+    :value (node! value)
+    :precedence assignment-precedence}))
+
+(defn parenthesized
+  "Retains the frontend expression tree while allowing presentation to remove
+  a redundant pair of parentheses. The ordinary precedence renderer restores
+  parentheses whenever the surrounding destination context requires them."
+  [expression]
+  (let [expression (node! expression)]
+    {:kind :parenthesized
+     :expression expression
+     :precedence (:precedence expression 0)}))
 
 (defn member
   [target member-name]
@@ -278,8 +363,36 @@
           (append-rendered (render-node (:right node) (inc precedence)))))
 
     :prefix
-    (append-rendered {:text (:operator node) :mappings []}
-                     (render-node (:operand node) prefix-precedence))
+    (let [operand (render-node (:operand node) prefix-precedence)
+          collision? (and (contains? #{"+" "-"} (:operator node))
+                          (str/starts-with? (:text operand) (:operator node)))]
+      (append-rendered {:text (:operator node) :mappings []}
+                       (if collision?
+                         (wrap-rendered operand "(" ")")
+                         operand)))
+
+    :postfix
+    (append-rendered (render-node (:operand node) postfix-precedence)
+                     {:text (:operator node) :mappings []})
+
+    :conditional
+    (-> (render-node (:condition node) (inc conditional-precedence))
+        (append-rendered {:text " ? " :mappings []})
+        (append-rendered (render-node (:then node) 0))
+        (append-rendered {:text " : " :mappings []})
+        (append-rendered (render-node (:else node) conditional-precedence)))
+
+    :cast
+    (-> (wrap-rendered (render-node (:type node) 0) "(" ")")
+        (append-rendered (render-node (:operand node) prefix-precedence)))
+
+    :assignment
+    (-> (render-node (:target node) (inc assignment-precedence))
+        (append-rendered {:text (str " " (:operator node) " ") :mappings []})
+        (append-rendered (render-node (:value node) assignment-precedence)))
+
+    :parenthesized
+    (render-node (:expression node) 0)
 
     :member
     (-> (render-node (:target node) postfix-precedence)
@@ -317,11 +430,31 @@
                      :destination {:start 0 :end (count (:text rendered))}})
                   (:sources node)))))
 
-(defn render
-  "Renders a structured node deterministically and returns exact zero-based,
-  end-exclusive destination ranges for all attached source metadata."
+(def presentation-policy
+  "The universal product-neutral policy selected by every ordinary render."
+  presentation/default-policy)
+
+(defn render-raw
+  "Renders a structured node without presentation for structural translator
+  decisions. Emission paths must use `render` so mappings are finalized only
+  after the universal presentation pass."
   [node]
   (render-node node 0))
+
+(defn render
+  "Renders and presents a structured node deterministically. Source ranges are
+  finalized only after indentation, brace, blank-line, and wrapping edits."
+  ([node]
+   (presentation/present (render-raw node) presentation-policy))
+  ([node policy]
+   (presentation/present (render-raw node) policy)))
+
+(defn present-text
+  "Applies the shared policy to mechanically assembled C# text that surrounds
+  translated nodes, such as generated adapted-test wrappers."
+  ([text] (present-text text presentation-policy))
+  ([text policy]
+   (:text (presentation/present {:text text :mappings []} policy))))
 
 (defn transform
   "Applies a deterministic post-order transform to a structured C# tree before
@@ -353,6 +486,24 @@
 
                     :prefix
                     (update node :operand visit)
+
+                    :postfix
+                    (update node :operand visit)
+
+                    :conditional
+                    (-> node
+                        (update :condition visit)
+                        (update :then visit)
+                        (update :else visit))
+
+                    :cast
+                    (-> node (update :type visit) (update :operand visit))
+
+                    :assignment
+                    (-> node (update :target visit) (update :value visit))
+
+                    :parenthesized
+                    (update node :expression visit)
 
                     :member
                     (update node :target visit)

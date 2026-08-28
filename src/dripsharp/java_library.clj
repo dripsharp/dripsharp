@@ -729,7 +729,7 @@
      false)))
 
 (defn- null-forgiven-node [node]
-  (if (str/ends-with? (:text (csharp/render node)) "!")
+  (if (str/ends-with? (:text (csharp/render-raw node)) "!")
     node
     (assoc (sequence-node [node (raw "!")])
            ::value-adaptation :null-forgiven)))
@@ -1505,21 +1505,21 @@
        (str "unchecked((sbyte)" value ")")
        (if (and (= "short" literal-type) (instance? Number value))
          (str "unchecked((short)" value ")")
-       (cond
-         (nil? value) "default!"
-         (string? value) (escape-string value)
-         (instance? Character value)
-         (escape-character value)
-         (instance? Boolean value) (if value "true" "false")
-         (instance? Long value) (str value "L")
-         (instance? Float value) (str value "F")
-         (instance? Double value)
          (cond
-           (Double/isNaN value) "double.NaN"
-           (= Double/POSITIVE_INFINITY value) "double.PositiveInfinity"
-           (= Double/NEGATIVE_INFINITY value) "double.NegativeInfinity"
-           :else (str value "D"))
-         :else (str value)))))))
+           (nil? value) "default!"
+           (string? value) (escape-string value)
+           (instance? Character value)
+           (escape-character value)
+           (instance? Boolean value) (if value "true" "false")
+           (instance? Long value) (str value "L")
+           (instance? Float value) (str value "F")
+           (instance? Double value)
+           (cond
+             (Double/isNaN value) "double.NaN"
+             (= Double/POSITIVE_INFINITY value) "double.PositiveInfinity"
+             (= Double/NEGATIVE_INFINITY value) "double.NegativeInfinity"
+             :else (str value "D"))
+           :else (str value)))))))
 
 (declare method-name)
 
@@ -1851,9 +1851,9 @@
                   inner (raw ")")])
 
                 (boxed-primitive-reference? cast)
-                (sequence-node
-                 [(raw "(") (type-node ctx cast)
-                  (raw "?)(") inner (raw ")")])
+                (csharp/cast
+                 (sequence-node [(type-node ctx cast) (raw "?")])
+                 inner)
 
                 (contains? #{"byte" "short" "char"} qualified-name)
                 (sequence-node
@@ -1870,9 +1870,11 @@
                   (type-node ctx cast) (raw ">(") inner (raw ")")])
 
                 :else
-                (sequence-node [(raw "(") (type-node ctx cast)
-                                (raw ")(") inner
-                                (raw (if (.isPrimitive cast) ")" "!)"))]))))
+                (csharp/cast
+                 (type-node ctx cast)
+                 (if (.isPrimitive cast)
+                   inner
+                   (sequence-node [inner (raw "!")]))))))
           node
           (reverse (.getTypeCasts expression))))
 
@@ -1991,7 +1993,7 @@
                     invocation)))
 
 (defn- nullable-node [node]
-  (if (str/ends-with? (:text (csharp/render node)) "?")
+  (if (str/ends-with? (:text (csharp/render-raw node)) "?")
     node
     (sequence-node [node (raw "?")])))
 
@@ -2353,10 +2355,9 @@
           (raw ">")])))))
 
 (defn- compat-call [name arguments]
-  (sequence-node
-   [(raw (str "global::DripSharp.Runtime.JavaCompat." name "("))
-    (sequence-node arguments ", ")
-    (raw ")")]))
+  (csharp/invocation
+   (raw (str "global::DripSharp.Runtime.JavaCompat." name))
+   arguments))
 
 (defn- stream-collect-mapping
   [{:keys [destination-context element target arguments]}]
@@ -2821,7 +2822,7 @@
   [^CtExpression expression node]
   (if (contains? java-small-integral-types
                  (some-> expression .getType .getQualifiedName))
-    (sequence-node [(raw "(int)(") node (raw ")")])
+    (csharp/cast (raw "int") node)
     node))
 
 (defn- promoted-division-operand-node
@@ -2831,10 +2832,10 @@
             (some-> expression .getType .getQualifiedName))]
     (case effective-type
       ("double" "java.lang.Double")
-      (sequence-node [(raw "(double)(") node (raw ")")])
+      (csharp/cast (raw "double") node)
 
       ("float" "java.lang.Float")
-      (sequence-node [(raw "(float)(") node (raw ")")])
+      (csharp/cast (raw "float") node)
 
       node)))
 
@@ -3370,7 +3371,7 @@
 
           :else
           (child-node children target))
-        node-text (:text (csharp/render node))
+        node-text (:text (csharp/render-raw node))
         redundant-static-cast
         (or
          (re-matches
@@ -3391,7 +3392,7 @@
       node)))
 
 (defn- normalize-redundant-static-casts [node]
-  (let [text (:text (csharp/render node))
+  (let [text (:text (csharp/render-raw node))
         normalized
         (str/replace
          text
@@ -7837,7 +7838,7 @@
                (->> catch-type-nodes
                     (reduce
                      (fn [{:keys [seen nodes] :as result} node]
-                       (let [destination (get (csharp/render node) :text)]
+                       (let [destination (get (csharp/render-raw node) :text)]
                          (if (contains? seen destination)
                            result
                            {:seen (conj seen destination)
@@ -7845,7 +7846,7 @@
                      {:seen #{} :nodes []})
                     :nodes)
                catch-destinations
-               (set (map #(get (csharp/render %) :text)
+               (set (map #(get (csharp/render-raw %) :text)
                          distinct-catch-type-nodes))
                later-catch-destinations
                (let [parent (when (.isParentInitialized element)
@@ -7862,7 +7863,7 @@
                              (if (seq later-multi-types)
                                later-multi-types
                                [(.getType later-parameter)]))))
-                        (map #(get (csharp/render
+                        (map #(get (csharp/render-raw
                                     (type-node @ctx-holder %))
                                    :text))
                         set)
@@ -8044,7 +8045,7 @@
                        multi-types
                        [(.getType element)])
                type-nodes (mapv #(type-node @ctx-holder %) types)
-               destinations (mapv #(get (csharp/render %) :text) type-nodes)]
+               destinations (mapv #(get (csharp/render-raw %) :text) type-nodes)]
            {:node
             (sequence-node [(if (= 1 (count (distinct destinations)))
                               (first type-nodes)
@@ -9032,7 +9033,7 @@
           (into {}
                 (map (fn [[^CtTypeParameter formal ^CtTypeReference actual]]
                        [(.getSimpleName formal)
-                        (:text (csharp/render (type-node ctx actual)))]))
+                        (:text (csharp/render-raw (type-node ctx actual)))]))
                 (map vector formals actuals)))]
     (binding [*destination-type-parameter-overrides* overrides]
       (declaration-type-node ctx method
@@ -9252,7 +9253,7 @@
          superclass-reference (when (instance? CtClass owner)
                                 (.getSuperclass ^CtClass owner))
          superclass-declaration (some-> superclass-reference
-                                         .getTypeDeclaration)
+                                        .getTypeDeclaration)
          external-superclass?
          (and superclass-reference
               (or (nil? superclass-declaration)
@@ -9563,7 +9564,7 @@
         (when (and (instance? CtClass declaration)
                    (not (.isShadow ^CtClass declaration)))
           (or
-          (some
+           (some
             #(when (and
                     (= (destination-field-name ctx field)
                        (destination-field-name ctx ^CtField %))
@@ -9936,7 +9937,7 @@
               "java.util.List"
               (let [arguments (vec (.getActualTypeArguments reference))
                     element (if (= 1 (count arguments))
-                              (:text (csharp/render
+                              (:text (csharp/render-raw
                                       (type-node ctx (first arguments))))
                               "object")]
                 [(raw
@@ -9959,11 +9960,11 @@
               "java.util.Map"
               (let [arguments (vec (.getActualTypeArguments reference))
                     key-type (if (= 2 (count arguments))
-                               (:text (csharp/render
+                               (:text (csharp/render-raw
                                        (type-node ctx (first arguments))))
                                "object")
                     value-type (if (= 2 (count arguments))
-                                 (:text (csharp/render
+                                 (:text (csharp/render-raw
                                          (type-node ctx (second arguments))))
                                  "object")]
                 [(raw
@@ -10508,8 +10509,8 @@
                 (substituted-interface-reference
                  interface-reference (.getType candidate)))
                (raw (str " " (method-name ctx
-                                           (.getDeclaringType candidate)
-                                           candidate)))
+                                          (.getDeclaringType candidate)
+                                          candidate)))
                (method-formals-node candidate lifted)
                (raw "(")
                (sequence-node

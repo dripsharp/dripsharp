@@ -237,7 +237,7 @@
                       .getSimpleName)))
       (raw
        (str/replace
-        (:text (csharp/render node))
+        (:text (csharp/render-raw node))
         #"\.OrElse\(default!\)$"
         ""))
 
@@ -751,7 +751,7 @@
       (generic-call
        destination-context
        (raw
-        (str (:text (csharp/render source-target-node)) ".DoEvaluate"))
+        (str (:text (csharp/render-raw source-target-node)) ".DoEvaluate"))
        [((:current-product-return-reference services))]
        arguments)
 
@@ -929,7 +929,7 @@
            (= 1 argc))
       (invoke
        (csharp/generic-name
-        (raw (str (:text (csharp/render target-node)) ".Replace"))
+        (raw (str (:text (csharp/render-raw target-node)) ".Replace"))
         [(java-library/type-node destination-context (.getType element))])
        [(sequence-node
          [(raw "(")
@@ -1313,7 +1313,7 @@
       (invoke
        (csharp/generic-name
         (raw
-         (str (:text (csharp/render target-node))
+         (str (:text (csharp/render-raw target-node))
               ".GetNullable"))
         [(raw "global::System.Collections.Generic.IList<string>")])
        [(argument 0)
@@ -1393,7 +1393,7 @@
             "hasElement" "listElements" "resolveUri"}
           (.getSimpleName (.getExecutable element)))
          (str/includes?
-         (:text (csharp/render target-node))
+          (:text (csharp/render-raw target-node))
           "global::DripSharp.Brine.Runtime.ReaderBase"))))
       (invoke
        (member
@@ -1472,7 +1472,7 @@
 
       (and (= "accept" (.getSimpleName (.getExecutable element)))
            (= 2 argc)
-           (str/starts-with? (:text (csharp/render target-node)) "vmValue"))
+           (str/starts-with? (:text (csharp/render-raw target-node)) "vmValue"))
       (invoke (member target-node "Accept") arguments)
 
       (and (= "accept" (.getSimpleName (.getExecutable element)))
@@ -1519,7 +1519,7 @@
                 (raw "object")))]
         (invoke
          (csharp/generic-name
-          (raw (str (:text (csharp/render target-node)) ".Accept"))
+          (raw (str (:text (csharp/render-raw target-node)) ".Accept"))
           [result-node])
          arguments))
 
@@ -1618,7 +1618,7 @@
               :node
               (raw
                (str/replace
-                (:text (csharp/render node))
+                (:text (csharp/render-raw node))
                 "this.__outer"
                 "__outer"))))
            arguments)

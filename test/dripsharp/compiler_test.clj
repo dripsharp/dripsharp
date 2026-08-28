@@ -1,6 +1,7 @@
 (ns dripsharp.compiler-test
   (:require [clojure.test :refer [deftest is testing]]
             [dripsharp.compiler :as compiler]
+            [dripsharp.csharp :as csharp]
             [dripsharp.paths :as paths])
   (:import [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))
@@ -47,6 +48,50 @@
         diagnostics (compiler/parse-diagnostics (str line "\n" line "\n"))]
     (is (= 1 (count diagnostics)))
     (is (= :warning (:severity (first diagnostics))))))
+
+(deftest presented-diagnostics-select-the-originating-narrowest-rule
+  (let [root (Files/createTempDirectory "dripsharp-presented-compiler-map"
+                                        (make-array FileAttribute 0))
+        file (paths/resolve-path root "src/Example.cs")
+        type-source {:identity :type :rule :fixture/type}
+        invocation-source {:identity :invocation :rule :fixture/invocation}
+        node
+        (csharp/with-source
+          (csharp/declaration
+           (csharp/raw "class Example")
+           (csharp/block
+            [(csharp/with-source
+               (csharp/invocation
+                (csharp/raw "Call")
+                [(csharp/raw "firstArgument")
+                 (csharp/raw "secondArgument")
+                 (csharp/raw "thirdArgument")])
+               invocation-source)]))
+          type-source)
+        rendered (csharp/render node {:width 40})
+        _ (Files/createDirectories (.getParent file)
+                                   (make-array FileAttribute 0))
+        _ (Files/writeString file (:text rendered) (make-array OpenOption 0))
+        offset (.indexOf ^String (:text rendered) "thirdArgument")
+        prefix (subs (:text rendered) 0 offset)
+        line (inc (count (re-seq #"\n" prefix)))
+        last-newline (.lastIndexOf ^String prefix "\n")
+        column (inc (- offset (inc last-newline)))
+        mappings
+        (mapv #(assoc % :file "src/Example.cs") (:mappings rendered))
+        mapped
+        (compiler/map-diagnostic
+         root mappings
+         {:file (str file)
+          :line line
+          :column column
+          :severity :error
+          :code "CS0000"
+          :message "fixture"
+          :project (str (paths/resolve-path root "Example.csproj"))})]
+    (is (re-find #"secondArgument,\n\s+thirdArgument" (:text rendered)))
+    (is (= invocation-source (:source mapped)))
+    (is (= :fixture/invocation (:translation-rule mapped)))))
 
 (deftest clean-build-rejects-trailing-source-map-edn
   (let [root (Files/createTempDirectory "dripsharp-compiler-source-map"

@@ -559,7 +559,7 @@
 (defn- node!
   [node role]
   (try
-    (csharp/render node)
+    (csharp/render-raw node)
     node
     (catch Throwable error
       (throw (ex-info "Mapping interpreter received an invalid C# node"

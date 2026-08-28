@@ -3470,7 +3470,7 @@
       (csharp/transform
        (fn [current]
          (if (= security-handler-carrier
-                (:text (csharp/render current)))
+                (:text (csharp/render-raw current)))
            (cond-> (csharp/raw erased-security-handler)
              (seq (:sources current))
              (assoc :sources (:sources current)))
@@ -3592,7 +3592,7 @@
          (fn [current]
            (if (and (not @found?)
                     (contains? #{:raw :sequence} (:kind current))
-                    (= rendered-statement (:text (csharp/render current))))
+                    (= rendered-statement (:text (csharp/render-raw current))))
              (do
                (vreset! found? true)
                (csharp/sequence-node
@@ -3648,7 +3648,7 @@
                   (if (and (not @found?)
                            (contains? #{:raw :sequence} (:kind current))
                            (= sampled-image-raster-return
-                              (:text (csharp/render current))))
+                              (:text (csharp/render-raw current))))
                     (do
                       (vreset! found? true)
                       (csharp/sequence-node
@@ -3697,10 +3697,10 @@
      (if
       (and
        (= :generic-name (:kind current))
-       (contains? targets (:text (csharp/render (:target current))))
+       (contains? targets (:text (csharp/render-raw (:target current))))
        (= 1 (count (:arguments current)))
        (= source
-          (:text (csharp/render (first (:arguments current))))))
+          (:text (csharp/render-raw (first (:arguments current))))))
        (update current :arguments
                (fn [[argument]]
                  [(csharp/sequence-node
@@ -3712,7 +3712,7 @@
   (csharp/transform
    node
    (fn [current]
-     (if (= source (:text (csharp/render current)))
+     (if (= source (:text (csharp/render-raw current)))
        (cond-> replacement
          (seq (:sources current))
          (assoc :sources (:sources current)))
@@ -3725,7 +3725,7 @@
    (fn [current]
      (let [rendered
            (when (= :generic-name (:kind current))
-             (:text (csharp/render current)))]
+             (:text (csharp/render-raw current)))]
        (if (and rendered
                 (str/includes? rendered (str name "<")))
          (:target current)
@@ -3780,7 +3780,7 @@
          (fn [declaration]
            (if (= "getClosestPathElement"
                   (get-in declaration [:data :source-name]))
-             (if (str/includes? (:text (csharp/render (:body declaration)))
+             (if (str/includes? (:text (csharp/render-raw (:body declaration)))
                                 "GetPathElement<T>")
                declaration
                (update declaration :body csharp/replace-raw-text

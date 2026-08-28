@@ -749,7 +749,8 @@
                                        "JAVA-TEST-PROVENANCE.tsv")
         provenance-rows (provenance-rows contract accounting)]
     (write-text! generated-java-tests
-                 (render-test-source contract resolved-model plan))
+                 (csharp/present-text
+                  (render-test-source contract resolved-model plan)))
     (write-text! support (adapters/support-source))
     (write-text! integrity (render-integrity-source contract))
     (write-text! fixture-targets (render-fixture-targets (:fixtures contract)))
