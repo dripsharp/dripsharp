@@ -48,8 +48,14 @@ four-core, 16-GB GitHub-hosted runner. It is evidence about whether one already
 committed product version can be safely packed and published. It does not
 replace the full local product proof in `dripsharp/dripsharp`.
 
-Before advancing an intended product commit to a release, run its full local
-proof on a host that can safely dedicate 22 workers and a 28-GiB JVM heap:
+Before advancing an intended product commit to a release, its full local proof
+must pass. Check available RAM and CPU before starting; use a host that can
+safely dedicate 22 workers and a 28-GiB JVM heap. For a new version or generated
+change, follow the two-pass sequence below. The post-commit `product-sync`
+already runs the full proof; do not additionally run `proof` for the same
+unchanged revision merely to satisfy this runbook.
+
+When only a standalone full proof is needed, select the product's command:
 
 ```sh
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pkl
@@ -63,6 +69,65 @@ differential and corpus validation, complete adapted upstream tests and
 fixtures, and every other gate declared by the target. Follow the separate
 [product repository synchronization contract](product-repositories.md) when a
 new generated product commit is needed.
+
+### Version changes and synchronization
+
+Check the intended NuGet version's availability and the GitHub release
+environment before starting the expensive local checks. An environment with
+missing protection rules is a setup problem, not a workflow waiting for a
+reviewer. Resolve it before dispatch; discovering it early avoids a surprise
+after release preparation.
+
+For PdfCarton, update these durable inputs together:
+
+1. In `targets/pdfcube/target.edn`, increment
+   `:publication :nuget :version-policy :translator-revision` and update all
+   five entries under `:publication :nuget :packages`. The revision determines
+   the `-alpha.N` suffix; changing package strings alone fails target validation.
+2. Update the five package versions in `targets/pdfcube/baseline.edn`, retaining
+   the assembly version unless an assembly-version change is intended.
+3. Update version-sensitive expectations in the PdfCarton identity, family
+   packaging, PDFBox differential, Preflight differential, and Preflight corpus
+   tests under `test/dripsharp/`. Search for the previous package version to
+   catch additional active references; preserve historical release records.
+4. After pre-commit synchronization, update version-sensitive filenames in the
+   product-owned `products/pdfcarton/eng/test-release-packages.sh` and include
+   them in the release commit. Editing it earlier leaves the product checkout
+   dirty and blocks synchronization.
+   This operational script is outside the generator's managed paths. Its tests
+   require restored production-project assets; restore them before running it.
+5. Regenerate the product README, project files, and generation manifests from
+   those inputs. Do not manually bump the generated files.
+
+Use this sequence from the source repository, substituting the corresponding
+target and product paths for other products:
+
+1. Inspect the product checkout with `git -C products/pdfcarton status --short`.
+   Local builds and restores can leave untracked `bin/` and `obj/` directories.
+   Remove only confirmed disposable build outputs before synchronization;
+   preserve unrelated changes and do not use a blanket repository cleanup.
+2. Run the pre-commit pass:
+
+   ```sh
+   DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run product-sync pdfcube
+   ```
+
+   It clean-generates and compiles the production profiles, checks their public
+   surfaces, runs the generated test suites, and synchronizes managed paths.
+   Changed staged bytes are not packaged against the old product commit.
+3. Review the synchronized diff, include any product-owned release-tooling
+   update, and commit in the product repository. Commit the source changes and
+   updated submodule gitlink in the parent repository. Clear any disposable
+   build outputs introduced by local tooling tests before the next pass.
+4. Run the same `product-sync` command again. With staging matching the clean
+   product commit and parent gitlink, this post-commit pass runs the complete
+   package, consumer, and behavior proof, reruns generated tests, and requires
+   final synchronization to make no changes. A successful pre-commit pass alone
+   does not establish this result.
+5. Push the product commit before the parent commit that references it, then
+   dispatch the release workflow from the verified product `master` commit.
+
+### GitHub release gate
 
 The release workflow starts later, from an existing product-repository commit
 on `master`. Its `prepare` job always:
@@ -106,6 +171,20 @@ least one required reviewer, enable prevention of self-review, disallow
 administrator bypass of protection rules, and restrict deployment to the
 `master` branch. Do not rely on a workflow run to create this environment:
 GitHub otherwise creates it without protection rules.
+
+Inspect the environment early in release preparation, for example:
+
+```sh
+gh api repos/dripsharp/pdfcarton/environments/release \
+  --jq '{protection_rules, deployment_branch_policy}'
+```
+
+An empty `protection_rules` array is not a pending approval. Check the required
+reviewer, self-review and administrator-bypass settings, and deployment branch
+restrictions. A configured environment awaiting approval is handled through
+**Review deployments** after the prepare job succeeds. An explicit owner
+exception for one release applies only to that release; it does not change
+these defaults or authorize future releases through an unprotected environment.
 
 The workflow grants ordinary jobs only `contents: read`. Its `publish` job is
 the only job with `id-token: write`, and that job references the protected
@@ -215,7 +294,12 @@ package push failure stops the job and prevents later ordered pushes.
 ## Verify the published product
 
 NuGet validates and indexes primary and symbol packages after upload. Do not
-repeat the workflow merely because indexing is still in progress. For every
+repeat the workflow merely because indexing is still in progress. A successful
+publish job with `Created` and `Your package was pushed` for both the `.nupkg`
+and `.snupkg` confirms upload acceptance, while the NuGet version index and
+search results can still lag. Report that distinction, wait for indexing, and
+continue the checks below; do not diagnose a failed upload from an initially
+missing index entry or attempt to republish the immutable version. For every
 ID/version in the product family:
 
 1. confirm that the primary package and its symbols complete validation;
