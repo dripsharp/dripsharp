@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>DripSharp.PdfCarton.Tests</AssemblyName>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <PdfCartonRoot Condition="'$(PdfCartonRoot)' == ''">../../products/pdfcarton</PdfCartonRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(PdfCartonRoot)/src/DripSharp.PdfCarton/DripSharp.PdfCarton.csproj" />
+    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="4.150.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.150.1" />
+  </ItemGroup>
+</Project>
