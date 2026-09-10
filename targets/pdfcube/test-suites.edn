@@ -40,7 +40,7 @@
     "pdfcube-fontbox"
     {:source "consumer-tests/FontsConsumerTests.cs"
      :destination "FontsConsumerTests.cs"
-     :sha256 "8b462bda182b1b3d6ea563456ca2990cda4e3ad20ffeeb5fbb3e445a4ef62f40"}
+     :sha256 "a500e8806d20954377f4744c0377c6dcff61a13d389f7867bb4a945aad7da955"}
     "pdfcube-xmpbox"
     {:source "consumer-tests/XmpConsumerTests.cs"
      :destination "XmpConsumerTests.cs"

@@ -14,3 +14,9 @@ larger bitmap. Timings are reported for comparison, not used as pass/fail limits
 
 Use `-- --benchmark` to run only the measurements. Override the generated
 checkout with `-p:PdfCartonRoot=/absolute/path/to/pdfcarton` when necessary.
+
+Run correctness checks without stopwatch measurements:
+
+```sh
+dotnet run --project validation/pdfcube-skia-performance -c Release -- --regressions-only
+```

@@ -1735,6 +1735,113 @@ internal ref struct PdfCartonPixels
         changed = true;
     }
 
+    // The caller validates the region and sample array before entering these bulk
+    // paths. Other formats and alpha modes retain the per-pixel conversion above.
+    internal bool TryGetPixels(int x, int y, int width, int height, int[] pixels)
+    {
+        if (info.ColorType != SKColorType.Bgra8888 ||
+            info.AlphaType != SKAlphaType.Unpremul || !BitConverter.IsLittleEndian)
+            return false;
+        if (width == 0 || height == 0) return true;
+        // A retained JavaRaster can outlive a bitmap reallocation. Let the
+        // original per-pixel path preserve its bounds and partial-write behavior.
+        if (x > info.Width - width || y > info.Height - height) return false;
+
+        var sampleCount = checked(width * 4);
+        for (var row = 0; row < height; row++)
+        {
+            var input = bytes.Slice((y + row) * rowBytes + x * 4, sampleCount);
+            var output = pixels.AsSpan(row * sampleCount, sampleCount);
+            var offset = 0;
+            if (Vector.IsHardwareAccelerated)
+            {
+                for (; offset <= sampleCount - Vector<byte>.Count; offset += Vector<byte>.Count)
+                {
+                    var rgba = SwapRedBlue(Unsafe.ReadUnaligned<Vector<uint>>(ref input[offset]));
+                    Vector.Widen(Vector.AsVectorByte(rgba),
+                        out Vector<ushort> low, out Vector<ushort> high);
+                    Vector.Widen(low, out Vector<uint> first, out Vector<uint> second);
+                    Vector.Widen(high, out Vector<uint> third, out Vector<uint> fourth);
+                    Unsafe.WriteUnaligned(ref Unsafe.As<int, byte>(ref output[offset]), first);
+                    Unsafe.WriteUnaligned(ref Unsafe.As<int, byte>(ref output[offset + Vector<uint>.Count]), second);
+                    Unsafe.WriteUnaligned(ref Unsafe.As<int, byte>(ref output[offset + Vector<uint>.Count * 2]), third);
+                    Unsafe.WriteUnaligned(ref Unsafe.As<int, byte>(ref output[offset + Vector<uint>.Count * 3]), fourth);
+                }
+            }
+            for (; offset < sampleCount; offset += 4)
+            {
+                var pixel = Unsafe.ReadUnaligned<uint>(ref input[offset]);
+                output[offset] = (int)((pixel >> 16) & 255);
+                output[offset + 1] = (int)((pixel >> 8) & 255);
+                output[offset + 2] = (int)(pixel & 255);
+                output[offset + 3] = (int)(pixel >> 24);
+            }
+        }
+        return true;
+    }
+
+    internal bool TrySetPixels(int x, int y, int width, int height, int[] pixels)
+    {
+        if (info.ColorType != SKColorType.Bgra8888 ||
+            info.AlphaType != SKAlphaType.Unpremul || !BitConverter.IsLittleEndian)
+            return false;
+        if (width == 0 || height == 0) return true;
+        if (x > info.Width - width || y > info.Height - height) return false;
+
+        var sampleCount = checked(width * 4);
+        var byteMask = new Vector<uint>(255);
+        for (var row = 0; row < height; row++)
+        {
+            var input = pixels.AsSpan(row * sampleCount, sampleCount);
+            var output = bytes.Slice((y + row) * rowBytes + x * 4, sampleCount);
+            // Mark before writing so Dispose also invalidates Skia after any
+            // partially completed write, just as the per-pixel path does.
+            changed = true;
+            var offset = 0;
+            if (Vector.IsHardwareAccelerated)
+            {
+                for (; offset <= sampleCount - Vector<byte>.Count; offset += Vector<byte>.Count)
+                {
+                    // Mask before narrowing to preserve unchecked byte conversion
+                    // for negative samples and values greater than 255.
+                    var first = Unsafe.ReadUnaligned<Vector<uint>>(
+                        ref Unsafe.As<int, byte>(ref input[offset])) & byteMask;
+                    var second = Unsafe.ReadUnaligned<Vector<uint>>(
+                        ref Unsafe.As<int, byte>(ref input[offset + Vector<uint>.Count])) & byteMask;
+                    var third = Unsafe.ReadUnaligned<Vector<uint>>(
+                        ref Unsafe.As<int, byte>(ref input[offset + Vector<uint>.Count * 2])) & byteMask;
+                    var fourth = Unsafe.ReadUnaligned<Vector<uint>>(
+                        ref Unsafe.As<int, byte>(ref input[offset + Vector<uint>.Count * 3])) & byteMask;
+                    var packed = Vector.Narrow(Vector.Narrow(first, second), Vector.Narrow(third, fourth));
+                    Unsafe.WriteUnaligned(ref output[offset], SwapRedBlue(Vector.AsVectorUInt32(packed)));
+                }
+            }
+            for (; offset < sampleCount; offset += 4)
+            {
+                var pixel = (uint)unchecked((byte)input[offset + 2]) |
+                    ((uint)unchecked((byte)input[offset + 1]) << 8) |
+                    ((uint)unchecked((byte)input[offset]) << 16) |
+                    ((uint)unchecked((byte)input[offset + 3]) << 24);
+                Unsafe.WriteUnaligned(ref output[offset], pixel);
+            }
+        }
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector<uint> SwapRedBlue(Vector<uint> pixel)
+    {
+        // netstandard2.0 Vector<T> has no shift or byte-shuffle API. Multiply
+        // moves blue left; exact float scaling moves masked red right. Every
+        // masked red value is below 2^24 and exactly representable, and scaling
+        // by 2^-16 produces an exact integer, so conversion cannot round.
+        var red = Vector.AsVectorInt32(pixel & new Vector<uint>(0x00ff0000));
+        var redToBlue = Vector.AsVectorUInt32(Vector.ConvertToInt32(
+            Vector.ConvertToSingle(red) * new Vector<float>(1f / 65536f)));
+        var blueToRed = (pixel & new Vector<uint>(255)) * new Vector<uint>(65536);
+        return (pixel & new Vector<uint>(0xff00ff00)) | blueToRed | redToBlue;
+    }
+
     private void Validate(int x, int y)
     {
         if ((uint)x >= (uint)info.Width || (uint)y >= (uint)info.Height)
@@ -2046,6 +2153,8 @@ public sealed class JavaRaster
         if (bitmap is not null && storage is null)
         {
             using var access = new PdfCartonPixels(bitmap);
+            if (NumberOfBands == 4 && access.TryGetPixels(x, y, width, height, pixels))
+                return pixels;
             for (var row = y; row < y + height; row++)
                 for (var column = x; column < x + width; column++)
                 {
@@ -2167,6 +2276,8 @@ public sealed class JavaRaster
         if (bitmap is not null && storage is null)
         {
             using var access = new PdfCartonPixels(bitmap);
+            if (NumberOfBands == 4 && access.TrySetPixels(x, y, width, height, pixels))
+                return;
             for (var row = y; row < y + height; row++)
                 for (var column = x; column < x + width; column++)
                 {

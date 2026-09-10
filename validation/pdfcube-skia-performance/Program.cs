@@ -13,7 +13,8 @@ internal static class Program
 
     private static void Main(string[] args)
     {
-        if (args.Length == 0)
+        var regressionsOnly = Array.IndexOf(args, "--regressions-only") >= 0;
+        if (args.Length == 0 || regressionsOnly)
         {
             PixelFormats();
             PremultipliedReads();
@@ -25,7 +26,7 @@ internal static class Program
             BinaryBounds();
             Console.WriteLine("Skia pixel and rendering regressions passed.");
         }
-        Benchmark();
+        if (!regressionsOnly) Benchmark();
     }
 
     private static void PixelFormats()
