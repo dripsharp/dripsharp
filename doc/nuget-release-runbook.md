@@ -12,6 +12,24 @@ manually dispatched workflow at `.github/workflows/nuget-release.yml`:
 | PdfCarton | [`dripsharp/pdfcarton`](https://github.com/dripsharp/pdfcarton) | `Release PdfCarton to NuGet` | `DripSharp.PdfCarton` |
 | SqlTrellis | [`dripsharp/sqltrellis`](https://github.com/dripsharp/sqltrellis) | `Release SqlTrellis to NuGet` | `DripSharp.SqlTrellis` |
 
+An explicit owner instruction to release a product authorizes the complete
+release operation: prepare the requested version (or the next version in the
+requested channel), run the required checks, commit and push the source and
+generated changes, dispatch the product workflow, publish through its existing
+trusted-publishing setup, and verify remote consumption. Do not ask the owner
+to confirm publication again or request a separate one-release exception merely
+because the existing GitHub environment has no reviewer or branch restrictions.
+This authorization also covers retrying a failed attempt after confirming that
+no package or symbol was accepted and that the version is still unused.
+
+Honor protection rules that are actually configured. Complete an available
+deployment approval within the owner's release authorization when permitted;
+if GitHub requires a different reviewer or credentials unavailable to the
+operator, report the specific external action needed. Do not remove or bypass
+configured protections to make a run proceed. These platform constraints and
+the required verification gates remain distinct from asking permission to
+perform the release the owner already requested.
+
 The canonical public inventory is exactly four package IDs:
 `DripSharp.Brine.Parser`, `DripSharp.Brine`, `DripSharp.PdfCarton`, and
 `DripSharp.SqlTrellis`. Its only public dependency edge is
@@ -73,10 +91,10 @@ new generated product commit is needed.
 ### Version changes and synchronization
 
 Check the intended NuGet version's availability and the GitHub release
-environment before starting the expensive local checks. An environment with
-missing protection rules is a setup problem, not a workflow waiting for a
-reviewer. Resolve it before dispatch; discovering it early avoids a surprise
-after release preparation.
+environment before starting the expensive local checks. Record whether the
+existing environment requires a deployment review so the workflow can be
+followed to completion. Missing protection rules are not a pending approval and
+do not block an owner-requested release or require another confirmation.
 
 For PdfCarton, update these durable inputs together:
 
@@ -88,8 +106,9 @@ For PdfCarton, update these durable inputs together:
    the assembly version unless an assembly-version change is intended.
 3. Update version-sensitive expectations in the PdfCarton identity, family
    packaging, PDFBox differential, Preflight differential, and Preflight corpus
-   tests under `test/dripsharp/`. Search for the previous package version to
-   catch additional active references; preserve historical release records.
+   tests under `test/dripsharp/`. Search for the previous package version and
+   concatenated `-alpha.N` expectations in the five-profile release-selection
+   test to catch additional active references; preserve historical records.
 4. After pre-commit synchronization, update version-sensitive filenames in the
    product-owned `products/pdfcarton/eng/test-release-packages.sh` and include
    them in the release commit. Editing it earlier leaves the product checkout
@@ -161,16 +180,17 @@ omitted behavior optional or excluded.
 
 ## One-time publication setup
 
-Complete this setup independently in all three product repositories before any
-release dispatch.
+Configure trusted publishing independently in each product repository. Review
+environment protection settings when establishing or changing release
+infrastructure; an ordinary release request uses the existing environment.
 
-### Protect the GitHub release environment
+### GitHub release environment
 
-In **Settings → Environments**, create an environment named `release`. Add at
-least one required reviewer, enable prevention of self-review, disallow
-administrator bypass of protection rules, and restrict deployment to the
-`master` branch. Do not rely on a workflow run to create this environment:
-GitHub otherwise creates it without protection rules.
+The workflow uses an environment named `release`. When the owner asks to
+establish reviewer-based protection, add the selected required reviewer,
+prevent self-review, disallow administrator bypass, and restrict deployment to
+`master`. Changing those settings is separate infrastructure work; do not make
+it a prerequisite for releasing through an existing unprotected environment.
 
 Inspect the environment early in release preparation, for example:
 
@@ -179,15 +199,14 @@ gh api repos/dripsharp/pdfcarton/environments/release \
   --jq '{protection_rules, deployment_branch_policy}'
 ```
 
-An empty `protection_rules` array is not a pending approval. Check the required
-reviewer, self-review and administrator-bypass settings, and deployment branch
-restrictions. A configured environment awaiting approval is handled through
-**Review deployments** after the prepare job succeeds. An explicit owner
-exception for one release applies only to that release; it does not change
-these defaults or authorize future releases through an unprotected environment.
+An empty `protection_rules` array means there is no configured review gate;
+continue the authorized release. A configured environment awaiting approval is
+handled through **Review deployments** after the prepare job succeeds, subject
+to its actual reviewer, self-review, and branch rules. Do not ask the owner to
+name a new reviewer or grant an exception when no such gate exists.
 
 The workflow grants ordinary jobs only `contents: read`. Its `publish` job is
-the only job with `id-token: write`, and that job references the protected
+the only job with `id-token: write`, and that job references the
 `release` environment. No long-lived NuGet API key belongs in a repository,
 organization, or environment secret.
 
@@ -209,8 +228,9 @@ NuGet expects the workflow file name only, not the
 prevents a token from another job in the same repository from matching the
 policy. The workflow obtains a short-lived key immediately before publication
 through the pinned official `NuGet/login` action and exposes it only to the
-push step. If trusted publishing or the protected environment is unavailable,
-stop; do not substitute a long-lived secret.
+push step. If trusted publishing cannot authenticate, inspect and resolve the
+actual setup or credential failure; do not substitute a long-lived secret.
+An environment without protection rules is not an authentication failure.
 
 See NuGet's [trusted-publishing documentation][nuget-trusted-publishing] and
 GitHub's [environment protection documentation][github-environments].
@@ -224,8 +244,9 @@ GitHub's [environment protection documentation][github-environments].
 2. Confirm on nuget.org that every ID/version pair in the selected product
    family is unused. NuGet versions are immutable; an availability check does
    not reserve a version.
-3. Confirm that the `release` environment has the required reviewer and branch
-   protection and that the matching trusted-publishing policy is active.
+3. Inspect the existing `release` environment and confirm that the matching
+   trusted-publishing policy is active. Follow configured protection rules;
+   their absence does not require renewed owner approval.
 4. In the product repository, open **Actions**, select the workflow named in
    the first table, choose **Run workflow**, select `master`, and dispatch it.
    The equivalent GitHub CLI commands are:
@@ -237,7 +258,8 @@ GitHub's [environment protection documentation][github-environments].
    ```
 
    Run only the command for the product being released. Dispatch is an external
-   action that can lead to package publication after approval.
+   action authorized by the owner's release request. Publication follows a
+   successful prepare job and any deployment gate actually configured.
 5. Record the workflow-run URL and the triggering commit SHA shown by GitHub.
    The workflow rejects any ref other than `refs/heads/master`, then
    `actions/checkout` checks out that triggering product commit. It does not
@@ -245,8 +267,8 @@ GitHub's [environment protection documentation][github-environments].
 
 ## Review the prepare job
 
-Do not approve publication unless the `prepare` job is green. Review its normal
-logs for all of the following product-owned evidence:
+The workflow must keep publication dependent on a successful `prepare` job.
+Review its normal logs for all of the following product-owned evidence:
 
 * every production project restored and compiled in `Release` with zero errors;
 * the mandatory release smoke suite passed;
@@ -269,14 +291,15 @@ uploaded artifact contains only those exact tested files and the checksum list.
 
 ## Approve and publish
 
-The `publish` job depends on the successful `prepare` job and waits on the
-protected `release` environment. The required reviewer must compare the run's
-repository, triggering `master` commit, package version, prepare evidence, and
-intended nuget.org mutation with the release decision. Reject the deployment if
-any value is unexpected. Otherwise choose **Review deployments → Approve and
-deploy**.
+The `publish` job depends on the successful `prepare` job and uses the `release`
+environment. Without configured protection rules it proceeds automatically;
+the owner's release request already authorizes that publication. When a review
+gate exists, compare the repository, triggering `master` commit, package
+version, prepare evidence, and intended nuget.org mutation with the release
+decision before choosing **Review deployments → Approve and deploy**. Reject
+unexpected values and honor any requirement for a different reviewer.
 
-After approval, the publish job:
+Once any configured gate is satisfied, the publish job:
 
 1. downloads the artifact produced by that same workflow run;
 2. runs `sha256sum --check --strict SHA256SUMS` and rejects any unexpected or
@@ -324,8 +347,8 @@ Do not manually push later packages, add skip-duplicate behavior, or assume a
 failed client response means the server accepted nothing.
 
 * If no package or symbol from the product family was accepted, resolve the
-  transient cause, reconfirm that all versions remain unused, obtain a fresh
-  release approval, and dispatch the same product commit again.
+  transient cause, reconfirm that all versions remain unused, and dispatch the
+  same product commit again under the original release authorization.
 * If any primary or symbol package was accepted, the family release is partial.
   Record the remote state, unlist only with separate owner authorization if
   appropriate, assign a new version to the entire product family through the

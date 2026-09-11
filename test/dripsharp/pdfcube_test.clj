@@ -587,7 +587,7 @@
              (:mechanical-source destination)))
       (is (str/ends-with? (:maven-project-id profile) (str ":" version)))
       (is (str/ends-with? (:source-project-id destination) (str ":" version)))
-      (is (= (str version "-alpha.1")
+      (is (= (str version "-alpha.4")
              (get-in destination [:package :version]))))
     (is (= revision
            (str/trim
