@@ -15,7 +15,7 @@
    "generate|verify|pack|package <target> <profile>"
    "|differential <target> [validation-id]"
    "|proof <target> [--resume <run-id>]"
-   "|product-sync <target>"
+   "|product-sync <target> [--post-commit (PdfCarton only)]"
    "|product-preflight <target> [--live]"
    "|product-prepare <target> <branch> <commit-message>"
    "|authorship-report <pkl|pdfcube|sqltrellis|all>"
@@ -61,9 +61,10 @@
 
       (and (= "product-sync" command)
            target
-           (nil? selector)
+           (or (nil? selector) (= "--post-commit" selector))
            (empty? extra))
-      (target-execution/synchronize! {:target target})
+      (target-execution/synchronize!
+       (cond-> {:target target} selector (assoc :post-commit? true)))
 
       (and (= "product-prepare" command)
            target

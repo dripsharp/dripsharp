@@ -138,11 +138,25 @@ target and product paths for other products:
    update, and commit in the product repository. Commit the source changes and
    updated submodule gitlink in the parent repository. Clear any disposable
    build outputs introduced by local tooling tests before the next pass.
-4. Run the same `product-sync` command again. With staging matching the clean
-   product commit and parent gitlink, this post-commit pass runs the complete
-   package, consumer, and behavior proof, reruns generated tests, and requires
-   final synchronization to make no changes. A successful pre-commit pass alone
-   does not establish this result.
+4. For PdfCarton, run the explicit post-commit pass:
+
+   ```sh
+   DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run product-sync pdfcube --post-commit
+   ```
+
+   It runs the complete proof with two independent clean generations and
+   exact-commit package builds, including compiled public-surface audits,
+   independent consumers, differential/corpus checks and all other target
+   gates. It then runs all generated test suites, including the complete
+   shipped adapted upstream suite and fixtures, removes transient outputs,
+   rechecks the clean product commit and parent gitlink, and requires final
+   managed synchronization to make no changes. The separate generation/build/
+   audit prefix and pre-proof test run are omitted. A successful pre-commit
+   pass alone does not establish this result.
+
+   This flag is PdfCarton-only. For other products, rerun their unflagged
+   `product-sync` command. The unflagged PdfCarton command also retains the
+   previous sequence for compatibility.
 5. Push the product commit before the parent commit that references it, then
    dispatch the release workflow from the verified product `master` commit.
 
@@ -413,6 +427,26 @@ stamping pass, projects build in dependency order with project-reference builds
 disabled, so already stamped dependencies are not recursively rebuilt. The
 initial clean compiled-surface build and the later exact-commit stamping build
 remain distinct.
+
+After committing the pre-commit result and updating the parent gitlink, use
+`product-sync pdfcube --post-commit` for the post-commit pass. The approved
+two-pass sequence schedules three complete-family generations instead of
+four, and two generated-test-suite runs instead of three. It retains both
+independent exact-commit package builds and the final complete shipped tests,
+cleanup, repository comparison and no-drift synchronization. These counts
+describe removed stage invocations; they do not predict a whole-release time
+saving.
+
+The explicit post-commit mode starts a fresh complete proof and does not cache
+the pre-commit result. Changes to source, runtime, mapping, generated files or
+package version require the pre-commit synchronization and commit steps again.
+A product-owned release-tooling or metadata change requires proof and fresh
+package stamping against the resulting clean product commit and parent gitlink,
+even if generated source bytes are unchanged. Every package must identify that
+commit, and changed staged bytes cannot be attributed to an older revision.
+No final synchronization in this mode may introduce managed changes. Product
+goals, exclusions, shipped-test requirements and completion semantics are
+unchanged.
 
 To retain a successful package stage when a later validator fails, select a
 local run name on the **first** attempt and reuse it on retry:

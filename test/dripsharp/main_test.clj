@@ -115,6 +115,7 @@
                 ["proof" "pkl" "extra"]
                 ["product-sync"]
                 ["product-sync" "pkl" "extra"]
+                ["product-sync" "pdfcube" "--post-commit" "extra"]
                 ["product-prepare" "pkl"]
                 ["product-prepare" "pkl" "generated/pkl"]
                 ["product-prepare" "pkl" "generated/pkl" "message" "extra"]
@@ -144,7 +145,10 @@
 
 (deftest release-prerequisite-and-resume-cli-options
   (with-redefs [target-execution/prerequisites! identity
+                target-execution/synchronize! identity
                 target-execution/proof! identity]
+    (is (= {:target "pdfcube" :post-commit? true}
+           (main/dispatch! ["product-sync" "pdfcube" "--post-commit"])))
     (is (= {:target "pdfcube"}
            (main/dispatch! ["product-preflight" "pdfcube"])))
     (is (= {:target "pdfcube" :live-release? true}

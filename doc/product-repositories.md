@@ -69,13 +69,43 @@ The pre-commit pass follows this order:
 6. Update the parent repository's submodule gitlink only after the product
    repository commit exists.
 
-The post-commit pass reruns `product-sync <target>`. It repeats clean generation,
-compiled-surface checks, and generated repository-local tests, establishes that
-staging exactly matches the clean product `HEAD` and parent gitlink, and then
-runs the target's complete package, independent-consumer, behavior, and other
-required proof against that exact commit. It reruns generated tests after the
-complete proof, removes transient outputs, rechecks the exact commit, and
-requires managed synchronization to produce no changes.
+For PdfCarton, the post-commit pass uses
+`product-sync pdfcube --post-commit` after the successful pre-commit pass and
+the product commit and parent gitlink update. It runs the complete proof,
+including two independent clean generations, compiled public-surface audits,
+exact-commit package builds, independent consumers, differential and corpus
+checks, and every other required target check. It then runs every declared
+generated repository-local test project, including the complete shipped adapted
+upstream suite and fixtures, removes transient outputs, rechecks the exact
+product commit and parent gitlink, and requires managed synchronization to
+produce no changes. It omits the separate generation/build/audit prefix and
+the test run before the complete proof; the independent package builds and
+final shipped tests retain those verification responsibilities.
+
+This explicit PdfCarton mode does not reuse pre-commit build or test results.
+Source, runtime, mapping, generated-file or package-version changes must be
+generated, verified, synchronized and committed before the post-commit proof
+can succeed against their exact product revision. A product-owned release
+tooling or metadata change also requires proof against the resulting clean
+product commit and parent gitlink, even when generated source bytes do not
+change. The package proof establishes embedded commit metadata afresh. Staging
+that differs from the product commit is a failure, never permission to package
+changed bytes under an earlier commit or synchronize them at the end of this
+mode. Existing invalidation rules for separately named package-recovery runs
+do not turn this synchronization mode into a cache.
+
+For the standard PdfCarton two-pass sequence, scheduled complete-family
+generation passes decrease from four to three and generated-test-suite runs
+from three to two. The two independent package builds remain mandatory. These
+are invocation counts, not a claim about total release wall time.
+
+The unflagged `product-sync <target>` retains the existing behavior for
+compatibility, and `--post-commit` is PdfCarton-only. The unflagged post-commit
+pass repeats clean generation, compiled-surface checks, and generated tests,
+establishes that staging matches the clean product `HEAD` and parent gitlink,
+then runs the complete proof. It runs generated tests again after that proof,
+removes transient outputs, rechecks the exact commit, and requires managed
+synchronization to produce no changes. Other targets retain this sequence.
 
 Ordinary `pack` and `package` entry points always require the exact clean
 generated-product commit; the pre-commit `product-sync` pass does not weaken or
