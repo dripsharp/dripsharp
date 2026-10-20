@@ -1174,8 +1174,93 @@ internal static class Program
         var bits = new JavaBitSet();
         bits.set(2, 5);
         bits.clear(3);
-        return $"{bits.get(2)}|{bits.get(3)}|{bits.nextSetBit(3)}"
-            .ToLowerInvariant();
+        var trace = new StringBuilder();
+        trace.Append(Bool(bits.get(2))).Append('|').Append(Bool(bits.get(3))).Append('|').Append(Int(bits.nextSetBit(3)));
+        // Word boundaries, ranges inside one word and across words, empty ranges, growth.
+        bits.set(63);
+        bits.set(64);
+        bits.set(127, 130);
+        bits.set(200, 200);
+        bits.set(1000);
+        bits.set(320, 384);
+        trace.Append('|').Append(BitSetRuns(bits));
+        foreach (var from in new[] { 0, 5, 63, 64, 65, 130, 384, 1000, 1001, 5000 })
+            trace.Append(',').Append(Int(bits.nextSetBit(from)));
+        trace.Append(',').Append(Bool(bits.get(129))).Append(',').Append(Bool(bits.get(130)))
+            .Append(',').Append(Bool(bits.get(5000))).Append(',').Append(Bool(bits.get(383)));
+        // Clearing the highest bit shrinks the logical size; clearing past it is a no-op.
+        bits.clear(1000);
+        bits.clear(4000);
+        bits.clear(64);
+        bits.clear(383);
+        trace.Append('|').Append(BitSetRuns(bits)).Append(',').Append(Int(bits.nextSetBit(383)))
+            .Append(',').Append(Int(bits.nextSetBit(400)));
+        bits.set(1, 191);
+        trace.Append('|').Append(BitSetRuns(bits));
+        bits.clear();
+        trace.Append('|').Append(Int(bits.nextSetBit(0))).Append(',').Append(Bool(bits.get(2)));
+        bits.set(70, 71);
+        bits.set(0, 64);
+        bits.set(65, 70);
+        trace.Append('|').Append(BitSetRuns(bits));
+        // ScratchFile: free pages set in bulk, taken with nextSetBit(0)/clear, freed and enlarged.
+        bits.clear();
+        bits.set(0, 100_000);
+        long taken = 0;
+        for (var i = 0; i < 25_600; i++)
+        {
+            var index = bits.nextSetBit(0);
+            bits.clear(index);
+            taken += index;
+        }
+        bits.set(7);
+        bits.set(12_345);
+        trace.Append('|').Append(Int(taken)).Append(',').Append(Int(bits.nextSetBit(0)))
+            .Append(',').Append(Int(bits.nextSetBit(8))).Append(',').Append(Int(bits.nextSetBit(12_346)));
+        bits.clear(7);
+        bits.clear(12_345);
+        bits.set(25_600, 100_000);
+        for (var i = 0; i < 74_400; i++) bits.clear(bits.nextSetBit(0));
+        trace.Append(',').Append(Int(bits.nextSetBit(0)));
+        bits.set(100_000, 100_016);
+        trace.Append(',').Append(BitSetRuns(bits));
+        // Negative indexes and reversed ranges.
+        trace.Append('|').Append(BitSetFailure(() => Bool(bits.get(-1))))
+            .Append(',').Append(BitSetFailure(() => { bits.set(-2); return "null"; }))
+            .Append(',').Append(BitSetFailure(() => { bits.clear(-3); return "null"; }))
+            .Append(',').Append(BitSetFailure(() => bits.nextSetBit(-4).ToString(CultureInfo.InvariantCulture)))
+            .Append(',').Append(BitSetFailure(() => { bits.set(-5, 2); return "null"; }))
+            .Append(',').Append(BitSetFailure(() => { bits.set(2, -6); return "null"; }))
+            .Append(',').Append(BitSetFailure(() => { bits.set(9, 8); return "null"; }))
+            .Append(',').Append(BitSetRuns(bits));
+        return trace.ToString();
+    }
+
+    private static string Bool(bool value) => value ? "true" : "false";
+    private static string Int(long value) => value.ToString(CultureInfo.InvariantCulture);
+
+    private static string BitSetRuns(JavaBitSet bits)
+    {
+        var runs = new StringBuilder("[");
+        for (var index = bits.nextSetBit(0); index >= 0; index = bits.nextSetBit(index + 1))
+        {
+            var start = index;
+            while (bits.get(index + 1)) index++;
+            runs.Append(Int(start)).Append('-').Append(Int(index)).Append(';');
+        }
+        return runs.Append(']').ToString();
+    }
+
+    private static string BitSetFailure(Func<string> operation)
+    {
+        try
+        {
+            return "ok:" + operation();
+        }
+        catch (ArgumentOutOfRangeException error)
+        {
+            return "index-out-of-bounds:" + error.Message;
+        }
     }
 
     private static string ByteBufferContract()

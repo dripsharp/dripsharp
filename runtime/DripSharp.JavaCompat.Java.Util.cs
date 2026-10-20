@@ -629,19 +629,109 @@ internal sealed class JavaHashtable<K, V> : IDictionary<K, V> where K : notnull
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+// java.util.BitSet: bits packed into 64-bit words; wordsInUse is the logical
+// size (index of the highest word with a set bit, plus one), as in the JDK.
 internal sealed class JavaBitSet
 {
-    private readonly HashSet<int> values = new();
-    internal void clear() => values.Clear();
-    internal void clear(int index) => values.Remove(index);
-    internal bool get(int index) => values.Contains(index);
-    internal int nextSetBit(int fromIndex) =>
-        values.Where(value => value >= fromIndex).DefaultIfEmpty(-1).Min();
-    internal void set(int index) => values.Add(index);
+    private const int AddressBitsPerWord = 6;
+    private const ulong WordMask = ulong.MaxValue;
+    private static readonly byte[] DeBruijnTrailingZeros =
+    {
+        0, 1, 48, 2, 57, 49, 28, 3, 61, 58, 50, 42, 38, 29, 17, 4,
+        62, 55, 59, 36, 53, 51, 43, 22, 45, 39, 33, 30, 24, 18, 12, 5,
+        63, 47, 56, 27, 60, 41, 37, 16, 54, 35, 52, 21, 44, 32, 23, 11,
+        46, 26, 40, 15, 34, 20, 31, 10, 25, 14, 19, 9, 13, 8, 7, 6
+    };
+    private ulong[] words = new ulong[1];
+    private int wordsInUse;
+
+    internal void clear()
+    {
+        Array.Clear(words, 0, wordsInUse);
+        wordsInUse = 0;
+    }
+
+    internal void clear(int bitIndex)
+    {
+        if (bitIndex < 0) throw IndexOutOfBounds("bitIndex < 0: " + bitIndex);
+        var wordIndex = bitIndex >> AddressBitsPerWord;
+        if (wordIndex >= wordsInUse) return;
+        words[wordIndex] &= ~(1UL << (bitIndex & 63));
+        if (words[wordIndex] == 0 && wordIndex == wordsInUse - 1) RecalculateWordsInUse();
+    }
+
+    internal bool get(int bitIndex)
+    {
+        if (bitIndex < 0) throw IndexOutOfBounds("bitIndex < 0: " + bitIndex);
+        var wordIndex = bitIndex >> AddressBitsPerWord;
+        return wordIndex < wordsInUse && (words[wordIndex] & (1UL << (bitIndex & 63))) != 0;
+    }
+
+    internal int nextSetBit(int fromIndex)
+    {
+        if (fromIndex < 0) throw IndexOutOfBounds("fromIndex < 0: " + fromIndex);
+        var wordIndex = fromIndex >> AddressBitsPerWord;
+        if (wordIndex >= wordsInUse) return -1;
+        var word = words[wordIndex] & (WordMask << (fromIndex & 63));
+        while (true)
+        {
+            if (word != 0) return (wordIndex << AddressBitsPerWord) + TrailingZeros(word);
+            if (++wordIndex == wordsInUse) return -1;
+            word = words[wordIndex];
+        }
+    }
+
+    internal void set(int bitIndex)
+    {
+        if (bitIndex < 0) throw IndexOutOfBounds("bitIndex < 0: " + bitIndex);
+        var wordIndex = bitIndex >> AddressBitsPerWord;
+        ExpandTo(wordIndex);
+        words[wordIndex] |= 1UL << (bitIndex & 63);
+    }
+
     internal void set(int fromIndex, int toIndex)
     {
-        for (var index = fromIndex; index < toIndex; index++) values.Add(index);
+        if (fromIndex < 0) throw IndexOutOfBounds("fromIndex < 0: " + fromIndex);
+        if (toIndex < 0) throw IndexOutOfBounds("toIndex < 0: " + toIndex);
+        if (fromIndex > toIndex)
+            throw IndexOutOfBounds("fromIndex: " + fromIndex + " > toIndex: " + toIndex);
+        if (fromIndex == toIndex) return;
+        var startWordIndex = fromIndex >> AddressBitsPerWord;
+        var endWordIndex = (toIndex - 1) >> AddressBitsPerWord;
+        ExpandTo(endWordIndex);
+        var firstWordMask = WordMask << (fromIndex & 63);
+        var lastWordMask = WordMask >> (-toIndex & 63);
+        if (startWordIndex == endWordIndex)
+        {
+            words[startWordIndex] |= firstWordMask & lastWordMask;
+            return;
+        }
+        words[startWordIndex] |= firstWordMask;
+        for (var index = startWordIndex + 1; index < endWordIndex; index++) words[index] = WordMask;
+        words[endWordIndex] |= lastWordMask;
     }
+
+    private void ExpandTo(int wordIndex)
+    {
+        var wordsRequired = wordIndex + 1;
+        if (wordsInUse >= wordsRequired) return;
+        if (words.Length < wordsRequired)
+            Array.Resize(ref words, Math.Max(2 * words.Length, wordsRequired));
+        wordsInUse = wordsRequired;
+    }
+
+    private void RecalculateWordsInUse()
+    {
+        var index = wordsInUse - 1;
+        while (index >= 0 && words[index] == 0) index--;
+        wordsInUse = index + 1;
+    }
+
+    private static int TrailingZeros(ulong word) =>
+        DeBruijnTrailingZeros[(int)(((word & (0UL - word)) * 0x03F79D71B4CB0A89UL) >> 58)];
+
+    private static ArgumentOutOfRangeException IndexOutOfBounds(string message) =>
+        new(null, message);
 }
 
 internal static class JavaZlib

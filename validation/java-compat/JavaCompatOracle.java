@@ -974,7 +974,83 @@ public final class JavaCompatOracle {
     var bits = new BitSet();
     bits.set(2, 5);
     bits.clear(3);
-    return bits.get(2) + "|" + bits.get(3) + "|" + bits.nextSetBit(3);
+    var trace = new StringBuilder();
+    trace.append(bits.get(2)).append('|').append(bits.get(3)).append('|').append(bits.nextSetBit(3));
+    // Word boundaries, ranges inside one word and across words, empty ranges, growth.
+    bits.set(63);
+    bits.set(64);
+    bits.set(127, 130);
+    bits.set(200, 200);
+    bits.set(1000);
+    bits.set(320, 384);
+    trace.append('|').append(bitSetRuns(bits));
+    for (int from : new int[] {0, 5, 63, 64, 65, 130, 384, 1000, 1001, 5000})
+      trace.append(',').append(bits.nextSetBit(from));
+    trace.append(',').append(bits.get(129)).append(',').append(bits.get(130))
+        .append(',').append(bits.get(5000)).append(',').append(bits.get(383));
+    // Clearing the highest bit shrinks the logical size; clearing past it is a no-op.
+    bits.clear(1000);
+    bits.clear(4000);
+    bits.clear(64);
+    bits.clear(383);
+    trace.append('|').append(bitSetRuns(bits)).append(',').append(bits.nextSetBit(383))
+        .append(',').append(bits.nextSetBit(400));
+    bits.set(1, 191);
+    trace.append('|').append(bitSetRuns(bits));
+    bits.clear();
+    trace.append('|').append(bits.nextSetBit(0)).append(',').append(bits.get(2));
+    bits.set(70, 71);
+    bits.set(0, 64);
+    bits.set(65, 70);
+    trace.append('|').append(bitSetRuns(bits));
+    // ScratchFile: free pages set in bulk, taken with nextSetBit(0)/clear, freed and enlarged.
+    bits.clear();
+    bits.set(0, 100_000);
+    long taken = 0;
+    for (int i = 0; i < 25_600; i++) {
+      int index = bits.nextSetBit(0);
+      bits.clear(index);
+      taken += index;
+    }
+    bits.set(7);
+    bits.set(12_345);
+    trace.append('|').append(taken).append(',').append(bits.nextSetBit(0))
+        .append(',').append(bits.nextSetBit(8)).append(',').append(bits.nextSetBit(12_346));
+    bits.clear(7);
+    bits.clear(12_345);
+    bits.set(25_600, 100_000);
+    for (int i = 0; i < 74_400; i++) bits.clear(bits.nextSetBit(0));
+    trace.append(',').append(bits.nextSetBit(0));
+    bits.set(100_000, 100_016);
+    trace.append(',').append(bitSetRuns(bits));
+    // Negative indexes and reversed ranges.
+    trace.append('|').append(bitSetFailure(() -> bits.get(-1)))
+        .append(',').append(bitSetFailure(() -> { bits.set(-2); return null; }))
+        .append(',').append(bitSetFailure(() -> { bits.clear(-3); return null; }))
+        .append(',').append(bitSetFailure(() -> bits.nextSetBit(-4)))
+        .append(',').append(bitSetFailure(() -> { bits.set(-5, 2); return null; }))
+        .append(',').append(bitSetFailure(() -> { bits.set(2, -6); return null; }))
+        .append(',').append(bitSetFailure(() -> { bits.set(9, 8); return null; }))
+        .append(',').append(bitSetRuns(bits));
+    return trace.toString();
+  }
+
+  private static String bitSetRuns(BitSet bits) {
+    var runs = new StringBuilder("[");
+    for (int index = bits.nextSetBit(0); index >= 0; index = bits.nextSetBit(index + 1)) {
+      int start = index;
+      while (bits.get(index + 1)) index++;
+      runs.append(start).append('-').append(index).append(';');
+    }
+    return runs.append(']').toString();
+  }
+
+  private static String bitSetFailure(java.util.function.Supplier<Object> operation) {
+    try {
+      return "ok:" + operation.get();
+    } catch (IndexOutOfBoundsException error) {
+      return "index-out-of-bounds:" + error.getMessage();
+    }
   }
 
   private static String byteBufferContract() {

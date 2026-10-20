@@ -862,3 +862,205 @@ public sealed class JavaEqualityConsumerTests
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }
+
+// java.util.BitSet behind ScratchFile's free-page map. It was a HashSet<int>
+// whose nextSetBit scanned every set bit: an unrestricted ScratchFile starts
+// with 100,000 free pages and takes each new page with nextSetBit(0).
+public sealed class BitSetConsumerTests
+{
+    [Fact]
+    public void BitSetFollowsJavaSemanticsAcrossWordsRangesAndGrowth()
+    {
+        var bits = new DripSharp.Runtime.JavaBitSet();
+        Assert.Equal(-1, bits.nextSetBit(0));
+        Assert.False(bits.get(1_000_000));
+        bits.clear(5);
+        bits.set(63);
+        bits.set(64);
+        bits.set(127, 130);
+        bits.set(200, 200);
+        bits.set(320, 384);
+        bits.set(70_000);
+        Assert.Equal(new[] { 63, 64, 127, 128, 129 }, SetBits(bits, 0, 130));
+        Assert.Equal(63, bits.nextSetBit(0));
+        Assert.Equal(64, bits.nextSetBit(64));
+        Assert.Equal(127, bits.nextSetBit(65));
+        Assert.Equal(320, bits.nextSetBit(130));
+        Assert.Equal(70_000, bits.nextSetBit(384));
+        Assert.Equal(-1, bits.nextSetBit(70_001));
+        Assert.Equal(-1, bits.nextSetBit(int.MaxValue));
+        Assert.True(bits.get(383));
+        Assert.False(bits.get(384));
+        Assert.False(bits.get(200));
+
+        bits.clear(70_000);
+        bits.clear(64);
+        bits.clear(int.MaxValue);
+        Assert.Equal(-1, bits.nextSetBit(384));
+        Assert.Equal(127, bits.nextSetBit(64));
+        bits.set(1, 191);
+        Assert.Equal(Enumerable.Range(1, 190).Concat(Enumerable.Range(320, 64)), SetBits(bits, 0, 1000));
+        bits.clear();
+        Assert.Equal(-1, bits.nextSetBit(0));
+        Assert.False(bits.get(2));
+        bits.set(0, 64);
+        bits.set(64, 128);
+        Assert.Equal(Enumerable.Range(0, 128), SetBits(bits, 0, 1000));
+    }
+
+    [Fact]
+    public void BitSetRejectsNegativeIndexesAndReversedRangesLikeJava()
+    {
+        var bits = new DripSharp.Runtime.JavaBitSet();
+        bits.set(3);
+        Assert.Equal("bitIndex < 0: -1",
+            Assert.ThrowsAny<ArgumentOutOfRangeException>(() => bits.get(-1)).Message);
+        Assert.Equal("bitIndex < 0: -2",
+            Assert.ThrowsAny<ArgumentOutOfRangeException>(() => bits.set(-2)).Message);
+        Assert.Equal("bitIndex < 0: -3",
+            Assert.ThrowsAny<ArgumentOutOfRangeException>(() => bits.clear(-3)).Message);
+        Assert.Equal("fromIndex < 0: -4",
+            Assert.ThrowsAny<ArgumentOutOfRangeException>(() => bits.nextSetBit(-4)).Message);
+        Assert.Equal("fromIndex < 0: -5",
+            Assert.ThrowsAny<ArgumentOutOfRangeException>(() => bits.set(-5, 2)).Message);
+        Assert.Equal("toIndex < 0: -6",
+            Assert.ThrowsAny<ArgumentOutOfRangeException>(() => bits.set(2, -6)).Message);
+        Assert.Equal("fromIndex: 9 > toIndex: 8",
+            Assert.ThrowsAny<ArgumentOutOfRangeException>(() => bits.set(9, 8)).Message);
+        Assert.Equal(new[] { 3 }, SetBits(bits, 0, 100));
+    }
+
+    [Fact]
+    public void NextSetBitDoesNotScanTheSetBitsAfterTheResult()
+    {
+        // ScratchFile.initPages sets 100,000 free pages; getNewPage takes one
+        // with nextSetBit(0) and clear. The HashSet scan made 25,600 pages
+        // cost about 2.5e9 steps.
+        var bits = new DripSharp.Runtime.JavaBitSet();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        bits.set(0, 100_000);
+        long taken = 0;
+        for (var index = 0; index < 25_600; index++)
+        {
+            int page = bits.nextSetBit(0);
+            bits.clear(page);
+            taken += page;
+        }
+        watch.Stop();
+        Assert.Equal(25_600L * 25_599 / 2, taken);
+        Assert.Equal(25_600, bits.nextSetBit(0));
+        Assert.True(watch.ElapsedMilliseconds < 1000,
+            $"set(0, 100000) and 25,600 nextSetBit/clear cycles took {watch.ElapsedMilliseconds} ms.");
+    }
+
+    [Fact]
+    public void ScratchFilePagesAreTakenWithoutRescanningTheFreePages()
+    {
+        using var scratch = new ScratchFile(MemoryUsageSetting.SetupMainMemoryOnly());
+        var held = new List<DripSharp.PdfCarton.IO.RandomAccess>();
+        var page = new sbyte[4096];
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            for (var index = 0; index < 25_600; index++)
+            {
+                var buffer = scratch.CreateBuffer();
+                page[0] = unchecked((sbyte)index);
+                buffer.Write(page);
+                if (index % 16 == 0) held.Add(buffer);
+                else buffer.Dispose();
+            }
+            watch.Stop();
+            for (var index = 0; index < held.Count; index++)
+            {
+                held[index].Seek(0);
+                Assert.Equal(4096L, held[index].Length());
+                Assert.Equal((index * 16) & 0xff, held[index].Read());
+            }
+        }
+        finally
+        {
+            foreach (var buffer in held) buffer.Dispose();
+        }
+        Assert.True(watch.ElapsedMilliseconds < 5000,
+            $"25,600 ScratchFile buffers took {watch.ElapsedMilliseconds} ms.");
+    }
+
+    [Fact]
+    public void ScratchFileBackedRoundTripOfManyStreamsMatchesMemoryOnlyOutput()
+    {
+        // 1 MiB of main memory spills to the scratch file (enlarge sets
+        // 16 free pages at a time); main-memory-only starts with 100,000.
+        byte[] expected = SaveManyStreams(IOUtils.CreateMemoryOnlyStreamCache());
+        Assert.Equal(expected, SaveManyStreams(MemoryUsageSetting.SetupMixed(1024 * 1024).StreamCache));
+        Assert.Equal(expected, SaveManyStreams(MemoryUsageSetting.SetupMainMemoryOnly().StreamCache));
+
+        byte[] resaved = Resave(expected, IOUtils.CreateMemoryOnlyStreamCache());
+        Assert.Equal(resaved, Resave(expected, MemoryUsageSetting.SetupMixed(1024 * 1024).StreamCache));
+        Assert.Equal(resaved, Resave(expected, MemoryUsageSetting.SetupMainMemoryOnly().StreamCache));
+
+        using var reloaded = Loader.LoadPDF(
+            (sbyte[])(Array)resaved, "", null!, null!,
+            MemoryUsageSetting.SetupMixed(1024 * 1024).StreamCache);
+        var payloads = (COSArray)reloaded.GetDocumentCatalog().GetCOSObject()
+            .GetDictionaryObject(COSName.GetPDFName("Payloads"));
+        Assert.Equal(StreamCount, payloads.Size());
+        foreach (int index in new[] { 0, 1, StreamCount / 2, StreamCount - 1 })
+        {
+            var stream = (COSStream)payloads.GetObject(index);
+            using var input = stream.CreateInputStream();
+            using var copy = new MemoryStream();
+            input.CopyTo(copy);
+            Assert.Equal(Payload(index), copy.ToArray());
+        }
+    }
+
+    private const int StreamCount = 600;
+
+    private static byte[] SaveManyStreams(
+        RandomAccessStreamCache.StreamCacheCreateFunction streamCache)
+    {
+        using var document = new PDDocument(streamCache);
+        document.SetDocumentId(20261019L);
+        document.AddPage(new PDPage());
+        var payloads = new COSArray();
+        for (var index = 0; index < StreamCount; index++)
+        {
+            var stream = document.GetDocument().CreateCOSStream();
+            using (var output = stream.CreateOutputStream())
+                output.Write(Payload(index));
+            payloads.Add(stream);
+        }
+        document.GetDocumentCatalog().GetCOSObject()
+            .SetItem(COSName.GetPDFName("Payloads"), payloads);
+        using var saved = new MemoryStream();
+        document.Save(saved);
+        return saved.ToArray();
+    }
+
+    private static byte[] Resave(
+        byte[] pdf, RandomAccessStreamCache.StreamCacheCreateFunction streamCache)
+    {
+        using var document = Loader.LoadPDF((sbyte[])(Array)pdf, "", null!, null!, streamCache);
+        using var saved = new MemoryStream();
+        document.Save(saved);
+        return saved.ToArray();
+    }
+
+    // Roughly one to three pages of distinct bytes per stream.
+    private static byte[] Payload(int index)
+    {
+        var payload = new byte[4096 * (1 + index % 3) - 1 + index % 7];
+        for (var offset = 0; offset < payload.Length; offset++)
+            payload[offset] = unchecked((byte)(offset * 31 + index * 7));
+        return payload;
+    }
+
+    private static List<int> SetBits(DripSharp.Runtime.JavaBitSet bits, int from, int to)
+    {
+        var result = new List<int>();
+        for (var index = bits.nextSetBit(from); index >= 0 && index < to; index = bits.nextSetBit(index + 1))
+            result.Add(index);
+        return result;
+    }
+}
