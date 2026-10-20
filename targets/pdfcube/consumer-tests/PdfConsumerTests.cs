@@ -720,3 +720,145 @@ public sealed class FlateConsumerTests
             base.Read(b, off, Math.Min(len, feed));
     }
 }
+
+// Java equality and hashing behind translated HashMap/LinkedHashMap keys.
+// Keys that are enumerable but not IList (strings, COSArray) used to scan the
+// key type's interfaces on every comparison and hash, allocating each time.
+public sealed class JavaEqualityConsumerTests
+{
+    private const int Lookups = 1000;
+
+    [Fact]
+    public void StringKeyedMapHitWithANonInternedKeyAllocatesNothing()
+    {
+        var map = new DripSharp.Runtime.JavaLinkedHashMap<string, int>();
+        map["BT"] = 1;
+        map["Tj"] = 2;
+        string probe = new string(new[] { 'T', 'j' });
+        Assert.NotSame(string.IsInterned(probe), probe);
+
+        AssertNoAllocation(() => map.TryGetValue(probe, out int value) && value == 2);
+    }
+
+    [Fact]
+    public void BoxedPrimitiveKeysCompareWithoutAllocating()
+    {
+        var map = new DripSharp.Runtime.JavaLinkedHashMap<object, int>();
+        object stored = 42;
+        object probe = 42;
+        object wider = 42L;
+        map[stored] = 1;
+        Assert.NotSame(stored, probe);
+
+        AssertNoAllocation(() => map.TryGetValue(probe, out int value) && value == 1);
+        // Java's Integer.equals(Long) is false.
+        Assert.False(map.ContainsKey(wider));
+    }
+
+    [Fact]
+    public void EnumerableNonListKeysHashAndCompareWithoutAllocating()
+    {
+        var arrays = new DripSharp.Runtime.JavaLinkedHashMap<COSBase, int>();
+        var array = new COSArray();
+        array.Add(COSInteger.Get(1));
+        arrays[array] = 1;
+        AssertNoAllocation(() => arrays.TryGetValue(array, out int value) && value == 1);
+
+        var tokens = new DripSharp.Runtime.JavaLinkedHashMap<Token, int>();
+        tokens[new Token("cm")] = 3;
+        var probe = new Token("cm");
+        AssertNoAllocation(() => tokens.TryGetValue(probe, out int value) && value == 3);
+    }
+
+    [Fact]
+    public void ListSetMapAndUriKeysKeepJavaEquality()
+    {
+        var map = new DripSharp.Runtime.JavaLinkedHashMap<object, string>();
+        map[new List<object> { 1, "a" }] = "list";
+        map[new HashSet<object> { 1, 2, 3 }] = "set";
+        map[new Dictionary<string, int> { ["k"] = 1 }] = "map";
+        map[new Uri("http://Example.com/a")] = "uri";
+        map[new object[] { 7 }] = "array";
+
+        // java.util.List equality holds across list implementations.
+        Assert.Equal("list", Lookup(map, new ReadOnlyItems(1, "a")));
+        Assert.Null(Lookup(map, new ReadOnlyItems("a", 1)));
+        Assert.Equal("set", Lookup(map, new SortedSet<object> { 3, 2, 1 }));
+        Assert.Null(Lookup(map, new List<object> { 1, 2, 3 }));
+        Assert.Null(Lookup(map, new HashSet<object> { 1, "a" }));
+        var linked = new DripSharp.Runtime.JavaLinkedHashMap<string, int>();
+        linked["k"] = 1;
+        Assert.Equal("map", Lookup(map, linked));
+        Assert.Equal("uri", Lookup(map, new Uri("http://example.com/a")));
+        // Arrays keep identity equality.
+        Assert.Null(Lookup(map, new object[] { 7 }));
+        Assert.Null(Lookup(map, "a"));
+    }
+
+    // The per-type classification cache must not root collectible types.
+    [Fact]
+    public void CollectibleEnumerableKeyTypeIsNotRetainedAfterTheMapIsCleared()
+    {
+        var map = new DripSharp.Runtime.JavaLinkedHashMap<object, int>();
+        WeakReference type = UseCollectibleListKey(map);
+        map.Clear();
+        for (int attempt = 0; attempt < 20 && type.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        Assert.False(type.IsAlive);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference UseCollectibleListKey(DripSharp.Runtime.JavaLinkedHashMap<object, int> map)
+    {
+        var assembly = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(
+            new System.Reflection.AssemblyName("PdfCartonCollectibleKey"),
+            System.Reflection.Emit.AssemblyBuilderAccess.RunAndCollect);
+        var builder = assembly.DefineDynamicModule("Keys").DefineType(
+            "CollectibleList",
+            System.Reflection.TypeAttributes.Public | System.Reflection.TypeAttributes.Sealed,
+            typeof(List<object>));
+        builder.DefineDefaultConstructor(System.Reflection.MethodAttributes.Public);
+        Type type = builder.CreateType();
+        var key = (List<object>)Activator.CreateInstance(type)!;
+        key.Add(1);
+        map[key] = 1;
+        // Hashing and list equality both classify the collectible key type.
+        Assert.True(map.ContainsKey(new List<object> { 1 }));
+        return new WeakReference(type);
+    }
+
+    private static string? Lookup(DripSharp.Runtime.JavaLinkedHashMap<object, string> map, object key) =>
+        map.TryGetValue(key, out string? value) ? value : null;
+
+    private static void AssertNoAllocation(Func<bool> lookup)
+    {
+        Assert.True(lookup());
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool hit = true;
+        for (int index = 0; index < Lookups; index++) hit &= lookup();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(hit);
+        Assert.Equal(0, allocated);
+    }
+
+    private sealed class Token(string text) : IEnumerable<char>
+    {
+        private readonly string text = text;
+        public override bool Equals(object? other) => other is Token token && token.text == text;
+        public override int GetHashCode() => text.GetHashCode();
+        public IEnumerator<char> GetEnumerator() => text.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class ReadOnlyItems(params object[] items) : IReadOnlyList<object>
+    {
+        public object this[int index] => items[index];
+        public int Count => items.Length;
+        public IEnumerator<object> GetEnumerator() => ((IEnumerable<object>)items).GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+}

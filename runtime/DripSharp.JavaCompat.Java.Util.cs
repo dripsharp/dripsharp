@@ -3614,12 +3614,19 @@ internal static partial class JavaCompat
         if (right is JavaReadOnlyAdapter rightAdapter) right = rightAdapter.MutableSource;
         if (ReferenceEquals(left, right)) return true;
         if (left is null || right is null) return false;
+        if (left is string leftText) return right is string rightText && string.Equals(leftText, rightText);
         if (left is Uri leftUri)
             return right is Uri rightUri && UriEquals(leftUri, rightUri);
-        if (IsJavaList(left)) return IsJavaList(right) && ListsEqual((IEnumerable)left, (IEnumerable)right);
-        if (IsJavaSet(left)) return IsJavaSet(right) && SetsEqual((IEnumerable)left, (IEnumerable)right);
-        if (left is IDictionary leftMap)
-            return right is IDictionary rightMap && MapsEqual(leftMap, rightMap);
+        if (left is IEnumerable leftValues)
+        {
+            var leftKind = CollectionKindOf(left);
+            if ((leftKind & JavaCollectionKind.List) != 0)
+                return IsJavaList(right) && ListsEqual(leftValues, (IEnumerable)right);
+            if ((leftKind & JavaCollectionKind.Set) != 0)
+                return IsJavaSet(right) && SetsEqual(leftValues, (IEnumerable)right);
+            if (left is IDictionary leftMap)
+                return right is IDictionary rightMap && MapsEqual(leftMap, rightMap);
+        }
         return left.Equals(right);
     }
 
@@ -3665,17 +3672,64 @@ internal static partial class JavaCompat
         }
     }
 
+    [Flags]
+    private enum JavaCollectionKind : byte
+    {
+        None = 0,
+        List = 1,
+        Set = 2,
+    }
+
+    private sealed class JavaCollectionKindEntry(JavaCollectionKind kind)
+    {
+        internal JavaCollectionKind Kind { get; } = kind;
+    }
+
+    // Java list/set classification depends only on the runtime type, so the
+    // interface scan runs once per type instead of once per comparison. Types
+    // are weak keys, so a collectible type is not rooted by this cache; misses
+    // are serialized so a type is classified at most once.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Type, JavaCollectionKindEntry>
+        CollectionKinds = new();
+
+    private static JavaCollectionKind CollectionKindOf(object value)
+    {
+        if (value is not IEnumerable) return JavaCollectionKind.None;
+        var type = value.GetType();
+        if (CollectionKinds.TryGetValue(type, out var entry)) return entry.Kind;
+        lock (CollectionKinds)
+        {
+            if (!CollectionKinds.TryGetValue(type, out entry))
+            {
+                entry = new JavaCollectionKindEntry(ClassifyCollection(type));
+                CollectionKinds.Add(type, entry);
+            }
+            return entry.Kind;
+        }
+    }
+
+    private static JavaCollectionKind ClassifyCollection(Type type)
+    {
+        var interfaces = type.GetInterfaces();
+        var kind = JavaCollectionKind.None;
+        if (!type.IsArray &&
+            (typeof(IList).IsAssignableFrom(type) || interfaces.Any(contract =>
+                contract.IsGenericType &&
+                (contract.GetGenericTypeDefinition() == typeof(IList<>) ||
+                 contract.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)))))
+            kind |= JavaCollectionKind.List;
+        if (interfaces.Any(contract =>
+                contract.IsGenericType &&
+                contract.GetGenericTypeDefinition() == typeof(ISet<>)))
+            kind |= JavaCollectionKind.Set;
+        return kind;
+    }
+
     private static bool IsJavaList(object value) =>
-        value is not Array && value is IEnumerable &&
-        (value is IList || value.GetType().GetInterfaces().Any(type =>
-            type.IsGenericType &&
-            (type.GetGenericTypeDefinition() == typeof(IList<>) ||
-             type.GetGenericTypeDefinition() == typeof(IReadOnlyList<>))));
+        (CollectionKindOf(value) & JavaCollectionKind.List) != 0;
 
     private static bool IsJavaSet(object value) =>
-        value is IEnumerable && value.GetType().GetInterfaces().Any(type =>
-            type.IsGenericType &&
-            type.GetGenericTypeDefinition() == typeof(ISet<>));
+        (CollectionKindOf(value) & JavaCollectionKind.Set) != 0;
 
     internal static bool IsSet(object? value) => value is not null && IsJavaSet(value);
 
@@ -3752,20 +3806,22 @@ internal static partial class JavaCompat
                 result += JavaHashCode(entry.Key) ^ JavaHashCode(entry.Value);
             return result;
         }
-        if (IsJavaSet(value))
+        if (value is not IEnumerable values) return value.GetHashCode();
+        var kind = CollectionKindOf(value);
+        if ((kind & JavaCollectionKind.Set) != 0)
         {
             unchecked
             {
                 var result = 0;
-                foreach (var element in (IEnumerable)value) result += JavaHashCode(element);
+                foreach (var element in values) result += JavaHashCode(element);
                 return result;
             }
         }
-        if (!IsJavaList(value)) return value.GetHashCode();
+        if ((kind & JavaCollectionKind.List) == 0) return value.GetHashCode();
         unchecked
         {
             var result = 1;
-            foreach (var element in (IEnumerable)value) result = 31 * result + JavaHashCode(element);
+            foreach (var element in values) result = 31 * result + JavaHashCode(element);
             return result;
         }
     }

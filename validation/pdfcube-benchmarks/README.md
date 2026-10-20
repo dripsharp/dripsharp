@@ -19,7 +19,9 @@ bytes. Managed allocation counts do not include Skia's native bitmap memory.
 Select individual classes with `--filter '*RasterBenchmarks*'`,
 `--filter '*SmallBlendBenchmarks*'`, `--filter '*RenderingBenchmarks*'`, or
 `--filter '*FlateBenchmarks*'` (/FlateDecode and whole embedded-font loading
-at 64 KiB to 4 MiB, server GC).
+at 64 KiB to 4 MiB, server GC), or `--filter '*ContentStreamBenchmarks*'`
+(PDFStreamEngine.processPage over 3,000 and 30,000 cheap `q`/`cm`/`Q`
+operators, and one string-keyed JavaLinkedHashMap hit with a non-interned key).
 Benchmark setup and cleanup are excluded from timings. Read results into reused
 buffers; writes consume a prebuilt sample buffer. Small blends report per-blend
 cost from a batch of nonoverlapping rectangles, with the destination reset before
