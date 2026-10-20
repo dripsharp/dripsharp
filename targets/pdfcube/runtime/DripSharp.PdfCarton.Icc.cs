@@ -7,6 +7,7 @@
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace DripSharp.Runtime;
@@ -24,7 +25,11 @@ internal sealed class PdfCartonIccProfileData
 
     private readonly byte[] data;
     private readonly Dictionary<uint, TagRecord> tags;
-    private readonly Dictionary<uint, IccLut> luts = new();
+    // Parsed tags are immutable and shared by every thread that converts with
+    // this profile. A rare duplicate parse under a race is harmless.
+    private readonly ConcurrentDictionary<uint, IccLut> luts = new();
+    private readonly ConcurrentDictionary<uint, IccCurve> curves = new();
+    private readonly ConcurrentDictionary<uint, float[]> xyzValues = new();
     private readonly uint colorSpaceSignature;
     private readonly uint pcsSignature;
 
@@ -122,19 +127,29 @@ internal sealed class PdfCartonIccProfileData
 
     internal float[] ToRgb(float[] components)
     {
+        var rgb = new float[3];
+        ToRgb(components, rgb);
+        return rgb;
+    }
+
+    // Writes the same values ToRgb returns into rgb; intermediate values live
+    // on the stack, so a conversion allocates nothing.
+    internal void ToRgb(float[] components, float[] rgb)
+    {
         ArgumentNullException.ThrowIfNull(components);
         if (components.Length < NumberOfComponents)
             throw new ArgumentException(
                 "The component array is shorter than the ICC color space.",
                 nameof(components));
 
-        var source = new float[NumberOfComponents];
+        Span<float> source = stackalloc float[NumberOfComponents];
         for (var index = 0; index < source.Length; index++)
             source[index] = JavaCompat.Clamp(components[index], 0f, 1f);
 
-        var pcs = TryDeviceToPcs(source) ?? MatrixDeviceToXyz(source);
-        var xyz = pcsSignature == PcsLab ? LabToXyz(pcs) : pcs;
-        return XyzD50ToSrgb(xyz);
+        Span<float> pcs = stackalloc float[3];
+        if (!TryDeviceToPcs(source, pcs)) MatrixDeviceToXyz(source, pcs);
+        if (pcsSignature == PcsLab) LabToXyz(pcs, pcs);
+        XyzD50ToSrgb(pcs, rgb);
     }
 
     internal float[] FromRgb(float[] rgb)
@@ -157,12 +172,15 @@ internal sealed class PdfCartonIccProfileData
         return NaiveFromRgb(rgb, NumberOfComponents);
     }
 
-    private float[]? TryDeviceToPcs(float[] components)
+    private bool TryDeviceToPcs(ReadOnlySpan<float> components, Span<float> pcs)
     {
         var tag = SelectTag(true);
-        if (!tag.HasValue) return null;
-        var encoded = GetLut(tag.Value).Transform(components);
-        return DecodePcs(encoded);
+        if (!tag.HasValue) return false;
+        var lut = GetLut(tag.Value);
+        Span<float> encoded = stackalloc float[lut.OutputChannels];
+        lut.Transform(components, encoded);
+        DecodePcs(encoded, pcs);
+        return true;
     }
 
     private uint? SelectTag(bool deviceToPcs)
@@ -181,9 +199,13 @@ internal sealed class PdfCartonIccProfileData
         return tags.ContainsKey(prefix) ? prefix : null;
     }
 
-    private IccLut GetLut(uint signature)
+    private IccLut GetLut(uint signature) =>
+        luts.TryGetValue(signature, out var existing)
+            ? existing
+            : luts.GetOrAdd(signature, ParseLut(signature));
+
+    private IccLut ParseLut(uint signature)
     {
-        if (luts.TryGetValue(signature, out var existing)) return existing;
         var tag = tags[signature];
         var parsed = IccLut.Parse(data, tag.Offset, tag.Size);
         if (parsed.InputChannels != (signature >> 24 == 0x41
@@ -193,23 +215,20 @@ internal sealed class PdfCartonIccProfileData
             throw new ArgumentException(
                 $"ICC LUT `{Signature(signature)}` has an unexpected input channel count.");
         }
-        luts.Add(signature, parsed);
         return parsed;
     }
 
-    private float[] MatrixDeviceToXyz(float[] source)
+    private void MatrixDeviceToXyz(ReadOnlySpan<float> source, Span<float> xyz)
     {
         if (NumberOfComponents == 1)
         {
             var curve = ReadCurve(0x6b545243); // kTRC
             var white = ReadXyz(0x77747074); // wtpt
             var luminance = curve.Evaluate(source[0]);
-            return new[]
-            {
-                white[0] * luminance,
-                white[1] * luminance,
-                white[2] * luminance
-            };
+            xyz[0] = white[0] * luminance;
+            xyz[1] = white[1] * luminance;
+            xyz[2] = white[2] * luminance;
+            return;
         }
         if (NumberOfComponents == 3)
         {
@@ -219,21 +238,19 @@ internal sealed class PdfCartonIccProfileData
             var r = ReadCurve(0x72545243).Evaluate(source[0]); // rTRC
             var g = ReadCurve(0x67545243).Evaluate(source[1]); // gTRC
             var b = ReadCurve(0x62545243).Evaluate(source[2]); // bTRC
-            return new[]
-            {
-                red[0] * r + green[0] * g + blue[0] * b,
-                red[1] * r + green[1] * g + blue[1] * b,
-                red[2] * r + green[2] * g + blue[2] * b
-            };
+            xyz[0] = red[0] * r + green[0] * g + blue[0] * b;
+            xyz[1] = red[1] * r + green[1] * g + blue[1] * b;
+            xyz[2] = red[2] * r + green[2] * g + blue[2] * b;
+            return;
         }
         if (NumberOfComponents == 4)
         {
-            return SrgbToXyzD50(new[]
-            {
-                1f - Math.Min(1f, source[0] + source[3]),
-                1f - Math.Min(1f, source[1] + source[3]),
-                1f - Math.Min(1f, source[2] + source[3])
-            });
+            Span<float> rgb = stackalloc float[3];
+            rgb[0] = 1f - Math.Min(1f, source[0] + source[3]);
+            rgb[1] = 1f - Math.Min(1f, source[1] + source[3]);
+            rgb[2] = 1f - Math.Min(1f, source[2] + source[3]);
+            SrgbToXyzD50(rgb, xyz);
+            return;
         }
         throw new ArgumentException(
             "ICC profile has neither a usable LUT nor a matrix/TRC transform.");
@@ -282,20 +299,21 @@ internal sealed class PdfCartonIccProfileData
         return true;
     }
 
-    private float[] DecodePcs(float[] encoded)
+    private void DecodePcs(ReadOnlySpan<float> encoded, Span<float> pcs)
     {
         if (encoded.Length < 3)
             throw new ArgumentException("ICC LUT did not produce a three-channel PCS value.");
         if (pcsSignature == PcsXyz)
-            return new[] { encoded[0] * 1.9999695f, encoded[1] * 1.9999695f,
-                           encoded[2] * 1.9999695f };
-        var scale = MajorVersion < 4 ? 65535f / 65280f : 1f;
-        return new[]
         {
-            JavaCompat.Clamp(encoded[0] * scale, 0f, 1f) * 100f,
-            JavaCompat.Clamp(encoded[1] * scale, 0f, 1f) * 255f - 128f,
-            JavaCompat.Clamp(encoded[2] * scale, 0f, 1f) * 255f - 128f
-        };
+            pcs[0] = encoded[0] * 1.9999695f;
+            pcs[1] = encoded[1] * 1.9999695f;
+            pcs[2] = encoded[2] * 1.9999695f;
+            return;
+        }
+        var scale = MajorVersion < 4 ? 65535f / 65280f : 1f;
+        pcs[0] = JavaCompat.Clamp(encoded[0] * scale, 0f, 1f) * 100f;
+        pcs[1] = JavaCompat.Clamp(encoded[1] * scale, 0f, 1f) * 255f - 128f;
+        pcs[2] = JavaCompat.Clamp(encoded[2] * scale, 0f, 1f) * 255f - 128f;
     }
 
     private float[] EncodePcs(float[] pcs)
@@ -316,7 +334,13 @@ internal sealed class PdfCartonIccProfileData
         };
     }
 
-    private float[] ReadXyz(uint signature)
+    // Callers only read the cached triple.
+    private float[] ReadXyz(uint signature) =>
+        xyzValues.TryGetValue(signature, out var existing)
+            ? existing
+            : xyzValues.GetOrAdd(signature, ParseXyz(signature));
+
+    private float[] ParseXyz(uint signature)
     {
         if (!tags.TryGetValue(signature, out var tag) ||
             tag.Size < 20 ||
@@ -331,7 +355,12 @@ internal sealed class PdfCartonIccProfileData
         };
     }
 
-    private IccCurve ReadCurve(uint signature)
+    private IccCurve ReadCurve(uint signature) =>
+        curves.TryGetValue(signature, out var existing)
+            ? existing
+            : curves.GetOrAdd(signature, ParseCurve(signature));
+
+    private IccCurve ParseCurve(uint signature)
     {
         if (!tags.TryGetValue(signature, out var tag))
             throw new ArgumentException(
@@ -339,7 +368,9 @@ internal sealed class PdfCartonIccProfileData
         return IccCurve.Parse(data, tag.Offset, tag.Size);
     }
 
-    private static float[] LabToXyz(float[] lab)
+    // lab and xyz may be the same span: every input is read before any output
+    // is written.
+    private static void LabToXyz(ReadOnlySpan<float> lab, Span<float> xyz)
     {
         var fy = (lab[0] + 16f) / 116f;
         var fx = fy + lab[1] / 500f;
@@ -351,12 +382,9 @@ internal sealed class PdfCartonIccProfileData
                 ? value * value * value
                 : 3f * delta * delta * (value - 4f / 29f);
         }
-        return new[]
-        {
-            0.9642f * Inverse(fx),
-            Inverse(fy),
-            0.8249f * Inverse(fz)
-        };
+        xyz[0] = 0.9642f * Inverse(fx);
+        xyz[1] = Inverse(fy);
+        xyz[2] = 0.8249f * Inverse(fz);
     }
 
     private static float[] XyzToLab(float[] xyz)
@@ -375,7 +403,7 @@ internal sealed class PdfCartonIccProfileData
         return new[] { 116f * fy - 16f, 500f * (fx - fy), 200f * (fy - fz) };
     }
 
-    private static float[] XyzD50ToSrgb(float[] xyz)
+    private static void XyzD50ToSrgb(ReadOnlySpan<float> xyz, Span<float> rgb)
     {
         var x = 0.9555766f * xyz[0] - 0.0230393f * xyz[1] + 0.0631636f * xyz[2];
         var y = -0.0282895f * xyz[0] + 1.0099416f * xyz[1] + 0.0210077f * xyz[2];
@@ -389,10 +417,19 @@ internal sealed class PdfCartonIccProfileData
                 : 1.055f * JavaCompat.Pow(Math.Max(0f, value), 1f / 2.4f) - 0.055f,
                 0f,
                 1f);
-        return new[] { Gamma(red), Gamma(green), Gamma(blue) };
+        rgb[0] = Gamma(red);
+        rgb[1] = Gamma(green);
+        rgb[2] = Gamma(blue);
     }
 
     private static float[] SrgbToXyzD50(float[] rgb)
+    {
+        var xyz = new float[3];
+        SrgbToXyzD50(rgb, xyz);
+        return xyz;
+    }
+
+    private static void SrgbToXyzD50(ReadOnlySpan<float> rgb, Span<float> xyz)
     {
         static float Linear(float value)
         {
@@ -407,12 +444,9 @@ internal sealed class PdfCartonIccProfileData
         var x65 = 0.4124564f * r + 0.3575761f * g + 0.1804375f * b;
         var y65 = 0.2126729f * r + 0.7151522f * g + 0.0721750f * b;
         var z65 = 0.0193339f * r + 0.1191920f * g + 0.9503041f * b;
-        return new[]
-        {
-            1.0478112f * x65 + 0.0228866f * y65 - 0.0501270f * z65,
-            0.0295424f * x65 + 0.9904844f * y65 - 0.0170491f * z65,
-            -0.0092345f * x65 + 0.0150436f * y65 + 0.7521316f * z65
-        };
+        xyz[0] = 1.0478112f * x65 + 0.0228866f * y65 - 0.0501270f * z65;
+        xyz[1] = 0.0295424f * x65 + 0.9904844f * y65 - 0.0170491f * z65;
+        xyz[2] = -0.0092345f * x65 + 0.0150436f * y65 + 0.7521316f * z65;
     }
 
     private static float[] NaiveFromRgb(float[] rgb, int components)
@@ -610,9 +644,18 @@ internal sealed class PdfCartonIccProfileData
 
         internal float[] Transform(float[] input)
         {
+            var result = new float[OutputChannels];
+            Transform(input, result);
+            return result;
+        }
+
+        // Writes OutputChannels values into result; intermediate values live
+        // on the stack.
+        internal void Transform(ReadOnlySpan<float> input, Span<float> result)
+        {
             if (input.Length < InputChannels)
                 throw new ArgumentException("ICC LUT input has too few components.");
-            var mapped = new float[InputChannels];
+            Span<float> mapped = stackalloc float[InputChannels];
             for (var channel = 0; channel < mapped.Length; channel++)
                 mapped[channel] = Interpolate(inputTables[channel], input[channel]);
             if (InputChannels == 3)
@@ -625,15 +668,16 @@ internal sealed class PdfCartonIccProfileData
                 mapped[2] = JavaCompat.Clamp(matrix[6] * x + matrix[7] * y + matrix[8] * z, 0f, 1f);
             }
 
-            var low = new int[InputChannels];
-            var fractions = new float[InputChannels];
+            Span<int> low = stackalloc int[InputChannels];
+            Span<float> fractions = stackalloc float[InputChannels];
             for (var channel = 0; channel < InputChannels; channel++)
             {
                 var position = JavaCompat.Clamp(mapped[channel], 0f, 1f) * (gridPoints - 1);
                 low[channel] = Math.Min((int)position, gridPoints - 2);
                 fractions[channel] = position - low[channel];
             }
-            var clutResult = new float[OutputChannels];
+            Span<float> clutResult = stackalloc float[OutputChannels];
+            clutResult.Clear();
             var cornerCount = 1 << InputChannels;
             for (var corner = 0; corner < cornerCount; corner++)
             {
@@ -649,10 +693,8 @@ internal sealed class PdfCartonIccProfileData
                 for (var channel = 0; channel < OutputChannels; channel++)
                     clutResult[channel] += clut[offset + channel] * weight;
             }
-            var result = new float[OutputChannels];
-            for (var channel = 0; channel < result.Length; channel++)
+            for (var channel = 0; channel < OutputChannels; channel++)
                 result[channel] = Interpolate(outputTables[channel], clutResult[channel]);
-            return result;
         }
 
         internal static IccLut Parse(byte[] source, int offset, int size)

@@ -2699,32 +2699,54 @@ public sealed class JavaColorConvertOp
         var destinationRaster = PdfCartonFontCompat.GetRaster(destination);
         object? sourcePixel = null;
         object? destinationPixel = null;
-        float[]? sourceComponents = null;
+        var sourceComponents = new float[sourceColorModel.NumberOfComponents];
+        var rgbBuffer = new float[3];
+        var convertedBuffer =
+            new float[destinationColorModel.ColorSpace.FromRgbLength];
         var destinationComponents =
             new float[destinationColorModel.NumberOfComponents];
+        // Every destination component follows from the source pixel alone.
+        var conversions = new PdfCartonFontCompat.PixelMemo<float[]>();
         for (var y = 0; y < source.Height; y++)
         {
             for (var x = 0; x < source.Width; x++)
             {
                 sourcePixel =
                     sourceRaster.GetDataElements(x, y, 1, 1, sourcePixel);
-                sourceComponents = sourceColorModel.GetNormalizedComponents(
-                    sourcePixel,
-                    sourceComponents,
-                    0);
-                var rgb = sourceColorModel.ColorSpace.ToRgb(sourceComponents);
-                var converted = destinationColorModel.ColorSpace.FromRgb(rgb);
-                Array.Copy(
-                    converted,
-                    destinationComponents,
-                    destinationColorModel.NumberOfColorComponents);
-                if (destinationColorModel.HasAlpha)
+                if (conversions.TryGet(sourcePixel, out var known))
                 {
-                    destinationComponents[
-                        destinationColorModel.NumberOfColorComponents] =
-                        sourceColorModel.HasAlpha
-                            ? sourceComponents[sourceColorModel.NumberOfColorComponents]
-                            : 1f;
+                    Array.Copy(known, destinationComponents, known.Length);
+                }
+                else
+                {
+                    sourceColorModel.GetNormalizedComponents(
+                        sourcePixel,
+                        sourceComponents,
+                        0);
+                    var rgb = sourceColorModel.ColorSpace.ToRgb(
+                        sourceComponents,
+                        rgbBuffer);
+                    var converted = destinationColorModel.ColorSpace.FromRgb(
+                        rgb,
+                        convertedBuffer);
+                    Array.Copy(
+                        converted,
+                        destinationComponents,
+                        destinationColorModel.NumberOfColorComponents);
+                    if (destinationColorModel.HasAlpha)
+                    {
+                        destinationComponents[
+                            destinationColorModel.NumberOfColorComponents] =
+                            sourceColorModel.HasAlpha
+                                ? sourceComponents[sourceColorModel.NumberOfColorComponents]
+                                : 1f;
+                    }
+                    if (conversions.Accepts(sourcePixel))
+                    {
+                        conversions.Add(
+                            sourcePixel,
+                            (float[])destinationComponents.Clone());
+                    }
                 }
                 destinationPixel = destinationColorModel.GetDataElements(
                     destinationComponents,
@@ -3105,6 +3127,7 @@ public sealed class JavaIccProfile
     public int GetMajorVersion() => profile.MajorVersion;
     public int GetMinorVersion() => profile.MinorVersion;
     internal float[] ToRgb(float[] components) => profile.ToRgb(components);
+    internal void ToRgb(float[] components, float[] rgb) => profile.ToRgb(components, rgb);
     internal float[] FromRgb(float[] rgb) => profile.FromRgb(rgb);
 }
 
@@ -3836,31 +3859,9 @@ public class JavaColorSpace
 
     public virtual float[] ToRgb(float[] components)
     {
-        ArgumentNullException.ThrowIfNull(components);
-        if (components.Length < NumberOfComponents)
-            throw new ArgumentException("The component array is too short.", nameof(components));
-        static float Clamp(float value) => JavaCompat.Clamp(value, 0f, 1f);
-        return Type switch
-        {
-            TYPE_GRAY => new[]
-            {
-                Clamp(components[0]),
-                Clamp(components[0]),
-                Clamp(components[0])
-            },
-            TYPE_CMYK => new[]
-            {
-                1f - Math.Min(1f, Clamp(components[0]) + Clamp(components[3])),
-                1f - Math.Min(1f, Clamp(components[1]) + Clamp(components[3])),
-                1f - Math.Min(1f, Clamp(components[2]) + Clamp(components[3]))
-            },
-            _ => new[]
-            {
-                Clamp(components[0]),
-                Clamp(components.Length > 1 ? components[1] : components[0]),
-                Clamp(components.Length > 2 ? components[2] : components[0])
-            }
-        };
+        var rgb = new float[3];
+        WriteRgb(components, rgb);
+        return rgb;
     }
 
     public virtual float[] FromRgb(float[] rgb)
@@ -3868,29 +3869,111 @@ public class JavaColorSpace
         ArgumentNullException.ThrowIfNull(rgb);
         if (rgb.Length < 3)
             throw new ArgumentException("RGB input must have three components.", nameof(rgb));
+        var components = new float[FromRgbLength];
+        WriteComponents(rgb, components);
+        return components;
+    }
+
+    // ToRgb and FromRgb into a caller's buffer: each returns the array that
+    // holds the same values the public method returns. The built-in
+    // transforms fill the buffer without allocating; other subclasses keep
+    // their own public methods.
+    internal float[] ToRgb(float[] components, float[] buffer)
+    {
+        if (this is JavaIccColorSpace icc)
+        {
+            if (!icc.IsSrgb)
+            {
+                icc.Profile.ToRgb(components, buffer);
+                return buffer;
+            }
+        }
+        else if (GetType() != typeof(JavaColorSpace))
+        {
+            return ToRgb(components);
+        }
+        WriteRgb(components, buffer);
+        return buffer;
+    }
+
+    // The buffer holds FromRgbLength values.
+    internal float[] FromRgb(float[] rgb, float[] buffer)
+    {
+        if (this is JavaIccColorSpace icc ? !icc.IsSrgb : GetType() != typeof(JavaColorSpace))
+            return FromRgb(rgb);
+        ArgumentNullException.ThrowIfNull(rgb);
+        if (rgb.Length < 3)
+            throw new ArgumentException("RGB input must have three components.", nameof(rgb));
+        WriteComponents(rgb, buffer);
+        return buffer;
+    }
+
+    internal int FromRgbLength => Type switch
+    {
+        TYPE_GRAY => 1,
+        TYPE_CMYK => 4,
+        _ => NumberOfComponents
+    };
+
+    private void WriteRgb(float[] components, float[] rgb)
+    {
+        ArgumentNullException.ThrowIfNull(components);
+        if (components.Length < NumberOfComponents)
+            throw new ArgumentException("The component array is too short.", nameof(components));
+        static float Clamp(float value) => JavaCompat.Clamp(value, 0f, 1f);
+        switch (Type)
+        {
+            case TYPE_GRAY:
+                rgb[0] = Clamp(components[0]);
+                rgb[1] = Clamp(components[0]);
+                rgb[2] = Clamp(components[0]);
+                break;
+            case TYPE_CMYK:
+                rgb[0] = 1f - Math.Min(1f, Clamp(components[0]) + Clamp(components[3]));
+                rgb[1] = 1f - Math.Min(1f, Clamp(components[1]) + Clamp(components[3]));
+                rgb[2] = 1f - Math.Min(1f, Clamp(components[2]) + Clamp(components[3]));
+                break;
+            default:
+                rgb[0] = Clamp(components[0]);
+                rgb[1] = Clamp(components.Length > 1 ? components[1] : components[0]);
+                rgb[2] = Clamp(components.Length > 2 ? components[2] : components[0]);
+                break;
+        }
+    }
+
+    // Writes FromRgbLength values into components.
+    private void WriteComponents(float[] rgb, float[] components)
+    {
         var red = JavaCompat.Clamp(rgb[0], 0f, 1f);
         var green = JavaCompat.Clamp(rgb[1], 0f, 1f);
         var blue = JavaCompat.Clamp(rgb[2], 0f, 1f);
         if (Type == TYPE_GRAY)
-            return new[] { red * 0.2126f + green * 0.7152f + blue * 0.0722f };
+        {
+            components[0] = red * 0.2126f + green * 0.7152f + blue * 0.0722f;
+            return;
+        }
         if (Type != TYPE_CMYK)
         {
-            var components = new float[NumberOfComponents];
-            if (components.Length > 0) components[0] = red;
-            if (components.Length > 1) components[1] = green;
-            if (components.Length > 2) components[2] = blue;
-            return components;
+            Array.Clear(components, 0, NumberOfComponents);
+            if (NumberOfComponents > 0) components[0] = red;
+            if (NumberOfComponents > 1) components[1] = green;
+            if (NumberOfComponents > 2) components[2] = blue;
+            return;
         }
         var black = 1f - Math.Max(red, Math.Max(green, blue));
-        if (black >= 1f) return new[] { 0f, 0f, 0f, 1f };
-        var scale = 1f - black;
-        return new[]
+        if (black >= 1f)
         {
-            (1f - red - black) / scale,
-            (1f - green - black) / scale,
-            (1f - blue - black) / scale,
-            black
-        };
+            components[0] = 0f;
+            components[1] = 0f;
+            components[2] = 0f;
+            components[3] = 1f;
+            return;
+        }
+        var scale = 1f - black;
+        components[0] = (1f - red - black) / scale;
+        components[1] = (1f - green - black) / scale;
+        components[2] = (1f - blue - black) / scale;
+        components[3] = black;
     }
 
     public virtual float[] ToCieXyz(float[] components)
@@ -6610,20 +6693,153 @@ internal static class PdfCartonFontCompat
         JavaRaster raster)
     {
         using var output = new PdfCartonPixels(bitmap);
+        var colors = new PixelColors(colorModel);
         object? pixel = null;
         for (var y = 0; y < bitmap.Height; y++)
         {
             for (var x = 0; x < bitmap.Width; x++)
             {
                 pixel = raster.GetDataElements(x, y, 1, 1, pixel);
-                output.Set(
-                    x,
-                    y,
-                    new SKColor(
-                        unchecked((byte)colorModel.GetRed(pixel)),
-                        unchecked((byte)colorModel.GetGreen(pixel)),
-                        unchecked((byte)colorModel.GetBlue(pixel)),
-                        unchecked((byte)colorModel.GetAlpha(pixel))));
+                output.Set(x, y, colors.Get(pixel).Color);
+            }
+        }
+    }
+
+    // Produces exactly what GetRed, GetGreen, GetBlue and GetAlpha report, as
+    // the renderer's colour and as GetRgb's packed value. Each pixel is
+    // normalized once into a reused buffer and its colour converted once, and
+    // results are memoized by raw pixel value. An instance serves one pass on
+    // one thread.
+    private sealed class PixelColors
+    {
+        private readonly JavaColorModel colorModel;
+        private readonly float[] components;
+        private readonly float[] rgb = new float[3];
+        private readonly PixelMemo<(SKColor Color, int Argb)> memo = new();
+
+        internal PixelColors(JavaColorModel colorModel)
+        {
+            this.colorModel = colorModel;
+            components = new float[colorModel.NumberOfComponents];
+        }
+
+        internal (SKColor Color, int Argb) Get(object pixel)
+        {
+            if (memo.TryGet(pixel, out var color)) return color;
+            color = Convert(pixel);
+            memo.Add(pixel, color);
+            return color;
+        }
+
+        internal (SKColor Color, int Argb) Convert(object pixel)
+        {
+            colorModel.GetNormalizedComponents(pixel, components, 0);
+            var converted = colorModel.ColorSpace.ToRgb(components, rgb);
+            var red = Channel(converted[0]);
+            var green = Channel(converted[1]);
+            var blue = Channel(converted[2]);
+            var alpha = colorModel.HasAlpha
+                ? Channel(components[colorModel.NumberOfColorComponents])
+                : 255;
+            return (
+                new SKColor(
+                    unchecked((byte)red),
+                    unchecked((byte)green),
+                    unchecked((byte)blue),
+                    unchecked((byte)alpha)),
+                unchecked((int)((uint)alpha << 24 | (uint)red << 16 |
+                                (uint)green << 8 | (uint)blue)));
+        }
+
+        // The getters' clamping and rounding.
+        private static int Channel(float value) =>
+            (int)JavaCompat.Round(JavaCompat.Clamp(value, 0f, 1f) * 255f);
+    }
+
+    // Memoizes a result by raw pixel value when the key space is small:
+    // single-band byte pixels use a 256-entry table, and byte pixels of two to
+    // four bands and single int pixels a dictionary that stops growing at
+    // 65,536 entries. A key covers every sample of the pixel, so it covers
+    // every sample a colour model reads. Other pixels are never memoized.
+    internal sealed class PixelMemo<T>
+    {
+        private const int PackedLimit = 65536;
+        private const int IntShape = 0;
+        private T[]? singleBand;
+        private bool[]? singleBandKnown;
+        private Dictionary<int, T>? packed;
+        private int packedShape;
+
+        internal bool TryGet(object pixel, out T value)
+        {
+            if (pixel is sbyte[] { Length: 1 } single)
+            {
+                var index = unchecked((byte)single[0]);
+                if (singleBandKnown is not null && singleBandKnown[index])
+                {
+                    value = singleBand![index];
+                    return true;
+                }
+            }
+            else if (packed is not null &&
+                     TryPackedKey(pixel, out var key, out var shape) &&
+                     shape == packedShape &&
+                     packed.TryGetValue(key, out value!))
+            {
+                return true;
+            }
+            value = default!;
+            return false;
+        }
+
+        // Whether Add would store a result for this pixel.
+        internal bool Accepts(object pixel) =>
+            pixel is sbyte[] { Length: 1 } ||
+            TryPackedKey(pixel, out _, out var shape) &&
+            (packed is null || shape == packedShape && packed.Count < PackedLimit);
+
+        internal void Add(object pixel, T value)
+        {
+            if (pixel is sbyte[] { Length: 1 } single)
+            {
+                var index = unchecked((byte)single[0]);
+                singleBand ??= new T[256];
+                singleBandKnown ??= new bool[256];
+                singleBand[index] = value;
+                singleBandKnown[index] = true;
+                return;
+            }
+            if (!TryPackedKey(pixel, out var key, out var shape)) return;
+            if (packed is null)
+            {
+                packed = new Dictionary<int, T>();
+                packedShape = shape;
+            }
+            else if (shape != packedShape || packed.Count >= PackedLimit)
+            {
+                return;
+            }
+            packed[key] = value;
+        }
+
+        private static bool TryPackedKey(object pixel, out int key, out int shape)
+        {
+            switch (pixel)
+            {
+                case sbyte[] { Length: >= 2 and <= 4 } bytes:
+                    key = 0;
+                    for (var band = 0; band < bytes.Length; band++)
+                        key |= unchecked((byte)bytes[band]) << (band * 8);
+                    shape = bytes.Length;
+                    return true;
+                case int[] { Length: 1 } values:
+                    key = values[0];
+                    shape = IntShape;
+                    return true;
+                default:
+                    key = 0;
+                    shape = IntShape;
+                    return false;
             }
         }
     }
@@ -6669,11 +6885,7 @@ internal static class PdfCartonFontCompat
             metadata.ColorModel is not null)
         {
             var pixel = metadata.Raster.GetDataElements(x, y, null);
-            return unchecked(
-                (int)((uint)metadata.ColorModel.GetAlpha(pixel) << 24 |
-                      (uint)metadata.ColorModel.GetRed(pixel) << 16 |
-                      (uint)metadata.ColorModel.GetGreen(pixel) << 8 |
-                      (uint)metadata.ColorModel.GetBlue(pixel)));
+            return new PixelColors(metadata.ColorModel).Convert(pixel).Argb;
         }
         return ToArgb(PdfCartonPixels.Read(bitmap, x, y));
     }
@@ -6690,12 +6902,28 @@ internal static class PdfCartonFontCompat
     {
         ArgumentNullException.ThrowIfNull(bitmap);
         values ??= new int[checked(offset + (height - 1) * scansize + width)];
+        if (!ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) ||
+            metadata.Raster is null ||
+            metadata.ColorModel is null)
+        {
+            for (var row = 0; row < height; row++)
+            {
+                for (var column = 0; column < width; column++)
+                {
+                    values[offset + row * scansize + column] =
+                        GetRgb(bitmap, x + column, y + row);
+                }
+            }
+            return values;
+        }
+        var colors = new PixelColors(metadata.ColorModel);
+        object? pixel = null;
         for (var row = 0; row < height; row++)
         {
             for (var column = 0; column < width; column++)
             {
-                values[offset + row * scansize + column] =
-                    GetRgb(bitmap, x + column, y + row);
+                pixel = metadata.Raster.GetDataElements(x + column, y + row, pixel);
+                values[offset + row * scansize + column] = colors.Get(pixel).Argb;
             }
         }
         return values;

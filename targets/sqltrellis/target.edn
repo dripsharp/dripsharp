@@ -34,7 +34,7 @@
    {:sources [:sqltrellis/generic-compatibility]
     :evidence [:sqltrellis-complete-product-proof]
     :review "pkl-e2eu.3"
-    :budget {:authored-lines 16167 :total-lines 137210}}
+    :budget {:authored-lines 16395 :total-lines 137438}}
    :required-capabilities
    #{:java-compat :java-regex-unicode :sqltrellis-generic-compatibility}}]
  :destinations [{:id :core :path "destinations/core.edn"}]

@@ -649,6 +649,13 @@ internal static class JavaZlib
     private static readonly Type? ZLibStreamType =
         Type.GetType("System.IO.Compression.ZLibStream, System.IO.Compression");
 
+    internal static bool HasNativeDecoder => ZLibStreamType is not null;
+
+    internal static Stream CreateDecoder(Stream compressed) =>
+        (Stream)Activator.CreateInstance(
+            ZLibStreamType ?? throw new PlatformNotSupportedException(),
+            new object[] { compressed, CompressionMode.Decompress, true })!;
+
     internal static byte[] DecompressAvailable(MemoryStream compressed)
     {
         var result = DecompressAvailable(compressed, out var failure);
@@ -837,11 +844,21 @@ internal sealed class JavaZlibOutputStream : Stream
 internal sealed class JavaInflaterOutputStream : Stream
 {
     private readonly Stream destination;
-    private readonly MemoryStream compressed = new();
+    // Native zlib decoding follows java.util.zip.InflaterOutputStream over one
+    // incremental JavaInflater. Without it, each write decodes the whole input.
+    private readonly JavaInflater? inflater;
+    private readonly byte[] block = new byte[512];
+    private readonly byte[] single = new byte[1];
+    private readonly MemoryStream? compressed;
     private int emitted;
     private bool disposed;
 
-    internal JavaInflaterOutputStream(Stream destination) => this.destination = destination;
+    internal JavaInflaterOutputStream(Stream destination)
+    {
+        this.destination = destination;
+        if (JavaZlib.HasNativeDecoder) inflater = new JavaInflater(false);
+        else compressed = new MemoryStream();
+    }
 
     public override bool CanRead => false;
     public override bool CanSeek => false;
@@ -863,20 +880,60 @@ internal sealed class JavaInflaterOutputStream : Stream
     public override void Write(byte[] buffer, int offset, int count)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        compressed.Write(buffer, offset, count);
-        EmitAvailable();
+        if (inflater is null)
+        {
+            compressed!.Write(buffer, offset, count);
+            EmitAvailable();
+            return;
+        }
+        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (offset > buffer.Length - count)
+            throw new ArgumentException("The input range exceeds the supplied buffer.");
+        if (count == 0) return;
+
+        // The CLR lets byte[] and sbyte[] share one array (ECMA-335 I.8.7).
+        var input = (sbyte[])(object)buffer;
+        while (true)
+        {
+            if (inflater.NeedsInput())
+            {
+                inflater.SetInput(input, offset, count);
+                count = 0;
+            }
+            Drain();
+            if (count == 0) break;
+        }
     }
 
     public override void WriteByte(byte value)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        compressed.WriteByte(value);
-        EmitAvailable();
+        if (inflater is null)
+        {
+            compressed!.WriteByte(value);
+            EmitAvailable();
+            return;
+        }
+        single[0] = value;
+        Write(single, 0, 1);
+    }
+
+    private void Drain()
+    {
+        int read;
+        do
+        {
+            read = inflater!.Inflate((sbyte[])(object)block);
+            if (read > 0) destination.Write(block, 0, read);
+        }
+        while (read > 0);
     }
 
     private void EmitAvailable()
     {
-        var position = compressed.Position;
+        var position = compressed!.Position;
         var bytes = JavaZlib.DecompressAvailable(compressed, out var failure);
         if (bytes.Length > emitted)
             destination.Write(bytes, emitted, bytes.Length - emitted);
@@ -892,17 +949,31 @@ internal sealed class JavaInflaterOutputStream : Stream
         disposed = true;
         try
         {
-            var position = compressed.Position;
-            var bytes = JavaZlib.Decompress(compressed);
-            if (bytes.Length > emitted)
-                destination.Write(bytes, emitted, bytes.Length - emitted);
-            emitted = bytes.Length;
-            compressed.Position = position;
+            if (inflater is not null)
+            {
+                // Like Java's close, finish only input that a failed write left.
+                while (!inflater.NeedsInput())
+                {
+                    var read = inflater.Inflate((sbyte[])(object)block);
+                    if (read < 1) break;
+                    destination.Write(block, 0, read);
+                }
+            }
+            else
+            {
+                var position = compressed!.Position;
+                var bytes = JavaZlib.Decompress(compressed);
+                if (bytes.Length > emitted)
+                    destination.Write(bytes, emitted, bytes.Length - emitted);
+                emitted = bytes.Length;
+                compressed.Position = position;
+            }
             destination.Flush();
         }
         finally
         {
-            compressed.Dispose();
+            inflater?.End();
+            compressed?.Dispose();
             destination.Dispose();
             base.Dispose(disposing);
         }
@@ -916,9 +987,14 @@ public
 #endif
 sealed class JavaInflater
 {
-    private readonly MemoryStream compressed = new();
+    private readonly PendingInput compressed = new();
     private readonly bool rawDeflate;
-    private int emitted;
+    private Stream? decoder;
+    private byte[] decodedBlock = Array.Empty<byte>();
+    private long decoded;
+    private long emitted;
+    private byte[]? wholeBufferResult;
+    private int wholeBufferInput = -1;
     private bool needsInput = true;
     private bool ended;
 
@@ -935,8 +1011,7 @@ sealed class JavaInflater
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         if (offset > input.Length - length)
             throw new ArgumentException("The input range exceeds the supplied buffer.");
-        compressed.Position = compressed.Length;
-        compressed.Write(JavaCompat.ToUnsignedBytes(input), offset, length);
+        compressed.Append(input, offset, length);
         needsInput = false;
     }
 
@@ -945,35 +1020,30 @@ sealed class JavaInflater
         ObjectDisposedException.ThrowIf(ended, this);
         ArgumentNullException.ThrowIfNull(output);
         if (output.Length == 0) return 0;
+        if (!rawDeflate && !JavaZlib.HasNativeDecoder) return InflateWholeBuffer(output);
 
-        var inputPosition = compressed.Position;
-        compressed.Position = 0;
-        using var decoded = new MemoryStream();
-        if (rawDeflate)
+        // DeflateStream and ZLibStream keep their state between reads, and a
+        // read that finds no pending input returns 0 without ending the stream,
+        // so each call resumes where the previous one stopped.
+        if (decodedBlock.Length < output.Length) decodedBlock = new byte[output.Length];
+        var count = 0;
+        try
         {
-            using var inflater = new DeflateStream(
-                compressed, CompressionMode.Decompress, leaveOpen: true);
-            inflater.CopyTo(decoded);
+            while (count < output.Length)
+            {
+                var read = Read(decodedBlock, count, output.Length - count);
+                if (read == 0) break;
+                count += read;
+            }
         }
-        else
+        catch (InvalidDataException)
         {
-            var decodedBytes = JavaZlib.Decompress(compressed);
-            decoded.Write(decodedBytes, 0, decodedBytes.Length);
+            ReplayFailedCall(output);
+            throw;
         }
-        compressed.Position = inputPosition;
-
-        var available = checked((int)decoded.Length - emitted);
-        if (available <= 0)
-        {
-            needsInput = true;
-            return 0;
-        }
-        var count = Math.Min(output.Length, available);
-        var bytes = decoded.GetBuffer();
-        for (var index = 0; index < count; index++)
-            output[index] = unchecked((sbyte)bytes[emitted + index]);
+        Buffer.BlockCopy(decodedBlock, 0, output, 0, count);
         emitted += count;
-        needsInput = count == available;
+        needsInput = count < output.Length;
         return count;
     }
 
@@ -981,7 +1051,165 @@ sealed class JavaInflater
     {
         if (ended) return;
         ended = true;
+        decoder?.Dispose();
         compressed.Dispose();
+    }
+
+    private int Read(byte[] buffer, int offset, int count)
+    {
+        var resumed = compressed.Drained;
+        compressed.Drained = false;
+        decoder ??= CreateDecoder(compressed);
+        int read;
+        try
+        {
+            read = decoder.Read(buffer, offset, count);
+        }
+        catch (InvalidOperationException) when (resumed)
+        {
+            // Defensive: if a runtime's decoder cannot resume after an empty
+            // read, decode the retained input again from its start.
+            decoder.Dispose();
+            compressed.Rewind();
+            decoder = CreateDecoder(compressed);
+            Skip(decoder, decoded);
+            read = decoder.Read(buffer, offset, count);
+        }
+        decoded += read;
+        return read;
+    }
+
+    // Java's inflate leaves the bytes a failed call decoded before the fault in
+    // its output. Decoders may also write scratch bytes past the decoded end of
+    // a buffer, so a fresh decoder replays the call one byte at a time. The read
+    // that faults may still decode its byte; a second sentinel settles a byte
+    // that matched the first.
+    private void ReplayFailedCall(sbyte[] output)
+    {
+        if (!Replay(output, 0x00)) Replay(output, 0xff);
+    }
+
+    private bool Replay(sbyte[] output, byte sentinel)
+    {
+        using var input = compressed.Snapshot();
+        using var replay = CreateDecoder(input);
+        var single = new[] { sentinel };
+        var index = 0;
+        try
+        {
+            Skip(replay, emitted);
+            for (; index < output.Length; index++)
+            {
+                single[0] = sentinel;
+                if (replay.Read(single, 0, 1) == 0) break;
+                output[index] = unchecked((sbyte)single[0]);
+            }
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            if (single[0] == sentinel) return false;
+            output[index] = unchecked((sbyte)single[0]);
+            return true;
+        }
+    }
+
+    private static void Skip(Stream source, long count)
+    {
+        var skipped = new byte[4096];
+        while (count > 0)
+        {
+            var read = source.Read(skipped, 0, (int)Math.Min(skipped.Length, count));
+            if (read == 0)
+                throw new InvalidDataException("The deflate stream could not be replayed.");
+            count -= read;
+        }
+    }
+
+    private Stream CreateDecoder(Stream input) => rawDeflate
+        ? new DeflateStream(input, CompressionMode.Decompress, leaveOpen: true)
+        : JavaZlib.CreateDecoder(input);
+
+    // Without a native zlib decoder, zlib mode decodes the whole input once per
+    // new input and returns the part not yet emitted.
+    private int InflateWholeBuffer(sbyte[] output)
+    {
+        if (wholeBufferInput != compressed.Count)
+        {
+            using (var snapshot = compressed.Snapshot())
+                wholeBufferResult = JavaZlib.Decompress(snapshot);
+            wholeBufferInput = compressed.Count;
+        }
+        var available = checked((int)(wholeBufferResult!.Length - emitted));
+        if (available <= 0)
+        {
+            needsInput = true;
+            return 0;
+        }
+        var count = Math.Min(output.Length, available);
+        Buffer.BlockCopy(wholeBufferResult, (int)emitted, output, 0, count);
+        emitted += count;
+        needsInput = count == available;
+        return count;
+    }
+
+    // All compressed input, retained so that a decoder can replay it. A read
+    // with nothing pending returns 0 and records that the decoder is waiting,
+    // without ending the stream.
+    private sealed class PendingInput : Stream
+    {
+        private byte[] bytes = Array.Empty<byte>();
+        private int position;
+        private int length;
+
+        internal bool Drained { get; set; }
+        internal int Count => length;
+
+        internal void Append(sbyte[] input, int offset, int count)
+        {
+            if (count > bytes.Length - length)
+            {
+                var grown = new byte[Math.Max(checked(length + count), bytes.Length * 2)];
+                Buffer.BlockCopy(bytes, 0, grown, 0, length);
+                bytes = grown;
+            }
+            Buffer.BlockCopy(input, offset, bytes, length, count);
+            length += count;
+        }
+
+        internal void Rewind() => position = 0;
+
+        internal MemoryStream Snapshot() => new(bytes, 0, length, writable: false);
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var available = Math.Min(count, length - position);
+            if (available <= 0)
+            {
+                Drained = true;
+                return 0;
+            }
+            Buffer.BlockCopy(bytes, position, buffer, offset, available);
+            position += available;
+            return available;
+        }
+
+        public override void Flush()
+        {
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
 
