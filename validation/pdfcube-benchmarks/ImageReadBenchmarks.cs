@@ -67,3 +67,64 @@ public class ImageReadBenchmarks
         return result;
     }
 }
+
+/// <summary>
+/// Image sizes read through JavaImageReader: JPEGFactory.CreateFromByteArray
+/// on a 4000x3000 (12 MP) Skia RGB JPEG at quality 90, which needs only the
+/// frame header, and JPXFilter.Decode of a 512x512 RGB JP2 image,
+/// which reads the image and then its width and height. Encoding is setup and
+/// is not timed.
+/// </summary>
+[MemoryDiagnoser]
+[GcServer(true)]
+public class ImageDimensionBenchmarks
+{
+    private sbyte[] jpeg = [];
+    private DripSharp.PdfCarton.Cos.COSStream? jpx;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(4000, 3000, SKColorType.Rgba8888, SKAlphaType.Opaque));
+        var pixels = bitmap.GetPixelSpan();
+        for (var index = 0; index < pixels.Length; index++)
+            pixels[index] = (byte)(index * 7 / 3 + index / 4096);
+        bitmap.NotifyPixelsChanged();
+        using (var data = bitmap.Encode(SKEncodedImageFormat.Jpeg, 90))
+        {
+            var bytes = data.ToArray();
+            jpeg = new sbyte[bytes.Length];
+            Buffer.BlockCopy(bytes, 0, jpeg, 0, bytes.Length);
+        }
+
+        const int size = 512;
+        var components = new int[3][];
+        for (var component = 0; component < 3; component++)
+        {
+            components[component] = new int[size * size];
+            for (var index = 0; index < size * size; index++)
+                components[component][index] = (index * (component + 3) & 255) - 128;
+        }
+        var source = new CoreJ2K.Util.InterleavedImageSource(size, size, 3, 8, new bool[3], components);
+        jpx = new DripSharp.PdfCarton.Cos.COSStream();
+        using (var output = jpx.CreateRawOutputStream())
+            output.Write(CoreJ2K.J2kImage.ToBytes(source, null, (CoreJ2K.j2k.util.ParameterList?)null));
+        jpx.SetItem(DripSharp.PdfCarton.Cos.COSName.Filter, DripSharp.PdfCarton.Cos.COSName.JpxDecode);
+    }
+
+    [Benchmark]
+    public int JpegCreateFromByteArray()
+    {
+        using var target = new PDDocument();
+        return JPEGFactory.CreateFromByteArray(target, jpeg).GetWidth();
+    }
+
+    [Benchmark]
+    public long JpxDecode()
+    {
+        using var encoded = jpx!.CreateRawInputStream();
+        using var decoded = new MemoryStream();
+        new DripSharp.PdfCarton.Filter.JPXFilter().Decode(encoded, decoded, jpx, 0);
+        return decoded.Length;
+    }
+}

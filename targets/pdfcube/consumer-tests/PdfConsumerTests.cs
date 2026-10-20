@@ -3428,7 +3428,9 @@ public sealed class DecodeFilterBitmapLifetimeTests
     }
 
     // binaryAlpha: lossless, with alpha 0 where index % 3 == 0, else 255.
-    internal static byte[] Jpx(int width, int height, bool alpha, bool binaryAlpha = false)
+    // codestream: a bare J2K codestream instead of a JP2 file.
+    internal static byte[] Jpx(
+        int width, int height, bool alpha, bool binaryAlpha = false, bool codestream = false)
     {
         var count = alpha ? 4 : 3;
         var components = new int[count][];
@@ -3457,12 +3459,13 @@ public sealed class DecodeFilterBitmapLifetimeTests
             };
         }
         // Binary alpha is encoded losslessly so that it stays 0 or 255.
-        var parameters = binaryAlpha
-            ? new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList())
-            {
-                ["lossless"] = "on"
-            }
-            : null;
+        CoreJ2K.j2k.util.ParameterList? parameters = null;
+        if (binaryAlpha || codestream)
+        {
+            parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
+            if (binaryAlpha) parameters["lossless"] = "on";
+            if (codestream) parameters["file_format"] = "off";
+        }
         return CoreJ2K.J2kImage.ToBytes(source, metadata, parameters);
     }
 }
@@ -3961,6 +3964,187 @@ public sealed class ImageReadParameterTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         action();
         return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+}
+
+// ImageIO reads an image's size from its header. JPEG sizes come from the
+// frame header through Skia's codec and JPX sizes from the codestream's main
+// header, without a pixel decode, so JPEGFactory.createFromByteArray decodes
+// nothing and JPXFilter, which reads the image and then its width and
+// height, decodes once.
+public sealed class ImageReaderSizeTests
+{
+    // 13x7 RGB, cjpeg -progressive (libjpeg-turbo 3.2.0).
+    private const string ProgressiveJpeg =
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/" +
+        "2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wgARCAAHAA0DASIAAhEBAxEB/8QAFQAB" +
+        "AQAAAAAAAAAAAAAAAAAAAAb/xAAVAQEBAAAAAAAAAAAAAAAAAAADBv/aAAwDAQACEAMQAAABixZt/8QAFRABAQAAAAAAAAAAAAAAAAAAABP/2gAIAQEAAQUCss//" +
+        "xAAXEQADAQAAAAAAAAAAAAAAAAAABBVS/9oACAEDAQE/Aa7Wj//EABcRAAMBAAAAAAAAAAAAAAAAAAAEFVL/2gAIAQIBAT8BiqZP/8QAFBABAAAAAAAAAAAAAAAA" +
+        "AAAAEP/aAAgBAQAGPwI//8QAFRABAQAAAAAAAAAAAAAAAAAAABH/2gAIAQEAAT8htb//2gAMAwEAAgADAAAAEA//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAED" +
+        "AQE/EA//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ED//xAAWEAADAAAAAAAAAAAAAAAAAAAAAWH/2gAIAQEAAT8QsyzP/9k=";
+
+    // 9x6 Adobe CMYK, ImageMagick 7 -colorspace CMYK.
+    private const string CmykJpeg =
+        "/9j/7gAOQWRvYmUAZAAAAAAC/9sAQwAGBAUGBQQGBgUGBwcGCAoQCgoJCQoUDg8MEBcUGBgXFBYWGh0lHxobIxwWFiAsICMmJykqKRkfLTAtKDAlKCko/9sAQwEH" +
+        "BwcKCAoTCgoTKBoWGigoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo/8AAFAgABgAJBAEiAAIRAQMRAQQiAP/EABYAAQEB" +
+        "AAAAAAAAAAAAAAAAAAAGCP/EABkQAQACAwAAAAAAAAAAAAAAAAADBRdRkf/EABUBAQEAAAAAAAAAAAAAAAAAAAYH/8QAGBEAAgMAAAAAAAAAAAAAAAAAAAEEFVP/" +
+        "2gAOBAEAAhEDEQQAAD8AhsrWGpOmVrDUnQXqsiZoE08LJGqQH//Z";
+
+    // 11x5 RGB, cjpeg -precision 12 (SOF1, 12-bit samples).
+    private const string TwelveBitJpeg =
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/" +
+        "2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wQARDAAFAAsDASIAAhEBAxEB/8QAFQAB" +
+        "AQAAAAAAAAAAAAAAAAAAAAv/xAAaEAABBQEAAAAAAAAAAAAAAAAAAggZVKTS/8QAFQEBAQAAAAAAAAAAAAAAAAAACQv/xAAhEQAAAQ0AAAAAAAAAAAAAAAAAAQMG" +
+        "BwkXGlVYkpTT4f/aAAwDAQACEQMRAD8Ah7zKOKtbV8iZRxVravkAueQvTJCnpHcQuwBI4JXElMW9H//Z";
+
+    private static (string Name, byte[] Data, int Width, int Height, Type ColorSpace)[] Jpegs() =>
+    [
+        ("baseline RGB", IccRenderFixtures.SkiaJpeg(40, 24), 40, 24, typeof(PDDeviceRGB)),
+        ("baseline gray", DecodeFilterBitmapLifetimeTests.GrayJpeg(48, 32), 48, 32, typeof(PDDeviceGray)),
+        ("progressive", Convert.FromBase64String(ProgressiveJpeg), 13, 7, typeof(PDDeviceRGB)),
+        ("CMYK", Convert.FromBase64String(CmykJpeg), 9, 6, typeof(PDDeviceCMYK)),
+        // Orientation 6 (rotate 90): ImageIO ignores it, so the size is the
+        // frame's, not the displayed 10x20.
+        ("EXIF rotated", WithExifOrientation(IccRenderFixtures.SkiaJpeg(20, 10), 6), 20, 10, typeof(PDDeviceRGB)),
+    ];
+
+    [Fact]
+    public void JpegSizeComesFromTheHeaderWithoutAPixelDecode()
+    {
+        foreach (var (name, data, width, height, colorSpace) in Jpegs())
+        {
+            var decodes = Compat.JavaImageReader.DecodesOnCurrentThread;
+            var reader = Reader("JPEG", data);
+            Assert.Equal((width, height), (reader.GetWidth(0), reader.GetHeight(0)));
+            using (var document = new PDDocument())
+            {
+                var image = JPEGFactory.CreateFromByteArray(document, IccRenderFixtures.Signed(data));
+                Assert.Equal((width, height), (image.GetWidth(), image.GetHeight()));
+                Assert.IsType(colorSpace, image.GetColorSpace());
+            }
+            Assert.True(decodes == Compat.JavaImageReader.DecodesOnCurrentThread, $"{name} decoded pixels.");
+
+            // The decoded image has the header's size.
+            using var decoded = reader.ReadDeferred(0, null);
+            Assert.Equal((width, height), (decoded.Width, decoded.Height));
+            Assert.Equal(decodes + 1, Compat.JavaImageReader.DecodesOnCurrentThread);
+        }
+
+        using var codec = SKCodec.Create(new MemoryStream(Jpegs()[4].Data));
+        Assert.Equal(SKEncodedOrigin.RightTop, codec.EncodedOrigin);
+    }
+
+    // The size of a 12-bit JPEG is its frame header's, read without a decode.
+    [Fact]
+    public void TwelveBitJpegSizeComesFromTheHeader()
+    {
+        var data = Convert.FromBase64String(TwelveBitJpeg);
+        var decodes = Compat.JavaImageReader.DecodesOnCurrentThread;
+        var reader = Reader("JPEG", data);
+        Assert.Equal((11, 5), (reader.GetWidth(0), reader.GetHeight(0)));
+        Assert.Equal(decodes, Compat.JavaImageReader.DecodesOnCurrentThread);
+    }
+
+    [Fact]
+    public void JpxFilterDecodesEachImageOnce()
+    {
+        foreach (var (name, data, bands) in new[]
+                 {
+                     ("J2K codestream", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: false, codestream: true), 3),
+                     ("JP2 file", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: false), 3),
+                     ("JPX with alpha", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: true), 4),
+                 })
+        {
+            var stream = new COSStream();
+            using (var output = stream.CreateRawOutputStream())
+                output.Write(data);
+            stream.SetItem(COSName.Filter, COSName.JpxDecode);
+            using var encoded = stream.CreateRawInputStream();
+            using var decoded = new MemoryStream();
+            var decodes = Compat.JavaImageReader.DecodesOnCurrentThread;
+            var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
+            using var smask = result.GetJPXSMask();
+            Assert.True(decodes + 1 == Compat.JavaImageReader.DecodesOnCurrentThread,
+                $"{name}: {Compat.JavaImageReader.DecodesOnCurrentThread - decodes} decodes.");
+            Assert.Equal(40, result.GetParameters().GetInt(COSName.Width));
+            Assert.Equal(24, result.GetParameters().GetInt(COSName.Height));
+            Assert.Equal(40 * 24 * bands, decoded.Length);
+        }
+        Assert.Equal("ftyp", System.Text.Encoding.ASCII.GetString(
+            DecodeFilterBitmapLifetimeTests.Jpx(4, 4, alpha: false), 16, 4));
+        Assert.Equal(new byte[] { 0xff, 0x4f, 0xff, 0x51 },
+            DecodeFilterBitmapLifetimeTests.Jpx(4, 4, alpha: false, codestream: true)[..4]);
+    }
+
+    // JP2 files and bare J2K codestreams report their size from the main
+    // header, the full image size whatever region a read selected.
+    [Fact]
+    public void JpxSizeComesFromTheHeaderWithoutAPixelDecode()
+    {
+        foreach (var codestream in new[] { false, true })
+        {
+            var reader = Reader("JPEG2000", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: false, codestream: codestream));
+            var decodes = Compat.JavaImageReader.DecodesOnCurrentThread;
+            Assert.Equal((40, 24), (reader.GetWidth(0), reader.GetHeight(0)));
+            Assert.Equal(decodes, Compat.JavaImageReader.DecodesOnCurrentThread);
+            var parameters = new Compat.JavaImageReadParam();
+            parameters.SetSourceSubsampling(2, 2, 0, 0);
+            using (var image = reader.ReadDeferred(0, parameters))
+                Assert.Equal((20, 12), (image.Width, image.Height));
+            Assert.Equal((40, 24), (reader.GetWidth(0), reader.GetHeight(0)));
+            Assert.Equal(decodes + 1, Compat.JavaImageReader.DecodesOnCurrentThread);
+
+            reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(
+                DecodeFilterBitmapLifetimeTests.Jpx(17, 9, alpha: true, codestream: codestream))));
+            Assert.Equal((17, 9), (reader.GetWidth(0), reader.GetHeight(0)));
+            using (var image = reader.ReadDeferred(0, null))
+                Assert.Equal((17, 9), (image.Width, image.Height));
+            Assert.Equal(decodes + 2, Compat.JavaImageReader.DecodesOnCurrentThread);
+        }
+
+        Assert.Throws<IOException>(() => Reader("JPEG2000", [0xff, 0x4f, 0xff, 0x51, 0, 2]).GetWidth(0));
+    }
+
+    // Without a header-only read (JBIG2), the size is the last decode's until
+    // SetInput.
+    [Fact]
+    public void ReaderRemembersTheDecodedSizeUntilItsInputChanges()
+    {
+        var reader = Reader("JBIG2", ImageCodecAdapterTests.MixedPage());
+        var decodes = Compat.JavaImageReader.DecodesOnCurrentThread;
+        Assert.Equal((67, 20), (reader.GetWidth(0), reader.GetHeight(0)));
+        Assert.Equal(decodes + 1, Compat.JavaImageReader.DecodesOnCurrentThread);
+        using (reader.ReadDeferred(0, null))
+            Assert.Equal((67, 20), (reader.GetWidth(0), reader.GetHeight(0)));
+        Assert.Equal(decodes + 2, Compat.JavaImageReader.DecodesOnCurrentThread);
+
+        reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(ImageCodecAdapterTests.MixedPage())));
+        Assert.Equal((67, 20), (reader.GetWidth(0), reader.GetHeight(0)));
+        Assert.Equal(decodes + 3, Compat.JavaImageReader.DecodesOnCurrentThread);
+
+        reader.SetInput(null);
+        Assert.Throws<InvalidOperationException>(() => reader.GetWidth(0));
+        Assert.Throws<IndexOutOfRangeException>(() => Reader("JPEG", Convert.FromBase64String(ProgressiveJpeg)).GetWidth(1));
+    }
+
+    // Inserts an EXIF APP1 segment with one Orientation tag after SOI.
+    private static byte[] WithExifOrientation(byte[] jpeg, int orientation)
+    {
+        byte[] app1 =
+        [
+            0xff, 0xe1, 0x00, 0x22, (byte)'E', (byte)'x', (byte)'i', (byte)'f', 0, 0,
+            (byte)'M', (byte)'M', 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08,
+            0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01,
+            0x00, (byte)orientation, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        return [.. jpeg.AsSpan(0, 2), .. app1, .. jpeg.AsSpan(2)];
+    }
+
+    private static Compat.JavaImageReader Reader(string format, byte[] data)
+    {
+        var reader = DripSharp.PdfCarton.Filter.Filter.FindImageReader(format, "codec missing");
+        reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(data)));
+        return reader;
     }
 }
 

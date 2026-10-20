@@ -9,6 +9,10 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using CoreJ2K;
+using CoreJ2K.j2k.codestream;
+using CoreJ2K.j2k.codestream.reader;
+using CoreJ2K.j2k.fileformat.reader;
+using CoreJ2K.j2k.util;
 using JBig2Decoder.NETStandard;
 using SkiaSharp;
 
@@ -31,6 +35,40 @@ internal static class PdfCartonImageCodecs
                     ? DecodeJpx(encoded)
                     : throw new IOException(
                         $"Unsupported internal image codec `{formatName}`.");
+        }
+        catch (IOException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new IOException(
+                $"Unable to decode {formatName} image data.",
+                error);
+        }
+    }
+
+    // The size of a JPX image from its JP2 boxes and codestream main header
+    // (SIZ), which is the size Decode returns, without decoding it. JBIG2 has
+    // no such read: null.
+    internal static SKSizeI? ReadSize(string formatName, byte[] encoded)
+    {
+        ArgumentNullException.ThrowIfNull(formatName);
+        ArgumentNullException.ThrowIfNull(encoded);
+        if (!IsJpx(formatName)) return null;
+        try
+        {
+            using var stream = new MemoryStream(
+                encoded, 0, encoded.Length, writable: false, publiclyVisible: true);
+            var input = new ISRandomAccessIO(stream);
+            var fileFormat = new FileFormatReader(input);
+            fileFormat.readFileFormat();
+            if (fileFormat.JP2FFUsed) input.seek(fileFormat.FirstCodeStreamPos);
+            var header = new HeaderDecoder(
+                input,
+                new ParameterList(J2kImage.GetDefaultDecoderParameterList()),
+                new HeaderInfo());
+            return new SKSizeI(header.ImgWidth, header.ImgHeight);
         }
         catch (IOException)
         {

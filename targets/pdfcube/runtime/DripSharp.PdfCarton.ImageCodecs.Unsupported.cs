@@ -16,6 +16,13 @@ internal static class PdfCartonImageCodecs
         return false;
     }
 
+    internal static SKSizeI? ReadSize(string formatName, byte[] encoded)
+    {
+        ArgumentNullException.ThrowIfNull(formatName);
+        ArgumentNullException.ThrowIfNull(encoded);
+        return null;
+    }
+
     internal static SKBitmap Decode(string formatName, byte[] encoded) =>
         throw new NotSupportedException(
             $"The `{formatName}` image codec is not part of this product.");

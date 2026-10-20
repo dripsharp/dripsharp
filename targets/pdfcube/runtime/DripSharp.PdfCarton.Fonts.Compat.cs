@@ -1169,6 +1169,9 @@ public sealed class JavaImageReader : IDisposable
 {
     private readonly string formatName;
     private JavaImageInputStream? input;
+    // The size of image sizeIndex of the current input, when known (not -1).
+    private int sizeIndex = -1;
+    private SKSizeI imageSize;
 
     internal JavaImageReader(string formatName) => this.formatName = formatName;
 
@@ -1181,6 +1184,7 @@ public sealed class JavaImageReader : IDisposable
         bool seekForwardOnly,
         bool ignoreMetadata)
     {
+        sizeIndex = -1;
         if (source is null)
         {
             input = null;
@@ -1196,18 +1200,39 @@ public sealed class JavaImageReader : IDisposable
 
     public JavaImageReadParam GetDefaultReadParam() => new();
 
-    public int GetWidth(int imageIndex)
+    public int GetWidth(int imageIndex) => GetSize(imageIndex).Width;
+
+    public int GetHeight(int imageIndex) => GetSize(imageIndex).Height;
+
+    // ImageIO reads an image's size from its header. Skia's codec reads the
+    // header alone for the formats it decodes (JPEG among them), and the JPX
+    // adapter reads the codestream's main header; JBIG2 and TIFF have no
+    // header-only read, so their size is that of the last decode of the
+    // current input, or a decode. A read remembers its image's full size.
+    private SKSizeI GetSize(int imageIndex)
     {
         RequireImageIndex(imageIndex);
-        using var bitmap = Decode(imageIndex);
-        return bitmap.Width;
+        if (imageIndex == sizeIndex) return imageSize;
+        var size = imageIndex == 0 && !IsTiff ? ReadHeaderSize() : null;
+        if (size is null)
+        {
+            using var bitmap = Decode(imageIndex);
+            return imageSize;
+        }
+        sizeIndex = imageIndex;
+        imageSize = size.Value;
+        return imageSize;
     }
 
-    public int GetHeight(int imageIndex)
+    private SKSizeI? ReadHeaderSize()
     {
-        RequireImageIndex(imageIndex);
-        using var bitmap = Decode(imageIndex);
-        return bitmap.Height;
+        var encoded = RequireInput().Bytes;
+        if (PdfCartonImageCodecs.Supports(formatName))
+            return PdfCartonImageCodecs.ReadSize(formatName, encoded);
+        using var stream = new MemoryStream(encoded, writable: false);
+        using var codec = SKCodec.Create(stream) ??
+            throw new IOException($"Unable to decode {formatName} image data.");
+        return new SKSizeI(codec.Info.Width, codec.Info.Height);
     }
 
     public SKBitmap Read(int imageIndex, JavaImageReadParam? parameters)
@@ -1310,12 +1335,30 @@ public sealed class JavaImageReader : IDisposable
     public void Dispose()
     {
         input = null;
+        sizeIndex = -1;
     }
+
+    // Pixel decodes run on this thread, for tests.
+    [ThreadStatic] private static int decodesOnCurrentThread;
+
+    internal static int DecodesOnCurrentThread => decodesOnCurrentThread;
+
+    private bool IsTiff =>
+        formatName.Equals("TIFF", StringComparison.OrdinalIgnoreCase) ||
+        formatName.Equals("TIF", StringComparison.OrdinalIgnoreCase);
 
     private SKBitmap Decode(int imageIndex)
     {
-        if (formatName.Equals("TIFF", StringComparison.OrdinalIgnoreCase) ||
-            formatName.Equals("TIF", StringComparison.OrdinalIgnoreCase))
+        decodesOnCurrentThread++;
+        var bitmap = DecodePixels(imageIndex);
+        sizeIndex = imageIndex;
+        imageSize = new SKSizeI(bitmap.Width, bitmap.Height);
+        return bitmap;
+    }
+
+    private SKBitmap DecodePixels(int imageIndex)
+    {
+        if (IsTiff)
         {
             return PdfCartonFontCompat.DecodeImage(
                 RequireInput().Bytes,
