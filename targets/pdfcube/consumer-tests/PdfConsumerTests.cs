@@ -1931,25 +1931,44 @@ public sealed class RasterConversionConsumerTests
                 using (var canvas = new SKCanvas(image))
                     canvas.Clear(SKColors.Red);
                 Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
-                var mismatches = 0;
-                var allocated = GC.GetAllocatedBytesForCurrentThread();
-                var started = System.Diagnostics.Stopwatch.GetTimestamp();
-                for (var call = 0; call < 1000; call++)
-                {
-                    if (!ReferenceEquals(colorModel, Compat.PdfCartonFontCompat.GetColorModel(image)) ||
-                        Compat.PdfCartonFontCompat.GetTransparency(image) != transparency)
-                        mismatches++;
-                }
-                var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
-                allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+                var (mismatches, allocated, jitted, elapsed) =
+                    MeasureRepeatedTransparencyLookups(image, colorModel, transparency);
                 Assert.Equal(0, mismatches);
                 Assert.True(allocated < 1024,
-                    $"type {type} {width}x{height}: 1000 calls allocated {allocated} bytes.");
+                    $"type {type} {width}x{height}: 1000 calls allocated {allocated} bytes " +
+                    $"({jitted} methods compiled on this thread meanwhile).");
                 // One scan of 2550x3300 pixels takes milliseconds.
                 Assert.True(elapsed < TimeSpan.FromSeconds(1),
                     $"type {type} {width}x{height}: 1000 calls took {elapsed}.");
             }
         }
+    }
+
+    // The measured loop runs fully optimised from its first call: in a
+    // tiered method the loop's on-stack replacement compiles on this thread
+    // after enough iterations, and that compile allocates managed memory
+    // depending on what the process has loaded so far, which made the
+    // allocation check fail in full-suite runs only.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    private static (int Mismatches, long Allocated, long Jitted, TimeSpan Elapsed)
+        MeasureRepeatedTransparencyLookups(SKBitmap image, Compat.JavaColorModel colorModel, int transparency)
+    {
+        var mismatches = 0;
+        var jitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true);
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        for (var call = 0; call < 1000; call++)
+        {
+            if (!ReferenceEquals(colorModel, Compat.PdfCartonFontCompat.GetColorModel(image)) ||
+                Compat.PdfCartonFontCompat.GetTransparency(image) != transparency)
+                mismatches++;
+        }
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+        allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        jitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true) - jitted;
+        return (mismatches, allocated, jitted, elapsed);
     }
 
     // Decoded images take their decoder's transparency, as in Java's ImageIO:
