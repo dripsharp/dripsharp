@@ -1786,22 +1786,16 @@ public
 #endif
 class JavaMapEntry<K, V>
 {
-    private readonly IDictionary<K, V>? source;
     private readonly K key;
-    private V value;
+    // JavaLinkedHashMap entries are the map's own storage, as in Java, so
+    // the map updates this field directly.
+    private protected V __entryValue;
     private readonly bool mutable;
 
     protected JavaMapEntry()
     {
         key = default!;
-        value = default!;
-    }
-
-    internal JavaMapEntry(IDictionary<K, V> source, K key)
-    {
-        this.source = source;
-        this.key = key;
-        value = source.TryGetValue(key, out var current) ? current : default!;
+        __entryValue = default!;
     }
 
     internal JavaMapEntry(K key, V value)
@@ -1812,31 +1806,19 @@ class JavaMapEntry<K, V>
     protected JavaMapEntry(K key, V value, bool mutable)
     {
         this.key = key;
-        this.value = value;
+        __entryValue = value;
         this.mutable = mutable;
     }
 
     public virtual K Key => key;
-    public virtual V Value => source is not null && source.TryGetValue(key, out var current)
-        ? current
-        : value;
+    public virtual V Value => __entryValue;
 
     public virtual V SetValue(V replacement)
     {
-        if (source is null)
-        {
-            if (!mutable) throw new NotSupportedException("This Java map entry is immutable.");
-            var previousValue = value;
-            value = replacement;
-            return previousValue;
-        }
-        var previous = Value;
-        if (source is JavaMapValueUpdater<K, V> linked)
-            linked.ReplaceValueWithoutAccess(key, replacement);
-        else
-            source[key] = replacement;
-        value = replacement;
-        return previous;
+        if (!mutable) throw new NotSupportedException("This Java map entry is immutable.");
+        var previousValue = __entryValue;
+        __entryValue = replacement;
+        return previousValue;
     }
 
     public override bool Equals(object? other)
@@ -2205,7 +2187,13 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
         return source.Remove(item.Key);
     }
 
-    public IEnumerator<JavaMapEntry<K, V>> GetEnumerator() => new Enumerator(source);
+    // An insertion-ordered JavaLinkedHashMap hands out its own entries without
+    // a key snapshot; other maps (and access-ordered ones, where a lookup
+    // reorders entries) iterate a snapshot of the keys.
+    public IEnumerator<JavaMapEntry<K, V>> GetEnumerator() =>
+        source is JavaLinkedHashMap<K, V> linked && linked.TryGetEntryEnumerator(out var entries)
+            ? entries
+            : new Enumerator(source);
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     public void ExceptWith(IEnumerable<JavaMapEntry<K, V>> other)
@@ -2246,6 +2234,34 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
 
     private HashSet<JavaMapEntry<K, V>> Snapshot() => new(this);
 
+    // An entry over an arbitrary IDictionary: reads and writes go through to
+    // the map while the key is present. Once the key has left the map the
+    // entry is detached, as in Java, and setValue changes only the entry.
+    private sealed class LiveEntry : JavaMapEntry<K, V>
+    {
+        private readonly IDictionary<K, V> source;
+
+        internal LiveEntry(IDictionary<K, V> source, K key)
+            : base(key, source.TryGetValue(key, out var current) ? current : default!, mutable: true)
+        {
+            this.source = source;
+        }
+
+        public override V Value => source.TryGetValue(Key, out var current) ? current : __entryValue;
+
+        public override V SetValue(V replacement)
+        {
+            if (!source.TryGetValue(Key, out var previous))
+                previous = __entryValue;
+            else if (source is JavaMapValueUpdater<K, V> linked)
+                linked.ReplaceValueWithoutAccess(Key, replacement);
+            else
+                source[Key] = replacement;
+            __entryValue = replacement;
+            return previous;
+        }
+    }
+
     private sealed class Enumerator : IEnumerator<JavaMapEntry<K, V>>, JavaRemovableIterator
     {
         private readonly IDictionary<K, V> source;
@@ -2273,7 +2289,7 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
                 if (!source.ContainsKey(key)) continue;
                 preparedKey = key;
                 hasPreparedKey = true;
-                Current = new JavaMapEntry<K, V>(source, key);
+                Current = new LiveEntry(source, key);
                 return true;
             }
             preparedKey = default;
@@ -2486,10 +2502,26 @@ class JavaLinkedHashMap<K, V> :
         public int GetHashCode(StorageKey value) => JavaCompat.HashCode(value.Value);
     }
 
-    private sealed class Entry(K key, V value)
+    // Each entry is both the map's storage and the Map.Entry that entrySet()
+    // and removeEldestEntry hand out, as in Java. Entries form an intrusive
+    // doubly linked list in iteration order; a removed entry is unlinked.
+    private sealed class Entry : JavaMapEntry<K, V>
     {
-        internal K Key { get; } = key;
-        internal V Value { get; set; } = value;
+        internal Entry(K key, V value, long stamp)
+            : base(key, value, mutable: true) => Stamp = stamp;
+
+        internal Entry? Before;
+        internal Entry? After;
+        // Insertion sequence number, or -1 once the entry has left the map.
+        internal long Stamp;
+
+        internal bool Removed => Stamp < 0;
+
+        internal V Stored
+        {
+            get => __entryValue;
+            set => __entryValue = value;
+        }
     }
 
     private sealed class KeyComparer : IEqualityComparer<K>
@@ -2498,8 +2530,13 @@ class JavaLinkedHashMap<K, V> :
         public int GetHashCode(K value) => JavaCompat.HashCode(value);
     }
 
-    private readonly Dictionary<StorageKey, LinkedListNode<Entry>> entries;
-    private readonly LinkedList<Entry> order = new();
+    private readonly Dictionary<StorageKey, Entry> entries;
+    private Entry? head;
+    private Entry? tail;
+    private long nextStamp;
+    // Bumped by every structural change and access-order move; key, value and
+    // KeyValuePair enumerations fail fast on it.
+    private int version;
     private readonly bool accessOrder;
 
     public JavaLinkedHashMap() : this(0, 0.75f, false) { }
@@ -2511,8 +2548,7 @@ class JavaLinkedHashMap<K, V> :
         if (initialCapacity < 0) throw new ArgumentOutOfRangeException(nameof(initialCapacity));
         if (!(loadFactor > 0) || float.IsNaN(loadFactor))
             throw new ArgumentOutOfRangeException(nameof(loadFactor));
-        entries = new Dictionary<StorageKey, LinkedListNode<Entry>>(
-            initialCapacity, new StorageKeyComparer());
+        entries = new Dictionary<StorageKey, Entry>(initialCapacity, new StorageKeyComparer());
         this.accessOrder = accessOrder;
     }
     public JavaLinkedHashMap(IEnumerable<KeyValuePair<K, V>> values) : this()
@@ -2536,9 +2572,9 @@ class JavaLinkedHashMap<K, V> :
     {
         get
         {
-            if (!entries.TryGetValue(key, out var node)) throw new KeyNotFoundException();
-            RecordAccess(node);
-            return node.Value.Value;
+            if (!entries.TryGetValue(key, out var entry)) throw new KeyNotFoundException();
+            RecordAccess(entry);
+            return entry.Stored;
         }
         set => Put(key, value);
     }
@@ -2553,24 +2589,24 @@ class JavaLinkedHashMap<K, V> :
 
     internal V Get(K key)
     {
-        if (!entries.TryGetValue(key, out var node)) return default!;
-        RecordAccess(node);
-        return node.Value.Value;
+        if (!entries.TryGetValue(key, out var entry)) return default!;
+        RecordAccess(entry);
+        return entry.Stored;
     }
 
     internal V GetOrDefault(K key, V fallback)
     {
-        if (!entries.TryGetValue(key, out var node)) return fallback;
-        RecordAccess(node);
-        return node.Value.Value;
+        if (!entries.TryGetValue(key, out var entry)) return fallback;
+        RecordAccess(entry);
+        return entry.Stored;
     }
 
     internal V PutIfAbsent(K key, V value)
     {
-        if (entries.TryGetValue(key, out var node))
+        if (entries.TryGetValue(key, out var entry))
         {
-            var previous = node.Value.Value;
-            RecordAccess(node);
+            var previous = entry.Stored;
+            RecordAccess(entry);
             if (previous is not null) return previous;
         }
         return Put(key, value);
@@ -2578,11 +2614,11 @@ class JavaLinkedHashMap<K, V> :
 
     internal V ComputeIfAbsent(K key, Func<K, V> factory)
     {
-        var present = entries.TryGetValue(key, out var node);
+        var present = entries.TryGetValue(key, out var entry);
         if (present)
         {
-            var current = node!.Value.Value;
-            RecordAccess(node);
+            var current = entry!.Stored;
+            RecordAccess(entry);
             if (current is not null) return current;
         }
         var value = factory(key);
@@ -2595,17 +2631,20 @@ class JavaLinkedHashMap<K, V> :
     {
         if (entries.TryGetValue(key, out var existing))
         {
-            var previous = existing.Value.Value;
-            existing.Value.Value = value;
+            var previous = existing.Stored;
+            existing.Stored = value;
             RecordAccess(existing);
             return previous;
         }
 
-        var node = order.AddLast(new Entry(key, value));
-        entries.Add(key, node);
-        var eldest = order.First!;
-        if (RemoveEldestEntry(new JavaMapEntry<K, V>(this, eldest.Value.Key)))
-            Remove(eldest.Value.Key);
+        // Two key hashes per insertion: the miss above and this Add.
+        var entry = new Entry(key, value, nextStamp++);
+        entries.Add(key, entry);
+        Link(entry);
+        // Like Java, removeEldestEntry receives the eldest entry itself.
+        var eldest = head!;
+        if (RemoveEldestEntry(eldest))
+            Remove(eldest.Key);
         return default!;
     }
 
@@ -2616,8 +2655,8 @@ class JavaLinkedHashMap<K, V> :
 
     internal void ReplaceValueWithoutAccess(K key, V value)
     {
-        if (!entries.TryGetValue(key, out var node)) throw new KeyNotFoundException();
-        node.Value.Value = value;
+        if (!entries.TryGetValue(key, out var entry)) throw new KeyNotFoundException();
+        entry.Stored = value;
     }
 
     void JavaMapValueUpdater<K, V>.ReplaceValueWithoutAccess(K key, V value) =>
@@ -2625,11 +2664,69 @@ class JavaLinkedHashMap<K, V> :
 
     internal ISet<K> KeySet() => new KeySetView(this);
 
-    private void RecordAccess(LinkedListNode<Entry> node)
+    private void RecordAccess(Entry entry)
     {
-        if (!accessOrder || ReferenceEquals(order.Last, node)) return;
-        order.Remove(node);
-        order.AddLast(node);
+        if (!accessOrder || ReferenceEquals(tail, entry)) return;
+        Unlink(entry);
+        Link(entry);
+    }
+
+    private void Link(Entry entry)
+    {
+        entry.Before = tail;
+        entry.After = null;
+        if (tail is null) head = entry;
+        else tail.After = entry;
+        tail = entry;
+        version++;
+    }
+
+    private void Unlink(Entry entry)
+    {
+        var before = entry.Before;
+        var after = entry.After;
+        if (before is null) head = after;
+        else before.After = after;
+        if (after is null) tail = before;
+        else after.Before = before;
+        entry.Before = null;
+        entry.After = null;
+        version++;
+    }
+
+    // A detached entry may outlive the map through entrySet() or
+    // RemoveEldestEntry, so it keeps no links to other entries.
+    private void Detach(Entry entry)
+    {
+        Unlink(entry);
+        entry.Stamp = -1;
+    }
+
+    // The first live entry inserted after the given stamp; entries are in
+    // stamp order in an insertion-ordered map.
+    private Entry? FirstAfter(long stamp)
+    {
+        var entry = head;
+        while (entry is not null && entry.Stamp <= stamp) entry = entry.After;
+        return entry;
+    }
+
+    private IEnumerable<Entry> Ordered()
+    {
+        var expected = version;
+        for (var entry = head; entry is not null; entry = entry.After)
+        {
+            yield return entry;
+            if (version != expected)
+                throw new InvalidOperationException(
+                    "Collection was modified; enumeration operation may not execute.");
+        }
+    }
+
+    internal bool TryGetEntryEnumerator(out IEnumerator<JavaMapEntry<K, V>> enumerator)
+    {
+        enumerator = accessOrder ? null! : new EntryEnumerator(this);
+        return !accessOrder;
     }
 
     public void Add(K key, V value)
@@ -2642,30 +2739,30 @@ class JavaLinkedHashMap<K, V> :
 
     public bool Remove(K key)
     {
-        if (!entries.TryGetValue(key, out var node)) return false;
+        if (!entries.TryGetValue(key, out var entry)) return false;
         entries.Remove(key);
-        order.Remove(node);
+        Detach(entry);
         return true;
     }
 
     public bool Remove(K key, out V value)
     {
-        if (!entries.TryGetValue(key, out var node))
+        if (!entries.TryGetValue(key, out var entry))
         {
             value = default!;
             return false;
         }
-        value = node.Value.Value;
+        value = entry.Stored;
         entries.Remove(key);
-        order.Remove(node);
+        Detach(entry);
         return true;
     }
 
     public bool TryGetValue(K key, out V value)
     {
-        if (entries.TryGetValue(key, out var node))
+        if (entries.TryGetValue(key, out var entry))
         {
-            value = node.Value.Value;
+            value = entry.Stored;
             return true;
         }
         value = default!;
@@ -2677,11 +2774,22 @@ class JavaLinkedHashMap<K, V> :
     public void Clear()
     {
         entries.Clear();
-        order.Clear();
+        var entry = head;
+        while (entry is not null)
+        {
+            var after = entry.After;
+            entry.Before = null;
+            entry.After = null;
+            entry.Stamp = -1;
+            entry = after;
+        }
+        head = null;
+        tail = null;
+        version++;
     }
 
     public bool Contains(KeyValuePair<K, V> item) =>
-        entries.TryGetValue(item.Key, out var node) && JavaCompat.Equals(node.Value.Value, item.Value);
+        entries.TryGetValue(item.Key, out var entry) && JavaCompat.Equals(entry.Stored, item.Value);
     bool IDictionary.Contains(object key) =>
         JavaCompat.TryMapKey(key, out K typed) && ContainsKey(typed);
 
@@ -2703,8 +2811,8 @@ class JavaLinkedHashMap<K, V> :
 
     public IEnumerator<KeyValuePair<K, V>> GetEnumerator()
     {
-        foreach (var entry in order)
-            yield return new KeyValuePair<K, V>(entry.Key, entry.Value);
+        foreach (var entry in Ordered())
+            yield return new KeyValuePair<K, V>(entry.Key, entry.Stored);
     }
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -2748,7 +2856,7 @@ class JavaLinkedHashMap<K, V> :
         public bool Remove(K item) => source.Remove(item);
         public IEnumerator<K> GetEnumerator()
         {
-            foreach (var entry in source.order) yield return entry.Key;
+            foreach (var entry in source.Ordered()) yield return entry.Key;
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
@@ -2759,26 +2867,101 @@ class JavaLinkedHashMap<K, V> :
         public bool IsReadOnly => false;
         public void Add(V item) => throw new NotSupportedException("Java Map.values does not support add().");
         public void Clear() => source.Clear();
-        public bool Contains(V item) => source.order.Any(entry => JavaCompat.Equals(entry.Value, item));
+        public bool Contains(V item)
+        {
+            for (var entry = source.head; entry is not null; entry = entry.After)
+                if (JavaCompat.Equals(entry.Stored, item)) return true;
+            return false;
+        }
         public void CopyTo(V[] array, int arrayIndex)
         {
             foreach (var item in this) array[arrayIndex++] = item;
         }
         public bool Remove(V item)
         {
-            var node = source.order.First;
-            while (node is not null)
-            {
-                if (JavaCompat.Equals(node.Value.Value, item)) return source.Remove(node.Value.Key);
-                node = node.Next;
-            }
+            for (var entry = source.head; entry is not null; entry = entry.After)
+                if (JavaCompat.Equals(entry.Stored, item)) return source.Remove(entry.Key);
             return false;
         }
         public IEnumerator<V> GetEnumerator()
         {
-            foreach (var entry in source.order) yield return entry.Value;
+            foreach (var entry in source.Ordered()) yield return entry.Stored;
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    // entrySet() iteration over an insertion-ordered map: walks the entries
+    // themselves, with no key snapshot and no per-entry lookup. As with the
+    // snapshot iterator it replaces, entries removed before they are reached
+    // are skipped, entries added after the iterator was created are not
+    // visited, and Iterator.remove() removes the last entry returned.
+    private sealed class EntryEnumerator : IEnumerator<JavaMapEntry<K, V>>, JavaRemovableIterator
+    {
+        private readonly JavaLinkedHashMap<K, V> source;
+        private readonly long limit;
+        private Entry? prepared;
+        private long preparedStamp = -1;
+        // The successor captured when Iterator.remove() detached the prepared entry.
+        private Entry? resume;
+        private Entry? returned;
+        private bool exhausted;
+        private bool canRemove;
+
+        internal EntryEnumerator(JavaLinkedHashMap<K, V> source)
+        {
+            this.source = source;
+            limit = source.nextStamp;
+        }
+
+        public JavaMapEntry<K, V> Current { get; private set; } = default!;
+        object IEnumerator.Current => Current;
+
+        public bool MoveNext()
+        {
+            if (exhausted) return false;
+            Entry? entry;
+            if (prepared is null) entry = source.head;
+            else if (!prepared.Removed) entry = prepared.After;
+            else if (resume is not null && !resume.Removed) entry = resume;
+            // The prepared entry was removed behind the iterator's back
+            // (concurrent modification in Java): find its position by stamp.
+            else entry = source.FirstAfter(preparedStamp);
+            resume = null;
+            if (entry is null || entry.Stamp >= limit)
+            {
+                exhausted = true;
+                prepared = null;
+                Current = default!;
+                return false;
+            }
+            prepared = entry;
+            preparedStamp = entry.Stamp;
+            Current = entry;
+            return true;
+        }
+
+        public void MarkReturned()
+        {
+            if (prepared is null)
+                throw new InvalidOperationException("Iterator has no current map entry.");
+            returned = prepared;
+            canRemove = true;
+        }
+
+        public void Remove()
+        {
+            if (!canRemove)
+                throw new InvalidOperationException("Iterator.remove() requires one preceding next().");
+            if (!returned!.Removed)
+            {
+                if (ReferenceEquals(returned, prepared)) resume = returned.After;
+                source.Remove(returned.Key);
+            }
+            canRemove = false;
+        }
+
+        public void Reset() => throw new NotSupportedException();
+        public void Dispose() { }
     }
 
     private sealed class KeySetView(JavaLinkedHashMap<K, V> source) : ISet<K>
@@ -3751,9 +3934,124 @@ internal static partial class JavaCompat
         }
     }
 
-    internal static int ArrayHash(Array? values)
+    // java.util.Arrays.hashCode: one typed overload per Java element type, so
+    // elements are never boxed and each uses the Java wrapper's hashCode.
+    internal static int ArrayHash(sbyte[]? values)
     {
         if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + value;
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(short[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + value;
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(char[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + value;
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(int[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + value;
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(long[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + (int)(value ^ (long)((ulong)value >> 32));
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(float[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + FloatToIntBits(value);
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(double[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + DoubleHashCode(value);
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(bool[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + (value ? 1231 : 1237);
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(object?[]? values)
+    {
+        if (values is null) return 0;
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + JavaHashCode(value);
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(Array? values) => values switch
+    {
+        null => 0,
+        sbyte[] typed => ArrayHash(typed),
+        short[] typed => ArrayHash(typed),
+        char[] typed => ArrayHash(typed),
+        int[] typed => ArrayHash(typed),
+        long[] typed => ArrayHash(typed),
+        float[] typed => ArrayHash(typed),
+        double[] typed => ArrayHash(typed),
+        bool[] typed => ArrayHash(typed),
+        object?[] typed => ArrayHash(typed),
+        _ => ArrayHashOfOtherArray(values),
+    };
+
+    private static int ArrayHashOfOtherArray(Array values)
+    {
         unchecked
         {
             var result = 1;

@@ -1317,6 +1317,368 @@ public sealed class JavaEqualityConsumerTests
     }
 }
 
+// java.util.Arrays.hashCode behind COSName, COSString, Matrix and TextPosition
+// hashing, and the JavaLinkedHashMap behind every COSDictionary. Expected
+// hashes are java.util.Arrays.hashCode results from a JVM.
+public sealed class JavaArrayHashAndLinkedMapConsumerTests
+{
+    private const int Calls = 1000;
+
+    [Fact]
+    public void ArrayHashMatchesJavaArraysHashCodeForEveryElementType()
+    {
+        var bytes = new sbyte[] { 0, 1, -1, 127, -128, 64 };
+        var shorts = new short[] { 0, 1, -1, short.MaxValue, short.MinValue };
+        var chars = new[] { 'a', '\0', '￿', 'é' };
+        var ints = new[] { 0, 1, -1, int.MaxValue, int.MinValue };
+        var longs = new[] { 0L, 1L, -1L, long.MaxValue, long.MinValue, 0x100000000L };
+        var floats = new[]
+        {
+            0f, -0f, 1.5f, float.NaN, float.PositiveInfinity, float.NegativeInfinity,
+            float.Epsilon, IntBitsToFloat(0x7f800001), IntBitsToFloat(unchecked((int)0xffc00000)),
+        };
+        var doubles = new[]
+        {
+            0d, -0d, 1.5d, double.NaN, double.PositiveInfinity, double.NegativeInfinity,
+            double.Epsilon, BitConverter.Int64BitsToDouble(0x7ff0000000000001L), 1.0E300,
+        };
+        var booleans = new[] { true, false, true };
+        var objects = new object?[] { "a", null, "PdfCarton" };
+
+        Assert.Equal(888515554, Compat.JavaCompat.ArrayHash(bytes));
+        Assert.Equal(29640990, Compat.JavaCompat.ArrayHash(shorts));
+        Assert.Equal(5845066, Compat.JavaCompat.ArrayHash(chars));
+        Assert.Equal(28657950, Compat.JavaCompat.ArrayHash(ints));
+        Assert.Equal(888427203, Compat.JavaCompat.ArrayHash(longs));
+        Assert.Equal(-1001818912, Compat.JavaCompat.ArrayHash(floats));
+        Assert.Equal(-863435136, Compat.JavaCompat.ArrayHash(doubles));
+        Assert.Equal(1252360, Compat.JavaCompat.ArrayHash(booleans));
+        Assert.Equal(1962336497, Compat.JavaCompat.ArrayHash(objects));
+        Assert.Equal(1, Compat.JavaCompat.ArrayHash(new sbyte[0]));
+        Assert.Equal(0, Compat.JavaCompat.ArrayHash((sbyte[]?)null));
+        Assert.Equal(0, Compat.JavaCompat.ArrayHash((object?[]?)null));
+
+        // The untyped entry point dispatches to the same Java hashes.
+        Array[] arrays = { bytes, shorts, chars, ints, longs, floats, doubles, booleans, objects };
+        int[] expected =
+        {
+            888515554, 29640990, 5845066, 28657950, 888427203,
+            -1001818912, -863435136, 1252360, 1962336497,
+        };
+        for (int index = 0; index < arrays.Length; index++)
+            Assert.Equal(expected[index], Compat.JavaCompat.ArrayHash(arrays[index]));
+        Assert.Equal(0, Compat.JavaCompat.ArrayHash((Array?)null));
+        Assert.Equal(1962336497, Compat.JavaCompat.ArrayHash(new[] { "a", null, "PdfCarton" }));
+    }
+
+    [Fact]
+    public void PrimitiveArrayHashingAndCOSNameHashingAllocateNothing()
+    {
+        var bytes = new sbyte[] { 1, -2, 3, -4 };
+        var floats = new[] { 1f, -0f, float.NaN };
+        var doubles = new[] { 1d, -0d, double.NaN };
+        AssertNoAllocation(() => Compat.JavaCompat.ArrayHash(bytes) != 0);
+        AssertNoAllocation(() => Compat.JavaCompat.ArrayHash(floats) != 0);
+        AssertNoAllocation(() => Compat.JavaCompat.ArrayHash(doubles) != 0);
+
+        COSName type = COSName.Type;
+        Assert.Equal(3545819, type.GetHashCode());
+        Assert.Equal(7722, COSName.GetPDFName(new sbyte[] { -23, -1, 65 }).GetHashCode());
+        AssertNoAllocation(() => type.GetHashCode() == 3545819);
+    }
+
+    [Fact]
+    public void COSStreamDescriptionUsesTheJavaHashOfItsRawBytes()
+    {
+        var stream = new COSStream();
+        using (var output = stream.CreateRawOutputStream())
+            output.Write(new byte[] { 0x80, 0xff, 0, 1, 127 });
+        Assert.EndsWith("COSStream{-89611170}", stream.ToString());
+    }
+
+    [Fact]
+    public void InsertionHashesTheKeyTwiceAndAllocatesNoEldestEntry()
+    {
+        var map = new Compat.JavaLinkedHashMap<CountingKey, int>(Calls * 2);
+        var keys = new CountingKey[Calls];
+        for (int index = 0; index < keys.Length; index++) keys[index] = new CountingKey(index);
+
+        CountingKey.Reset();
+        Compat.JavaCompat.MapPut(map, keys[0], 0);
+        Assert.Equal(2, CountingKey.Hashes);
+        CountingKey.Reset();
+        Compat.JavaCompat.MapPut(map, keys[0], 1);
+        Assert.Equal(1, CountingKey.Hashes);
+
+        // One entry object per insertion: no separate list node and no eldest
+        // entry for the RemoveEldestEntry check (both were allocated before).
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 1; index < keys.Length; index++) Compat.JavaCompat.MapPut(map, keys[index], index);
+        long perInsertion = (GC.GetAllocatedBytesForCurrentThread() - before) / (keys.Length - 1);
+        Assert.InRange(perInsertion, 1, 64);
+
+        var dictionary = new COSDictionary();
+        dictionary.SetItem(COSName.Type, COSName.Page);
+        long putBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 0; index < Calls; index++) dictionary.SetItem(COSName.Type, COSName.Page);
+        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - putBefore);
+    }
+
+    [Fact]
+    public void RemoveEldestEntryOverrideReceivesTheLiveEldestEntry()
+    {
+        var cache = new BoundedMap(2);
+        cache["a"] = 1;
+        cache["b"] = 2;
+        cache["c"] = 3;
+        Assert.Equal(new[] { "b", "c" }, cache.Keys.ToArray());
+        cache["b"] = 20;
+        cache["d"] = 4;
+        Assert.Equal(new[] { "c", "d" }, cache.Keys.ToArray());
+        Assert.Equal(new[] { "a=1", "a=1", "a=1", "b=20" }, cache.Seen.ToArray());
+    }
+
+    [Fact]
+    public void EntrySetIterationTakesNoSnapshotAndDoesNoLookups()
+    {
+        var map = new Compat.JavaLinkedHashMap<CountingKey, int>();
+        for (int index = 0; index < 100; index++) map[new CountingKey(index)] = index;
+        var entries = Compat.JavaCompat.MapEntrySet(map);
+
+        CountingKey.Reset();
+        int sum = 0;
+        foreach (var entry in entries) sum += entry.Value + entry.Key.Id;
+        Assert.Equal(2 * 4950, sum);
+        Assert.Equal(0, CountingKey.Hashes);
+        Assert.Equal(0, CountingKey.Comparisons);
+
+        var dictionary = new COSDictionary();
+        for (int index = 0; index < 100; index++)
+            dictionary.SetInt(COSName.GetPDFName("K" + index), index);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        int count = 0;
+        foreach (var entry in dictionary.EntrySet()) count += entry.Value is COSInteger ? 1 : 0;
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal(100, count);
+        // The entry-set view and its enumerator, independent of the size.
+        Assert.InRange(allocated, 1, 256);
+    }
+
+    [Fact]
+    public void EntrySetIterationKeepsMutationDuringIterationSemantics()
+    {
+        var map = new Compat.JavaLinkedHashMap<string, int>();
+        foreach (var key in new[] { "a", "b", "c", "d", "e" }) map[key] = 0;
+        var visited = new List<string>();
+        foreach (var entry in Compat.JavaCompat.MapEntrySet(map))
+        {
+            visited.Add(entry.Key);
+            entry.SetValue(entry.Key[0]);
+            if (entry.Key == "a")
+            {
+                map.Remove("a");    // the current entry
+                map.Remove("c");    // not reached yet: skipped
+                map["f"] = 0;       // added after the iterator started: not visited
+            }
+        }
+        Assert.Equal(new[] { "a", "b", "d", "e" }, visited);
+        Assert.Equal(new[] { "b=98", "d=100", "e=101", "f=0" },
+            map.Select(pair => pair.Key + "=" + pair.Value).ToArray());
+
+        // Iterator.remove() removes the entry returned by next(), also after
+        // hasNext() has prepared the following entry.
+        var iterator = Compat.JavaCompat.MapEntrySet(map).GetEnumerator();
+        var first = Compat.JavaCompat.IteratorNext(iterator);
+        Assert.True(Compat.JavaCompat.IteratorHasNext(iterator));
+        Compat.JavaCompat.IteratorRemove(iterator);
+        Assert.Throws<InvalidOperationException>(() => Compat.JavaCompat.IteratorRemove(iterator));
+        Assert.Equal("b", first.Key);
+        Assert.Equal("d", Compat.JavaCompat.IteratorNext(iterator).Key);
+        Compat.JavaCompat.IteratorRemove(iterator);
+        Assert.Equal(new[] { "e", "f" }, map.Keys.ToArray());
+
+        // A removed entry is detached: it keeps its last value and no longer
+        // writes through to the map, like Java's LinkedHashMap nodes.
+        Assert.Equal(98, first.Value);
+        var stale = Compat.JavaCompat.MapEntrySet(map).First();
+        map.Remove("e");
+        stale.SetValue(7);
+        Assert.False(map.ContainsKey("e"));
+        Assert.Equal(7, stale.Value);
+
+        // Clearing the map ends an iteration in progress.
+        map["g"] = 1;
+        int seen = 0;
+        foreach (var entry in Compat.JavaCompat.MapEntrySet(map))
+        {
+            seen++;
+            map.Clear();
+        }
+        Assert.Equal(1, seen);
+
+        // Key, value and pair enumeration still fail fast on modification.
+        map["x"] = 1;
+        map["y"] = 2;
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            foreach (var key in map.Keys) map.Remove("y");
+        });
+    }
+
+    [Fact]
+    public void AccessOrderedEntrySetIterationAndEntryUpdatesKeepAccessOrder()
+    {
+        var map = new Compat.JavaLinkedHashMap<string, int>(8, 0.75f, true);
+        map["a"] = 1;
+        map["b"] = 2;
+        map["c"] = 3;
+        foreach (var entry in Compat.JavaCompat.MapEntrySet(map))
+            if (entry.Key == "a") entry.SetValue(10);
+        Assert.Equal(new[] { "a=10", "b=2", "c=3" },
+            map.Select(pair => pair.Key + "=" + pair.Value).ToArray());
+        Assert.Equal(2, Compat.JavaCompat.MapGet(map, "b"));
+        Assert.Equal(new[] { "a", "c", "b" },
+            Compat.JavaCompat.MapEntrySet(map).Select(entry => entry.Key).ToArray());
+    }
+
+    // Entries escape through entrySet() and RemoveEldestEntry, so a detached
+    // entry must not keep later entries (and their values) reachable.
+    [Fact]
+    public void DetachedEntriesDoNotRetainOtherEntriesOrValues()
+    {
+        var map = new Compat.JavaLinkedHashMap<int, object>();
+        var saved = ChurnAfterSavingAnEntry(map, out List<WeakReference> evicted);
+        CollectUntilDead(evicted);
+        Assert.All(evicted, value => Assert.False(value.IsAlive));
+        Assert.False(map.ContainsKey(saved.Key));
+
+        var kept = FillThenClear(map, out List<WeakReference> cleared);
+        CollectUntilDead(cleared);
+        Assert.All(cleared, value => Assert.False(value.IsAlive));
+        Assert.Empty(map);
+        GC.KeepAlive(saved);
+        GC.KeepAlive(kept);
+    }
+
+    [Fact]
+    public void SnapshotBackedEntriesStayDetachedAfterRemoval()
+    {
+        var maps = new IDictionary<string, int>[]
+        {
+            new Dictionary<string, int>(),
+            new Compat.JavaLinkedHashMap<string, int>(8, 0.75f, true),
+        };
+        foreach (var map in maps)
+        {
+            map["k"] = 1;
+            map["other"] = 2;
+            var entry = Compat.JavaCompat.MapEntrySet(map).First(item => item.Key == "k");
+            var other = Compat.JavaCompat.MapEntrySet(map).First(item => item.Key == "other");
+            map.Remove("k");
+            Assert.Equal(1, entry.SetValue(5));
+            Assert.Equal(5, entry.Value);
+            Assert.False(map.ContainsKey("k"));
+            // An entry whose key is still present writes through.
+            Assert.Equal(2, other.SetValue(3));
+            Assert.Equal(3, map["other"]);
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static Compat.JavaMapEntry<int, object> ChurnAfterSavingAnEntry(
+        Compat.JavaLinkedHashMap<int, object> map, out List<WeakReference> evicted)
+    {
+        evicted = new List<WeakReference>();
+        map[0] = new object();
+        var saved = Compat.JavaCompat.MapEntrySet(map).First();
+        map.Remove(0);
+        for (int key = 1; key <= 50; key++)
+        {
+            var value = new object();
+            map[key] = value;
+            if (key > 1) map.Remove(key - 1);
+            if (key < 50) evicted.Add(new WeakReference(value));
+        }
+        map.Remove(50);
+        return saved;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static Compat.JavaMapEntry<int, object> FillThenClear(
+        Compat.JavaLinkedHashMap<int, object> map, out List<WeakReference> cleared)
+    {
+        cleared = new List<WeakReference>();
+        for (int key = 0; key < 50; key++)
+        {
+            var value = new object();
+            map[key] = value;
+            if (key > 0) cleared.Add(new WeakReference(value));
+        }
+        var kept = Compat.JavaCompat.MapEntrySet(map).First();
+        map.Clear();
+        return kept;
+    }
+
+    private static void CollectUntilDead(List<WeakReference> references)
+    {
+        for (int attempt = 0; attempt < 20 && references.Any(reference => reference.IsAlive); attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
+
+    private static float IntBitsToFloat(int bits) =>
+        BitConverter.ToSingle(BitConverter.GetBytes(bits), 0);
+
+    private static void AssertNoAllocation(Func<bool> call)
+    {
+        Assert.True(call());
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool result = true;
+        for (int index = 0; index < Calls; index++) result &= call();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(result);
+        Assert.Equal(0, allocated);
+    }
+
+    private sealed class CountingKey(int id)
+    {
+        [ThreadStatic] private static int hashes;
+        [ThreadStatic] private static int comparisons;
+        internal static int Hashes => hashes;
+        internal static int Comparisons => comparisons;
+        internal int Id { get; } = id;
+        internal static void Reset()
+        {
+            hashes = 0;
+            comparisons = 0;
+        }
+        public override int GetHashCode()
+        {
+            hashes++;
+            return Id;
+        }
+        public override bool Equals(object? other)
+        {
+            comparisons++;
+            return other is CountingKey key && key.Id == Id;
+        }
+    }
+
+    private sealed class BoundedMap(int limit) : Compat.JavaLinkedHashMap<string, int>
+    {
+        internal List<string> Seen { get; } = new();
+        protected internal override bool RemoveEldestEntry(Compat.JavaMapEntry<string, int> eldest)
+        {
+            Seen.Add(eldest.ToString());
+            return Count > limit;
+        }
+    }
+}
+
 // java.util.BitSet behind ScratchFile's free-page map. It was a HashSet<int>
 // whose nextSetBit scanned every set bit: an unrestricted ScratchFile starts
 // with 100,000 free pages and takes each new page with nextSetBit(0).

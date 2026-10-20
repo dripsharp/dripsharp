@@ -1449,7 +1449,16 @@ internal static partial class JavaCompat
     internal static int HighestOneBit(int value) =>
         value == 0 ? 0 : 1 << (31 - IntLeadingZeros(value));
     internal static int FloatToIntBits(float value) =>
-        float.IsNaN(value) ? 0x7fc00000 : BitConverter.ToInt32(BitConverter.GetBytes(value), 0);
+        float.IsNaN(value) ? 0x7fc00000 : new SingleBits { Single = value }.Int32;
+
+    // netstandard2.0 has no BitConverter.SingleToInt32Bits; an overlapping
+    // field reads the IEEE bits without allocating or unsafe code.
+    [StructLayout(LayoutKind.Explicit)]
+    private struct SingleBits
+    {
+        [FieldOffset(0)] internal float Single;
+        [FieldOffset(0)] internal int Int32;
+    }
     private static int LeadingZeroCount(ulong value)
     {
         if (value == 0) return 64;
