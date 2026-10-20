@@ -28,7 +28,7 @@
   :header "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"
   :columns [:family :id :value]
   :required-families ["behavior" "type-contract"]
-  :expected-count 202}
+  :expected-count 203}
  :oracle
  {:source "validation/java-compat/JavaCompatOracle.java"
   :main-class "JavaCompatOracle"

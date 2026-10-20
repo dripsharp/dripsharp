@@ -1,7 +1,10 @@
 using DripSharp.PdfCarton;
 using DripSharp.PdfCarton.Cos;
+using DripSharp.PdfCarton.Filter;
+using DripSharp.PdfCarton.IO;
 using DripSharp.PdfCarton.Pdmodel;
 using DripSharp.PdfCarton.Pdmodel.Common;
+using DripSharp.PdfCarton.Pdmodel.Font;
 using DripSharp.PdfCarton.Pdmodel.Graphics.Color;
 using DripSharp.PdfCarton.Pdmodel.Graphics.Image;
 using DripSharp.PdfCarton.Rendering;
@@ -483,4 +486,237 @@ internal static class IccRenderFixtures
     }
 
     internal static sbyte[] Signed(byte[] bytes) => (sbyte[])(Array)bytes;
+}
+
+// /FlateDecode through the public FlateFilterDecoderStream and font loading.
+public sealed class FlateConsumerTests
+{
+    [Fact]
+    public void FlateDecodingMatchesTheInputAcrossFeedsReadSizesAndStreamSizes()
+    {
+        // Feed int.MaxValue gives PDFBox's own 2 KiB input / 4 KiB output pattern.
+        foreach (int size in new[] { 0, 1, 4095, 4097, 70_000, 1_100_000 })
+        {
+            byte[] payload = FlatePayload(size);
+            byte[] encoded = Zlib(payload, flushAt: -1, out _);
+            foreach (int feed in new[] { 1, 7, 2048, int.MaxValue })
+            foreach (int read in new[] { 1, 3, 4096, 65536 })
+                Assert.Equal(payload, DecodeFlate(encoded, feed, read));
+        }
+    }
+
+    [Fact]
+    public void FlateDecodingAllocatesIndependentlyOfTheDecodedSize()
+    {
+        // The decoder once re-inflated everything fed so far on every 4 KiB
+        // drain: about D * D / 2048 bytes of buffers for D decoded bytes.
+        byte[] small = Zlib(FlatePayload(256 * 1024), flushAt: -1, out _);
+        byte[] large = Zlib(FlatePayload(4 * 1024 * 1024), flushAt: -1, out _);
+        AllocatedWhileDecoding(small);
+        long smallAllocated = AllocatedWhileDecoding(small);
+        long largeAllocated = AllocatedWhileDecoding(large);
+        Assert.True(largeAllocated < 256 * 1024,
+            $"Decoding 4 MiB allocated {largeAllocated} bytes (256 KiB: {smallAllocated}).");
+    }
+
+    [Fact]
+    public void FlateDecodingRecoversWhatPdfBoxRecoversFromDamagedStreams()
+    {
+        // Expected lengths are Java PDFBox 3.0.8's FlateFilterDecoderStream on
+        // identical bytes: stored blocks, then a header with BFINAL=1, dynamic
+        // codes, HLIT=31 ("too many length or distance symbols"). PDFBox keeps
+        // the non-zero prefix of its 4 KiB buffer after the failing inflate,
+        // so how much it recovers depends on the feed and read sizes.
+        byte[] payload = StoredPayload(9000);
+        foreach (var (split, block, feed, read, expected) in new[]
+                 {
+                     (3000, 1000, 1, 4096, 3000), (3000, 1000, 2048, 1, 2034),
+                     (3000, 65535, 7, 1, 2999), (6000, 1000, 7, 1, 5998),
+                     (6000, 1000, 1, 8192, 6000), (6000, 65535, 2048, 1, 4092),
+                     (6000, 65535, 2048, 4096, 4096), (6000, 65535, 2048, 8192, 6000),
+                 })
+        {
+            byte[] damaged = Stored(payload, split, block, last: false, [0xFD, 0, 0, 0]);
+            Assert.Equal(payload[..expected], DecodeFlate(damaged, feed, read));
+        }
+
+        // Truncated input yields every byte it holds; trailing bytes are ignored.
+        byte[] whole = Stored(payload, payload.Length, 1000, last: true, [1, 2, 3, 4]);
+        foreach (int feed in new[] { 1, 2048 })
+        foreach (int read in new[] { 1, 4096 })
+        {
+            Assert.Equal(payload[..4573], DecodeFlate(whole[..4600], feed, read));
+            Assert.Equal(payload, DecodeFlate([.. whole, .. "garbage"u8.ToArray()], feed, read));
+        }
+
+        // Huffman-coded data damaged right after a sync flush.
+        byte[] coded = FlatePayload(9000);
+        foreach (int split in new[] { 3000, 6000 })
+        {
+            byte[] damaged = Zlib(coded, split, out int boundary);
+            damaged[boundary] = 0xFD;
+            Assert.Equal(coded[..split], DecodeFlate(damaged, 1, 4096));
+        }
+        byte[] withoutChecksum = Zlib(coded, -1, out _)[..^4];
+        Assert.Equal(coded, DecodeFlate(withoutChecksum, 13, 4096));
+    }
+
+    [Fact]
+    public void WholeEmbeddedFontsLoadWithLinearFlateDecoding()
+    {
+        // Stands in for the reported page with two whole ~1 MB fonts: PdfCarton's
+        // bundled LiberationSans-Regular (SIL OFL, 410 KiB) embedded whole twice.
+        byte[] original;
+        using (Stream resource = OpenLiberationSans())
+        using (var copy = new MemoryStream())
+        {
+            resource.CopyTo(copy);
+            original = copy.ToArray();
+        }
+
+        byte[] saved;
+        using (var document = new PDDocument())
+        {
+            var page = new PDPage();
+            document.AddPage(page);
+            var resources = new PDResources();
+            for (int copy = 0; copy < 2; copy++)
+            {
+                using Stream font = OpenLiberationSans();
+                resources.Add(PDType0Font.Load(document, font, false));
+            }
+            page.SetResources(resources);
+            using var output = new MemoryStream();
+            document.Save(output);
+            saved = output.ToArray();
+        }
+
+        using PDDocument reopened = Loader.LoadPDF(Signed(saved));
+        PDResources loaded = reopened.GetPage(0).GetResources();
+        int fonts = 0;
+        foreach (COSName name in loaded.GetFontNames())
+        {
+            var font = Assert.IsType<PDType0Font>(loaded.GetFont(name));
+            Assert.Equal("LiberationSans", font.GetDescendantFont().GetBaseFont());
+            Assert.True(font.GetStringWidth("PdfCarton") > 0);
+            PDStream file = font.GetDescendantFont().GetFontDescriptor().GetFontFile2();
+            Assert.Equal(COSName.FlateDecode, file.GetFilters()[0]);
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            sbyte[] decoded = file.ToByteArray();
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(original, (byte[])(Array)decoded);
+            Assert.True(allocated < 16L * original.Length,
+                $"Decoding a {original.Length}-byte font allocated {allocated} bytes.");
+            fonts++;
+        }
+        Assert.Equal(2, fonts);
+    }
+
+    private static sbyte[] Signed(byte[] bytes) => (sbyte[])(Array)bytes;
+
+    private static Stream OpenLiberationSans() =>
+        typeof(PDDocument).Assembly.GetManifestResourceStream(
+            "org.apache.pdfbox.resources.ttf.LiberationSans-Regular.ttf")
+        ?? throw new InvalidOperationException("PdfCarton font resource is missing.");
+
+    // Deterministic compressible bytes with no zeros, so PDFBox's zero-trimming
+    // recovery cannot hide a lost tail.
+    private static byte[] FlatePayload(int length)
+    {
+        var payload = new byte[length];
+        uint state = 12345;
+        for (int index = 0; index < length; index++)
+        {
+            state = state * 1103515245 + 12345;
+            payload[index] = index > 32 && ((state >> 8) & 3) == 0
+                ? payload[index - 1 - (int)((state >> 20) & 31)]
+                : (byte)('a' + (state >> 16) % 23);
+        }
+        return payload;
+    }
+
+    private static byte[] StoredPayload(int length)
+    {
+        var payload = new byte[length];
+        for (int index = 0; index < length; index++)
+            payload[index] = (byte)('a' + (index * 7 + index / 13) % 23);
+        return payload;
+    }
+
+    // A zlib header, the first count bytes in stored blocks of at most block
+    // bytes, then tail.
+    private static byte[] Stored(byte[] payload, int count, int block, bool last, byte[] tail)
+    {
+        using var output = new MemoryStream();
+        output.Write([0x78, 0x01]);
+        for (int offset = 0; offset < count; offset += block)
+        {
+            int length = Math.Min(block, count - offset);
+            output.WriteByte(last && offset + length == count ? (byte)1 : (byte)0);
+            output.Write([(byte)length, (byte)(length >> 8), (byte)~length, (byte)(~length >> 8)]);
+            output.Write(payload, offset, length);
+        }
+        output.Write(tail);
+        return output.ToArray();
+    }
+
+    // zlib-wrapped data; with flushAt >= 0, a sync flush after that many bytes
+    // leaves the next block starting byte-aligned at boundary.
+    private static byte[] Zlib(byte[] payload, int flushAt, out int boundary)
+    {
+        using var output = new MemoryStream();
+        boundary = -1;
+        using (var zlib = new System.IO.Compression.ZLibStream(
+                   output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        {
+            if (flushAt >= 0)
+            {
+                zlib.Write(payload, 0, flushAt);
+                zlib.Flush();
+                boundary = checked((int)output.Length);
+                zlib.Write(payload, flushAt, payload.Length - flushAt);
+            }
+            else
+            {
+                zlib.Write(payload);
+            }
+        }
+        return output.ToArray();
+    }
+
+    private static byte[] DecodeFlate(byte[] encoded, int feed, int read)
+    {
+        using var decoder = new FlateFilterDecoderStream(new TricklingInputStream(encoded, feed));
+        var buffer = new sbyte[read];
+        using var decoded = new MemoryStream();
+        int count;
+        while ((count = decoder.Read(buffer, 0, buffer.Length)) > 0)
+            decoded.Write((byte[])(Array)buffer, 0, count);
+        return decoded.ToArray();
+    }
+
+    private static long AllocatedWhileDecoding(byte[] encoded)
+    {
+        var source = new TricklingInputStream(encoded, int.MaxValue);
+        var buffer = new sbyte[4096];
+        long total = 0;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        using (var decoder = new FlateFilterDecoderStream(source))
+        {
+            int count;
+            while ((count = decoder.Read(buffer, 0, buffer.Length)) > 0)
+                total += count;
+        }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(total > 0);
+        return allocated;
+    }
+
+    // A PDF stream source over memory that returns at most feed bytes per read.
+    private sealed class TricklingInputStream(byte[] bytes, int feed)
+        : RandomAccessInputStream(new RandomAccessReadBuffer(Signed(bytes)))
+    {
+        public override int Read(sbyte[] b, int off, int len) =>
+            base.Read(b, off, Math.Min(len, feed));
+    }
 }

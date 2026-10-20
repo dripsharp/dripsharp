@@ -405,11 +405,20 @@ internal static class Program
         sbyte[] encoded, int chunk, string sequence, CompressionCase observation)
     {
         if (encoded.Length > 16384 || chunk <= 0 ||
-            sequence is not ("close" or "flush-close"))
+            sequence is not ("close" or "flush-close" or "write-byte-close"))
             throw new ArgumentException("Invalid bounded compression case");
 
         var inflater = new JavaInflaterOutputStream(observation.Output);
-        for (var offset = 0; offset < encoded.Length; offset += chunk)
+        if (sequence == "write-byte-close")
+        {
+            for (var offset = 0; offset < encoded.Length; offset++)
+            {
+                observation.Stage = "write-" + offset.ToString(CultureInfo.InvariantCulture);
+                inflater.WriteByte(unchecked((byte)encoded[offset]));
+                observation.OutputAfterWrites.Add(checked((int)observation.Output.Length));
+            }
+        }
+        for (var offset = 0; sequence != "write-byte-close" && offset < encoded.Length; offset += chunk)
         {
             observation.Stage = "write-" + offset.ToString(CultureInfo.InvariantCulture);
             var count = Math.Min(chunk, encoded.Length - offset);
@@ -429,6 +438,71 @@ internal static class Program
         observation.Stage = "closed";
         return observation.Output.ToArray()
             .Select(value => unchecked((sbyte)value)).ToArray();
+    }
+
+    private static string RunInflate(
+        sbyte[] encoded, int feed, int outputSize, string mode, CompressionCase observation)
+    {
+        if (encoded.Length > 65536 || feed <= 0 || outputSize <= 0 || outputSize > 65536 ||
+            mode is not ("raw" or "zlib"))
+            throw new ArgumentException("Invalid bounded inflate case");
+        observation.CompareTiming = false;
+        var inflater = new JavaInflater(mode == "raw");
+        var trace = new List<string>();
+        var output = new sbyte[outputSize];
+        var offset = 0;
+        try
+        {
+            for (var step = 0; step < 100000; step++)
+            {
+                if (inflater.Finished())
+                {
+                    trace.Add("F");
+                    break;
+                }
+                if (inflater.NeedsInput())
+                {
+                    if (offset >= encoded.Length)
+                    {
+                        trace.Add("I");
+                        break;
+                    }
+                    var part = Math.Min(feed, encoded.Length - offset);
+                    inflater.SetInput(encoded, offset, part);
+                    offset += part;
+                }
+                Array.Clear(output, 0, output.Length);
+                int count;
+                try
+                {
+                    count = inflater.Inflate(output);
+                }
+                catch (InvalidDataException)
+                {
+                    var prefix = output.Length;
+                    while (prefix > 0 && output[prefix - 1] == 0) prefix--;
+                    var crc = new JavaCrc32();
+                    crc.Update(output, 0, output.Length);
+                    trace.Add("E" + prefix.ToString(CultureInfo.InvariantCulture) + ":" +
+                              crc.GetValue().ToString(CultureInfo.InvariantCulture));
+                    break;
+                }
+                observation.Output.Write(
+                    output.Select(value => unchecked((byte)value)).ToArray(), 0, count);
+                if (count == 0 && !inflater.NeedsInput() && !inflater.Finished())
+                {
+                    trace.Add("S");
+                    break;
+                }
+                trace.Add(count.ToString(CultureInfo.InvariantCulture) +
+                          (inflater.Finished() ? "f" : "") + (inflater.NeedsInput() ? "n" : ""));
+            }
+        }
+        finally
+        {
+            inflater.End();
+        }
+        return offset.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", trace);
     }
 
     private static string FileInspection(JavaFile file) => string.Join("\u0001",
@@ -510,6 +584,7 @@ internal static class Program
                     "binary-data/read-fully" or "binary-data/write-buffer" => 3,
                     "compression/roundtrip" => 5,
                     "compression/decode" => 3,
+                    "compression/inflate" => 4,
                     "byte-array-input/open" => 3,
                     "filter-input/open" => 3,
                     "byte-array-input/read-buffer" or "filter-input/read-buffer" => 3,
@@ -662,6 +737,12 @@ internal static class Program
                             result = "b:" + Hex(RunCompressionDecode(
                                 (sbyte[])values[0]!, IntValue(values[1]),
                                 (string)values[2]!, compressionCase));
+                            break;
+                        case "compression/inflate":
+                            compressionCase = new CompressionCase();
+                            result = StringToken(RunInflate(
+                                (sbyte[])values[0]!, IntValue(values[1]), IntValue(values[2]),
+                                (string)values[3]!, compressionCase));
                             break;
                         case "byte-array-input/open":
                             inputCase?.Stream.Dispose();

@@ -17,7 +17,9 @@ Reports include time, error, standard deviation, GC counts, and managed allocate
 bytes. Managed allocation counts do not include Skia's native bitmap memory.
 
 Select individual classes with `--filter '*RasterBenchmarks*'`,
-`--filter '*SmallBlendBenchmarks*'`, or `--filter '*RenderingBenchmarks*'`.
+`--filter '*SmallBlendBenchmarks*'`, `--filter '*RenderingBenchmarks*'`, or
+`--filter '*FlateBenchmarks*'` (/FlateDecode and whole embedded-font loading
+at 64 KiB to 4 MiB, server GC).
 Benchmark setup and cleanup are excluded from timings. Read results into reused
 buffers; writes consume a prebuilt sample buffer. Small blends report per-blend
 cost from a batch of nonoverlapping rectangles, with the destination reset before

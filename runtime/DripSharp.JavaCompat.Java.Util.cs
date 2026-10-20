@@ -646,122 +646,608 @@ internal sealed class JavaBitSet
 
 internal static class JavaZlib
 {
-    private static readonly Type? ZLibStreamType =
-        Type.GetType("System.IO.Compression.ZLibStream, System.IO.Compression");
+    internal static uint Adler32(byte[] bytes) => Adler32(1, bytes);
 
-    internal static byte[] DecompressAvailable(MemoryStream compressed)
+    internal static uint Adler32(uint adler, ReadOnlySpan<byte> bytes)
     {
-        var result = DecompressAvailable(compressed, out var failure);
-        if (failure is not null) throw failure;
-        return result;
-    }
-
-    internal static byte[] DecompressAvailable(
-        MemoryStream compressed, out InvalidDataException? failure)
-    {
-        var bytes = compressed.ToArray();
-        failure = null;
-        if (bytes.Length < 2) return Array.Empty<byte>();
-        ValidateHeader(bytes);
-        if (ZLibStreamType is not null)
+        var first = adler & 0xffff;
+        var second = adler >> 16;
+        while (bytes.Length > 0)
         {
-            using var input = new MemoryStream(bytes, writable: false);
-            using var inflater = (Stream)Activator.CreateInstance(
-                ZLibStreamType,
-                new object[] { input, CompressionMode.Decompress, true })!;
-            using var decoded = new MemoryStream();
-            try
+            // 5552 is the longest run whose sums cannot overflow 32 bits.
+            var count = Math.Min(bytes.Length, 5552);
+            for (var index = 0; index < count; index++)
             {
-                inflater.CopyTo(decoded);
+                first += bytes[index];
+                second += first;
             }
-            catch (InvalidDataException error)
-            {
-                failure = error;
-            }
-            return decoded.ToArray();
-        }
-        return DecompressRaw(bytes, bytes.Length - 2);
-    }
-
-    internal static byte[] Decompress(MemoryStream compressed)
-    {
-        var bytes = compressed.ToArray();
-        if (bytes.Length < 2)
-            throw new InvalidDataException("The zlib stream is incomplete.");
-        var result = DecompressAvailable(compressed, out var failure);
-        if (failure is not null) throw failure;
-        if (ZLibStreamType is null)
-            ValidateChecksum(bytes, result, final: true);
-        return result;
-    }
-
-    internal static void ValidateChecksumIfPresent(
-        MemoryStream compressed, byte[] result)
-    {
-        if (ZLibStreamType is null)
-            ValidateChecksum(compressed.ToArray(), result, final: false);
-    }
-
-    private static void ValidateChecksum(byte[] bytes, byte[] result, bool final)
-    {
-        var actual = Adler32(result);
-        var trailer = new[]
-        {
-            (byte)(actual >> 24), (byte)(actual >> 16),
-            (byte)(actual >> 8), (byte)actual
-        };
-        var trailerCandidate = false;
-        for (var length = 4; length >= 1; length--)
-        {
-            if (bytes.Length < 2 + length) continue;
-            byte[] prefix;
-            try
-            {
-                prefix = DecompressRaw(bytes, bytes.Length - 2 - length);
-            }
-            catch (InvalidDataException)
-            {
-                continue;
-            }
-            if (!prefix.AsSpan().SequenceEqual(result)) continue;
-            trailerCandidate = true;
-            if (bytes.AsSpan(bytes.Length - length, length)
-                .SequenceEqual(trailer.AsSpan(0, length)))
-                return;
-        }
-        if (trailerCandidate &&
-            (final || (bytes.Length >= 4 &&
-                bytes.AsSpan(bytes.Length - 4, 3)
-                    .SequenceEqual(trailer.AsSpan(0, 3)))))
-            throw new InvalidDataException("The zlib stream checksum is invalid.");
-    }
-
-    private static byte[] DecompressRaw(byte[] bytes, int count)
-    {
-        using var payload = new MemoryStream(bytes, 2, count, writable: false);
-        using var inflater = new DeflateStream(payload, CompressionMode.Decompress);
-        using var decoded = new MemoryStream();
-        inflater.CopyTo(decoded);
-        return decoded.ToArray();
-    }
-
-    private static void ValidateHeader(byte[] bytes)
-    {
-        var header = (bytes[0] << 8) | bytes[1];
-        if ((bytes[0] & 0x0f) != 8 || header % 31 != 0 || (bytes[1] & 0x20) != 0)
-            throw new InvalidDataException("The zlib stream header is invalid.");
-    }
-
-    internal static uint Adler32(byte[] bytes)
-    {
-        uint first = 1;
-        uint second = 0;
-        foreach (var value in bytes)
-        {
-            first = (first + value) % 65521;
-            second = (second + first) % 65521;
+            first %= 65521;
+            second %= 65521;
+            bytes = bytes.Slice(count);
         }
         return (second << 16) | first;
+    }
+}
+
+// Push-style inflater with java.util.zip.Inflater (zlib) semantics. The bit
+// accumulator, block mode, Huffman tables, pending match and 32 KiB history
+// persist between calls, so every supplied byte is decoded once and a temporary
+// end of input is never mistaken for the end of the stream. Output goes straight
+// into the caller's buffer and stops when that buffer is full; the end-of-block
+// code, following block headers and the zlib trailer are still consumed then.
+internal sealed class JavaInflateEngine
+{
+    private enum Mode
+    {
+        Header, DictionaryId, NeedDictionary, BlockHeader, StoredLength, Stored,
+        TableCounts, CodeLengthCodes, CodeLengths, Codes, Literal, Copy, Trailer, Done, Bad
+    }
+
+    private const int WindowMask = 32767;
+    private const int PrimaryBits = 10;
+    private const int NeedMore = -1;
+    private const int InvalidCode = -2;
+
+    private static readonly int[] LengthBase =
+    {
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
+        67, 83, 99, 115, 131, 163, 195, 227, 258
+    };
+    private static readonly byte[] LengthExtra =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4,
+        5, 5, 5, 5, 0
+    };
+    private static readonly int[] DistanceBase =
+    {
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513,
+        769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577
+    };
+    private static readonly byte[] DistanceExtra =
+    {
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
+        11, 11, 12, 12, 13, 13
+    };
+    private static readonly byte[] CodeLengthOrder =
+        { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
+    private static readonly HuffmanTable FixedLiterals = HuffmanTable.Fixed(literals: true);
+    private static readonly HuffmanTable FixedDistances = HuffmanTable.Fixed(literals: false);
+
+    private readonly bool zlibWrapper;
+    private readonly byte[] window = new byte[WindowMask + 1];
+    private readonly byte[] codeLengthLengths = new byte[19];
+    private readonly byte[] lengths = new byte[286 + 30];
+    private byte[] input = Array.Empty<byte>();
+    private int inputPosition;
+    private int inputLimit;
+    private ulong bits;
+    private int bitCount;
+    private bool starved;
+    private Mode mode;
+    private bool lastBlock;
+    private int windowPosition;
+    private long totalOut;
+    private uint adler = 1;
+    private int checksumStart;
+    private int storedRemaining;
+    private int copyLength;
+    private int copyDistance;
+    private byte pendingLiteral;
+    private int literalCount;
+    private int distanceCount;
+    private int codeLengthCount;
+    private int lengthIndex;
+    private HuffmanTable? codeLengthTable;
+    private HuffmanTable? dynamicLiterals;
+    private HuffmanTable? dynamicDistances;
+    private HuffmanTable literalTable = FixedLiterals;
+    private HuffmanTable distanceTable = FixedDistances;
+    private string? failure;
+
+    internal JavaInflateEngine(bool nowrap)
+    {
+        zlibWrapper = !nowrap;
+        mode = nowrap ? Mode.BlockHeader : Mode.Header;
+    }
+
+    internal bool Finished => mode == Mode.Done;
+    internal bool NeedsDictionary => mode == Mode.NeedDictionary;
+    // A starved decoder has accepted its held-back partial symbol, as zlib does.
+    internal bool NeedsInput => starved || inputPosition == inputLimit;
+
+    internal void SetInput(ReadOnlySpan<byte> data)
+    {
+        // Like Inflater.setInput, new input replaces unread input.
+        if (!starved) inputPosition = inputLimit;
+        var kept = inputLimit - inputPosition;
+        if (kept + data.Length > input.Length)
+        {
+            var grown = new byte[Math.Max(kept + data.Length, 2 * input.Length)];
+            Buffer.BlockCopy(input, inputPosition, grown, 0, kept);
+            input = grown;
+        }
+        else if (inputPosition > 0)
+        {
+            Buffer.BlockCopy(input, inputPosition, input, 0, kept);
+        }
+        inputPosition = 0;
+        data.CopyTo(input.AsSpan(kept));
+        inputLimit = kept + data.Length;
+        if (data.Length > 0) starved = false;
+    }
+
+    internal int Inflate(Span<byte> output)
+    {
+        if (mode == Mode.Bad) throw new InvalidDataException(failure);
+        if (output.Length == 0) return 0;
+        checksumStart = 0;
+        int produced;
+        try
+        {
+            produced = Decode(output);
+        }
+        finally
+        {
+            ReturnWholeBytes();
+        }
+        if (zlibWrapper)
+            adler = JavaZlib.Adler32(adler, output.Slice(checksumStart, produced - checksumStart));
+        totalOut += produced;
+        return produced;
+    }
+
+    private int Decode(Span<byte> output)
+    {
+        var produced = 0;
+        while (true)
+        {
+            switch (mode)
+            {
+                case Mode.Header:
+                {
+                    Fill();
+                    if (bitCount < 16) return Starve(produced);
+                    var method = Take(8);
+                    var flags = Take(8);
+                    if (((method << 8) | flags) % 31 != 0) throw Fail("incorrect header check");
+                    if ((method & 15) != 8) throw Fail("unknown compression method");
+                    if ((method >> 4) + 8 > 15) throw Fail("invalid window size");
+                    mode = (flags & 0x20) != 0 ? Mode.DictionaryId : Mode.BlockHeader;
+                    break;
+                }
+                case Mode.DictionaryId:
+                    Fill();
+                    if (bitCount < 32) return Starve(produced);
+                    Take(16);
+                    Take(16);
+                    mode = Mode.NeedDictionary;
+                    break;
+                case Mode.NeedDictionary:
+                case Mode.Done:
+                    return produced;
+                case Mode.BlockHeader:
+                    Fill();
+                    if (bitCount < 3) return Starve(produced);
+                    lastBlock = Take(1) == 1;
+                    switch (Take(2))
+                    {
+                        case 0:
+                            Take(bitCount & 7);
+                            mode = Mode.StoredLength;
+                            break;
+                        case 1:
+                            literalTable = FixedLiterals;
+                            distanceTable = FixedDistances;
+                            mode = Mode.Codes;
+                            break;
+                        case 2:
+                            mode = Mode.TableCounts;
+                            break;
+                        default:
+                            throw Fail("invalid block type");
+                    }
+                    break;
+                case Mode.StoredLength:
+                {
+                    Fill();
+                    if (bitCount < 32) return Starve(produced);
+                    var length = Take(16);
+                    if (length != (~Take(16) & 0xffff)) throw Fail("invalid stored block lengths");
+                    storedRemaining = length;
+                    mode = Mode.Stored;
+                    break;
+                }
+                case Mode.Stored:
+                {
+                    if (storedRemaining == 0)
+                    {
+                        FinishBlock();
+                        break;
+                    }
+                    if (produced == output.Length) return produced;
+                    if (bitCount >= 8)
+                    {
+                        var value = (byte)Take(8);
+                        window[windowPosition] = value;
+                        windowPosition = (windowPosition + 1) & WindowMask;
+                        output[produced++] = value;
+                        storedRemaining--;
+                        break;
+                    }
+                    if (inputPosition == inputLimit) return Starve(produced);
+                    var count = Math.Min(storedRemaining,
+                        Math.Min(output.Length - produced, inputLimit - inputPosition));
+                    var source = new ReadOnlySpan<byte>(input, inputPosition, count);
+                    source.CopyTo(output.Slice(produced));
+                    Remember(source);
+                    inputPosition += count;
+                    produced += count;
+                    storedRemaining -= count;
+                    break;
+                }
+                case Mode.TableCounts:
+                    Fill();
+                    if (bitCount < 14) return Starve(produced);
+                    literalCount = Take(5) + 257;
+                    distanceCount = Take(5) + 1;
+                    codeLengthCount = Take(4) + 4;
+                    if (literalCount > 286 || distanceCount > 30)
+                        throw Fail("too many length or distance symbols");
+                    Array.Clear(codeLengthLengths, 0, codeLengthLengths.Length);
+                    lengthIndex = 0;
+                    mode = Mode.CodeLengthCodes;
+                    break;
+                case Mode.CodeLengthCodes:
+                    while (lengthIndex < codeLengthCount)
+                    {
+                        Fill();
+                        if (bitCount < 3) return Starve(produced);
+                        codeLengthLengths[CodeLengthOrder[lengthIndex++]] = (byte)Take(3);
+                    }
+                    codeLengthTable ??= new HuffmanTable(19);
+                    if (!codeLengthTable.Build(codeLengthLengths, 0, 19, incompleteAllowed: false))
+                        throw Fail("invalid code lengths set");
+                    lengthIndex = 0;
+                    mode = Mode.CodeLengths;
+                    break;
+                case Mode.CodeLengths:
+                    if (!DecodeCodeLengths()) return Starve(produced);
+                    break;
+                case Mode.Codes:
+                    if (!DecodeCodes(output, ref produced)) return produced;
+                    break;
+                case Mode.Literal:
+                    if (produced == output.Length) return produced;
+                    window[windowPosition] = pendingLiteral;
+                    windowPosition = (windowPosition + 1) & WindowMask;
+                    output[produced++] = pendingLiteral;
+                    mode = Mode.Codes;
+                    break;
+                case Mode.Copy:
+                {
+                    // zlib checks the distance when the first byte is copied.
+                    if (produced == output.Length) return produced;
+                    if (copyDistance > totalOut + produced)
+                        throw Fail("invalid distance too far back");
+                    var count = Math.Min(copyLength, output.Length - produced);
+                    var source = (windowPosition - copyDistance) & WindowMask;
+                    for (var index = 0; index < count; index++)
+                    {
+                        var value = window[source];
+                        window[windowPosition] = value;
+                        output[produced++] = value;
+                        source = (source + 1) & WindowMask;
+                        windowPosition = (windowPosition + 1) & WindowMask;
+                    }
+                    copyLength -= count;
+                    if (copyLength > 0) return produced;
+                    mode = Mode.Codes;
+                    break;
+                }
+                case Mode.Trailer:
+                {
+                    Fill();
+                    if (bitCount < 32) return Starve(produced);
+                    uint expected = 0;
+                    for (var index = 0; index < 4; index++)
+                        expected = (expected << 8) | (uint)Take(8);
+                    adler = JavaZlib.Adler32(
+                        adler, output.Slice(checksumStart, produced - checksumStart));
+                    checksumStart = produced;
+                    if (expected != adler) throw Fail("incorrect data check");
+                    mode = Mode.Done;
+                    break;
+                }
+                default:
+                    throw new InvalidDataException(failure);
+            }
+        }
+    }
+
+    private bool DecodeCodeLengths()
+    {
+        var total = literalCount + distanceCount;
+        while (lengthIndex < total)
+        {
+            Fill();
+            var savedPosition = inputPosition;
+            var savedBits = bits;
+            var savedCount = bitCount;
+            var symbol = DecodeSymbol(codeLengthTable!);
+            if (symbol == NeedMore) return false;
+            if (symbol == InvalidCode) throw Fail("invalid code lengths set");
+            if (symbol < 16)
+            {
+                lengths[lengthIndex++] = (byte)symbol;
+                continue;
+            }
+            var extra = symbol == 16 ? 2 : symbol == 17 ? 3 : 7;
+            if (bitCount < extra)
+            {
+                inputPosition = savedPosition;
+                bits = savedBits;
+                bitCount = savedCount;
+                return false;
+            }
+            byte value = 0;
+            int repeat;
+            if (symbol == 16)
+            {
+                if (lengthIndex == 0) throw Fail("invalid bit length repeat");
+                value = lengths[lengthIndex - 1];
+                repeat = 3 + Take(2);
+            }
+            else
+            {
+                repeat = symbol == 17 ? 3 + Take(3) : 11 + Take(7);
+            }
+            if (lengthIndex + repeat > total) throw Fail("invalid bit length repeat");
+            while (repeat-- > 0) lengths[lengthIndex++] = value;
+        }
+        if (lengths[256] == 0) throw Fail("invalid code -- missing end-of-block");
+        dynamicLiterals ??= new HuffmanTable(288);
+        if (!dynamicLiterals.Build(lengths, 0, literalCount, incompleteAllowed: true))
+            throw Fail("invalid literal/lengths set");
+        dynamicDistances ??= new HuffmanTable(32);
+        if (!dynamicDistances.Build(lengths, literalCount, distanceCount, incompleteAllowed: true))
+            throw Fail("invalid distances set");
+        literalTable = dynamicLiterals;
+        distanceTable = dynamicDistances;
+        mode = Mode.Codes;
+        return true;
+    }
+
+    // Decodes symbols until the block ends or a match starts (true), or output or
+    // input runs out (false). A symbol whose bits are incomplete is rolled back
+    // whole. As in zlib, a complete symbol is consumed even when the output is
+    // full and is emitted by the next call, so NeedsInput agrees with zlib.
+    private bool DecodeCodes(Span<byte> output, ref int produced)
+    {
+        while (true)
+        {
+            Fill();
+            var savedPosition = inputPosition;
+            var savedBits = bits;
+            var savedCount = bitCount;
+            var symbol = DecodeSymbol(literalTable);
+            if (symbol < 256)
+            {
+                if (symbol == NeedMore)
+                {
+                    starved = true;
+                    return false;
+                }
+                if (symbol == InvalidCode) throw Fail("invalid literal/length code");
+                if (produced == output.Length)
+                {
+                    pendingLiteral = (byte)symbol;
+                    mode = Mode.Literal;
+                    return false;
+                }
+                window[windowPosition] = (byte)symbol;
+                windowPosition = (windowPosition + 1) & WindowMask;
+                output[produced++] = (byte)symbol;
+                continue;
+            }
+            if (symbol == 256)
+            {
+                FinishBlock();
+                return true;
+            }
+            symbol -= 257;
+            if (symbol >= 29) throw Fail("invalid literal/length code");
+            var length = 0;
+            var distanceSymbol = NeedMore;
+            if (bitCount >= LengthExtra[symbol])
+            {
+                length = LengthBase[symbol] + Take(LengthExtra[symbol]);
+                distanceSymbol = DecodeSymbol(distanceTable);
+            }
+            if (distanceSymbol == InvalidCode || distanceSymbol >= 30)
+                throw Fail("invalid distance code");
+            if (distanceSymbol == NeedMore || bitCount < DistanceExtra[distanceSymbol])
+            {
+                inputPosition = savedPosition;
+                bits = savedBits;
+                bitCount = savedCount;
+                starved = true;
+                return false;
+            }
+            copyLength = length;
+            copyDistance = DistanceBase[distanceSymbol] + Take(DistanceExtra[distanceSymbol]);
+            mode = Mode.Copy;
+            return true;
+        }
+    }
+
+    private int DecodeSymbol(HuffmanTable table)
+    {
+        var entry = table.Primary[(int)(bits & ((1UL << PrimaryBits) - 1))];
+        var length = entry & 15;
+        if (entry != 0 && length <= bitCount)
+        {
+            bits >>= length;
+            bitCount -= length;
+            return entry >> 4;
+        }
+        // Canonical decode for long codes, unassigned codes and short input.
+        int code = 0, first = 0, index = 0;
+        for (length = 1; length <= 15; length++)
+        {
+            if (length > bitCount) return NeedMore;
+            code |= (int)((bits >> (length - 1)) & 1);
+            int count = table.Counts[length];
+            if (code - count < first)
+            {
+                bits >>= length;
+                bitCount -= length;
+                return table.Symbols[index + (code - first)];
+            }
+            index += count;
+            first = (first + count) << 1;
+            code <<= 1;
+        }
+        return InvalidCode;
+    }
+
+    private void FinishBlock()
+    {
+        if (!lastBlock)
+        {
+            mode = Mode.BlockHeader;
+            return;
+        }
+        Take(bitCount & 7);
+        mode = zlibWrapper ? Mode.Trailer : Mode.Done;
+    }
+
+    private void Fill()
+    {
+        while (bitCount <= 56 && inputPosition < inputLimit)
+        {
+            bits |= (ulong)input[inputPosition++] << bitCount;
+            bitCount += 8;
+        }
+    }
+
+    private int Take(int count)
+    {
+        var value = (int)(bits & ((1UL << count) - 1));
+        bits >>= count;
+        bitCount -= count;
+        return value;
+    }
+
+    // Between calls the accumulator holds only the unread bits of one partly
+    // consumed byte; whole bytes go back to the input so Remaining is exact.
+    private void ReturnWholeBytes()
+    {
+        inputPosition -= bitCount >> 3;
+        bitCount &= 7;
+        bits &= (1UL << bitCount) - 1;
+    }
+
+    private int Starve(int produced)
+    {
+        starved = true;
+        return produced;
+    }
+
+    private void Remember(ReadOnlySpan<byte> data)
+    {
+        while (data.Length > 0)
+        {
+            var count = Math.Min(data.Length, window.Length - windowPosition);
+            data.Slice(0, count).CopyTo(window.AsSpan(windowPosition));
+            windowPosition = (windowPosition + count) & WindowMask;
+            data = data.Slice(count);
+        }
+    }
+
+    private InvalidDataException Fail(string message)
+    {
+        mode = Mode.Bad;
+        failure = message;
+        return new InvalidDataException(message);
+    }
+
+    private sealed class HuffmanTable
+    {
+        internal readonly short[] Counts = new short[16];
+        internal readonly short[] Symbols;
+        // (symbol << 4) | length for codes of at most PrimaryBits bits, Invalid
+        // for a one-bit prefix no code has (incomplete sets), 0 for long codes.
+        internal readonly int[] Primary = new int[1 << PrimaryBits];
+        private const int Invalid = (InvalidCode << 4) | 1;
+
+        internal HuffmanTable(int capacity) => Symbols = new short[capacity];
+
+        internal static HuffmanTable Fixed(bool literals)
+        {
+            var lengths = new byte[literals ? 288 : 32];
+            for (var index = 0; index < lengths.Length; index++)
+                lengths[index] = !literals ? (byte)5
+                    : index < 144 ? (byte)8
+                    : index < 256 ? (byte)9
+                    : index < 280 ? (byte)7
+                    : (byte)8;
+            var table = new HuffmanTable(lengths.Length);
+            table.Build(lengths, 0, lengths.Length, incompleteAllowed: true);
+            return table;
+        }
+
+        // zlib's inflate_table rules: over-subscribed sets are invalid, and an
+        // incomplete set is allowed only as a single one-bit literal or distance
+        // code. As in zlib, a missing code is invalid once its first bit is read,
+        // and every code of an empty set is.
+        internal bool Build(byte[] lengths, int offset, int count, bool incompleteAllowed)
+        {
+            Array.Clear(Counts, 0, Counts.Length);
+            Array.Clear(Primary, 0, Primary.Length);
+            for (var index = 0; index < count; index++) Counts[lengths[offset + index]]++;
+            Counts[0] = 0;
+            var max = 15;
+            while (max > 0 && Counts[max] == 0) max--;
+            if (max == 0)
+            {
+                for (var slot = 0; slot < Primary.Length; slot++) Primary[slot] = Invalid;
+                return true;
+            }
+            var left = 1;
+            for (var length = 1; length <= 15; length++)
+            {
+                left = (left << 1) - Counts[length];
+                if (left < 0) return false;
+            }
+            if (left > 0 && (!incompleteAllowed || max != 1)) return false;
+            Span<int> offsets = stackalloc int[16];
+            for (var length = 1; length < 15; length++)
+                offsets[length + 1] = offsets[length] + Counts[length];
+            for (var symbol = 0; symbol < count; symbol++)
+            {
+                var length = lengths[offset + symbol];
+                if (length != 0) Symbols[offsets[length]++] = (short)symbol;
+            }
+            var code = 0;
+            var position = 0;
+            for (var length = 1; length <= 15; length++, code <<= 1)
+            {
+                for (var remaining = Counts[length]; remaining > 0; remaining--, code++)
+                {
+                    var symbol = Symbols[position++];
+                    if (length > PrimaryBits) continue;
+                    var reversed = 0;
+                    for (var bit = 0; bit < length; bit++)
+                        reversed |= ((code >> bit) & 1) << (length - 1 - bit);
+                    for (var slot = reversed; slot < Primary.Length; slot += 1 << length)
+                        Primary[slot] = (symbol << 4) | length;
+                }
+            }
+            if (left > 0)
+                for (var slot = 0; slot < Primary.Length; slot++)
+                    if (Primary[slot] == 0) Primary[slot] = Invalid;
+            return true;
+        }
     }
 }
 
@@ -834,14 +1320,18 @@ internal sealed class JavaZlibOutputStream : Stream
     }
 }
 
+// java.util.zip.InflaterOutputStream (JDK 17): each write is supplied whole and
+// its output is written in 512-byte pieces as soon as it is decoded.
 internal sealed class JavaInflaterOutputStream : Stream
 {
     private readonly Stream destination;
-    private readonly MemoryStream compressed = new();
-    private int emitted;
+    private readonly JavaInflateEngine inflater = new(nowrap: false);
+    private readonly byte[] decoded = new byte[512];
+    private readonly byte[] single = new byte[1];
     private bool disposed;
 
-    internal JavaInflaterOutputStream(Stream destination) => this.destination = destination;
+    internal JavaInflaterOutputStream(Stream destination) =>
+        this.destination = destination ?? throw new ArgumentNullException(nameof(destination));
 
     public override bool CanRead => false;
     public override bool CanSeek => false;
@@ -855,35 +1345,56 @@ internal sealed class JavaInflaterOutputStream : Stream
 
     public override void Flush()
     {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (inflater.Finished) return;
+        WritePending();
         destination.Flush();
     }
+
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
+
     public override void Write(byte[] buffer, int offset, int count)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        compressed.Write(buffer, offset, count);
-        EmitAvailable();
+        ArgumentNullException.ThrowIfNull(buffer);
+        if (offset < 0 || count < 0 || offset > buffer.Length - count)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        if (count == 0) return;
+        while (true)
+        {
+            if (inflater.NeedsInput)
+            {
+                inflater.SetInput(new ReadOnlySpan<byte>(buffer, offset, count));
+                count = 0;
+            }
+            int produced;
+            do
+            {
+                produced = inflater.Inflate(decoded);
+                if (produced > 0) destination.Write(decoded, 0, produced);
+            } while (produced > 0);
+            if (inflater.NeedsDictionary)
+                throw new InvalidDataException("ZLIB dictionary missing");
+            if (inflater.Finished || count == 0) break;
+        }
     }
 
     public override void WriteByte(byte value)
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
-        compressed.WriteByte(value);
-        EmitAvailable();
+        single[0] = value;
+        Write(single, 0, 1);
     }
 
-    private void EmitAvailable()
+    private void WritePending()
     {
-        var position = compressed.Position;
-        var bytes = JavaZlib.DecompressAvailable(compressed, out var failure);
-        if (bytes.Length > emitted)
-            destination.Write(bytes, emitted, bytes.Length - emitted);
-        emitted = bytes.Length;
-        compressed.Position = position;
-        JavaZlib.ValidateChecksumIfPresent(compressed, bytes);
-        if (failure is not null) throw failure;
+        while (!inflater.Finished && !inflater.NeedsInput)
+        {
+            var produced = inflater.Inflate(decoded);
+            if (produced < 1) break;
+            destination.Write(decoded, 0, produced);
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -892,17 +1403,14 @@ internal sealed class JavaInflaterOutputStream : Stream
         disposed = true;
         try
         {
-            var position = compressed.Position;
-            var bytes = JavaZlib.Decompress(compressed);
-            if (bytes.Length > emitted)
-                destination.Write(bytes, emitted, bytes.Length - emitted);
-            emitted = bytes.Length;
-            compressed.Position = position;
-            destination.Flush();
+            if (!inflater.Finished)
+            {
+                WritePending();
+                destination.Flush();
+            }
         }
         finally
         {
-            compressed.Dispose();
             destination.Dispose();
             base.Dispose(disposing);
         }
@@ -916,16 +1424,13 @@ public
 #endif
 sealed class JavaInflater
 {
-    private readonly MemoryStream compressed = new();
-    private readonly bool rawDeflate;
-    private int emitted;
-    private bool needsInput = true;
+    private readonly JavaInflateEngine engine;
     private bool ended;
 
-    internal JavaInflater(bool nowrap) => rawDeflate = nowrap;
+    internal JavaInflater(bool nowrap) => engine = new JavaInflateEngine(nowrap);
 
-    public bool Finished() => false;
-    public bool NeedsInput() => needsInput;
+    public bool Finished() => engine.Finished;
+    public bool NeedsInput() => engine.NeedsInput;
 
     public void SetInput(sbyte[] input, int offset, int length)
     {
@@ -935,54 +1440,19 @@ sealed class JavaInflater
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         if (offset > input.Length - length)
             throw new ArgumentException("The input range exceeds the supplied buffer.");
-        compressed.Position = compressed.Length;
-        compressed.Write(JavaCompat.ToUnsignedBytes(input), offset, length);
-        needsInput = false;
+        engine.SetInput(MemoryMarshal.Cast<sbyte, byte>(new ReadOnlySpan<sbyte>(input, offset, length)));
     }
 
+    // Decoded bytes are written into output as they are produced; when the
+    // stream is malformed, those written before the error stay in output.
     public int Inflate(sbyte[] output)
     {
         ObjectDisposedException.ThrowIf(ended, this);
         ArgumentNullException.ThrowIfNull(output);
-        if (output.Length == 0) return 0;
-
-        var inputPosition = compressed.Position;
-        compressed.Position = 0;
-        using var decoded = new MemoryStream();
-        if (rawDeflate)
-        {
-            using var inflater = new DeflateStream(
-                compressed, CompressionMode.Decompress, leaveOpen: true);
-            inflater.CopyTo(decoded);
-        }
-        else
-        {
-            var decodedBytes = JavaZlib.Decompress(compressed);
-            decoded.Write(decodedBytes, 0, decodedBytes.Length);
-        }
-        compressed.Position = inputPosition;
-
-        var available = checked((int)decoded.Length - emitted);
-        if (available <= 0)
-        {
-            needsInput = true;
-            return 0;
-        }
-        var count = Math.Min(output.Length, available);
-        var bytes = decoded.GetBuffer();
-        for (var index = 0; index < count; index++)
-            output[index] = unchecked((sbyte)bytes[emitted + index]);
-        emitted += count;
-        needsInput = count == available;
-        return count;
+        return engine.Inflate(MemoryMarshal.Cast<sbyte, byte>(output.AsSpan()));
     }
 
-    public void End()
-    {
-        if (ended) return;
-        ended = true;
-        compressed.Dispose();
-    }
+    public void End() => ended = true;
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT

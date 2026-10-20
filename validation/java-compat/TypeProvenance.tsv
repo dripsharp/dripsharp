@@ -63,6 +63,7 @@ JavaFormat	java.text.Format	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFor
 JavaFuture	java.util.concurrent.Future	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFuture
 JavaHashtable	java.util.Hashtable	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaHashtable
 JavaIdentityHashMap	java.util.IdentityHashMap	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaIdentityHashMap
+JavaInflateEngine	java.util.zip.Inflater	pdfcube,pkl,rawhttp,sqltrellis	behavior/compression,type-contract/JavaInflateEngine
 JavaInflater	java.util.zip.Inflater	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaInflater
 JavaInflaterOutputStream	java.util.zip.InflaterOutputStream	pdfcube,pkl,rawhttp,sqltrellis	behavior/compression,type-contract/JavaInflaterOutputStream
 JavaInputStream	java.io.InputStream	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaInputStream

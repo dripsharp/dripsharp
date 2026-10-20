@@ -459,7 +459,9 @@
    {"roundtrip" {:arguments [#{"b"} #{"i"} #{"i"} #{"i"} #{"u"}]
                  :exceptions #{"none" "illegal-argument" "io"}}
     "decode" {:arguments [#{"b"} #{"i"} #{"u"}]
-              :exceptions #{"none" "illegal-argument" "io"}}}
+              :exceptions #{"none" "illegal-argument" "io"}}
+    "inflate" {:arguments [#{"b"} #{"i"} #{"i"} #{"u"}]
+               :exceptions #{"none" "illegal-argument"}}}
    "string" {"hash" {:arguments [#{"u" "n"}]
                      :exceptions #{"none" "null-pointer"}}}
    "long" {"hash" {:arguments [#{"i"}] :exceptions #{"none"}}}

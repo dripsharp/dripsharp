@@ -51,7 +51,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.Adler32;
 import java.util.zip.CRC32;
+import java.util.zip.DataFormatException;
 import java.util.zip.DeflaterOutputStream;
+import java.util.zip.Inflater;
 import java.util.zip.InflaterOutputStream;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPathFactory;
@@ -332,11 +334,20 @@ public final class JavaCompatOracle {
       byte[] encoded, int chunk, String sequence, CompressionCase observation)
       throws IOException {
     if (encoded.length > 16384 || chunk <= 0
-        || !(sequence.equals("close") || sequence.equals("flush-close")))
+        || !(sequence.equals("close") || sequence.equals("flush-close")
+            || sequence.equals("write-byte-close")))
       throw new IllegalArgumentException("Invalid bounded compression case");
 
     var inflater = new InflaterOutputStream(observation.output);
-    for (int offset = 0; offset < encoded.length; offset += chunk) {
+    if (sequence.equals("write-byte-close")) {
+      for (int offset = 0; offset < encoded.length; offset++) {
+        observation.stage = "write-" + offset;
+        inflater.write(encoded[offset]);
+        observation.outputAfterWrites.add(observation.output.size());
+      }
+    }
+    for (int offset = 0; !sequence.equals("write-byte-close") && offset < encoded.length;
+         offset += chunk) {
       observation.stage = "write-" + offset;
       int count = Math.min(chunk, encoded.length - offset);
       inflater.write(encoded, offset, count);
@@ -350,6 +361,61 @@ public final class JavaCompatOracle {
     inflater.close();
     observation.stage = "closed";
     return observation.output.toByteArray();
+  }
+
+  // Drives Inflater the way PDFBox's FlateFilterDecoderStream does: new input
+  // only when needsInput(), a zero-filled output buffer per call. The trace
+  // records each call's count and finished/needsInput state; a
+  // DataFormatException records the salvageable non-zero prefix and the CRC of
+  // the bytes written into the output buffer before the failure.
+  private static String runInflate(
+      byte[] encoded, int feed, int outputSize, String mode, CompressionCase observation) {
+    if (encoded.length > 65536 || feed <= 0 || outputSize <= 0 || outputSize > 65536
+        || !(mode.equals("raw") || mode.equals("zlib")))
+      throw new IllegalArgumentException("Invalid bounded inflate case");
+    observation.compareTiming = false;
+    var inflater = new Inflater(mode.equals("raw"));
+    var trace = new ArrayList<String>();
+    var output = new byte[outputSize];
+    int offset = 0;
+    try {
+      for (int step = 0; step < 100000; step++) {
+        if (inflater.finished()) {
+          trace.add("F");
+          break;
+        }
+        if (inflater.needsInput()) {
+          if (offset >= encoded.length) {
+            trace.add("I");
+            break;
+          }
+          int count = Math.min(feed, encoded.length - offset);
+          inflater.setInput(encoded, offset, count);
+          offset += count;
+        }
+        java.util.Arrays.fill(output, (byte)0);
+        int count;
+        try {
+          count = inflater.inflate(output);
+        } catch (DataFormatException error) {
+          int prefix = output.length;
+          while (prefix > 0 && output[prefix - 1] == 0) prefix--;
+          var crc = new CRC32();
+          crc.update(output, 0, output.length);
+          trace.add("E" + prefix + ":" + crc.getValue());
+          break;
+        }
+        observation.output.write(output, 0, count);
+        if (count == 0 && !inflater.needsInput() && !inflater.finished()) {
+          trace.add("S");
+          break;
+        }
+        trace.add(count + (inflater.finished() ? "f" : "") + (inflater.needsInput() ? "n" : ""));
+      }
+    } finally {
+      inflater.end();
+    }
+    return offset + "|" + String.join(",", trace);
   }
 
   private static String fileInspection(File file) {
@@ -433,6 +499,7 @@ public final class JavaCompatOracle {
         case "binary-data/read-fully", "binary-data/write-buffer" -> 3;
         case "compression/roundtrip" -> 5;
         case "compression/decode" -> 3;
+        case "compression/inflate" -> 4;
         case "byte-array-input/open", "filter-input/open",
              "byte-array-input/read-buffer", "filter-input/read-buffer",
              "byte-array-output/write-buffer", "filter-output/write-buffer",
@@ -566,6 +633,12 @@ public final class JavaCompatOracle {
             result = "b:" + HexFormat.of().formatHex(runCompressionDecode(
                 (byte[])values[0], intValue(values[1]), (String)values[2],
                 compressionCase));
+          }
+          case "compression/inflate" -> {
+            compressionCase = new CompressionCase();
+            result = stringToken(runInflate(
+                (byte[])values[0], intValue(values[1]), intValue(values[2]),
+                (String)values[3], compressionCase));
           }
           case "byte-array-input/open" -> {
             if (inputs.get(key) != null) inputs.get(key).stream.close();
