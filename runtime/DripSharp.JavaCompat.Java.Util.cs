@@ -333,19 +333,35 @@ public
 #endif
 sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
 {
+    // Entries are chained per Java hash code (computed once, at insertion, as
+    // java.util.WeakHashMap does) and linked in insertion order for iteration.
+    // Count and iteration sweep collected keys first, so they never report one.
+    // Other operations unlink collected entries they meet in a chain and sweep
+    // the whole map once per max(size at the last sweep, 16) operations, so
+    // purging is amortised O(1) per operation even under insert-only traffic.
     private sealed class Entry
     {
-        internal Entry(K key, V value)
+        internal Entry(K key, int hash, V value)
         {
             Key = new WeakReference<K>(key);
+            Hash = hash;
             Value = value;
         }
 
         internal WeakReference<K> Key { get; }
+        internal int Hash { get; }
         internal V Value { get; set; }
+        internal Entry? NextInBucket { get; set; }
+        internal Entry? Previous { get; set; }
+        internal Entry? Next { get; set; }
     }
 
-    private readonly List<Entry> entries = new();
+    private readonly Dictionary<int, Entry> buckets = new();
+    private Entry? first;
+    private Entry? last;
+    private int size;
+    private const int MinimumSweepInterval = 16;
+    private int operationsUntilSweep = MinimumSweepInterval;
 
     public V this[K key]
     {
@@ -355,10 +371,11 @@ sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
         set
         {
             ArgumentNullException.ThrowIfNull(key);
-            if (Find(key) is { } entry)
+            var hash = JavaCompat.HashCode(key);
+            if (Find(key, hash) is { } entry)
                 entry.Value = value;
             else
-                entries.Add(new Entry(key, value));
+                Insert(key, hash, value);
         }
     }
 
@@ -374,8 +391,8 @@ sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
     {
         get
         {
-            RemoveCollectedEntries();
-            return entries.Count;
+            Sweep();
+            return size;
         }
     }
 
@@ -384,36 +401,29 @@ sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
     public void Add(K key, V value)
     {
         ArgumentNullException.ThrowIfNull(key);
-        if (ContainsKey(key)) throw new ArgumentException("An item with the same key already exists.");
-        entries.Add(new Entry(key, value));
+        var hash = JavaCompat.HashCode(key);
+        if (Find(key, hash) is not null) throw new ArgumentException("An item with the same key already exists.");
+        Insert(key, hash, value);
     }
 
     public bool ContainsKey(K key)
     {
         ArgumentNullException.ThrowIfNull(key);
-        return Find(key) is not null;
+        return Find(key, JavaCompat.HashCode(key)) is not null;
     }
 
     public bool Remove(K key)
     {
         ArgumentNullException.ThrowIfNull(key);
-        RemoveCollectedEntries();
-        for (var index = 0; index < entries.Count; index++)
-        {
-            if (entries[index].Key.TryGetTarget(out var candidate) &&
-                JavaCompat.Equals(candidate, key))
-            {
-                entries.RemoveAt(index);
-                return true;
-            }
-        }
-        return false;
+        if (Find(key, JavaCompat.HashCode(key)) is not { } entry) return false;
+        Unlink(entry);
+        return true;
     }
 
     public bool TryGetValue(K key, out V value)
     {
         ArgumentNullException.ThrowIfNull(key);
-        if (Find(key) is { } entry)
+        if (Find(key, JavaCompat.HashCode(key)) is { } entry)
         {
             value = entry.Value;
             return true;
@@ -424,7 +434,14 @@ sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
 
     public void Add(KeyValuePair<K, V> item) => Add(item.Key, item.Value);
 
-    public void Clear() => entries.Clear();
+    public void Clear()
+    {
+        buckets.Clear();
+        first = null;
+        last = null;
+        size = 0;
+        operationsUntilSweep = MinimumSweepInterval;
+    }
 
     public bool Contains(KeyValuePair<K, V> item) =>
         TryGetValue(item.Key, out var value) &&
@@ -442,25 +459,69 @@ sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
         GetEnumerator();
 
-    private Entry? Find(K key)
+    private Entry? Find(K key, int hash)
     {
-        RemoveCollectedEntries();
-        foreach (var entry in entries)
+        if (--operationsUntilSweep <= 0) Sweep();
+        if (!buckets.TryGetValue(hash, out var entry)) return null;
+        while (entry is not null)
         {
-            if (entry.Key.TryGetTarget(out var candidate) &&
-                JavaCompat.Equals(candidate, key))
-            {
+            var next = entry.NextInBucket;
+            if (!entry.Key.TryGetTarget(out var candidate))
+                Unlink(entry);
+            else if (JavaCompat.Equals(key, candidate))
                 return entry;
-            }
+            entry = next;
         }
         return null;
     }
 
+    private void Insert(K key, int hash, V value)
+    {
+        var entry = new Entry(key, hash, value);
+        if (buckets.TryGetValue(hash, out var head))
+        {
+            while (head.NextInBucket is { } next) head = next;
+            head.NextInBucket = entry;
+        }
+        else
+        {
+            buckets.Add(hash, entry);
+        }
+        entry.Previous = last;
+        if (last is null) first = entry;
+        else last.Next = entry;
+        last = entry;
+        size++;
+    }
+
+    private void Unlink(Entry entry)
+    {
+        var head = buckets[entry.Hash];
+        if (ReferenceEquals(head, entry))
+        {
+            if (entry.NextInBucket is { } next) buckets[entry.Hash] = next;
+            else buckets.Remove(entry.Hash);
+        }
+        else
+        {
+            while (!ReferenceEquals(head.NextInBucket, entry)) head = head.NextInBucket!;
+            head.NextInBucket = entry.NextInBucket;
+        }
+        if (entry.Previous is null) first = entry.Next;
+        else entry.Previous.Next = entry.Next;
+        if (entry.Next is null) last = entry.Previous;
+        else entry.Next.Previous = entry.Previous;
+        entry.NextInBucket = null;
+        entry.Previous = null;
+        entry.Next = null;
+        size--;
+    }
+
     private List<KeyValuePair<K, V>> Snapshot()
     {
-        RemoveCollectedEntries();
-        var snapshot = new List<KeyValuePair<K, V>>(entries.Count);
-        foreach (var entry in entries)
+        Sweep();
+        var snapshot = new List<KeyValuePair<K, V>>(size);
+        for (var entry = first; entry is not null; entry = entry.Next)
         {
             if (entry.Key.TryGetTarget(out var key))
                 snapshot.Add(new KeyValuePair<K, V>(key, entry.Value));
@@ -468,13 +529,16 @@ sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
         return snapshot;
     }
 
-    private void RemoveCollectedEntries()
+    private void Sweep()
     {
-        for (var index = entries.Count - 1; index >= 0; index--)
+        var entry = first;
+        while (entry is not null)
         {
-            if (!entries[index].Key.TryGetTarget(out _))
-                entries.RemoveAt(index);
+            var next = entry.Next;
+            if (!entry.Key.TryGetTarget(out _)) Unlink(entry);
+            entry = next;
         }
+        operationsUntilSweep = Math.Max(size, MinimumSweepInterval);
     }
 }
 

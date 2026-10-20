@@ -32,7 +32,11 @@ in a temporary `pdfbox.fontcache` directory, and one String.split(";") and
 String.matches("g\\d+") call), or `--filter '*COSDictionaryBenchmarks*'`
 (one COSName hash, one lookup in and one build of a 12-entry COSDictionary, one
 EntrySet() walk, and loading a 500-page in-memory PDF and reading every page's
-/Resources and /MediaBox).
+/Resources and /MediaBox), or `--filter '*WeakHashMapBenchmarks*'` (one hit in a
+translated java.util.WeakHashMap of 10 or 10,000 live keys), or
+`--filter '*TextExtractionFontCountBenchmarks*'` (PDFTextStripper over 4,000 text
+runs of 10 or 40 glyphs cycling through 10 or 2,000 distinct font dictionaries;
+the 40-glyph minus 10-glyph time is the per-glyph cost at each font count).
 Benchmark setup and cleanup are excluded from timings. Read results into reused
 buffers; writes consume a prebuilt sample buffer. Small blends report per-blend
 cost from a batch of nonoverlapping rectangles, with the destination reset before

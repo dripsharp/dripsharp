@@ -1679,6 +1679,217 @@ public sealed class JavaArrayHashAndLinkedMapConsumerTests
     }
 }
 
+// java.util.WeakHashMap behind LegacyPDFStreamEngine.fontHeightMap (one lookup
+// per glyph of PDFTextStripper output) and TilingPaintFactory. It was a list
+// that every operation swept for collected keys and then scanned with equals.
+public sealed class JavaWeakHashMapConsumerTests
+{
+    [Fact]
+    public void OperationsCompareOnlyMatchingKeysWithTenThousandLiveKeys()
+    {
+        const int live = 10000;
+        var keys = new CountingKey[live];
+        var map = new Compat.JavaWeakHashMap<CountingKey, int>();
+        for (int index = 0; index < live; index++)
+        {
+            keys[index] = new CountingKey(index, index);
+            map[keys[index]] = index;
+        }
+
+        CountingKey.Reset();
+        for (int index = 0; index < live; index++)
+        {
+            // An equal key that is a different instance, as Java equality allows.
+            var probe = new CountingKey(index, index);
+            Assert.True(map.TryGetValue(probe, out int value));
+            Assert.Equal(index, value);
+            Assert.True(map.ContainsKey(probe));
+            Assert.Equal(index, Compat.JavaCompat.MapPut(map, probe, index + 1));
+        }
+        Assert.False(map.ContainsKey(new CountingKey(live, live)));
+        // get + containsKey + (get, put) per key, each comparing one candidate.
+        Assert.Equal(4 * live, CountingKey.Comparisons);
+
+        // put on a present key keeps the original (strongly held) key, as Java
+        // does, so no entry depends on a probe that is now garbage.
+        CollectFully();
+        Assert.Equal(live, map.Count);
+        Assert.Equal(1, map[keys[0]]);
+        Assert.Same(keys[live - 1], map.Keys.Last());
+        GC.KeepAlive(keys);
+    }
+
+    [Fact]
+    public void KeysKeepTheirEqualitySemanticsAndInsertionOrder()
+    {
+        // COSDictionary keeps Object identity, as the font height cache needs.
+        var fonts = new Compat.JavaWeakHashMap<COSDictionary, float>();
+        var first = new COSDictionary();
+        var second = new COSDictionary();
+        fonts[first] = 1;
+        fonts[second] = 2;
+        Assert.Equal(2, fonts.Count);
+        Assert.Equal(1f, Compat.JavaCompat.MapGetNullable(fonts, first));
+        Assert.Equal(2f, Compat.JavaCompat.MapGetNullable(fonts, second));
+        Assert.Null(Compat.JavaCompat.MapGetNullable(fonts, new COSDictionary()));
+
+        var names = new Compat.JavaWeakHashMap<string, int>();
+        names["Tj"] = 1;
+        Assert.True(names.ContainsKey(new string(new[] { 'T', 'j' })));
+
+        // Unequal keys with one hash code share a chain.
+        var a = new CountingKey(1, 7);
+        var b = new CountingKey(2, 7);
+        var c = new CountingKey(3, 7);
+        var map = new Compat.JavaWeakHashMap<CountingKey, string>();
+        map.Add(a, "a");
+        map.Add(b, "b");
+        map[c] = "c";
+        Assert.ThrowsAny<System.ArgumentException>(() => map.Add(new CountingKey(2, 7), "again"));
+        Assert.True(map.Remove(new CountingKey(2, 7)));
+        Assert.False(map.Remove(b));
+        Assert.Equal("a", map[a]);
+        Assert.Equal("c", map[c]);
+        Assert.Throws<KeyNotFoundException>(() => map[b]);
+        map[b] = "b2";
+        Assert.Equal(new[] { 1, 3, 2 }, map.Keys.Select(key => key.Id));
+        Assert.Equal(new[] { "a", "c", "b2" }, map.Values);
+        Assert.Equal(new[] { 1, 3, 2 }, map.Select(pair => pair.Key.Id));
+        var copy = new KeyValuePair<CountingKey, string>[4];
+        map.CopyTo(copy, 1);
+        Assert.Same(c, copy[2].Key);
+        Assert.False(map.Remove(new KeyValuePair<CountingKey, string>(a, "other")));
+        Assert.True(map.Remove(new KeyValuePair<CountingKey, string>(a, "a")));
+        Assert.Equal(new[] { "c", "b2" }, map.Values);
+        Assert.ThrowsAny<System.ArgumentNullException>(() => map[null!] = "null");
+        map.Clear();
+        Assert.Empty(map);
+        Assert.True(map.Count == 0);
+        map[a] = "after clear";
+        Assert.Equal(new[] { "after clear" }, map.Values);
+    }
+
+    [Fact]
+    public void CountAndIterationDropCollectedKeysAndReleaseTheirValues()
+    {
+        var map = new Compat.JavaWeakHashMap<object, object>();
+        var live = new object();
+        map[live] = "live";
+        var (keys, values) = AddUnreferencedEntries(map, 1000);
+        AwaitCollection(keys);
+
+        Assert.True(map.Count == 1, "Count must drop collected keys.");
+        Assert.Same(live, Assert.Single(map).Key);
+        Assert.Same(live, Assert.Single(map.Keys));
+        AwaitCollection(values);
+        Assert.All(values, value => Assert.False(value.IsAlive));
+    }
+
+    [Fact]
+    public void LookupsAloneEventuallyPurgeCollectedKeys()
+    {
+        var map = new Compat.JavaWeakHashMap<object, object>();
+        var live = new object();
+        map[live] = "live";
+        var (keys, values) = AddUnreferencedEntries(map, 1000);
+        AwaitCollection(keys);
+
+        // No Count, iteration or put: the amortised sweep runs within one
+        // map-size worth of lookups after a collection.
+        for (int index = 0; index < 2 * 1001; index++)
+            Assert.True(map.ContainsKey(live));
+        AwaitCollection(values);
+        Assert.All(values, value => Assert.False(value.IsAlive));
+        Assert.True(map.Count == 1, "Count must drop collected keys.");
+    }
+
+    [Fact]
+    public void InsertionsAloneEventuallyPurgeCollectedKeys()
+    {
+        var map = new Compat.JavaWeakHashMap<object, object>();
+        var (keys, values) = AddUnreferencedEntries(map, 1000);
+        AwaitCollection(keys);
+
+        // Only new distinct keys: no chain walk reaches the collected entries,
+        // so the periodic sweep has to run while the map keeps growing.
+        var added = new object[2 * 1000 + 16];
+        for (int index = 0; index < added.Length; index++)
+        {
+            added[index] = new object();
+            map[added[index]] = index;
+        }
+        AwaitCollection(values);
+        Assert.All(values, value => Assert.False(value.IsAlive));
+        Assert.Equal(added.Length, map.Count);
+        GC.KeepAlive(added);
+    }
+
+    [Fact]
+    public void LookupsAllocateNothing()
+    {
+        var map = new Compat.JavaWeakHashMap<COSDictionary, float>();
+        var fonts = new COSDictionary[100];
+        for (int index = 0; index < fonts.Length; index++)
+        {
+            fonts[index] = new COSDictionary();
+            map[fonts[index]] = index;
+        }
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        float total = 0;
+        for (int index = 0; index < 1000; index++)
+            total += Compat.JavaCompat.MapGetNullable(map, fonts[index % fonts.Length]) ?? -1;
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal(10 * 4950f, total);
+        Assert.Equal(0, allocated);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (WeakReference[] Keys, WeakReference[] Values) AddUnreferencedEntries(
+        Compat.JavaWeakHashMap<object, object> map, int count)
+    {
+        var keys = new WeakReference[count];
+        var values = new WeakReference[count];
+        for (int index = 0; index < count; index++)
+        {
+            var key = new object();
+            var value = new object();
+            map[key] = value;
+            keys[index] = new WeakReference(key);
+            values[index] = new WeakReference(value);
+        }
+        return (keys, values);
+    }
+
+    private static void AwaitCollection(WeakReference[] references)
+    {
+        for (int attempt = 0; attempt < 20 && references.Any(reference => reference.IsAlive); attempt++)
+            CollectFully();
+        Assert.All(references, reference => Assert.False(reference.IsAlive));
+    }
+
+    private static void CollectFully()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+    }
+
+    private sealed class CountingKey(int id, int hash)
+    {
+        [ThreadStatic] private static int comparisons;
+        internal static int Comparisons => comparisons;
+        internal int Id { get; } = id;
+        internal static void Reset() => comparisons = 0;
+        public override int GetHashCode() => hash;
+        public override bool Equals(object? other)
+        {
+            comparisons++;
+            return other is CountingKey key && key.Id == Id;
+        }
+    }
+}
+
 // java.util.BitSet behind ScratchFile's free-page map. It was a HashSet<int>
 // whose nextSetBit scanned every set bit: an unrestricted ScratchFile starts
 // with 100,000 free pages and takes each new page with nextSetBit(0).
