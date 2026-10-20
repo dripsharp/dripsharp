@@ -53,7 +53,10 @@ through BlendComposite; the Monitoring job runs each a few times),
 or `--filter '*SoftMaskGroupTextBenchmarks*'` (a US Letter page at 300 DPI
 whose full-page or bottom-strip transparency group shows 200 or 2,000 glyphs
 under an ExtGState luminosity soft mask; the difference is the per-glyph cost,
-which should not depend on the group's area).
+which should not depend on the group's area),
+or `--filter '*TexturePaintBenchmarks*'` (a US Letter page at 300 DPI filled
+through a TexturePaint: a full-page 20 pt tiling pattern, or a 64x64
+`/Interpolate` image stretched over the page under a luminosity soft mask).
 Benchmark setup and cleanup are excluded from timings. Read results into reused
 buffers; writes consume a prebuilt sample buffer. Small blends report per-blend
 cost from a batch of nonoverlapping rectangles, with the destination reset before

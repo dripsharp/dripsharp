@@ -1104,6 +1104,148 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // An image under an ExtGState /SMask is a TexturePaint filled through
+    // SoftMask. The 4x4 image covers 160x160 pixels: with /Interpolate true
+    // PDFBox keeps its bicubic hint and Java's texture paint filters
+    // bilinearly; without it the upscaled image is nearest neighbour.
+    // Expected colours were rendered by Apache PDFBox 3.0.8.
+    [Fact]
+    public void SoftMaskedImagesKeepTheirInterpolationLikePdfBox()
+    {
+        (int X, int Y)[] points = [(50, 150), (62, 150), (70, 110), (100, 100), (110, 60), (150, 62), (150, 100), (90, 170)];
+        foreach (var (kind, interpolate, expected) in new (string, bool, int[][])[]
+                 {
+                     ("/Luminosity", true, [[121, 109, 128], [126, 101, 129], [73, 112, 93], [25, 25, 140],
+                         [223, 223, 223], [130, 160, 158], [191, 175, 127], [67, 99, 181]]),
+                     ("/Luminosity", false, [[51, 153, 153], [153, 51, 153], [51, 153, 51], [255, 25, 255],
+                         [127, 127, 255], [127, 127, 127], [127, 127, 127], [153, 51, 153]]),
+                     ("/Alpha", true, [[88, 72, 96], [94, 63, 97], [28, 76, 52], [0, 0, 128],
+                         [223, 223, 223], [130, 160, 158], [191, 175, 127], [20, 60, 163]]),
+                 })
+        {
+            var rgba = IccRenderFixtures.Render(SoftMaskedImagePdf(kind, interpolate));
+            for (var point = 0; point < points.Length; point++)
+            {
+                var offset = (points[point].Y * 200 + points[point].X) * 4;
+                for (var channel = 0; channel < 3; channel++)
+                    Assert.True(Math.Abs(rgba[offset + channel] - expected[point][channel]) <= 2,
+                        $"{kind} interpolate={interpolate} {points[point]}: " +
+                        $"got [{rgba[offset]}, {rgba[offset + 1]}, {rgba[offset + 2]}].");
+            }
+        }
+    }
+
+    // A tiling pattern fills through TilingPaint's TexturePaint, which
+    // samples its device-resolution tile bilinearly at the fractional
+    // offsets of the pattern matrix. Expected colours were rendered by
+    // Apache PDFBox 3.0.8.
+    [Fact]
+    public void TilingPatternFillsRenderLikePdfBox()
+    {
+        // The second fill is clipped to a box with a nonzero origin and
+        // composed with /BM /Multiply and /ca 0.6 over a green backdrop on
+        // the left, so the shader also goes through the custom composite.
+        foreach (var (before, resources, expected) in new (string, string, (int X, int Y, int[] Rgb)[])[]
+                 {
+                     ("", "", [(41, 50, [77, 77, 201]), (42, 50, [0, 0, 255]), (48, 50, [178, 178, 201]),
+                         (50, 50, [255, 255, 255]), (11, 11, [201, 178, 178]), (40, 40, [194, 102, 102]),
+                         (15, 20, [0, 0, 255]), (150, 150, [255, 255, 255]), (5, 5, [255, 255, 255])]),
+                     ("0.2 0.8 0.6 rg 0 0 120 200 re f /GS1 gs 37 23 140 150 re W n ",
+                      " /ExtGState << /GS1 << /BM /Multiply /ca 0.6 >> >>",
+                         [(41, 50, [30, 119, 134]), (42, 50, [20, 82, 153]), (48, 50, [42, 167, 134]),
+                          (50, 50, [51, 204, 153]), (37, 28, [51, 82, 61]), (41, 28, [45, 167, 125]),
+                          (131, 50, [148, 148, 223]), (132, 50, [102, 102, 255]), (140, 40, [218, 163, 163]),
+                          (36, 50, [51, 204, 153]), (40, 40, [44, 131, 98]), (42, 26, [51, 204, 153]),
+                          (150, 180, [255, 255, 255])]),
+                 })
+        {
+            var rgba = IccRenderFixtures.Render(TilingPatternPdf(before, resources));
+            foreach (var (x, y, rgb) in expected)
+            {
+                var offset = (y * 200 + x) * 4;
+                for (var channel = 0; channel < 3; channel++)
+                    Assert.True(Math.Abs(rgba[offset + channel] - rgb[channel]) <= 2,
+                        $"{resources} ({x},{y}): got [{rgba[offset]}, {rgba[offset + 1]}, {rgba[offset + 2]}].");
+            }
+        }
+    }
+
+    // JavaTexturePaint fills through a Skia image shader, so it also draws
+    // on a canvas without a bitmap. As in java.awt.TexturePaintContext, a
+    // device pixel maps its corner to texture position u and takes texel
+    // floor(u) for nearest neighbour, or blends it with the next, repeating,
+    // texel by frac(u) otherwise. Here u = (x - 0.5) / 4 texels; expected
+    // values were rendered by Java 2D's TexturePaint.
+    [Fact]
+    public void TexturePaintsSampleLikeJavaOnAnyCanvas()
+    {
+        using var tile = new SKBitmap(new SKImageInfo(2, 1, SKColorType.Bgra8888, SKAlphaType.Opaque));
+        tile.SetPixel(0, 0, SKColors.Red);
+        tile.SetPixel(1, 0, SKColors.Blue);
+        int[] nearest = [0, 255, 255, 255, 255, 0, 0, 0, 0];
+        int[] bilinear = [223, 223, 159, 96, 32, 32, 96, 159, 223];
+        var interpolation = Compat.PdfCartonRenderingHints.KEY_INTERPOLATION;
+        var rendering = Compat.PdfCartonRenderingHints.KEY_RENDERING;
+        var quality = Compat.PdfCartonRenderingHints.VALUE_RENDER_QUALITY;
+        // Without an interpolation hint, Java filters only for quality rendering.
+        foreach (var (name, hints, reds) in new (string, object[], int[])[]
+                 {
+                     ("nearest", [interpolation, Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR], nearest),
+                     ("bilinear", [interpolation, Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_BILINEAR], bilinear),
+                     ("bicubic", [interpolation, Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_BICUBIC], bilinear),
+                     ("no hints", [], nearest),
+                     ("quality", [rendering, quality], bilinear),
+                     ("default rendering", [rendering, Compat.PdfCartonRenderingHints.VALUE_RENDER_DEFAULT], nearest),
+                     ("quality and nearest", [rendering, quality, interpolation,
+                         Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR], nearest),
+                 })
+        {
+            using var surface = SKSurface.Create(new SKImageInfo(9, 4, SKColorType.Bgra8888, SKAlphaType.Premul));
+            surface.Canvas.Clear(SKColors.White);
+            using (var graphics = new Compat.PdfCartonGraphics2D(surface))
+            {
+                for (var index = 0; index < hints.Length; index += 2)
+                    graphics.SetRenderingHint(hints[index], hints[index + 1]);
+                graphics.SetTransform(new SKMatrix(4, 0, 0.5f, 0, 4, 0, 0, 0, 1));
+                graphics.SetPaint(new Compat.JavaTexturePaint(tile, new SKRect(0, 0, 2, 1)));
+                graphics.Fill(new SKRect(-0.125f, 0, 2.25f, 1));
+            }
+            using var pixels = new SKBitmap(9, 4);
+            Assert.True(surface.ReadPixels(pixels.Info, pixels.GetPixels(), pixels.RowBytes, 0, 0));
+            for (var x = 0; x < 9; x++)
+            {
+                var color = pixels.GetPixel(x, 2);
+                Assert.True(Math.Abs(color.Red - reds[x]) <= 2 && Math.Abs(color.Blue - (255 - reds[x])) <= 2 &&
+                            color.Green == 0, $"{name} x={x}: got {color}.");
+            }
+        }
+    }
+
+    private static readonly int[][] InterpolationTexels =
+    [
+        [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0],
+        [0, 255, 255], [255, 0, 255], [255, 255, 255], [0, 0, 0],
+        [128, 0, 0], [0, 128, 0], [0, 0, 128], [128, 128, 0],
+        [0, 128, 128], [128, 0, 128], [64, 64, 64], [192, 192, 192],
+    ];
+
+    private static byte[] SoftMaskedImagePdf(string kind, bool interpolate) =>
+        SoftMaskedPdf(kind, "160 0 0 160 20 20 cm /Im Do", "/XObject << /Im 8 0 R >> ",
+            PdfStream("/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceRGB " +
+                $"/BitsPerComponent 8 /Interpolate {(interpolate ? "true" : "false")} /Filter /ASCIIHexDecode",
+                string.Concat(InterpolationTexels.Select(texel => $"{texel[0]:X2}{texel[1]:X2}{texel[2]:X2}")) + ">"));
+
+    private static byte[] TilingPatternPdf(string before, string resources) => SequentialPdf(
+    [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Pattern << /P1 5 0 R >>" +
+        resources + " >> /Contents 4 0 R >>",
+        PdfStream("", before + "/Pattern cs /P1 scn 10 10 180 180 re f"),
+        PdfStream("/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 " +
+            "/Matrix [1.5 0 0 1.5 3.3 2.6] /Resources << >>", "1 0 0 rg 0 0 5 5 re f 0 0 1 rg 5 5 5 5 re f"),
+    ]);
+
     private static Compat.JavaRaster Fill(Compat.JavaRaster raster, int max, int seed)
     {
         var random = new Random(seed);
@@ -1166,26 +1308,32 @@ public sealed class RasterConversionConsumerTests
     private static byte[] SoftMaskedShadingPdf(string kind) =>
         SoftMaskedPdf(kind, "10 10 180 180 re W n /Sh1 sh");
 
-    private static byte[] SoftMaskedPdf(string kind, string content)
-    {
-        static byte[] Ascii(string text) => System.Text.Encoding.ASCII.GetBytes(text);
-        static string Stream(string entries, string data) =>
-            $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
-        string[] objects =
+    private static string PdfStream(string entries, string data) =>
+        $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
+
+    // Objects in extra are numbered from 8; resources go into the page's.
+    private static byte[] SoftMaskedPdf(string kind, string content, string resources = "", params string[] extra) =>
+        SequentialPdf(
         [
             "<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /ExtGState << /GS1 5 0 R >> " +
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << " + resources +
+            "/ExtGState << /GS1 5 0 R >> " +
             "/Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Function << " +
             "/FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true] >> >> " +
             "/Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents 4 0 R >>",
-            Stream("", $"q /GS1 gs {content} Q"),
+            PdfStream("", $"q /GS1 gs {content} Q"),
             $"<< /Type /ExtGState /SMask << /Type /Mask /S {kind} /G 6 0 R >> >>",
-            Stream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Group << /S /Transparency " +
+            PdfStream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Group << /S /Transparency " +
                 "/CS /DeviceRGB >> /Resources << /ExtGState << /A 7 0 R >> >>",
                 "0.8 0.8 0.8 rg 20 20 100 100 re f /A gs 1 1 1 rg 80 80 100 100 re f"),
             "<< /Type /ExtGState /ca 0.5 >>",
-        ];
+            .. extra,
+        ]);
+
+    // A PDF whose objects are numbered from 1 in order.
+    private static byte[] SequentialPdf(string[] objects)
+    {
         var text = new System.Text.StringBuilder("%PDF-1.7\n");
         var offsets = new List<int>();
         for (var index = 0; index < objects.Length; index++)
@@ -1197,7 +1345,7 @@ public sealed class RasterConversionConsumerTests
         text.Append($"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
         foreach (var offset in offsets) text.Append($"{offset:D10} 00000 n \n");
         text.Append($"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
-        return Ascii(text.ToString());
+        return System.Text.Encoding.ASCII.GetBytes(text.ToString());
     }
 
     // Raster.getData copies and materialized data buffers of a bitmap-backed

@@ -3641,8 +3641,7 @@ public sealed class JavaTexturePaint : JavaPaint
         _ = colorModel;
         _ = deviceBounds;
         _ = userBounds;
-        _ = hints;
-        return new TexturePaintContext(Image, Anchor, transform);
+        return new TexturePaintContext(Image, Anchor, transform, hints);
     }
 
     public int GetTransparency() =>
@@ -3650,82 +3649,100 @@ public sealed class JavaTexturePaint : JavaPaint
             ? PdfCartonTransparency.OPAQUE
             : PdfCartonTransparency.TRANSLUCENT;
 
-    private sealed class TexturePaintContext : JavaPaintContext
+    // java.awt.TexturePaintContext drawn by Skia: PdfCartonGraphics2D fills
+    // with its shader, and GetRaster (custom paints such as SoftMask that
+    // wrap it) draws that shader into an INT_ARGB raster. No pixel is
+    // sampled in managed code.
+    internal sealed class TexturePaintContext : JavaPaintContext
     {
         private readonly List<SKBitmap> rasters = new();
         private readonly SKBitmap image;
-        private readonly SKRect anchor;
-        private readonly SKMatrix deviceToUser;
-        private readonly JavaColorModel colorModel;
+        private readonly SKMatrix deviceFromImage;
+        private readonly SKSamplingOptions sampling;
+        private readonly JavaColorModel colorModel =
+            new(PdfCartonFontCompat.TYPE_INT_ARGB);
 
         internal TexturePaintContext(
             SKBitmap image,
             SKRect anchor,
-            SKMatrix userToDevice)
+            SKMatrix userToDevice,
+            PdfCartonRenderingHints? hints)
         {
             if (anchor.Width == 0 || anchor.Height == 0)
                 throw new ArgumentException(
                     "Texture paint anchor dimensions cannot be zero.",
                     nameof(anchor));
             this.image = image;
-            this.anchor = anchor;
-            deviceToUser = PdfCartonFontCompat.CreateInverse(userToDevice);
-            colorModel = PdfCartonFontCompat.GetColorModel(image);
+            // As Java: bilinear unless the interpolation hint is nearest
+            // neighbour or, without one, the rendering hint is not quality.
+            object? interpolation = null;
+            hints?.TryGetValue(PdfCartonRenderingHints.KEY_INTERPOLATION, out interpolation);
+            var filter = interpolation is null
+                ? ReferenceEquals(
+                    hints?.GetValueOrDefault(PdfCartonRenderingHints.KEY_RENDERING),
+                    PdfCartonRenderingHints.VALUE_RENDER_QUALITY)
+                : !ReferenceEquals(
+                    interpolation,
+                    PdfCartonRenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            sampling = new SKSamplingOptions(filter ? SKFilterMode.Linear : SKFilterMode.Nearest);
+            // Java maps the device pixel's corner to image position u and
+            // takes texel floor(u), or blends floor(u) and the next texel by
+            // frac(u). Skia maps pixel centres and samples texel centres, so
+            // shift by half a device pixel and, when filtering, half a texel.
+            var matrix = SKMatrix.Concat(
+                SKMatrix.CreateTranslation(0.5f, 0.5f),
+                SKMatrix.Concat(
+                    userToDevice,
+                    SKMatrix.CreateScaleTranslation(
+                        anchor.Width / image.Width,
+                        anchor.Height / image.Height,
+                        anchor.Left,
+                        anchor.Top)));
+            deviceFromImage = filter
+                ? SKMatrix.Concat(matrix, SKMatrix.CreateTranslation(-0.5f, -0.5f))
+                : matrix;
         }
 
         public JavaColorModel GetColorModel() => colorModel;
+
+        // The repeating image shader for a canvas whose matrix is userToDevice;
+        // null when that matrix cannot be inverted (nothing is drawn).
+        internal SKShader? CreateShader(SKMatrix userToDevice)
+        {
+            if (!userToDevice.TryInvert(out var deviceToUser)) return null;
+            PdfCartonFontCompat.EnsureNativePixels(image);
+            return image.ToShader(
+                SKShaderTileMode.Repeat,
+                SKShaderTileMode.Repeat,
+                sampling,
+                SKMatrix.Concat(deviceToUser, deviceFromImage));
+        }
 
         public JavaRaster GetRaster(int x, int y, int width, int height)
         {
             if (width <= 0 || height <= 0)
                 throw new ArgumentException("Raster dimensions must be positive.");
-            var bitmap = new PdfCartonNativeBitmap(new SKImageInfo(
+            var bitmap = PdfCartonFontCompat.CreateNativeBitmap(
                 width,
                 height,
-                image.ColorType,
-                image.AlphaType,
-                image.ColorSpace));
-            using var input = new PdfCartonPixels(image);
-            using var output = new PdfCartonPixels(bitmap);
-            for (var row = 0; row < height; row++)
+                PdfCartonFontCompat.TYPE_INT_ARGB);
+            rasters.Add(bitmap);
+            using (var shader = CreateShader(SKMatrix.CreateTranslation(x, y)))
             {
-                for (var column = 0; column < width; column++)
+                if (shader is not null)
                 {
-                    var deviceX = x + column;
-                    var deviceY = y + row;
-                    var userX =
-                        deviceToUser.ScaleX * deviceX +
-                        deviceToUser.SkewX * deviceY +
-                        deviceToUser.TransX;
-                    var userY =
-                        deviceToUser.SkewY * deviceX +
-                        deviceToUser.ScaleY * deviceY +
-                        deviceToUser.TransY;
-                    var imageX = Mod(
-                        (int)Math.Floor(
-                            (userX - anchor.Left) / anchor.Width * image.Width),
-                        image.Width);
-                    var imageY = Mod(
-                        (int)Math.Floor(
-                            (userY - anchor.Top) / anchor.Height * image.Height),
-                        image.Height);
-                    output.Set(column, row, input.Get(imageX, imageY));
+                    using var canvas = new SKCanvas(bitmap);
+                    using var paint = new SKPaint { Shader = shader, BlendMode = SKBlendMode.Src };
+                    canvas.DrawPaint(paint);
                 }
             }
-            rasters.Add(bitmap);
-            return new JavaRaster(bitmap);
+            return PdfCartonFontCompat.GetRaster(bitmap);
         }
 
         public void Dispose()
         {
             foreach (var raster in rasters) raster.Dispose();
             rasters.Clear();
-        }
-
-        private static int Mod(int value, int modulus)
-        {
-            var result = value % modulus;
-            return result < 0 ? result + modulus : result;
         }
     }
 }
@@ -6330,11 +6347,13 @@ public class PdfCartonGraphics2D : IDisposable
         }
     }
 
-    private SKPaint CreateDrawingPaint(bool stroked)
+    private SKPaint CreateDrawingPaint(bool stroked, SKShader? shader = null)
     {
         var basicStroke = stroke as JavaBasicStroke ?? new JavaBasicStroke(1f);
         var result = basicStroke.CreateSkiaPaint();
-        result.Color = paint is JavaColor paintColor ? paintColor : color;
+        result.Color = shader is not null ? SKColors.White
+            : paint is JavaColor paintColor ? paintColor : color;
+        result.Shader = shader;
         result.IsStroke = stroked;
         result.IsAntialias = IsAntialiasEnabled();
         return result;
@@ -6388,7 +6407,8 @@ public class PdfCartonGraphics2D : IDisposable
         Action<SKCanvas, SKPaint> draw,
         bool stroked,
         bool imagePaint,
-        SKRect? userBounds)
+        SKRect? userBounds,
+        SKShader? shader = null)
     {
         ArgumentNullException.ThrowIfNull(draw);
         ThrowIfDisposed();
@@ -6398,7 +6418,7 @@ public class PdfCartonGraphics2D : IDisposable
         {
             using var directPaint = imagePaint
                 ? CreateImagePaint()
-                : CreateDrawingPaint(stroked);
+                : CreateDrawingPaint(stroked, shader);
             ApplyFallbackComposite(directPaint);
             using (BeginDrawing(bounds))
                 draw(RequireCanvas(), directPaint);
@@ -6421,7 +6441,7 @@ public class PdfCartonGraphics2D : IDisposable
             ConfigureLayerCanvas(layer, bounds);
             using var sourcePaint = imagePaint
                 ? CreateImagePaint()
-                : CreateDrawingPaint(stroked);
+                : CreateDrawingPaint(stroked, shader);
             draw(layer, sourcePaint);
         }
         CompositeLayer(source, bounds);
@@ -6429,27 +6449,37 @@ public class PdfCartonGraphics2D : IDisposable
 
     private void RenderPaintLayer(SKPath shape, bool stroked)
     {
+        var bounds = DrawingBounds(PathBounds(shape), stroked);
+        if (bounds.IsEmpty) return;
+        var deviceBounds = bounds;
+        using var context = paint.CreateContext(
+            bitmap is null
+                ? new JavaColorModel(PdfCartonFontCompat.TYPE_INT_ARGB)
+                : PdfCartonFontCompat.GetColorModel(bitmap),
+            deviceBounds,
+            shape.Bounds,
+            transform,
+            renderingHints);
+        // Texture paints, TilingPaint's among them, fill with a Skia shader.
+        if (context is JavaTexturePaint.TexturePaintContext texture)
+        {
+            using var shader = texture.CreateShader(transform);
+            if (shader is not null)
+                RenderLayer((layer, drawingPaint) => layer.DrawPath(shape, drawingPaint),
+                    stroked, imagePaint: false, PathBounds(shape), shader);
+            return;
+        }
         if (bitmap is null)
         {
             throw new InvalidOperationException(
                 "Non-solid Java paints require a bitmap-backed CPU canvas.");
         }
 
-        var bounds = DrawingBounds(PathBounds(shape), stroked);
-        if (bounds.IsEmpty) return;
-
         using var source = PdfCartonFontCompat.CreateNativeBitmap(
             bounds.Width,
             bounds.Height,
             PdfCartonFontCompat.TYPE_INT_ARGB);
         source.Erase(SKColors.Transparent);
-        var deviceBounds = bounds;
-        using (var context = paint.CreateContext(
-                   PdfCartonFontCompat.GetColorModel(bitmap),
-                   deviceBounds,
-                   shape.Bounds,
-                   transform,
-                   renderingHints))
         {
             var raster = context.GetRaster(
                 deviceBounds.Left,
