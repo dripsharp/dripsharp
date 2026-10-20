@@ -466,6 +466,57 @@
     (is (< (.indexOf transformed "SetImageData(bim!, raster)")
            (.indexOf transformed "return bim!;")))))
 
+(deftest color-space-conversion-owns-its-intermediate-bitmap
+  (let [source-declaration
+        (str "global::SkiaSharp.SKBitmap src = "
+             "global::DripSharp.Runtime.PdfCartonFontCompat.CreateImage("
+             "colorModel, raster, false, "
+             "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")
+        filter-call "this.colorConvertOp.Filter(src, dest);"
+        draw-call "g2d.DrawImage(src, 0, 0, (object)default!);"
+        declaration
+        (csharp/declaration
+         (csharp/raw "protected internal virtual object ToRGBImageAWT()")
+         (csharp/block [(csharp/raw source-declaration)
+                        (csharp/raw draw-call)
+                        (csharp/raw "g2d.Dispose();")
+                        (csharp/raw filter-call)
+                        (csharp/raw "return dest;")])
+         {:declaration-kind :method
+          :source-name "toRGBImageAWT"
+          :source-qualified-name
+          "org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace"})
+        transformed
+        (:text
+         (render-transformed
+          {:package {:id "DripSharp.PdfCarton"}}
+          declaration))]
+    (is (str/includes? transformed "using global::SkiaSharp.SKBitmap src"))
+    (is (str/includes? transformed "PdfCartonFontCompat.CreateDeferredImage("))
+    (is (not (str/includes? transformed "PdfCartonFontCompat.CreateImage(")))
+    (testing "the one-pixel drawing branch disposes its owned objects on failure"
+      (let [draw (.indexOf transformed draw-call)
+            cleanup (.indexOf transformed "g2d.Dispose();\n" draw)]
+        (is (< draw cleanup (.indexOf transformed "dest.Dispose();" cleanup)))))
+    (testing "the conversion branch disposes the owned result on failure"
+      (let [filter (.indexOf transformed filter-call)]
+        (is (< filter
+               (.indexOf transformed "dest.Dispose();" filter)
+               (.indexOf transformed "return dest;")))))
+    (testing "an upstream change to the rewritten statements fails generation"
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"missing the expected statement"
+           (render-transformed
+            {:package {:id "DripSharp.PdfCarton"}}
+            (csharp/declaration
+             (csharp/raw "protected internal virtual object ToRGBImageAWT()")
+             (csharp/block [(csharp/raw filter-call)])
+             {:declaration-kind :method
+              :source-name "toRGBImageAWT"
+              :source-qualified-name
+              "org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace"})))))))
+
 (deftest pdfbox-text-normalization-preserves-upstream-arabic-mark-order
   (let [declaration
         (csharp/declaration

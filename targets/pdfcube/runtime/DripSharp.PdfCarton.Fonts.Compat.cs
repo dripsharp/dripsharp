@@ -2042,6 +2042,11 @@ public sealed class JavaRaster
     public int TransferType => transferType;
     internal int PackedPixelBits => packedPixelBits;
     internal int StorageSize => storage?.Length ?? checked(width * height);
+    // A managed sample array that no bitmap view shadows.
+    internal bool HasArrayStorage => storage is not null && bitmap is null;
+    // True while this raster reads and writes the bitmap's native pixels.
+    internal bool IsLiveViewOf(SKBitmap image) =>
+        storage is null && ReferenceEquals(bitmap, image);
 
     public JavaRaster CreateCompatibleWritableRaster() =>
         packedPixelBits != 0
@@ -2670,23 +2675,38 @@ public sealed class JavaColorConvertOp
     public SKBitmap Filter(SKBitmap source, SKBitmap? destination)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (destination is null)
+        if (destination is not null) return Convert(source, destination);
+
+        var colorSpace = destinationColorSpace ??
+            PdfCartonFontCompat.GetColorModel(source).ColorSpace;
+        var colorModel = new JavaColorModel(
+            colorSpace,
+            false,
+            PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+        var raster = colorModel.CreateCompatibleWritableRaster(
+            source.Width,
+            source.Height);
+        // Convert ends with SetImageData, which renders the native pixels, so
+        // the new image skips CreateImage's eager render. It is disposed if
+        // the conversion fails because it never reaches the caller.
+        var created = PdfCartonFontCompat.CreateDeferredImage(
+            colorModel,
+            raster,
+            false,
+            null);
+        try
         {
-            var colorSpace = destinationColorSpace ??
-                PdfCartonFontCompat.GetColorModel(source).ColorSpace;
-            var colorModel = new JavaColorModel(
-                colorSpace,
-                false,
-                PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
-            var raster = colorModel.CreateCompatibleWritableRaster(
-                source.Width,
-                source.Height);
-            destination = PdfCartonFontCompat.CreateImage(
-                colorModel,
-                raster,
-                false,
-                null);
+            return Convert(source, created);
         }
+        catch
+        {
+            created.Dispose();
+            throw;
+        }
+    }
+
+    private static SKBitmap Convert(SKBitmap source, SKBitmap destination)
+    {
         if (source.Width != destination.Width ||
             source.Height != destination.Height)
         {
@@ -2697,41 +2717,88 @@ public sealed class JavaColorConvertOp
         var destinationColorModel = PdfCartonFontCompat.GetColorModel(destination);
         var sourceRaster = PdfCartonFontCompat.GetRaster(source);
         var destinationRaster = PdfCartonFontCompat.GetRaster(destination);
+        var width = source.Width;
+        var sourceCount = sourceColorModel.NumberOfComponents;
+        var sourceAlphaIndex = sourceColorModel.NumberOfColorComponents;
+        var sourceColorSpace = sourceColorModel.ColorSpace;
+        var destinationColorSpace = destinationColorModel.ColorSpace;
+        var destinationColorCount = destinationColorModel.NumberOfColorComponents;
+        var destinationHasAlpha = destinationColorModel.HasAlpha;
+        // Each pixel is read once into a reused row buffer and converted once
+        // (ToRgb, then FromRgb into the destination space) without allocating.
+        var sourceRow = new float[checked(width * sourceCount)];
+        int[]? sourceSamples = null;
         object? sourcePixel = null;
         object? destinationPixel = null;
-        float[]? sourceComponents = null;
         var destinationComponents =
             new float[destinationColorModel.NumberOfComponents];
-        for (var y = 0; y < source.Height; y++)
+        Span<float> rgb = stackalloc float[3];
+        Span<float> converted = stackalloc float[JavaColorSpace.MaximumComponents];
+        // When the destination raster is the bitmap's own live pixel view under
+        // its image-type model, the converted components go straight to the
+        // native pixels: the per-pixel raster writes and the final re-render
+        // would store exactly these bytes.
+        var direct = PdfCartonFontCompat.RendersAsStored(
+            destination,
+            destinationColorModel,
+            destinationRaster);
+        var output = direct ? new PdfCartonPixels(destination) : default;
+        try
         {
-            for (var x = 0; x < source.Width; x++)
+            for (var y = 0; y < source.Height; y++)
             {
-                sourcePixel =
-                    sourceRaster.GetDataElements(x, y, 1, 1, sourcePixel);
-                sourceComponents = sourceColorModel.GetNormalizedComponents(
-                    sourcePixel,
-                    sourceComponents,
-                    0);
-                var rgb = sourceColorModel.ColorSpace.ToRgb(sourceComponents);
-                var converted = destinationColorModel.ColorSpace.FromRgb(rgb);
-                Array.Copy(
-                    converted,
-                    destinationComponents,
-                    destinationColorModel.NumberOfColorComponents);
-                if (destinationColorModel.HasAlpha)
+                sourceColorModel.GetNormalizedRow(
+                    sourceRaster,
+                    y,
+                    sourceRow,
+                    ref sourceSamples,
+                    ref sourcePixel);
+                for (var x = 0; x < width; x++)
                 {
-                    destinationComponents[
-                        destinationColorModel.NumberOfColorComponents] =
-                        sourceColorModel.HasAlpha
-                            ? sourceComponents[sourceColorModel.NumberOfColorComponents]
+                    var sourceComponents =
+                        new ReadOnlySpan<float>(sourceRow, x * sourceCount, sourceCount);
+                    sourceColorSpace.ConvertToRgb(sourceComponents, rgb);
+                    var convertedCount = destinationColorSpace.ConvertFromRgb(rgb, converted);
+                    if (convertedCount < destinationColorCount)
+                        throw new ArgumentException(
+                            "The converted color has fewer components than the destination.");
+                    var alpha = !destinationHasAlpha
+                        ? 1f
+                        : sourceColorModel.HasAlpha
+                            ? sourceComponents[sourceAlphaIndex]
                             : 1f;
+                    if (direct)
+                    {
+                        var first = PdfCartonFontCompat.ComponentByte(converted[0]);
+                        output.Set(
+                            x,
+                            y,
+                            destinationColorCount == 1
+                                ? new SKColor(first, first, first)
+                                : new SKColor(
+                                    first,
+                                    PdfCartonFontCompat.ComponentByte(converted[1]),
+                                    PdfCartonFontCompat.ComponentByte(converted[2]),
+                                    destinationHasAlpha
+                                        ? PdfCartonFontCompat.ComponentByte(alpha)
+                                        : byte.MaxValue));
+                        continue;
+                    }
+                    converted.Slice(0, destinationColorCount)
+                        .CopyTo(destinationComponents);
+                    if (destinationHasAlpha)
+                        destinationComponents[destinationColorCount] = alpha;
+                    destinationPixel = destinationColorModel.GetDataElements(
+                        destinationComponents,
+                        0,
+                        destinationPixel);
+                    destinationRaster.SetDataElements(x, y, destinationPixel);
                 }
-                destinationPixel = destinationColorModel.GetDataElements(
-                    destinationComponents,
-                    0,
-                    destinationPixel);
-                destinationRaster.SetDataElements(x, y, destinationPixel);
             }
+        }
+        finally
+        {
+            if (direct) output.Dispose();
         }
         PdfCartonFontCompat.SetImageData(destination, destinationRaster);
         return destination;
@@ -3106,6 +3173,10 @@ public sealed class JavaIccProfile
     public int GetMinorVersion() => profile.MinorVersion;
     internal float[] ToRgb(float[] components) => profile.ToRgb(components);
     internal float[] FromRgb(float[] rgb) => profile.FromRgb(rgb);
+    internal void ToRgb(ReadOnlySpan<float> components, Span<float> rgb) =>
+        profile.ToRgb(components, rgb);
+    internal int FromRgb(ReadOnlySpan<float> rgb, Span<float> components) =>
+        profile.FromRgb(rgb, components);
 }
 
 public static class PdfCartonTransparency
@@ -3514,6 +3585,71 @@ public class JavaColorModel
         explicitColorSpace?.NumberOfComponents ??
         (imageType == PdfCartonFontCompat.TYPE_BYTE_GRAY ? 1 : 3);
     public JavaColorSpace ColorSpace { get; }
+    internal int ImageType => imageType;
+    // The model GetRaster/GetColorModel derive from a bitmap's image type.
+    internal bool IsImageTypeModel =>
+        explicitColorSpace is null && Palette is null && explicitMasks is null;
+
+    private double[]? componentMaxima;
+
+    // Writes the normalized components of raster row y into components
+    // (Width * NumberOfComponents values), producing exactly what
+    // GetNormalizedComponents returns for each pixel. The scratch arguments
+    // are reused across rows so a full-image pass allocates nothing per pixel.
+    internal void GetNormalizedRow(
+        JavaRaster raster,
+        int y,
+        float[] components,
+        ref int[]? samples,
+        ref object? pixel)
+    {
+        var width = raster.Width;
+        var count = NumberOfComponents;
+        if (components.Length < checked(width * count))
+            throw new IndexOutOfRangeException();
+        if (Palette is null && explicitMasks is null &&
+            imageType is not PdfCartonFontCompat.TYPE_INT_RGB and
+                not PdfCartonFontCompat.TYPE_INT_ARGB and
+                not PdfCartonFontCompat.TYPE_INT_BGR and
+                not PdfCartonFontCompat.TYPE_BYTE_BINARY &&
+            raster.HasArrayStorage &&
+            raster.PackedPixelBits == 0 &&
+            raster.NumberOfBands == count)
+        {
+            var length = width * count;
+            if (samples is null || samples.Length < length) samples = new int[length];
+            raster.GetPixels(0, y, width, 1, samples);
+            var maxima = componentMaxima ??= ComponentMaxima();
+            var clampSamples = raster.TransferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_INT;
+            for (var index = 0; index < length; index++)
+            {
+                var value = samples[index] / maxima[index % count];
+                components[index] = clampSamples
+                    ? (float)JavaCompat.Clamp(value, 0d, 1d)
+                    : (float)value;
+            }
+            return;
+        }
+        for (var x = 0; x < width; x++)
+        {
+            pixel = raster.GetDataElements(x, y, 1, 1, pixel);
+            GetNormalizedComponents(pixel, components, x * count);
+        }
+    }
+
+    private double[] ComponentMaxima()
+    {
+        var maxima = new double[NumberOfComponents];
+        for (var component = 0; component < maxima.Length; component++)
+        {
+            maxima[component] = explicitComponentBits is null
+                ? explicitDataType == PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT
+                    ? 65535d
+                    : 255d
+                : Math.Pow(2d, explicitComponentBits[component]) - 1d;
+        }
+        return maxima;
+    }
 
     public JavaRaster CreateCompatibleWritableRaster(int width, int height)
     {
@@ -3834,63 +3970,138 @@ public class JavaColorSpace
     public int NumberOfComponents => numberOfComponents;
     public bool IsSrgb => Kind == CS_sRGB;
 
+    // The array overloads are the Java-shaped API and delegate to the span
+    // overloads, which hold each space's conversion. Per-pixel callers use the
+    // span overloads, which write into caller-owned buffers and allocate nothing.
     public virtual float[] ToRgb(float[] components)
     {
         ArgumentNullException.ThrowIfNull(components);
-        if (components.Length < NumberOfComponents)
-            throw new ArgumentException("The component array is too short.", nameof(components));
-        static float Clamp(float value) => JavaCompat.Clamp(value, 0f, 1f);
-        return Type switch
-        {
-            TYPE_GRAY => new[]
-            {
-                Clamp(components[0]),
-                Clamp(components[0]),
-                Clamp(components[0])
-            },
-            TYPE_CMYK => new[]
-            {
-                1f - Math.Min(1f, Clamp(components[0]) + Clamp(components[3])),
-                1f - Math.Min(1f, Clamp(components[1]) + Clamp(components[3])),
-                1f - Math.Min(1f, Clamp(components[2]) + Clamp(components[3]))
-            },
-            _ => new[]
-            {
-                Clamp(components[0]),
-                Clamp(components.Length > 1 ? components[1] : components[0]),
-                Clamp(components.Length > 2 ? components[2] : components[0])
-            }
-        };
+        var rgb = new float[3];
+        ToRgb(components, rgb);
+        return rgb;
     }
 
     public virtual float[] FromRgb(float[] rgb)
     {
         ArgumentNullException.ThrowIfNull(rgb);
+        Span<float> buffer = stackalloc float[MaximumComponents];
+        var count = FromRgb(rgb, buffer);
+        return buffer.Slice(0, count).ToArray();
+    }
+
+    // Color spaces have at most fifteen components; FromRgb span callers pass
+    // an output buffer of at least this length.
+    internal const int MaximumComponents = PdfCartonIccProfileData.MaximumComponents;
+
+    private int arrayOverrides = -1;
+
+    // A subclass outside this assembly can only override the public array
+    // methods. Per-pixel callers use these entry points, which take the
+    // allocation-free span path unless such an override must be honored.
+    internal void ConvertToRgb(ReadOnlySpan<float> components, Span<float> rgb)
+    {
+        if (!OverridesArrayConversions)
+        {
+            ToRgb(components, rgb);
+            return;
+        }
+        var result = ToRgb(components.ToArray());
+        if (result.Length < 3)
+            throw new ArgumentException("The color space returned fewer than three RGB components.");
+        result.AsSpan(0, 3).CopyTo(rgb);
+    }
+
+    internal int ConvertFromRgb(ReadOnlySpan<float> rgb, Span<float> output)
+    {
+        if (!OverridesArrayConversions) return FromRgb(rgb, output);
+        var result = FromRgb(rgb.ToArray());
+        result.AsSpan().CopyTo(output);
+        return result.Length;
+    }
+
+    private bool OverridesArrayConversions
+    {
+        get
+        {
+            if (arrayOverrides < 0)
+            {
+                var type = GetType();
+                var overrides =
+                    type.GetMethod(nameof(ToRgb), new[] { typeof(float[]) })!.DeclaringType !=
+                        typeof(JavaColorSpace) ||
+                    type.GetMethod(nameof(FromRgb), new[] { typeof(float[]) })!.DeclaringType !=
+                        typeof(JavaColorSpace);
+                arrayOverrides = overrides ? 1 : 0;
+            }
+            return arrayOverrides == 1;
+        }
+    }
+
+    internal virtual void ToRgb(ReadOnlySpan<float> components, Span<float> rgb)
+    {
+        if (components.Length < NumberOfComponents)
+            throw new ArgumentException("The component array is too short.", nameof(components));
+        static float Clamp(float value) => JavaCompat.Clamp(value, 0f, 1f);
+        switch (Type)
+        {
+            case TYPE_GRAY:
+                var gray = Clamp(components[0]);
+                rgb[0] = gray;
+                rgb[1] = gray;
+                rgb[2] = gray;
+                return;
+            case TYPE_CMYK:
+                var black = Clamp(components[3]);
+                rgb[0] = 1f - Math.Min(1f, Clamp(components[0]) + black);
+                rgb[1] = 1f - Math.Min(1f, Clamp(components[1]) + black);
+                rgb[2] = 1f - Math.Min(1f, Clamp(components[2]) + black);
+                return;
+            default:
+                rgb[0] = Clamp(components[0]);
+                rgb[1] = Clamp(components.Length > 1 ? components[1] : components[0]);
+                rgb[2] = Clamp(components.Length > 2 ? components[2] : components[0]);
+                return;
+        }
+    }
+
+    // Writes the converted components into output (at least
+    // MaximumComponents long) and returns how many were written.
+    internal virtual int FromRgb(ReadOnlySpan<float> rgb, Span<float> output)
+    {
         if (rgb.Length < 3)
             throw new ArgumentException("RGB input must have three components.", nameof(rgb));
         var red = JavaCompat.Clamp(rgb[0], 0f, 1f);
         var green = JavaCompat.Clamp(rgb[1], 0f, 1f);
         var blue = JavaCompat.Clamp(rgb[2], 0f, 1f);
         if (Type == TYPE_GRAY)
-            return new[] { red * 0.2126f + green * 0.7152f + blue * 0.0722f };
+        {
+            output[0] = red * 0.2126f + green * 0.7152f + blue * 0.0722f;
+            return 1;
+        }
         if (Type != TYPE_CMYK)
         {
-            var components = new float[NumberOfComponents];
-            if (components.Length > 0) components[0] = red;
-            if (components.Length > 1) components[1] = green;
-            if (components.Length > 2) components[2] = blue;
-            return components;
+            var count = NumberOfComponents;
+            output.Slice(0, count).Clear();
+            if (count > 0) output[0] = red;
+            if (count > 1) output[1] = green;
+            if (count > 2) output[2] = blue;
+            return count;
         }
         var black = 1f - Math.Max(red, Math.Max(green, blue));
-        if (black >= 1f) return new[] { 0f, 0f, 0f, 1f };
-        var scale = 1f - black;
-        return new[]
+        if (black >= 1f)
         {
-            (1f - red - black) / scale,
-            (1f - green - black) / scale,
-            (1f - blue - black) / scale,
-            black
-        };
+            output[0] = 0f;
+            output[1] = 0f;
+            output[2] = 0f;
+            output[3] = 1f;
+            return 4;
+        }
+        var scale = 1f - black;
+        output[0] = (1f - red - black) / scale;
+        output[1] = (1f - green - black) / scale;
+        output[2] = (1f - blue - black) / scale;
+        output[3] = black;
+        return 4;
     }
 
     public virtual float[] ToCieXyz(float[] components)
@@ -3969,11 +4180,14 @@ public sealed class JavaIccColorSpace : JavaColorSpace
 
     public JavaIccProfile Profile { get; }
 
-    public override float[] ToRgb(float[] components) =>
-        IsSrgb ? base.ToRgb(components) : Profile.ToRgb(components);
+    internal override void ToRgb(ReadOnlySpan<float> components, Span<float> rgb)
+    {
+        if (IsSrgb) base.ToRgb(components, rgb);
+        else Profile.ToRgb(components, rgb);
+    }
 
-    public override float[] FromRgb(float[] rgb) =>
-        IsSrgb ? base.FromRgb(rgb) : Profile.FromRgb(rgb);
+    internal override int FromRgb(ReadOnlySpan<float> rgb, Span<float> output) =>
+        IsSrgb ? base.FromRgb(rgb, output) : Profile.FromRgb(rgb, output);
 
     public override float GetMinValue(int component)
     {
@@ -4552,6 +4766,7 @@ public class PdfCartonGraphics2D : IDisposable
     {
         ArgumentNullException.ThrowIfNull(image);
         _ = observer;
+        PdfCartonFontCompat.EnsureNativePixels(image);
         RenderImageLayer(
             (layer, imagePaint) => layer.DrawBitmap(
                 image,
@@ -4663,6 +4878,7 @@ public class PdfCartonGraphics2D : IDisposable
     {
         ArgumentNullException.ThrowIfNull(image);
         _ = observer;
+        PdfCartonFontCompat.EnsureNativePixels(image);
         if (PdfCartonFontCompat.IsDefaultMatrix(imageTransform))
         {
             imageTransform = SKMatrix.Identity;
@@ -5771,6 +5987,9 @@ internal static class PdfCartonFontCompat
         internal JavaRaster? Raster { get; }
         internal JavaSampleModel? SampleModel { get; }
         internal int? Transparency { get; }
+        // Set by CreateDeferredImage: the native pixels have not been rendered
+        // from Raster yet. Read and cleared under a lock on this instance.
+        internal bool NativePending { get; set; }
     }
 
     private static readonly ConditionalWeakTable<SKBitmap, ImageMetadata> ImageMetadataByBitmap = new();
@@ -6597,38 +6816,114 @@ internal static class PdfCartonFontCompat
                     retainedRaster.SetPixels(0, y, bitmap.Width, 1,
                         raster.GetPixels(0, y, bitmap.Width, 1, row));
             }
-            RenderRaster(bitmap, metadata.ColorModel, retainedRaster);
+            RenderRetainedRaster(bitmap, metadata);
             return;
         }
         var colorModel = new JavaColorModel(GetImageType(bitmap));
         RenderRaster(bitmap, colorModel, raster);
     }
 
+    // Re-renders a bitmap's retained raster. A live view of the bitmap's own
+    // pixels under its image-type model already holds the rendered result.
+    private static void RenderRetainedRaster(SKBitmap bitmap, ImageMetadata metadata)
+    {
+        lock (metadata)
+        {
+            if (!RendersAsStored(bitmap, metadata.ColorModel!, metadata.Raster!))
+                RenderRaster(bitmap, metadata.ColorModel!, metadata.Raster!);
+            metadata.NativePending = false;
+        }
+    }
+
+    // True when raster is the bitmap's live pixel view and model is the image-
+    // type model of a format whose round trip through it is exact, so
+    // rendering the raster would rewrite every native pixel unchanged.
+    internal static bool RendersAsStored(
+        SKBitmap bitmap,
+        JavaColorModel colorModel,
+        JavaRaster raster)
+    {
+        if (!raster.IsLiveViewOf(bitmap) || !colorModel.IsImageTypeModel) return false;
+        if (bitmap.ColorType == SKColorType.Gray8)
+            return colorModel.ImageType == TYPE_BYTE_GRAY && !colorModel.HasAlpha;
+        if (bitmap.ColorType != SKColorType.Bgra8888) return false;
+        return colorModel.ImageType switch
+        {
+            TYPE_INT_RGB or TYPE_3BYTE_BGR =>
+                bitmap.AlphaType == SKAlphaType.Opaque && !colorModel.HasAlpha,
+            TYPE_INT_ARGB or TYPE_4BYTE_ABGR =>
+                bitmap.AlphaType == SKAlphaType.Unpremul && colorModel.HasAlpha,
+            _ => false
+        };
+    }
+
+    // Renders every pixel through the color model once: components are read a
+    // row at a time into reused buffers and converted with one ToRgb per pixel.
     private static void RenderRaster(
         SKBitmap bitmap,
         JavaColorModel colorModel,
         JavaRaster raster)
     {
-        using var output = new PdfCartonPixels(bitmap);
+        var width = bitmap.Width;
+        var count = colorModel.NumberOfComponents;
+        var alphaIndex = colorModel.NumberOfColorComponents;
+        var hasAlpha = colorModel.HasAlpha;
+        var colorSpace = colorModel.ColorSpace;
+        var components = new float[checked(width * count)];
+        int[]? samples = null;
         object? pixel = null;
+        Span<float> rgb = stackalloc float[3];
+        using var output = new PdfCartonPixels(bitmap);
         for (var y = 0; y < bitmap.Height; y++)
         {
-            for (var x = 0; x < bitmap.Width; x++)
+            colorModel.GetNormalizedRow(raster, y, components, ref samples, ref pixel);
+            for (var x = 0; x < width; x++)
             {
-                pixel = raster.GetDataElements(x, y, 1, 1, pixel);
+                var pixelComponents = new ReadOnlySpan<float>(components, x * count, count);
+                colorSpace.ConvertToRgb(pixelComponents, rgb);
                 output.Set(
                     x,
                     y,
                     new SKColor(
-                        unchecked((byte)colorModel.GetRed(pixel)),
-                        unchecked((byte)colorModel.GetGreen(pixel)),
-                        unchecked((byte)colorModel.GetBlue(pixel)),
-                        unchecked((byte)colorModel.GetAlpha(pixel))));
+                        ComponentByte(rgb[0]),
+                        ComponentByte(rgb[1]),
+                        ComponentByte(rgb[2]),
+                        hasAlpha ? ComponentByte(pixelComponents[alphaIndex]) : byte.MaxValue));
             }
         }
     }
 
+    internal static byte ComponentByte(float value) =>
+        unchecked((byte)(int)JavaCompat.Round(JavaCompat.Clamp(value, 0f, 1f) * 255f));
+
     internal static SKBitmap CreateImage(
+        JavaColorModel colorModel,
+        JavaRaster raster,
+        bool isRasterPremultiplied,
+        object? properties)
+    {
+        var bitmap = CreateDeferredImage(
+            colorModel,
+            raster,
+            isRasterPremultiplied,
+            properties);
+        try
+        {
+            EnsureNativePixels(bitmap);
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
+        return bitmap;
+    }
+
+    // CreateImage without the eager native render, for an image the caller
+    // owns and consumes through its retained raster. The native pixels are
+    // rendered on first draw (EnsureNativePixels). Only pass such an image to
+    // compat paths that read its raster or call EnsureNativePixels.
+    internal static SKBitmap CreateDeferredImage(
         JavaColorModel colorModel,
         JavaRaster raster,
         bool isRasterPremultiplied,
@@ -6656,9 +6951,23 @@ internal static class PdfCartonFontCompat
             : new JavaMultiPixelPackedSampleModel(raster.PackedPixelBits);
         ImageMetadataByBitmap.Add(
             bitmap,
-            new ImageMetadata(TYPE_CUSTOM, colorModel, raster, sampleModel));
-        RenderRaster(bitmap, colorModel, raster);
+            new ImageMetadata(TYPE_CUSTOM, colorModel, raster, sampleModel)
+            {
+                NativePending = true
+            });
         return bitmap;
+    }
+
+    // Renders a deferred image's native pixels from its retained raster once.
+    internal static void EnsureNativePixels(SKBitmap bitmap)
+    {
+        if (!ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata)) return;
+        lock (metadata)
+        {
+            if (!metadata.NativePending) return;
+            RenderRaster(bitmap, metadata.ColorModel!, metadata.Raster!);
+            metadata.NativePending = false;
+        }
     }
 
     internal static int GetRgb(SKBitmap bitmap, int x, int y)
@@ -6728,7 +7037,7 @@ internal static class PdfCartonFontCompat
             var pixel =
                 metadata.ColorModel.GetDataElements(components, 0, null);
             metadata.Raster.SetDataElements(x, y, pixel);
-            RenderRaster(bitmap, metadata.ColorModel, metadata.Raster);
+            RenderRetainedRaster(bitmap, metadata);
             return;
         }
         var color = FromArgb(argb);

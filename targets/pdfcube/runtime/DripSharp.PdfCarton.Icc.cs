@@ -3,11 +3,15 @@
 
 // Focused ICC profile parsing and color transforms for PdfCarton.
 // This implementation is authored for PdfCarton and uses no third-party codec.
+// Parsed transform state (LUTs, TRC curves and matrix columns) is built once per
+// profile instance on first use and then shared read-only, so per-pixel
+// conversions allocate nothing and concurrent renders may share one profile.
 #nullable enable
 
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace DripSharp.Runtime;
 
@@ -24,9 +28,14 @@ internal sealed class PdfCartonIccProfileData
 
     private readonly byte[] data;
     private readonly Dictionary<uint, TagRecord> tags;
-    private readonly Dictionary<uint, IccLut> luts = new();
     private readonly uint colorSpaceSignature;
     private readonly uint pcsSignature;
+    // Each lazy caches its result or its parse failure, so a malformed tag
+    // fails every conversion consistently without being parsed again.
+    private readonly Lazy<IccLut?> deviceToPcsLut;
+    private readonly Lazy<IccLut?> pcsToDeviceLut;
+    private readonly Lazy<MatrixTransform> matrixTransform;
+    private readonly Lazy<InverseMatrixTransform?> inverseMatrixTransform;
 
     internal PdfCartonIccProfileData(sbyte[] profile)
     {
@@ -83,7 +92,24 @@ internal sealed class PdfCartonIccProfileData
                     new TagRecord(checked((int)offset), checked((int)size)));
             }
         }
+
+        deviceToPcsLut = new Lazy<IccLut?>(
+            () => LoadLut(true),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        pcsToDeviceLut = new Lazy<IccLut?>(
+            () => LoadLut(false),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        matrixTransform = new Lazy<MatrixTransform>(
+            LoadMatrixTransform,
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        inverseMatrixTransform = new Lazy<InverseMatrixTransform?>(
+            LoadInverseMatrixTransform,
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
+
+    // ICC color spaces have at most fifteen channels; span callers size
+    // FromRgb output buffers with this bound.
+    internal const int MaximumComponents = 15;
 
     internal uint DeviceClassSignature { get; }
     internal int NumberOfComponents { get; }
@@ -123,46 +149,86 @@ internal sealed class PdfCartonIccProfileData
     internal float[] ToRgb(float[] components)
     {
         ArgumentNullException.ThrowIfNull(components);
+        var result = new float[3];
+        ToRgb(components, result);
+        return result;
+    }
+
+    internal void ToRgb(ReadOnlySpan<float> components, Span<float> rgb)
+    {
         if (components.Length < NumberOfComponents)
             throw new ArgumentException(
                 "The component array is shorter than the ICC color space.",
                 nameof(components));
 
-        var source = new float[NumberOfComponents];
+        Span<float> source = stackalloc float[NumberOfComponents];
         for (var index = 0; index < source.Length; index++)
             source[index] = JavaCompat.Clamp(components[index], 0f, 1f);
 
-        var pcs = TryDeviceToPcs(source) ?? MatrixDeviceToXyz(source);
-        var xyz = pcsSignature == PcsLab ? LabToXyz(pcs) : pcs;
-        return XyzD50ToSrgb(xyz);
+        float x;
+        float y;
+        float z;
+        var lut = deviceToPcsLut.Value;
+        if (lut is not null)
+        {
+            Span<float> encoded = stackalloc float[lut.OutputChannels];
+            lut.Transform(source, encoded);
+            DecodePcs(encoded, out x, out y, out z);
+        }
+        else
+        {
+            matrixTransform.Value.DeviceToXyz(source, out x, out y, out z);
+        }
+        if (pcsSignature == PcsLab) LabToXyz(ref x, ref y, ref z);
+        XyzD50ToSrgb(x, y, z, rgb);
     }
 
     internal float[] FromRgb(float[] rgb)
     {
         ArgumentNullException.ThrowIfNull(rgb);
-        if (rgb.Length < 3)
-            throw new ArgumentException("RGB input must have three components.", nameof(rgb));
-        var xyz = SrgbToXyzD50(rgb);
-        var pcs = pcsSignature == PcsLab ? XyzToLab(xyz) : xyz;
-        var encoded = EncodePcs(pcs);
-        var tag = SelectTag(false);
-        if (tag.HasValue)
-            return GetLut(tag.Value).Transform(encoded);
-
-        if (NumberOfComponents == 3 && TryMatrixInverse(xyz, out var device))
-            return device;
-        if (NumberOfComponents == 1)
-            return new[] { JavaCompat.Clamp(rgb[0] * 0.2126f + rgb[1] * 0.7152f +
-                                      rgb[2] * 0.0722f, 0f, 1f) };
-        return NaiveFromRgb(rgb, NumberOfComponents);
+        Span<float> buffer = stackalloc float[MaximumComponents];
+        var count = FromRgb(rgb, buffer);
+        return buffer.Slice(0, count).ToArray();
     }
 
-    private float[]? TryDeviceToPcs(float[] components)
+    // Writes the device components into output and returns how many were
+    // written. Output must hold MaximumComponents values.
+    internal int FromRgb(ReadOnlySpan<float> rgb, Span<float> output)
     {
-        var tag = SelectTag(true);
-        if (!tag.HasValue) return null;
-        var encoded = GetLut(tag.Value).Transform(components);
-        return DecodePcs(encoded);
+        if (rgb.Length < 3)
+            throw new ArgumentException("RGB input must have three components.", nameof(rgb));
+        if (output.Length < MaximumComponents)
+            throw new ArgumentException("The output buffer is too small.", nameof(output));
+        SrgbToXyzD50(rgb, out var x, out var y, out var z);
+        var pcsX = x;
+        var pcsY = y;
+        var pcsZ = z;
+        if (pcsSignature == PcsLab) XyzToLab(ref pcsX, ref pcsY, ref pcsZ);
+        Span<float> encoded = stackalloc float[3];
+        EncodePcs(pcsX, pcsY, pcsZ, encoded);
+        var lut = pcsToDeviceLut.Value;
+        if (lut is not null)
+        {
+            lut.Transform(encoded, output);
+            return lut.OutputChannels;
+        }
+
+        if (NumberOfComponents == 3)
+        {
+            var inverse = inverseMatrixTransform.Value;
+            if (inverse is not null)
+            {
+                inverse.XyzToDevice(x, y, z, output);
+                return 3;
+            }
+        }
+        if (NumberOfComponents == 1)
+        {
+            output[0] = JavaCompat.Clamp(rgb[0] * 0.2126f + rgb[1] * 0.7152f +
+                                         rgb[2] * 0.0722f, 0f, 1f);
+            return 1;
+        }
+        return NaiveFromRgb(rgb, NumberOfComponents, output);
     }
 
     private uint? SelectTag(bool deviceToPcs)
@@ -181,9 +247,11 @@ internal sealed class PdfCartonIccProfileData
         return tags.ContainsKey(prefix) ? prefix : null;
     }
 
-    private IccLut GetLut(uint signature)
+    private IccLut? LoadLut(bool deviceToPcs)
     {
-        if (luts.TryGetValue(signature, out var existing)) return existing;
+        var selected = SelectTag(deviceToPcs);
+        if (!selected.HasValue) return null;
+        var signature = selected.Value;
         var tag = tags[signature];
         var parsed = IccLut.Parse(data, tag.Offset, tag.Size);
         if (parsed.InputChannels != (signature >> 24 == 0x41
@@ -193,59 +261,38 @@ internal sealed class PdfCartonIccProfileData
             throw new ArgumentException(
                 $"ICC LUT `{Signature(signature)}` has an unexpected input channel count.");
         }
-        luts.Add(signature, parsed);
         return parsed;
     }
 
-    private float[] MatrixDeviceToXyz(float[] source)
+    private MatrixTransform LoadMatrixTransform()
     {
         if (NumberOfComponents == 1)
         {
             var curve = ReadCurve(0x6b545243); // kTRC
             var white = ReadXyz(0x77747074); // wtpt
-            var luminance = curve.Evaluate(source[0]);
-            return new[]
-            {
-                white[0] * luminance,
-                white[1] * luminance,
-                white[2] * luminance
-            };
+            return MatrixTransform.Gray(curve, white);
         }
         if (NumberOfComponents == 3)
         {
             var red = ReadXyz(0x7258595a); // rXYZ
             var green = ReadXyz(0x6758595a); // gXYZ
             var blue = ReadXyz(0x6258595a); // bXYZ
-            var r = ReadCurve(0x72545243).Evaluate(source[0]); // rTRC
-            var g = ReadCurve(0x67545243).Evaluate(source[1]); // gTRC
-            var b = ReadCurve(0x62545243).Evaluate(source[2]); // bTRC
-            return new[]
-            {
-                red[0] * r + green[0] * g + blue[0] * b,
-                red[1] * r + green[1] * g + blue[1] * b,
-                red[2] * r + green[2] * g + blue[2] * b
-            };
+            var redCurve = ReadCurve(0x72545243); // rTRC
+            var greenCurve = ReadCurve(0x67545243); // gTRC
+            var blueCurve = ReadCurve(0x62545243); // bTRC
+            return MatrixTransform.Rgb(red, green, blue, redCurve, greenCurve, blueCurve);
         }
-        if (NumberOfComponents == 4)
-        {
-            return SrgbToXyzD50(new[]
-            {
-                1f - Math.Min(1f, source[0] + source[3]),
-                1f - Math.Min(1f, source[1] + source[3]),
-                1f - Math.Min(1f, source[2] + source[3])
-            });
-        }
+        if (NumberOfComponents == 4) return MatrixTransform.NaiveCmyk;
         throw new ArgumentException(
             "ICC profile has neither a usable LUT nor a matrix/TRC transform.");
     }
 
-    private bool TryMatrixInverse(float[] xyz, out float[] result)
+    private InverseMatrixTransform? LoadInverseMatrixTransform()
     {
-        result = Array.Empty<float>();
         if (!tags.ContainsKey(0x7258595a) ||
             !tags.ContainsKey(0x6758595a) ||
             !tags.ContainsKey(0x6258595a))
-            return false;
+            return null;
 
         var r = ReadXyz(0x7258595a);
         var g = ReadXyz(0x6758595a);
@@ -254,7 +301,7 @@ internal sealed class PdfCartonIccProfileData
             r[0] * (g[1] * b[2] - b[1] * g[2]) -
             g[0] * (r[1] * b[2] - b[1] * r[2]) +
             b[0] * (r[1] * g[2] - g[1] * r[2]);
-        if (Math.Abs(determinant) < 1e-12f) return false;
+        if (Math.Abs(determinant) < 1e-12f) return null;
         var inverse = new[]
         {
             (g[1] * b[2] - b[1] * g[2]) / determinant,
@@ -267,53 +314,43 @@ internal sealed class PdfCartonIccProfileData
             (g[0] * r[2] - r[0] * g[2]) / determinant,
             (r[0] * g[1] - g[0] * r[1]) / determinant
         };
-        var linear = new[]
-        {
-            inverse[0] * xyz[0] + inverse[1] * xyz[1] + inverse[2] * xyz[2],
-            inverse[3] * xyz[0] + inverse[4] * xyz[1] + inverse[5] * xyz[2],
-            inverse[6] * xyz[0] + inverse[7] * xyz[1] + inverse[8] * xyz[2]
-        };
-        result = new[]
-        {
-            ReadCurve(0x72545243).Invert(linear[0]),
-            ReadCurve(0x67545243).Invert(linear[1]),
-            ReadCurve(0x62545243).Invert(linear[2])
-        };
-        return true;
+        return new InverseMatrixTransform(
+            inverse,
+            ReadCurve(0x72545243),
+            ReadCurve(0x67545243),
+            ReadCurve(0x62545243));
     }
 
-    private float[] DecodePcs(float[] encoded)
+    private void DecodePcs(ReadOnlySpan<float> encoded, out float x, out float y, out float z)
     {
         if (encoded.Length < 3)
             throw new ArgumentException("ICC LUT did not produce a three-channel PCS value.");
         if (pcsSignature == PcsXyz)
-            return new[] { encoded[0] * 1.9999695f, encoded[1] * 1.9999695f,
-                           encoded[2] * 1.9999695f };
-        var scale = MajorVersion < 4 ? 65535f / 65280f : 1f;
-        return new[]
         {
-            JavaCompat.Clamp(encoded[0] * scale, 0f, 1f) * 100f,
-            JavaCompat.Clamp(encoded[1] * scale, 0f, 1f) * 255f - 128f,
-            JavaCompat.Clamp(encoded[2] * scale, 0f, 1f) * 255f - 128f
-        };
+            x = encoded[0] * 1.9999695f;
+            y = encoded[1] * 1.9999695f;
+            z = encoded[2] * 1.9999695f;
+            return;
+        }
+        var scale = MajorVersion < 4 ? 65535f / 65280f : 1f;
+        x = JavaCompat.Clamp(encoded[0] * scale, 0f, 1f) * 100f;
+        y = JavaCompat.Clamp(encoded[1] * scale, 0f, 1f) * 255f - 128f;
+        z = JavaCompat.Clamp(encoded[2] * scale, 0f, 1f) * 255f - 128f;
     }
 
-    private float[] EncodePcs(float[] pcs)
+    private void EncodePcs(float x, float y, float z, Span<float> encoded)
     {
         if (pcsSignature == PcsXyz)
-            return new[]
-            {
-                JavaCompat.Clamp(pcs[0] / 1.9999695f, 0f, 1f),
-                JavaCompat.Clamp(pcs[1] / 1.9999695f, 0f, 1f),
-                JavaCompat.Clamp(pcs[2] / 1.9999695f, 0f, 1f)
-            };
-        var scale = MajorVersion < 4 ? 65280f / 65535f : 1f;
-        return new[]
         {
-            JavaCompat.Clamp(pcs[0] / 100f, 0f, 1f) * scale,
-            JavaCompat.Clamp((pcs[1] + 128f) / 255f, 0f, 1f) * scale,
-            JavaCompat.Clamp((pcs[2] + 128f) / 255f, 0f, 1f) * scale
-        };
+            encoded[0] = JavaCompat.Clamp(x / 1.9999695f, 0f, 1f);
+            encoded[1] = JavaCompat.Clamp(y / 1.9999695f, 0f, 1f);
+            encoded[2] = JavaCompat.Clamp(z / 1.9999695f, 0f, 1f);
+            return;
+        }
+        var scale = MajorVersion < 4 ? 65280f / 65535f : 1f;
+        encoded[0] = JavaCompat.Clamp(x / 100f, 0f, 1f) * scale;
+        encoded[1] = JavaCompat.Clamp((y + 128f) / 255f, 0f, 1f) * scale;
+        encoded[2] = JavaCompat.Clamp((z + 128f) / 255f, 0f, 1f) * scale;
     }
 
     private float[] ReadXyz(uint signature)
@@ -339,11 +376,11 @@ internal sealed class PdfCartonIccProfileData
         return IccCurve.Parse(data, tag.Offset, tag.Size);
     }
 
-    private static float[] LabToXyz(float[] lab)
+    private static void LabToXyz(ref float l, ref float a, ref float b)
     {
-        var fy = (lab[0] + 16f) / 116f;
-        var fx = fy + lab[1] / 500f;
-        var fz = fy - lab[2] / 200f;
+        var fy = (l + 16f) / 116f;
+        var fx = fy + a / 500f;
+        var fz = fy - b / 200f;
         static float Inverse(float value)
         {
             const float delta = 6f / 29f;
@@ -351,15 +388,12 @@ internal sealed class PdfCartonIccProfileData
                 ? value * value * value
                 : 3f * delta * delta * (value - 4f / 29f);
         }
-        return new[]
-        {
-            0.9642f * Inverse(fx),
-            Inverse(fy),
-            0.8249f * Inverse(fz)
-        };
+        l = 0.9642f * Inverse(fx);
+        a = Inverse(fy);
+        b = 0.8249f * Inverse(fz);
     }
 
-    private static float[] XyzToLab(float[] xyz)
+    private static void XyzToLab(ref float x, ref float y, ref float z)
     {
         static float Forward(float value)
         {
@@ -369,17 +403,19 @@ internal sealed class PdfCartonIccProfileData
                 ? JavaCompat.Cbrt(value)
                 : value / (3f * delta * delta) + 4f / 29f;
         }
-        var fx = Forward(xyz[0] / 0.9642f);
-        var fy = Forward(xyz[1]);
-        var fz = Forward(xyz[2] / 0.8249f);
-        return new[] { 116f * fy - 16f, 500f * (fx - fy), 200f * (fy - fz) };
+        var fx = Forward(x / 0.9642f);
+        var fy = Forward(y);
+        var fz = Forward(z / 0.8249f);
+        x = 116f * fy - 16f;
+        y = 500f * (fx - fy);
+        z = 200f * (fy - fz);
     }
 
-    private static float[] XyzD50ToSrgb(float[] xyz)
+    private static void XyzD50ToSrgb(float xyz0, float xyz1, float xyz2, Span<float> rgb)
     {
-        var x = 0.9555766f * xyz[0] - 0.0230393f * xyz[1] + 0.0631636f * xyz[2];
-        var y = -0.0282895f * xyz[0] + 1.0099416f * xyz[1] + 0.0210077f * xyz[2];
-        var z = 0.0122982f * xyz[0] - 0.0204830f * xyz[1] + 1.3299098f * xyz[2];
+        var x = 0.9555766f * xyz0 - 0.0230393f * xyz1 + 0.0631636f * xyz2;
+        var y = -0.0282895f * xyz0 + 1.0099416f * xyz1 + 0.0210077f * xyz2;
+        var z = 0.0122982f * xyz0 - 0.0204830f * xyz1 + 1.3299098f * xyz2;
         var red = 3.2404542f * x - 1.5371385f * y - 0.4985314f * z;
         var green = -0.9692660f * x + 1.8760108f * y + 0.0415560f * z;
         var blue = 0.0556434f * x - 0.2040259f * y + 1.0572252f * z;
@@ -389,10 +425,16 @@ internal sealed class PdfCartonIccProfileData
                 : 1.055f * JavaCompat.Pow(Math.Max(0f, value), 1f / 2.4f) - 0.055f,
                 0f,
                 1f);
-        return new[] { Gamma(red), Gamma(green), Gamma(blue) };
+        rgb[0] = Gamma(red);
+        rgb[1] = Gamma(green);
+        rgb[2] = Gamma(blue);
     }
 
-    private static float[] SrgbToXyzD50(float[] rgb)
+    private static void SrgbToXyzD50(
+        ReadOnlySpan<float> rgb,
+        out float x,
+        out float y,
+        out float z)
     {
         static float Linear(float value)
         {
@@ -407,33 +449,34 @@ internal sealed class PdfCartonIccProfileData
         var x65 = 0.4124564f * r + 0.3575761f * g + 0.1804375f * b;
         var y65 = 0.2126729f * r + 0.7151522f * g + 0.0721750f * b;
         var z65 = 0.0193339f * r + 0.1191920f * g + 0.9503041f * b;
-        return new[]
-        {
-            1.0478112f * x65 + 0.0228866f * y65 - 0.0501270f * z65,
-            0.0295424f * x65 + 0.9904844f * y65 - 0.0170491f * z65,
-            -0.0092345f * x65 + 0.0150436f * y65 + 0.7521316f * z65
-        };
+        x = 1.0478112f * x65 + 0.0228866f * y65 - 0.0501270f * z65;
+        y = 0.0295424f * x65 + 0.9904844f * y65 - 0.0170491f * z65;
+        z = -0.0092345f * x65 + 0.0150436f * y65 + 0.7521316f * z65;
     }
 
-    private static float[] NaiveFromRgb(float[] rgb, int components)
+    private static int NaiveFromRgb(ReadOnlySpan<float> rgb, int components, Span<float> output)
     {
         if (components == 4)
         {
             var black = 1f - Math.Max(rgb[0], Math.Max(rgb[1], rgb[2]));
-            if (black >= 1f) return new[] { 0f, 0f, 0f, 1f };
-            var scale = 1f - black;
-            return new[]
+            if (black >= 1f)
             {
-                (1f - rgb[0] - black) / scale,
-                (1f - rgb[1] - black) / scale,
-                (1f - rgb[2] - black) / scale,
-                black
-            };
+                output[0] = 0f;
+                output[1] = 0f;
+                output[2] = 0f;
+                output[3] = 1f;
+                return 4;
+            }
+            var scale = 1f - black;
+            output[0] = (1f - rgb[0] - black) / scale;
+            output[1] = (1f - rgb[1] - black) / scale;
+            output[2] = (1f - rgb[2] - black) / scale;
+            output[3] = black;
+            return 4;
         }
-        var result = new float[components];
-        for (var index = 0; index < result.Length; index++)
-            result[index] = rgb[Math.Min(index, 2)];
-        return result;
+        for (var index = 0; index < components; index++)
+            output[index] = rgb[Math.Min(index, 2)];
+        return components;
     }
 
     private static int Components(uint signature) => signature switch
@@ -492,14 +535,172 @@ internal sealed class PdfCartonIccProfileData
 
     private readonly record struct TagRecord(int Offset, int Size);
 
+    // Device-to-PCS matrix/TRC state: the TRC curves and XYZ columns are
+    // read once, and DeviceToXyz evaluates them without allocating.
+    private sealed class MatrixTransform
+    {
+        private readonly int kind;
+        private readonly IccCurve? first;
+        private readonly IccCurve? second;
+        private readonly IccCurve? third;
+        private readonly float[] columns;
+
+        private MatrixTransform(
+            int kind,
+            IccCurve? first,
+            IccCurve? second,
+            IccCurve? third,
+            float[] columns)
+        {
+            this.kind = kind;
+            this.first = first;
+            this.second = second;
+            this.third = third;
+            this.columns = columns;
+        }
+
+        internal static readonly MatrixTransform NaiveCmyk =
+            new(4, null, null, null, Array.Empty<float>());
+
+        internal static MatrixTransform Gray(IccCurve curve, float[] white) =>
+            new(1, curve, null, null, white);
+
+        internal static MatrixTransform Rgb(
+            float[] red,
+            float[] green,
+            float[] blue,
+            IccCurve redCurve,
+            IccCurve greenCurve,
+            IccCurve blueCurve) =>
+            new(
+                3,
+                redCurve,
+                greenCurve,
+                blueCurve,
+                new[]
+                {
+                    red[0], red[1], red[2],
+                    green[0], green[1], green[2],
+                    blue[0], blue[1], blue[2]
+                });
+
+        internal void DeviceToXyz(
+            ReadOnlySpan<float> source,
+            out float x,
+            out float y,
+            out float z)
+        {
+            if (kind == 1)
+            {
+                var luminance = first!.Evaluate(source[0]);
+                x = columns[0] * luminance;
+                y = columns[1] * luminance;
+                z = columns[2] * luminance;
+                return;
+            }
+            if (kind == 3)
+            {
+                var r = first!.Evaluate(source[0]);
+                var g = second!.Evaluate(source[1]);
+                var b = third!.Evaluate(source[2]);
+                x = columns[0] * r + columns[3] * g + columns[6] * b;
+                y = columns[1] * r + columns[4] * g + columns[7] * b;
+                z = columns[2] * r + columns[5] * g + columns[8] * b;
+                return;
+            }
+            Span<float> rgb = stackalloc float[3];
+            rgb[0] = 1f - Math.Min(1f, source[0] + source[3]);
+            rgb[1] = 1f - Math.Min(1f, source[1] + source[3]);
+            rgb[2] = 1f - Math.Min(1f, source[2] + source[3]);
+            SrgbToXyzD50(rgb, out x, out y, out z);
+        }
+    }
+
+    private sealed class InverseMatrixTransform
+    {
+        private readonly float[] inverse;
+        private readonly IccCurve red;
+        private readonly IccCurve green;
+        private readonly IccCurve blue;
+
+        internal InverseMatrixTransform(
+            float[] inverse,
+            IccCurve red,
+            IccCurve green,
+            IccCurve blue)
+        {
+            this.inverse = inverse;
+            this.red = red;
+            this.green = green;
+            this.blue = blue;
+        }
+
+        internal void XyzToDevice(float x, float y, float z, Span<float> output)
+        {
+            var linear0 = inverse[0] * x + inverse[1] * y + inverse[2] * z;
+            var linear1 = inverse[3] * x + inverse[4] * y + inverse[5] * z;
+            var linear2 = inverse[6] * x + inverse[7] * y + inverse[8] * z;
+            output[0] = red.Invert(linear0);
+            output[1] = green.Invert(linear1);
+            output[2] = blue.Invert(linear2);
+        }
+    }
+
+    // An immutable TRC curve. Evaluation is a switch over the parsed curve
+    // kind, so it allocates no delegate, closure or sample array per call.
     private sealed class IccCurve
     {
-        private readonly Func<float, float> evaluate;
+        private const int IdentityCurve = 0;
+        private const int GammaCurve = 1;
+        private const int SampledCurve = 2;
+        private const int ParametricCurve = 3;
 
-        private IccCurve(Func<float, float> evaluate) => this.evaluate = evaluate;
+        private readonly int kind;
+        private readonly float gamma;
+        private readonly int functionType;
+        private readonly float[] values;
+
+        private IccCurve(int kind, float gamma, int functionType, float[] values)
+        {
+            this.kind = kind;
+            this.gamma = gamma;
+            this.functionType = functionType;
+            this.values = values;
+        }
 
         internal float Evaluate(float value) =>
-            JavaCompat.Clamp(evaluate(JavaCompat.Clamp(value, 0f, 1f)), 0f, 1f);
+            JavaCompat.Clamp(EvaluateRaw(JavaCompat.Clamp(value, 0f, 1f)), 0f, 1f);
+
+        private float EvaluateRaw(float value)
+        {
+            switch (kind)
+            {
+                case IdentityCurve:
+                    return value;
+                case GammaCurve:
+                    return JavaCompat.Pow(value, gamma);
+                case SampledCurve:
+                    return Interpolate(values, value);
+            }
+            var p = values;
+            return functionType switch
+            {
+                0 => JavaCompat.Pow(value, p[0]),
+                1 => value >= -p[2] / p[1]
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0])
+                    : 0f,
+                2 => value >= -p[2] / p[1]
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0]) + p[3]
+                    : p[3],
+                3 => value >= p[4]
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0])
+                    : p[3] * value,
+                4 => value >= p[4]
+                    ? JavaCompat.Pow(p[1] * value + p[2], p[0]) + p[5]
+                    : p[3] * value + p[6],
+                _ => value
+            };
+        }
 
         internal float Invert(float value)
         {
@@ -523,13 +724,14 @@ internal sealed class PdfCartonIccProfileData
             if (type == CurveType)
             {
                 var count = checked((int)ReadUInt32(source, offset + 8));
-                if (count == 0) return new IccCurve(value => value);
+                if (count == 0)
+                    return new IccCurve(IdentityCurve, 0f, 0, Array.Empty<float>());
                 if (count == 1)
                 {
                     if (size < 14) throw new ArgumentException("ICC gamma curve is truncated.");
                     var gamma = BinaryPrimitives.ReadUInt16BigEndian(
                         source.AsSpan(offset + 12, 2)) / 256f;
-                    return new IccCurve(value => JavaCompat.Pow(value, gamma));
+                    return new IccCurve(GammaCurve, gamma, 0, Array.Empty<float>());
                 }
                 if (12L + count * 2L > size)
                     throw new ArgumentException("ICC sampled curve is truncated.");
@@ -539,7 +741,7 @@ internal sealed class PdfCartonIccProfileData
                     samples[index] = BinaryPrimitives.ReadUInt16BigEndian(
                         source.AsSpan(offset + 12 + index * 2, 2)) / 65535f;
                 }
-                return new IccCurve(value => Interpolate(samples, value));
+                return new IccCurve(SampledCurve, 0f, 0, samples);
             }
             if (type != ParametricCurveType || size < 16)
                 throw new ArgumentException("Unsupported ICC curve tag type.");
@@ -559,23 +761,7 @@ internal sealed class PdfCartonIccProfileData
             var p = new float[parameterCount];
             for (var index = 0; index < p.Length; index++)
                 p[index] = ReadS15Fixed16(source, offset + 12 + index * 4);
-            return new IccCurve(value => functionType switch
-            {
-                0 => JavaCompat.Pow(value, p[0]),
-                1 => value >= -p[2] / p[1]
-                    ? JavaCompat.Pow(p[1] * value + p[2], p[0])
-                    : 0f,
-                2 => value >= -p[2] / p[1]
-                    ? JavaCompat.Pow(p[1] * value + p[2], p[0]) + p[3]
-                    : p[3],
-                3 => value >= p[4]
-                    ? JavaCompat.Pow(p[1] * value + p[2], p[0])
-                    : p[3] * value,
-                4 => value >= p[4]
-                    ? JavaCompat.Pow(p[1] * value + p[2], p[0]) + p[5]
-                    : p[3] * value + p[6],
-                _ => value
-            });
+            return new IccCurve(ParametricCurve, 0f, functionType, p);
         }
     }
 
@@ -608,11 +794,14 @@ internal sealed class PdfCartonIccProfileData
         internal int InputChannels { get; }
         internal int OutputChannels { get; }
 
-        internal float[] Transform(float[] input)
+        // Writes OutputChannels values into output without allocating.
+        internal void Transform(ReadOnlySpan<float> input, Span<float> output)
         {
             if (input.Length < InputChannels)
                 throw new ArgumentException("ICC LUT input has too few components.");
-            var mapped = new float[InputChannels];
+            if (output.Length < OutputChannels)
+                throw new ArgumentException("ICC LUT output buffer is too small.");
+            Span<float> mapped = stackalloc float[InputChannels];
             for (var channel = 0; channel < mapped.Length; channel++)
                 mapped[channel] = Interpolate(inputTables[channel], input[channel]);
             if (InputChannels == 3)
@@ -625,15 +814,16 @@ internal sealed class PdfCartonIccProfileData
                 mapped[2] = JavaCompat.Clamp(matrix[6] * x + matrix[7] * y + matrix[8] * z, 0f, 1f);
             }
 
-            var low = new int[InputChannels];
-            var fractions = new float[InputChannels];
+            Span<int> low = stackalloc int[InputChannels];
+            Span<float> fractions = stackalloc float[InputChannels];
             for (var channel = 0; channel < InputChannels; channel++)
             {
                 var position = JavaCompat.Clamp(mapped[channel], 0f, 1f) * (gridPoints - 1);
                 low[channel] = Math.Min((int)position, gridPoints - 2);
                 fractions[channel] = position - low[channel];
             }
-            var clutResult = new float[OutputChannels];
+            Span<float> clutResult = stackalloc float[OutputChannels];
+            clutResult.Clear();
             var cornerCount = 1 << InputChannels;
             for (var corner = 0; corner < cornerCount; corner++)
             {
@@ -649,10 +839,8 @@ internal sealed class PdfCartonIccProfileData
                 for (var channel = 0; channel < OutputChannels; channel++)
                     clutResult[channel] += clut[offset + channel] * weight;
             }
-            var result = new float[OutputChannels];
-            for (var channel = 0; channel < result.Length; channel++)
-                result[channel] = Interpolate(outputTables[channel], clutResult[channel]);
-            return result;
+            for (var channel = 0; channel < OutputChannels; channel++)
+                output[channel] = Interpolate(outputTables[channel], clutResult[channel]);
         }
 
         internal static IccLut Parse(byte[] source, int offset, int size)

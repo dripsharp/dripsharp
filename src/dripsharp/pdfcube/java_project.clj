@@ -3667,6 +3667,84 @@
            transformed)
          declaration)))))
 
+(defn- replace-rendered-statement
+  [declaration rendered-statement replacement-statement]
+  (let [found? (volatile! false)
+        transformed
+        (update
+         declaration
+         :body
+         csharp/transform
+         (fn [current]
+           (if (and (not @found?)
+                    (contains? #{:raw :sequence} (:kind current))
+                    (= rendered-statement (:text (csharp/render-raw current))))
+             (do
+               (vreset! found? true)
+               (csharp/raw replacement-statement))
+             current)))]
+    (when-not @found?
+      (fail! "Structured method is missing the expected statement"
+             {:kind :missing-pdfcube-structured-statement
+              :expected rendered-statement
+              :declaration-data (:data declaration)}))
+    transformed))
+
+(def ^:private owned-bitmap-statement-rewrites
+  "Java leaves intermediate BufferedImages to the garbage collector, but their
+  SKBitmap translations own native pixel memory. Each entry rewrites rendered
+  statements of one translated method so a non-escaping intermediate bitmap is
+  disposed deterministically (a `using` local) and an owned result is disposed
+  when the method fails before returning it. Keys are [declaring type, method]."
+  {["org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace" "toRGBImageAWT"]
+   ;; `src` only feeds ColorConvertOp.filter, which reads its retained
+   ;; raster, or the 1-pixel drawImage branch, which renders it on demand.
+   [[(str "global::SkiaSharp.SKBitmap src = "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateImage("
+          "colorModel, raster, false, "
+          "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")
+     (str "using global::SkiaSharp.SKBitmap src = "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateDeferredImage("
+          "colorModel, raster, false, "
+          "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")]
+    ;; Drawing renders the deferred `src`, so a conversion failure surfaces
+    ;; here too; the graphics context and `dest` never reach the caller.
+    ["g2d.DrawImage(src, 0, 0, (object)default!);"
+     (str "try {\n"
+          "g2d.DrawImage(src, 0, 0, (object)default!);\n"
+          "} catch {\n"
+          "g2d.Dispose();\n"
+          "dest.Dispose();\n"
+          "throw;\n"
+          "}")]
+    ["this.colorConvertOp.Filter(src, dest);"
+     (str "try {\n"
+          "this.colorConvertOp.Filter(src, dest);\n"
+          "} catch {\n"
+          "dest.Dispose();\n"
+          "throw;\n"
+          "}")]]})
+
+(defn- own-intermediate-bitmaps
+  [configuration node]
+  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
+    node
+    (reduce-kv
+     (fn [node [type-name method-name] rewrites]
+       (update-declaration
+        node
+        :method
+        type-name
+        (fn [declaration]
+          (if (= method-name (get-in declaration [:data :source-name]))
+            (reduce (fn [declaration [rendered replacement]]
+                      (replace-rendered-statement declaration rendered replacement))
+                    declaration
+                    rewrites)
+            declaration))))
+     node
+     owned-bitmap-statement-rewrites)))
+
 (defn- preserve-pdfbox-text-normalization
   [configuration node]
   (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
@@ -3823,6 +3901,7 @@
          (preserve-cos-update-dispatch configuration)
          (preserve-skia-annotation-rasterization configuration)
          (preserve-sampled-image-raster-synchronization configuration)
+         (own-intermediate-bitmaps configuration)
          (preserve-pdfbox-text-normalization configuration)
          (preserve-preflight-generic-contracts configuration))))
 
