@@ -49,7 +49,11 @@ RandomAccessReadBufferedFile and saving it),
 or `--filter '*PerPixelRasterBenchmarks*'` (page-sized upstream loops that read
 and write a bitmap-backed raster one pixel at a time: getStencilImage on a
 2480x3508 /ImageMask, and resetting plus Multiply-filling a 2480x3508 page
-through BlendComposite; the Monitoring job runs each a few times).
+through BlendComposite; the Monitoring job runs each a few times),
+or `--filter '*SoftMaskGroupTextBenchmarks*'` (a US Letter page at 300 DPI
+whose full-page or bottom-strip transparency group shows 200 or 2,000 glyphs
+under an ExtGState luminosity soft mask; the difference is the per-glyph cost,
+which should not depend on the group's area).
 Benchmark setup and cleanup are excluded from timings. Read results into reused
 buffers; writes consume a prebuilt sample buffer. Small blends report per-blend
 cost from a batch of nonoverlapping rectangles, with the destination reset before

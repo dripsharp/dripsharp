@@ -1332,12 +1332,13 @@ public sealed class JavaImageReader : IDisposable
         var bitmap = PdfCartonNativeBitmap.DecodeStream(stream) ??
             throw new IOException(
                 $"Unable to decode {formatName} image data.");
-        PdfCartonFontCompat.RegisterImageType(
+        PdfCartonFontCompat.RegisterDecodedImageType(
             bitmap,
             string.Equals(formatName, "JPEG", StringComparison.OrdinalIgnoreCase) &&
                 bitmap.ColorType != SKColorType.Gray8
                 ? PdfCartonFontCompat.TYPE_3BYTE_BGR
-                : PdfCartonFontCompat.InferImageType(bitmap));
+                : PdfCartonFontCompat.InferImageType(bitmap),
+            RequireInput().Bytes);
         return bitmap;
     }
 
@@ -6928,6 +6929,11 @@ internal static class PdfCartonFontCompat
         // Set by CreateDeferredImage: the native pixels have not been rendered
         // from Raster yet. Read and cleared under a lock on this instance.
         internal bool NativePending { get; set; }
+        // Without ColorModel or Transparency (a decoded image, whose decoder
+        // colour model is unknown), the transparency classified from the
+        // pixels on first use; 0 until then. Written under a lock on this
+        // instance.
+        internal int PixelTransparency;
     }
 
     // Bitmap -> metadata with atomic replacement. netstandard2.0's
@@ -7032,13 +7038,31 @@ internal static class PdfCartonFontCompat
         if (bitmap is null) throw new IOException("Unsupported or invalid image stream.");
         if (!IsTiff(encoded))
         {
-            RegisterImageType(
+            RegisterDecodedImageType(
                 bitmap,
                 IsGif(encoded)
                     ? InferGifImageType(encoded)
-                    : InferImageType(bitmap));
+                    : InferImageType(bitmap),
+                encoded);
         }
         return bitmap;
+    }
+
+    // Java's PNG reader gives a PNG with an alpha channel (colour type 4 or
+    // 6) a TRANSLUCENT colour model whatever its alpha samples; other decoded
+    // images are classified from their pixels on first use.
+    internal static void RegisterDecodedImageType(SKBitmap bitmap, int type, byte[] encoded)
+    {
+        ReadOnlySpan<byte> png = [137, 80, 78, 71, 13, 10, 26, 10];
+        if (encoded.Length > 25 && encoded.AsSpan(0, png.Length).SequenceEqual(png) &&
+            encoded[25] is 4 or 6 && bitmap.AlphaType != SKAlphaType.Opaque)
+        {
+            ImageMetadataByBitmap.Set(
+                bitmap,
+                new ImageMetadata(type, transparency: PdfCartonTransparency.TRANSLUCENT));
+            return;
+        }
+        RegisterImageType(bitmap, type);
     }
 
     private static SKBitmap? DecodeSixteenBitPng(byte[] encoded)
@@ -7653,7 +7677,9 @@ internal static class PdfCartonFontCompat
             alphaType == SKAlphaType.Opaque
                 ? SKColors.Black
                 : SKColors.Transparent);
-        RegisterImageType(bitmap, type);
+        // As in Java, the type fixes the colour model and so the
+        // transparency: no later call reads the pixels to classify it.
+        ImageMetadataByBitmap.Set(bitmap, new ImageMetadata(type, new JavaColorModel(type)));
         return bitmap;
     }
 
@@ -7716,50 +7742,49 @@ internal static class PdfCartonFontCompat
             : new JavaRaster(bitmap).DeepCopy();
     }
 
+    // BufferedImage.getTransparency(): the colour model's transparency, so
+    // pixels are never read for an image with a colour model, which
+    // CreateBitmap gives every new BufferedImage (Java's TYPE_INT_ARGB and
+    // TYPE_4BYTE_ABGR are TRANSLUCENT whatever they hold), nor for a foreign
+    // bitmap, whose inferred type is TYPE_INT_ARGB. Only a decoded image
+    // registered without a colour model, as a GIF or paletted PNG, whose
+    // Java IndexColorModel is BITMASK when every alpha is 0 or 255, is
+    // classified from its pixels, once.
     internal static int GetTransparency(SKBitmap bitmap)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
-        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
-            metadata.Transparency.HasValue)
-        {
-            return metadata.Transparency.Value;
-        }
+        ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata);
+        if (metadata?.Transparency is { } transparency) return transparency;
+        if (metadata?.ColorModel is { } colorModel) return colorModel.Transparency;
         if (bitmap.AlphaType == SKAlphaType.Opaque)
             return PdfCartonTransparency.OPAQUE;
-        if (metadata is { Raster: { } raster, ColorModel: { } colorModel })
-        {
-            lock (metadata)
-            {
-                // Unrendered pixels: classify the alpha they will render to.
-                if (metadata.NativePending)
-                    return RasterTransparency(colorModel, raster);
-            }
-        }
-        using var access = new PdfCartonPixels(bitmap);
-        for (var y = 0; y < bitmap.Height; y++)
-            for (var x = 0; x < bitmap.Width; x++)
-                if (access.Get(x, y).Alpha is not 0 and not byte.MaxValue)
-                    return PdfCartonTransparency.TRANSLUCENT;
-        return PdfCartonTransparency.BITMASK;
+        return metadata is null
+            ? PdfCartonTransparency.TRANSLUCENT
+            : PixelTransparency(bitmap, metadata);
     }
 
-    // The alpha bytes RenderRaster writes: ComponentByte of the normalized
-    // alpha component.
-    private static int RasterTransparency(JavaColorModel colorModel, JavaRaster raster)
+    private static int PixelTransparency(SKBitmap bitmap, ImageMetadata metadata)
     {
-        var count = colorModel.NumberOfComponents;
-        var alphaIndex = colorModel.NumberOfColorComponents;
-        var components = new float[checked(raster.Width * count)];
-        int[]? samples = null;
-        object? pixel = null;
-        for (var y = 0; y < raster.Height; y++)
+        var known = Volatile.Read(ref metadata.PixelTransparency);
+        if (known != 0) return known;
+        lock (metadata)
         {
-            colorModel.GetNormalizedRow(raster, y, components, ref samples, ref pixel);
-            for (var x = 0; x < raster.Width; x++)
-                if (ComponentByte(components[x * count + alphaIndex]) is not 0 and not byte.MaxValue)
-                    return PdfCartonTransparency.TRANSLUCENT;
+            known = metadata.PixelTransparency;
+            if (known != 0) return known;
+            var classified = PdfCartonTransparency.BITMASK;
+            using (var access = new PdfCartonPixels(bitmap))
+            {
+                for (var y = 0; y < bitmap.Height && classified == PdfCartonTransparency.BITMASK; y++)
+                    for (var x = 0; x < bitmap.Width; x++)
+                        if (access.Get(x, y).Alpha is not 0 and not byte.MaxValue)
+                        {
+                            classified = PdfCartonTransparency.TRANSLUCENT;
+                            break;
+                        }
+            }
+            Volatile.Write(ref metadata.PixelTransparency, classified);
+            return classified;
         }
-        return PdfCartonTransparency.BITMASK;
     }
 
     internal static JavaColorModel GetColorModel(SKBitmap bitmap)
@@ -8336,6 +8361,8 @@ internal static class PdfCartonFontCompat
         return result;
     }
 
+    // The type of a decoded bitmap, whose colour model (and so transparency)
+    // GetTransparency then classifies from its pixels once.
     internal static void RegisterImageType(SKBitmap bitmap, int type)
     {
         ImageMetadataByBitmap.Set(bitmap, new ImageMetadata(type));

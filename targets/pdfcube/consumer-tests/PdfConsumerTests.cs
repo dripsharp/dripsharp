@@ -1298,6 +1298,130 @@ public sealed class RasterConversionConsumerTests
         Assert.True(allocated < 1024, $"100 GetData calls allocated {allocated} bytes.");
     }
 
+    // A new BufferedImage's transparency is its type's, as in Java:
+    // TYPE_INT_ARGB and TYPE_4BYTE_ABGR are TRANSLUCENT whatever the pixels
+    // hold (a fresh one is all transparent), the other types OPAQUE. The
+    // colour model is created with the image, so no call reads pixels.
+    [Fact]
+    public void NewImageTransparencyComesFromItsType()
+    {
+        foreach (var (type, transparency) in new[]
+                 {
+                     (Compat.PdfCartonFontCompat.TYPE_INT_ARGB, Compat.PdfCartonTransparency.TRANSLUCENT),
+                     (Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, Compat.PdfCartonTransparency.TRANSLUCENT),
+                     (Compat.PdfCartonFontCompat.TYPE_INT_RGB, Compat.PdfCartonTransparency.OPAQUE),
+                     (Compat.PdfCartonFontCompat.TYPE_INT_BGR, Compat.PdfCartonTransparency.OPAQUE),
+                     (Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR, Compat.PdfCartonTransparency.OPAQUE),
+                     (Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY, Compat.PdfCartonTransparency.OPAQUE),
+                     (Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY, Compat.PdfCartonTransparency.OPAQUE),
+                 })
+        {
+            foreach (var (width, height) in new[] { (1, 1), (2550, 3300) })
+            {
+                using var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, type);
+                var colorModel = Compat.PdfCartonFontCompat.GetColorModel(image);
+                Assert.Equal(transparency, colorModel.Transparency);
+                Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
+                using (var canvas = new SKCanvas(image))
+                    canvas.Clear(SKColors.Red);
+                Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
+                var mismatches = 0;
+                var allocated = GC.GetAllocatedBytesForCurrentThread();
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                for (var call = 0; call < 1000; call++)
+                {
+                    if (!ReferenceEquals(colorModel, Compat.PdfCartonFontCompat.GetColorModel(image)) ||
+                        Compat.PdfCartonFontCompat.GetTransparency(image) != transparency)
+                        mismatches++;
+                }
+                var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+                allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+                Assert.Equal(0, mismatches);
+                Assert.True(allocated < 1024,
+                    $"type {type} {width}x{height}: 1000 calls allocated {allocated} bytes.");
+                // One scan of 2550x3300 pixels takes milliseconds.
+                Assert.True(elapsed < TimeSpan.FromSeconds(1),
+                    $"type {type} {width}x{height}: 1000 calls took {elapsed}.");
+            }
+        }
+    }
+
+    // Decoded images take their decoder's transparency, as in Java's ImageIO:
+    // a PNG with an alpha channel is TRANSLUCENT even when every alpha is 0
+    // or 255, a transparent GIF (an IndexColorModel) is BITMASK, classified
+    // from its pixels once, and a foreign bitmap is its inferred
+    // TYPE_INT_ARGB's TRANSLUCENT. Later pixel writes change none of them.
+    [Fact]
+    public void DecodedImageTransparencyFollowsItsDecoder()
+    {
+        using var source = new SKBitmap(new SKImageInfo(8, 6, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        source.Erase(SKColors.Transparent);
+        source.SetPixel(7, 5, SKColors.Blue);
+        byte[] png;
+        using (var sourceImage = SKImage.FromBitmap(source))
+        using (var data = sourceImage.Encode(SKEncodedImageFormat.Png, 100))
+            png = data.ToArray();
+        Assert.Equal(6, png[25]); // IHDR colour type: RGB with alpha
+
+        using var decodedPng = Compat.PdfCartonFontCompat.DecodeImage(png);
+        using var gif = Compat.PdfCartonFontCompat.DecodeImage(TransparentGif());
+        using var foreign = source.Copy();
+        foreach (var (image, expected) in new[]
+                 {
+                     (decodedPng, Compat.PdfCartonTransparency.TRANSLUCENT),
+                     (gif, Compat.PdfCartonTransparency.BITMASK),
+                     (foreign, Compat.PdfCartonTransparency.TRANSLUCENT),
+                 })
+        {
+            Assert.Equal(expected, Compat.PdfCartonFontCompat.GetTransparency(image));
+            Assert.Equal(expected, Compat.PdfCartonFontCompat.GetColorModel(image).Transparency);
+            using (var canvas = new SKCanvas(image))
+                canvas.Clear(SKColors.Red.WithAlpha(100));
+            Assert.Equal(expected, Compat.PdfCartonFontCompat.GetTransparency(image));
+            Assert.Equal(expected, Compat.PdfCartonFontCompat.GetColorModel(image).Transparency);
+        }
+    }
+
+    // A 2x1 GIF89a: a four-colour palette, index 0 transparent, pixels 0 and 1.
+    private static byte[] TransparentGif() =>
+    [
+        (byte)'G', (byte)'I', (byte)'F', (byte)'8', (byte)'9', (byte)'a',
+        2, 0, 1, 0, 0x81, 0, 0,
+        0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 0, 0,
+        0x21, 0xF9, 4, 1, 0, 0, 0, 0,
+        0x2C, 0, 0, 0, 0, 2, 0, 1, 0, 0,
+        2, 2, 0x44, 0x0A, 0,
+        0x3B,
+    ];
+
+    // A TYPE_INT_ARGB image is TRANSLUCENT even when every alpha is 0 or
+    // 255, so LosslessFactory writes an 8-bit soft mask rather than its 1-bit
+    // BITMASK one, and JPEGFactory accepts the image instead of refusing
+    // BITMASK transparency. Java PDFBox 3.0.8: Lossless soft mask 8-bit,
+    // ff000000 at (0,0) and ffffffff at (1,0); JPEG soft mask 8-bit DCT.
+    [Fact]
+    public void ImageFactoriesTreatAnArgbImageAsTranslucent()
+    {
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(20, 10, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        for (var y = 0; y < 10; y++)
+            for (var x = 0; x < 20; x++)
+                Compat.PdfCartonFontCompat.SetRgb(image, x, y, (x + y) % 3 == 0 ? 0x00000000 : unchecked((int)0xff3366cc));
+        using var document = new PDDocument();
+        var xobject = LosslessFactory.CreateFromImage(document, image);
+        var mask = xobject.GetSoftMask();
+        Assert.NotNull(mask);
+        Assert.Equal(8, mask.GetBitsPerComponent());
+        using var alpha = mask.GetImage();
+        Assert.Equal(unchecked((int)0xff000000), Compat.PdfCartonFontCompat.GetRgb(alpha, 0, 0));
+        Assert.Equal(unchecked((int)0xffffffff), Compat.PdfCartonFontCompat.GetRgb(alpha, 1, 0));
+
+        var jpeg = JPEGFactory.CreateFromImage(document, image);
+        var jpegMask = jpeg.GetSoftMask();
+        Assert.NotNull(jpegMask);
+        Assert.Equal(8, jpegMask.GetBitsPerComponent());
+        Assert.Equal(COSName.DctDecode, jpegMask.GetCOSObject().GetFilters());
+    }
+
     // A non-isolated group with blend modes, painted with Multiply over a
     // coloured backdrop. Its group image starts as a copy of the backdrop;
     // removeBackdrop must take that copy out again (Java PDFBox 3.0.8 output
@@ -3040,7 +3164,8 @@ public sealed class DecodeFilterBitmapLifetimeTests
         return data.ToArray();
     }
 
-    internal static byte[] Jpx(int width, int height, bool alpha)
+    // binaryAlpha: lossless, with alpha 0 where index % 3 == 0, else 255.
+    internal static byte[] Jpx(int width, int height, bool alpha, bool binaryAlpha = false)
     {
         var count = alpha ? 4 : 3;
         var components = new int[count][];
@@ -3048,7 +3173,9 @@ public sealed class DecodeFilterBitmapLifetimeTests
         {
             components[component] = new int[width * height];
             for (var index = 0; index < width * height; index++)
-                components[component][index] = (index * (component + 3) & 255) - 128;
+                components[component][index] = component == 3 && binaryAlpha
+                    ? (index % 3 == 0 ? 0 : 255) - 128
+                    : (index * (component + 3) & 255) - 128;
         }
         var source = new CoreJ2K.Util.InterleavedImageSource(
             width, height, count, 8, new bool[count], components);
@@ -3066,7 +3193,14 @@ public sealed class DecodeFilterBitmapLifetimeTests
                 ChannelDefinitions = channels
             };
         }
-        return CoreJ2K.J2kImage.ToBytes(source, metadata);
+        // Binary alpha is encoded losslessly so that it stays 0 or 255.
+        var parameters = binaryAlpha
+            ? new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList())
+            {
+                ["lossless"] = "on"
+            }
+            : null;
+        return CoreJ2K.J2kImage.ToBytes(source, metadata, parameters);
     }
 }
 
@@ -3268,8 +3402,8 @@ public sealed class ImageCodecAdapterTests
     }
 
     // JBIG2Filter and JPXFilter read without rendering native pixels; only a
-    // draw renders them. Transparency is classified from the raster until
-    // then, as the rendered alpha would be.
+    // draw renders them. Transparency is the colour model's, before and
+    // after.
     [Fact]
     public void FilterReadsRenderNativePixelsOnlyWhenDrawn()
     {
@@ -3300,6 +3434,34 @@ public sealed class ImageCodecAdapterTests
                         canvas.GetPixel(image.Width - 1, 1));
             }
         }
+    }
+
+    // An alpha-capable JPX is TRANSLUCENT whatever its alpha samples, as its
+    // jai-imageio colour model is in Java, so JPXFilter extracts the
+    // SMaskInData soft mask and returns three colour components even when
+    // every alpha is 0 or 255 (Java PDFBox 3.0.8 with jai-imageio-jpeg2000
+    // 1.4.0 decodes this fixture the same way).
+    [Fact]
+    public void JpxWithBinaryAlphaExtractsItsSoftMask()
+    {
+        var data = DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: true, binaryAlpha: true);
+        using (var image = Reader("JPEG2000", data).ReadDeferred(0, Subsampled(1)))
+            Assert.Equal(Compat.PdfCartonTransparency.TRANSLUCENT, Compat.PdfCartonFontCompat.GetTransparency(image));
+
+        var stream = new COSStream();
+        using (var output = stream.CreateRawOutputStream())
+            output.Write(data);
+        stream.SetItem(COSName.Filter, COSName.JpxDecode);
+        stream.SetInt(COSName.SmaskInData, 1);
+        using var encoded = stream.CreateRawInputStream();
+        using var decoded = new MemoryStream();
+        var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
+        using var smask = result.GetJPXSMask();
+        Assert.NotNull(smask);
+        Assert.Equal(40 * 24 * 3, decoded.Length);
+        for (var index = 0; index < 40 * 24; index++)
+            Assert.Equal(index % 3 == 0 ? 0 : 255,
+                Compat.PdfCartonFontCompat.GetRgb(smask, index % 40, index / 40) & 0xff);
     }
 
     // The public reader returns images whose native pixels are rendered, so
