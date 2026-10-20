@@ -5479,14 +5479,27 @@ public sealed class PathIteratorTests
             path, Compat.PdfCartonFontCompat.PathIterator(path, null), false);
         Assert.Equal(16, path.VerbCount);
 
-        // Appending an iterator appends the segments it has not yet returned.
+        // Appending an iterator appends the segments it has not yet returned,
+        // continuing the destination's current subpath as Path2D.append does.
         using var target = new SKPath();
-        var iterator = Compat.PdfCartonFontCompat.PathIterator(Polyline(3), SKMatrix.CreateTranslation(5, 0));
+        target.MoveTo(0, 0);
+        using var source = Polyline(3);
+        source.Close();
+        var iterator = Compat.PdfCartonFontCompat.PathIterator(source, SKMatrix.CreateTranslation(5, 0));
         iterator.Next();
         iterator.Next();
         Compat.PdfCartonFontCompat.AppendPath(target, iterator, false);
         Assert.True(iterator.IsDone());
-        Assert.Equal(new[] { new SKPoint(6, 1), new SKPoint(7, 0), new SKPoint(8, 1) }, target.Points);
+        Assert.Equal(new[] { new SKPoint(0, 0), new SKPoint(7, 0), new SKPoint(8, 1) }, target.Points);
+        Assert.Equal(new[] { "0:0,0", "1:7,0", "1:8,1", "4:" },
+            Segments(Compat.PdfCartonFontCompat.PathIterator(target, null)));
+        // A partially read iterator appended to its own path reads it first
+        // (Skia records the implicit move back to the start after a close).
+        var own = Compat.PdfCartonFontCompat.PathIterator(source, null);
+        own.Next();
+        Compat.PdfCartonFontCompat.AppendPath(source, own, true);
+        Assert.Equal(new[] { "0:0,0", "1:1,1", "1:2,0", "1:3,1", "4:", "0:0,0", "1:1,1", "1:2,0", "1:3,1", "4:" },
+            Segments(Compat.PdfCartonFontCompat.PathIterator(source, null)));
     }
 
     private static SKPath Polyline(int segments)
@@ -5551,17 +5564,20 @@ public sealed class NativePathLifetimeCollection
 public sealed class GlyphPathLifetimeTests
 {
     // Every glyph used to leave its transformed SKPath to the finalizer.
+    // Text clips are dropped at ET, also when the mode stops clipping first.
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RenderingTextDisposesEveryGlyphPath(bool clip)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void RenderingTextDisposesEveryGlyphPath(bool clip, bool fillBeforeEnd)
     {
-        using var document = TextDocument(3000, clip);
+        using var document = TextDocument(3000, clip, fillBeforeEnd);
         var renderer = new PDFRenderer(document);
         using (var warm = renderer.RenderImage(0, 1, ImageType.Rgb))
         {
             // Black text on a red page, or a red page fill clipped to the text.
-            Assert.Equal(clip ? SKColors.White : SKColors.Red, warm.GetPixel(300, 600));
+            Assert.Equal(clip && !fillBeforeEnd ? SKColors.White : SKColors.Red,
+                warm.GetPixel(300, 600));
             Assert.Contains(Enumerable.Range(0, 600).Select(x => warm.GetPixel(x, 7)),
                 color => clip ? color.Red > 160 && color.Green < 160 : color.Red < 160);
         }
@@ -5587,7 +5603,7 @@ public sealed class GlyphPathLifetimeTests
         Assert.True(abandoned < 1000, $"{abandoned} finalizable objects after 3000 glyphs.");
     }
 
-    private static PDDocument TextDocument(int glyphs, bool clip)
+    private static PDDocument TextDocument(int glyphs, bool clip, bool fillBeforeEnd)
     {
         var document = new PDDocument();
         var page = new PDPage(new PDRectangle(600, 800));
@@ -5615,6 +5631,8 @@ public sealed class GlyphPathLifetimeTests
             content.ShowText(line.Substring(0, Math.Min(line.Length, glyphs - shown)));
             content.NewLineAtOffset(0, -10);
         }
+        if (fillBeforeEnd)
+            content.SetRenderingMode(DripSharp.PdfCarton.Pdmodel.Graphics.State.RenderingMode.Fill);
         content.EndText();
         if (clip) FillPage();
         return document;

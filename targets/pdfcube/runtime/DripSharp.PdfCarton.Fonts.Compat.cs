@@ -6894,32 +6894,42 @@ public sealed class JavaPathIterator : IDisposable
     {
         ArgumentNullException.ThrowIfNull(path);
         if (IsDone()) return;
-        var mode = connect ? SKPathAddMode.Extend : SKPathAddMode.Append;
-        using var rest = remaining < count || ReferenceEquals(path, source)
-            ? new SKPath()
-            : null;
-        if (rest is null)
+        if (remaining == count)
         {
-            if (transformed) path.AddPath(source, in transform, mode);
-            else path.AddPath(source, mode);
+            // Skia ignores a path appended to itself, so that one is copied.
+            using var self = ReferenceEquals(path, source) ? new SKPath(source) : null;
+            var mode = connect ? SKPathAddMode.Extend : SKPathAddMode.Append;
+            if (transformed) path.AddPath(self ?? source, in transform, mode);
+            else path.AddPath(self ?? source, mode);
             Dispose();
             return;
         }
-        Load();
-        if (verb is not (SKPathVerb.Move or SKPathVerb.Close)) rest.MoveTo(points[0]);
+        // The rest continues the destination's current subpath; connect
+        // turns only a leading move into a line. It is read before any is
+        // appended, as the destination may be the source.
+        var rest = new List<(SKPathVerb Verb, SKPoint A, SKPoint B, SKPoint C)>(remaining);
         for (; !IsDone(); Next())
         {
             Load();
-            switch (verb)
-            {
-                case SKPathVerb.Move: rest.MoveTo(points[0]); break;
-                case SKPathVerb.Line: rest.LineTo(points[1]); break;
-                case SKPathVerb.Quad: rest.QuadTo(points[1], points[2]); break;
-                case SKPathVerb.Cubic: rest.CubicTo(points[1], points[2], points[3]); break;
-                default: rest.Close(); break;
-            }
+            rest.Add(verb == SKPathVerb.Move
+                ? (verb, points[0], default, default)
+                : (verb, points[1], points[2], points[3]));
         }
-        path.AddPath(rest, mode);
+        foreach (var (segment, a, b, c) in rest)
+        {
+            switch (segment)
+            {
+                case SKPathVerb.Move when connect && !path.IsEmpty:
+                    if (path.LastPoint != a) path.LineTo(a);
+                    break;
+                case SKPathVerb.Move: path.MoveTo(a); break;
+                case SKPathVerb.Line: path.LineTo(a); break;
+                case SKPathVerb.Quad: path.QuadTo(a, b); break;
+                case SKPathVerb.Cubic: path.CubicTo(a, b, c); break;
+                default: path.Close(); break;
+            }
+            connect = false;
+        }
     }
 
     private void Load()

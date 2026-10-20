@@ -3872,13 +3872,17 @@
     ["global::DripSharp.Runtime.JavaCompat.Add(this.textClippings, glyph);"
      (str "global::DripSharp.Runtime.JavaCompat.Add(this.textClippings, "
           "new global::SkiaSharp.SKPath(__dripsharpGlyph));")]]
+   ;; The buffered clips are disposed at ET, also when the text mode stopped
+   ;; clipping before it (the list is never read again).
    ["org.apache.pdfbox.rendering.PageDrawer" "endTextClip"]
-   [["state.IntersectClippingPath(path);"
-     (str "state.IntersectClippingPath(path);\n"
-          "path.Dispose();\n"
-          "foreach (object __dripsharpGlyph in this.textClippings) {\n"
-          "(__dripsharpGlyph as global::System.IDisposable)?.Dispose();\n"
-          "}")]]
+   (let [dispose-clips (str "foreach (object __dripsharpGlyph in this.textClippings) {\n"
+                            "(__dripsharpGlyph as global::System.IDisposable)?.Dispose();\n"
+                            "}")]
+     [["state.IntersectClippingPath(path);"
+       (str "state.IntersectClippingPath(path);\npath.Dispose();\n" dispose-clips)]
+      ;; A stray ET may come before any BT, with no list yet.
+      [:append (str "if (this.textClippings != null) {\n" dispose-clips
+                    "\nthis.textClippings.Clear();\n}")]])
    ;; A pattern fill clips the path to an Area of its own; the areas and the
    ;; graphics clip copy they are built from are dropped after the fill.
    ["org.apache.pdfbox.rendering.PageDrawer" "fillPath"]
