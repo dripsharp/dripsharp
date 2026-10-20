@@ -14,7 +14,9 @@ in separate benchmark processes. Keep the machine idle during measurements.
 Use `--job short` for an exploratory run; its confidence intervals can be wide.
 Use `--job dry` only to check execution, never for performance conclusions.
 Reports include time, error, standard deviation, GC counts, and managed allocated
-bytes. Managed allocation counts do not include Skia's native bitmap memory.
+bytes. Managed allocation counts include the pixels of `TYPE_INT_RGB` and
+`TYPE_INT_ARGB` images (rendered pages among them), which live in managed int
+arrays as in Java, but not Skia's other native bitmap memory.
 
 Select individual classes with `--filter '*RasterBenchmarks*'`,
 `--filter '*SmallBlendBenchmarks*'`, `--filter '*RenderingBenchmarks*'`, or

@@ -1229,6 +1229,140 @@ public sealed class RasterConversionConsumerTests
             Assert.Equal(new SKColor(80, 120, 160), page.GetPixel(30, 18));
         }
     }
+
+    // DataBufferInt.getData() returns an INT image's storage, as in Java:
+    // the same array on every call, which Skia drawing, raster reads and
+    // GetRgb share with it.
+    [Fact]
+    public void IntDataBufferIsTheLiveImageStorage()
+    {
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_INT_ARGB,
+                     Compat.PdfCartonFontCompat.TYPE_INT_RGB
+                 })
+        {
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+            var data = ((Compat.JavaDataBufferInt)raster.GetDataBuffer()).GetData();
+            Assert.Same(data,
+                ((Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData());
+            Assert.Equal(Width * Height, data.Length);
+
+            // Skia drawing into the image is visible in the array.
+            using (var canvas = new SKCanvas(image))
+                canvas.Clear(new SKColor(10, 20, 30));
+            Assert.Equal(unchecked((int)0xff0a141e), data[5 * Width + 7]);
+
+            // Writes into the array are visible to raster reads, GetRgb and Skia.
+            var written = type == Compat.PdfCartonFontCompat.TYPE_INT_ARGB
+                ? unchecked((int)0x80c86432)
+                : unchecked((int)0xffc86432);
+            data[5 * Width + 7] = written;
+            Assert.Equal(written, Compat.PdfCartonFontCompat.GetRgb(image, 7, 5));
+            Assert.Equal(
+                type == Compat.PdfCartonFontCompat.TYPE_INT_ARGB ? new[] { 200, 100, 50, 128 } : new[] { 200, 100, 50 },
+                raster.GetPixel(7, 5, (int[]?)null));
+            using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+                Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using (var graphics = new Compat.PdfCartonGraphics2D(target))
+                graphics.DrawImage(image, 0, 0, null);
+            // Premultiplied drawing may round a translucent colour by one.
+            var drawn = target.GetPixel(7, 5);
+            Assert.True(
+                Math.Abs(drawn.Red - 200) <= 1 && Math.Abs(drawn.Green - 100) <= 1 &&
+                Math.Abs(drawn.Blue - 50) <= 1 && drawn.Alpha == (byte)(written >>> 24),
+                $"type {type}: drew {drawn}.");
+
+            // A second write after that draw reaches Skia's next draw as well.
+            data[5 * Width + 7] = unchecked((int)0xff112233);
+            using (var graphics = new Compat.PdfCartonGraphics2D(target))
+                graphics.DrawImage(image, 0, 0, null);
+            Assert.Equal(new SKColor(0x11, 0x22, 0x33), target.GetPixel(7, 5));
+        }
+    }
+
+    // Handing out the storage copies nothing: the cost does not grow with
+    // the image (it used to read every pixel through the native view).
+    [Fact]
+    public void IntDataBufferGetDataDoesNotCopyThePixels()
+    {
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+            2000, 2000, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var buffer = (Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer();
+        var first = buffer.GetData();
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        for (var call = 0; call < 100; call++)
+            Assert.Same(first, buffer.GetData());
+        allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        Assert.True(allocated < 1024, $"100 GetData calls allocated {allocated} bytes.");
+    }
+
+    // A non-isolated group with blend modes, painted with Multiply over a
+    // coloured backdrop. Its group image starts as a copy of the backdrop;
+    // removeBackdrop must take that copy out again (Java PDFBox 3.0.8 output
+    // below), or the backdrop is multiplied with itself. The oracle colours
+    // are exact; the tolerance covers Skia's 8-bit blend rounding.
+    [Fact]
+    public void NonIsolatedBlendGroupRemovesItsBackdrop()
+    {
+        var expected = new (int X, int Y, uint Argb)[]
+        {
+            (5, 5, 0xffcc9966), // backdrop outside the group's content
+            (52, 52, 0xffcc9966),
+            (95, 5, 0xffcc9966),
+            (30, 70, 0xff522e29), // opaque Multiply content
+            (70, 30, 0xff667a47), // half-transparent Multiply content
+            (56, 44, 0xff667a47),
+        };
+        using var document = Loader.LoadPDF((sbyte[])(Array)BlendGroupFixture());
+        foreach (var type in new[] { ImageType.Rgb, ImageType.Argb })
+        {
+            using var image = new PDFRenderer(document).RenderImage(0, 1, type);
+            foreach (var (x, y, argb) in expected)
+            {
+                var actual = (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, y);
+                for (var shift = 0; shift < 32; shift += 8)
+                    Assert.True(Math.Abs((int)((actual >> shift) & 255) - (int)((argb >> shift) & 255)) <= 2,
+                        $"pixel ({x},{y}) is {actual:x8}, Java PDFBox renders {argb:x8}.");
+            }
+        }
+    }
+
+    private static byte[] BlendGroupFixture()
+    {
+        static string Stream(string entries, string data) =>
+            $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
+        var objects = new SortedDictionary<int, string>
+        {
+            [1] = "<< /Type /Catalog /Pages 2 0 R >>",
+            [2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            [3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /ExtGState << " +
+                "/MUL 5 0 R >> /XObject << /G 6 0 R >> >> /Contents 4 0 R >>",
+            [4] = Stream("", "0.8 0.6 0.4 rg 0 0 100 100 re f q /MUL gs /G Do Q"),
+            [5] = "<< /Type /ExtGState /BM /Multiply >>",
+            [6] = Stream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency " +
+                "/CS /DeviceRGB >> /Resources << /ExtGState << /MUL 5 0 R /HM 7 0 R >> >>",
+                "/MUL gs 0.5 0.5 1 rg 10 10 40 40 re f /HM gs 0 1 1 rg 55 55 35 35 re f"),
+            [7] = "<< /Type /ExtGState /BM /Multiply /ca 0.5 >>",
+        };
+        var text = new System.Text.StringBuilder("%PDF-1.7\n");
+        var offsets = new Dictionary<int, int>();
+        foreach (var (number, body) in objects)
+        {
+            offsets[number] = text.Length;
+            text.Append($"{number} 0 obj\n{body}\nendobj\n");
+        }
+        var size = objects.Keys.Max() + 1;
+        var xref = text.Length;
+        text.Append($"xref\n0 {size}\n");
+        for (var number = 0; number < size; number++)
+            text.Append(offsets.TryGetValue(number, out var offset)
+                ? $"{offset:D10} 00000 n \n"
+                : "0000000000 65535 f \n");
+        text.Append($"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return System.Text.Encoding.ASCII.GetBytes(text.ToString());
+    }
 }
 
 // /FlateDecode through the public FlateFilterDecoderStream and font loading.
@@ -2939,6 +3073,102 @@ public sealed class DecodeFilterBitmapLifetimeTests
 // The JBIG2 adapter packs the decoder's page bits straight into a 1-bit
 // raster, without an RGB or int-per-pixel copy, and both codec adapters
 // render native pixels only when the image is drawn.
+// TYPE_INT_RGB/ARGB images keep their pixels in a pinned managed array that
+// Skia's release callback unpins once no native owner shares the pixels.
+[Collection(nameof(NativeBitmapLifetimeCollection))]
+public sealed class IntBitmapPixelLifetimeTests
+{
+    [Fact]
+    public void AbandonedIntImagePixelsBecomeCollectible()
+    {
+        foreach (var type in new[] { Compat.PdfCartonFontCompat.TYPE_INT_RGB, Compat.PdfCartonFontCompat.TYPE_INT_ARGB })
+        {
+            var pixels = Abandon(type);
+            Collect();
+            Assert.False(pixels.IsAlive, $"type {type}: an abandoned image's pixels stayed pinned.");
+        }
+    }
+
+    [Fact]
+    public void DisposedIntImageWrapperDoesNotRetainItsPixels()
+    {
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(64, 64, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var pixels = PixelsOf(image);
+        image.Dispose();
+        Collect();
+        Assert.False(pixels.IsAlive);
+        GC.KeepAlive(image);
+    }
+
+    // A canvas shares the pixels: they stay pinned and drawable after the
+    // image is disposed and collected, until the canvas is gone too.
+    [Fact]
+    public void IntImagePixelsOutliveTheImageWhileACanvasSharesThem()
+    {
+        var (canvas, pixels) = CanvasOverDisposedImage();
+        Collect();
+        Assert.True(pixels.IsAlive);
+        Assert.Equal(unchecked((int)0xff010203), ClearAndRead(canvas, pixels));
+        canvas.Dispose();
+        Collect();
+        Assert.False(pixels.IsAlive);
+    }
+
+    // After SKBitmap replaces an int-backed image's pixels, GetData reads the
+    // current pixels instead of returning the detached array.
+    [Fact]
+    public void ReallocatedIntImageNoLongerHandsOutItsOldArray()
+    {
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(4, 4, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var original = ((Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
+        Assert.True(image.TryAllocPixels(new SKImageInfo(64, 32, SKColorType.Bgra8888, SKAlphaType.Unpremul)));
+        image.Erase(SKColors.Lime);
+        var current = ((Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
+        Assert.NotSame(original, current);
+        Assert.Equal(64 * 32, current.Length);
+        Assert.All(current, value => Assert.Equal(unchecked((int)0xff00ff00), value));
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference Abandon(int type)
+    {
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(64, 64, type);
+        using (var canvas = new SKCanvas(image))
+            canvas.Clear(SKColors.Red);
+        return PixelsOf(image);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (SKCanvas, WeakReference) CanvasOverDisposedImage()
+    {
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var canvas = new SKCanvas(image);
+        var pixels = PixelsOf(image);
+        image.Dispose();
+        return (canvas, pixels);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static int ClearAndRead(SKCanvas canvas, WeakReference pixels)
+    {
+        canvas.Clear(new SKColor(1, 2, 3));
+        return ((int[])pixels.Target!)[0];
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference PixelsOf(SKBitmap image) =>
+        new(((Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData());
+
+    private static void Collect()
+    {
+        for (var pass = 0; pass < 3; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
+}
+
 public sealed class ImageCodecAdapterTests
 {
     // A 64x16 all-white MMR generic region embedded as a JBIG2 stream.

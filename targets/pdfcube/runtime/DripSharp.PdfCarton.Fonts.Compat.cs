@@ -1677,12 +1677,7 @@ public sealed class JavaDataBufferInt : JavaDataBuffer
     {
     }
 
-    public int[] GetData()
-    {
-        var values = new int[Size];
-        for (var index = 0; index < values.Length; index++) values[index] = GetElement(index);
-        return values;
-    }
+    public int[] GetData() => Raster.GetIntData();
 }
 
 // A scoped view keeps the bitmap alive and invalidates Skia's cached images once
@@ -2120,13 +2115,14 @@ internal sealed class PdfCartonBitmapView
     }
 
     // Bumps Skia's pixel generation once if a view wrote since the last call.
+    // Writes into an int-backed bitmap's exposed pixel array are not tracked,
+    // so such a bitmap is published on every call.
     internal static void Publish(SKBitmap bitmap)
     {
-        if (PendingByBitmap.TryGetValue(bitmap, out var pending) &&
-            Interlocked.Exchange(ref pending.Dirty, 0) != 0)
-        {
+        var written = PendingByBitmap.TryGetValue(bitmap, out var pending) &&
+                      Interlocked.Exchange(ref pending.Dirty, 0) != 0;
+        if (written || bitmap is PdfCartonNativeBitmap { IntPixelsExposed: true })
             bitmap.NotifyPixelsChanged();
-        }
     }
 
     private int Offset(int x, int y)
@@ -3008,6 +3004,44 @@ public sealed class JavaRaster
         if (storage is null) MaterializeStorage(PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
         return storage as sbyte[]
             ?? throw new InvalidOperationException("Raster is not byte-backed.");
+    }
+
+    // DataBufferInt.getData(): the int storage itself. An array-backed raster
+    // returns its array, and a view of an int-backed bitmap (Java's
+    // TYPE_INT_RGB and TYPE_INT_ARGB images) the bitmap's pixels. Any other
+    // bitmap's pixels are not packed ints Java code can address, so its data
+    // elements are read once, in bulk, into a detached array.
+    internal int[] GetIntData()
+    {
+        if (storage is int[] integers) return integers;
+        if (storage is not null || bitmap is null ||
+            TransferType != PdfCartonFontCompat.DATA_BUFFER_TYPE_INT)
+            throw new InvalidOperationException("Raster is not int-backed.");
+        if (bitmap.Handle == IntPtr.Zero) throw new ObjectDisposedException(nameof(SKBitmap));
+        if (view!.IsReallocated())
+            throw new InvalidOperationException(
+                "The bitmap's pixels were reallocated after this raster was created.");
+        if (bitmap is PdfCartonNativeBitmap intBacked &&
+            intBacked.CurrentIntPixels() is { } pixels)
+        {
+            intBacked.ExposeIntPixels();
+            return pixels;
+        }
+        var elements = new int[StorageSize];
+        using var access = new PdfCartonPixels(bitmap);
+        var index = 0;
+        for (var y = 0; y < Height; y++)
+        {
+            for (var x = 0; x < Width; x++)
+            {
+                var color = access.Get(x, y);
+                elements[index++] = NumberOfBands == 1
+                    ? color.Red
+                    : unchecked((int)((uint)color.Alpha << 24 | (uint)color.Red << 16 |
+                                      (uint)color.Green << 8 | color.Blue));
+            }
+        }
+        return elements;
     }
 
     internal short[] GetUShortData()
@@ -6112,7 +6146,7 @@ public class PdfCartonGraphics2D : IDisposable
                 "Custom Java composites require a bitmap-backed CPU canvas.");
         }
 
-        using var source = PdfCartonFontCompat.CreateBitmap(
+        using var source = PdfCartonFontCompat.CreateNativeBitmap(
             bounds.Width,
             bounds.Height,
             PdfCartonFontCompat.TYPE_INT_ARGB);
@@ -6139,7 +6173,7 @@ public class PdfCartonGraphics2D : IDisposable
         var bounds = DrawingBounds(PathBounds(shape), stroked);
         if (bounds.IsEmpty) return;
 
-        using var source = PdfCartonFontCompat.CreateBitmap(
+        using var source = PdfCartonFontCompat.CreateNativeBitmap(
             bounds.Width,
             bounds.Height,
             PdfCartonFontCompat.TYPE_INT_ARGB);
@@ -6167,7 +6201,7 @@ public class PdfCartonGraphics2D : IDisposable
             sourceCanvas.DrawBitmap(paintBitmap, 0, 0, replacePaint);
         }
 
-        using var mask = PdfCartonFontCompat.CreateBitmap(
+        using var mask = PdfCartonFontCompat.CreateNativeBitmap(
             bounds.Width,
             bounds.Height,
             PdfCartonFontCompat.TYPE_INT_ARGB);
@@ -6211,7 +6245,7 @@ public class PdfCartonGraphics2D : IDisposable
         var sourceRaster = PdfCartonFontCompat.GetRaster(source);
         var destinationRaster = PdfCartonFontCompat.GetRaster(destination)
             .CopyRegion(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
-        using var output = PdfCartonFontCompat.CreateBitmap(
+        using var output = PdfCartonFontCompat.CreateNativeBitmap(
             bounds.Width,
             bounds.Height,
             PdfCartonFontCompat.GetImageType(destination));
@@ -6658,7 +6692,8 @@ public sealed class JavaArea
 // - Backstop: every compat-allocated bitmap is a PdfCartonNativeBitmap, which
 //   reports its pixel bytes as GC memory pressure and removes exactly that
 //   amount once, when it is disposed or finalized, so undisposed bitmaps still
-//   pace collections.
+//   pace collections. Int-backed bitmaps (CreateIntBacked) hold their pixels
+//   in a managed array, which the GC already sees.
 // - Ownership: a translated intermediate that never escapes its method is
 //   disposed deterministically. The translator's owned-bitmap statement
 //   rewrites (src/dripsharp/pdfcube/java_project.clj) make it a `using` local
@@ -6666,17 +6701,101 @@ public sealed class JavaArea
 //   native render for images that are only read through their raster.
 internal sealed class PdfCartonNativeBitmap : SKBitmap
 {
+    // Frees the pin once Skia releases the pixels, which may outlive the
+    // bitmap while a canvas or image still shares them.
+    private sealed class PinnedPixels(int[] pixels)
+    {
+        private GCHandle handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+        private int released;
+
+        internal IntPtr Address => handle.AddrOfPinnedObject();
+
+        internal void Release()
+        {
+            if (Interlocked.Exchange(ref released, 1) == 0) handle.Free();
+        }
+    }
+
+    private static readonly SKBitmapReleaseDelegate ReleasePinnedPixels =
+        (_, context) => ((PinnedPixels)context).Release();
+
     private static long liveCount;
     private static long outstandingBytes;
+    private readonly long pixelBytes;
     private readonly long pressure;
     private int registered;
+    private volatile bool intPixelsExposed;
+    // Cleared on disposal, so a retained disposed wrapper keeps no pixels.
+    private int[]? intPixels;
+    private IntPtr intPixelsAddress;
 
     internal PdfCartonNativeBitmap(SKImageInfo info)
         : base(info)
     {
-        pressure = (long)RowBytes * Height;
+        pixelBytes = (long)RowBytes * Height;
+        pressure = pixelBytes;
         if (pressure > 0) GC.AddMemoryPressure(pressure);
-        Interlocked.Add(ref outstandingBytes, pressure);
+        Register();
+    }
+
+    private PdfCartonNativeBitmap(int[] pixels)
+    {
+        intPixels = pixels;
+        pixelBytes = (long)pixels.Length * sizeof(int);
+        Register();
+    }
+
+    // Java's TYPE_INT_RGB and TYPE_INT_ARGB images store one packed
+    // 0xAARRGGBB int per pixel, which is the memory of a little-endian
+    // BGRA8888 pixel. Such a bitmap keeps its pixels in a pinned managed
+    // array, so DataBufferInt.getData() returns the storage itself, as in Java,
+    // and Skia, raster views and the array all see each other's writes. The
+    // array is managed memory, so it adds no GC pressure.
+    internal static PdfCartonNativeBitmap CreateIntBacked(SKImageInfo info)
+    {
+        if (info.ColorType != SKColorType.Bgra8888 || info.AlphaType == SKAlphaType.Premul ||
+            !BitConverter.IsLittleEndian)
+            throw new ArgumentException("Int-backed bitmaps hold little-endian straight BGRA pixels.",
+                nameof(info));
+        var pixels = new int[checked(info.Width * info.Height)];
+        var bitmap = new PdfCartonNativeBitmap(pixels);
+        var pinned = new PinnedPixels(pixels);
+        bitmap.intPixelsAddress = pinned.Address;
+        // Skia calls the release delegate on failure too.
+        if (!bitmap.InstallPixels(info, pinned.Address, info.RowBytes, ReleasePinnedPixels, pinned))
+        {
+            bitmap.Dispose();
+            throw new InvalidOperationException("Unable to install managed bitmap pixels.");
+        }
+        return bitmap;
+    }
+
+    // The pinned array holding this bitmap's pixels: null unless the bitmap is
+    // int-backed, undisposed and still uses the installed pixels (SKBitmap
+    // methods such as TryAllocPixels can replace them).
+    internal int[]? CurrentIntPixels()
+    {
+        var pixels = Volatile.Read(ref intPixels);
+        if (pixels is null || Handle == IntPtr.Zero) return null;
+        var info = Info;
+        var current = GetPixels() == intPixelsAddress &&
+                      info.ColorType == SKColorType.Bgra8888 &&
+                      info.AlphaType != SKAlphaType.Premul &&
+                      RowBytes == checked(info.Width * 4) &&
+                      (long)info.Width * info.Height == pixels.Length;
+        GC.KeepAlive(this);
+        return current ? pixels : null;
+    }
+
+    // True once the int pixels were handed out: writes into them bypass the
+    // raster views' change tracking, so every Publish then notifies Skia.
+    internal bool IntPixelsExposed => intPixelsExposed;
+
+    internal void ExposeIntPixels() => intPixelsExposed = true;
+
+    private void Register()
+    {
+        Interlocked.Add(ref outstandingBytes, pixelBytes);
         Interlocked.Increment(ref liveCount);
         registered = 1;
     }
@@ -6704,9 +6823,12 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
+        // Skia's release callback unpins the array once no native owner
+        // shares the pixels; the wrapper itself no longer references them.
+        Volatile.Write(ref intPixels, null);
         if (Interlocked.Exchange(ref registered, 0) != 1) return;
         if (pressure > 0) GC.RemoveMemoryPressure(pressure);
-        Interlocked.Add(ref outstandingBytes, -pressure);
+        Interlocked.Add(ref outstandingBytes, -pixelBytes);
         Interlocked.Decrement(ref liveCount);
     }
 }
@@ -7502,7 +7624,17 @@ internal static class PdfCartonFontCompat
         _ = useCache;
     }
 
-    internal static SKBitmap CreateBitmap(int width, int height, int type)
+    // new BufferedImage(width, height, type). TYPE_INT_RGB and TYPE_INT_ARGB
+    // images keep their pixels in the int array DataBufferInt.getData()
+    // returns, as in Java.
+    internal static SKBitmap CreateBitmap(int width, int height, int type) =>
+        CreateBitmap(width, height, type, intBacked: true);
+
+    // A compat-internal intermediate whose storage no Java code reads.
+    internal static SKBitmap CreateNativeBitmap(int width, int height, int type) =>
+        CreateBitmap(width, height, type, intBacked: false);
+
+    private static SKBitmap CreateBitmap(int width, int height, int type, bool intBacked)
     {
         if (width <= 0 || height <= 0)
             throw new ArgumentException("Bitmap dimensions must be positive.");
@@ -7513,7 +7645,10 @@ internal static class PdfCartonFontCompat
         var alphaType = type is TYPE_INT_ARGB or TYPE_4BYTE_ABGR
             ? SKAlphaType.Unpremul
             : SKAlphaType.Opaque;
-        var bitmap = new PdfCartonNativeBitmap(new SKImageInfo(width, height, colorType, alphaType));
+        var info = new SKImageInfo(width, height, colorType, alphaType);
+        var bitmap = intBacked && type is (TYPE_INT_RGB or TYPE_INT_ARGB) && BitConverter.IsLittleEndian
+            ? PdfCartonNativeBitmap.CreateIntBacked(info)
+            : new PdfCartonNativeBitmap(info);
         bitmap.Erase(
             alphaType == SKAlphaType.Opaque
                 ? SKColors.Black
