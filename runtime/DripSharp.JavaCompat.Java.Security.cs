@@ -90,7 +90,10 @@ internal sealed class JavaNonClosingStream : Stream
 
 internal sealed class JavaMessageDigest
 {
+    private const int MinimumScratchSize = 64;
+    private const int MaximumScratchSize = 8192;
     private readonly IncrementalHash digest;
+    private byte[]? scratch;
 
     private JavaMessageDigest(HashAlgorithmName algorithm) =>
         digest = IncrementalHash.CreateHash(algorithm);
@@ -112,17 +115,41 @@ internal sealed class JavaMessageDigest
         return new JavaMessageDigest(name);
     }
 
-    internal void Update(sbyte value) => digest.AppendData(new[] { unchecked((byte)value) });
+    internal void Update(sbyte value)
+    {
+        var chunk = scratch ??= new byte[MinimumScratchSize];
+        chunk[0] = unchecked((byte)value);
+        digest.AppendData(chunk, 0, 1);
+    }
 
-    internal void Update(sbyte[] value) =>
-        digest.AppendData(value.Select(item => unchecked((byte)item)).ToArray());
+    internal void Update(sbyte[] value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        Update(value, 0, value.Length);
+    }
 
-    internal void Update(sbyte[] value, int offset, int length) =>
-        digest.AppendData(value.Skip(offset).Take(length)
-            .Select(item => unchecked((byte)item)).ToArray());
+    internal void Update(sbyte[] value, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        JavaCompat.RequireByteRange(value.Length, offset, length);
+        // Hash only [offset, offset + length), copied through a reused chunk:
+        // O(length) work and no per-call allocation in steady state.
+        while (length > 0)
+        {
+            var chunk = scratch;
+            if (chunk is null || (chunk.Length < length && chunk.Length < MaximumScratchSize))
+                chunk = scratch = new byte[Math.Min(
+                    Math.Max(Math.Max(length, MinimumScratchSize), (chunk?.Length ?? 0) * 2),
+                    MaximumScratchSize)];
+            var count = Math.Min(length, chunk.Length);
+            Buffer.BlockCopy(value, offset, chunk, 0, count);
+            digest.AppendData(chunk, 0, count);
+            offset += count;
+            length -= count;
+        }
+    }
 
-    internal sbyte[] Digest() =>
-        digest.GetHashAndReset().Select(item => unchecked((sbyte)item)).ToArray();
+    internal sbyte[] Digest() => JavaCompat.ToSignedBytes(digest.GetHashAndReset());
 
     internal sbyte[] Digest(sbyte[] value)
     {
@@ -334,8 +361,13 @@ sealed class JavaCipher : IDisposable
     public const int ENCRYPT_MODE = 1;
     public const int DECRYPT_MODE = 2;
 
+    // Bounds the scratch memory a long-lived cipher keeps between calls.
+    private const int RetainedBufferSize = 64 * 1024;
+
     private readonly string transformation;
-    private readonly List<byte> pending = new();
+    private byte[] pending = Array.Empty<byte>();
+    private int pendingLength;
+    private byte[] output = Array.Empty<byte>();
     private SymmetricAlgorithm? algorithm;
     private ICryptoTransform? transform;
     private RSA? rsa;
@@ -476,22 +508,58 @@ sealed class JavaCipher : IDisposable
         var current = RequireTransform();
         if (offset < 0 || length < 0 || offset > input.Length - length)
             throw new ArgumentOutOfRangeException(nameof(offset));
-        var source = JavaCompat.ToUnsignedBytes(input);
-        pending.AddRange(source.AsSpan(offset, length).ToArray());
-        var completeBlocks = pending.Count / current.InputBlockSize;
+        // Only [offset, offset + length) is copied, so the cost is O(length)
+        // regardless of the size of the caller's buffer.
+        AppendPending(input, offset, length);
+        var completeBlocks = pendingLength / current.InputBlockSize;
         if (holdBackFinalBlock && completeBlocks > 0)
             completeBlocks--;
         var processLength = completeBlocks * current.InputBlockSize;
         if (processLength == 0)
             return null;
-        source = pending.GetRange(0, processLength).ToArray();
-        pending.RemoveRange(0, processLength);
-        var destination = new byte[processLength + current.OutputBlockSize];
+        var destinationLength = processLength + current.OutputBlockSize;
+        var destination = destinationLength <= RetainedBufferSize
+            ? output.Length >= destinationLength
+                ? output
+                : output = new byte[Math.Min(
+                    Math.Max(destinationLength, output.Length * 2), RetainedBufferSize)]
+            : new byte[destinationLength];
         var written = current.TransformBlock(
-            source, 0, source.Length, destination, 0);
+            pending, 0, processLength, destination, 0);
+        var remaining = pendingLength - processLength;
+        if (pending.Length > RetainedBufferSize)
+        {
+            var kept = new byte[Math.Max(remaining, 2 * current.InputBlockSize)];
+            Buffer.BlockCopy(pending, processLength, kept, 0, remaining);
+            pending = kept;
+        }
+        else if (remaining > 0)
+        {
+            Buffer.BlockCopy(pending, processLength, pending, 0, remaining);
+        }
+        pendingLength = remaining;
         return written == 0
             ? null
-            : JavaCompat.ToSignedBytes(destination.AsSpan(0, written).ToArray());
+            : JavaCompat.ToSignedBytes(destination, 0, written);
+    }
+
+    private void AppendPending(sbyte[] input, int offset, int length)
+    {
+        var required = checked(pendingLength + length);
+        if (pending.Length < required)
+        {
+            var grown = new byte[Math.Max(required, Math.Min(pending.Length * 2, RetainedBufferSize))];
+            Buffer.BlockCopy(pending, 0, grown, 0, pendingLength);
+            pending = grown;
+        }
+        Buffer.BlockCopy(input, offset, pending, pendingLength, length);
+        pendingLength = required;
+    }
+
+    private void ClearPending()
+    {
+        pendingLength = 0;
+        if (pending.Length > RetainedBufferSize) pending = Array.Empty<byte>();
     }
 
     public sbyte[] DoFinal() => DoFinal(Array.Empty<sbyte>());
@@ -514,11 +582,13 @@ sealed class JavaCipher : IDisposable
             asymmetricMode = 0;
             return JavaCompat.ToSignedBytes(asymmetricResult);
         }
-        pending.AddRange(JavaCompat.ToUnsignedBytes(input));
-        var finalInput = pending.ToArray();
-        pending.Clear();
+        AppendPending(input, 0, input.Length);
+        var finalInput = pending;
+        var finalLength = pendingLength;
+        pendingLength = 0;
         var finalResult = RequireTransform().TransformFinalBlock(
-            finalInput, 0, finalInput.Length);
+            finalInput, 0, finalLength);
+        ClearPending();
         DisposeTransform();
         return JavaCompat.ToSignedBytes(finalResult);
     }
@@ -541,7 +611,7 @@ sealed class JavaCipher : IDisposable
         transform = null;
         algorithm?.Dispose();
         algorithm = null;
-        pending.Clear();
+        ClearPending();
         holdBackFinalBlock = false;
         rsa = null;
         asymmetricMode = 0;

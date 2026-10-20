@@ -1126,7 +1126,7 @@ internal static partial class JavaCompat
     {
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
-        return buffer.ToArray().Select(value => unchecked((sbyte)value)).ToArray();
+        return ToSignedBytes(buffer);
     }
     internal static int InputStreamAvailable(Stream stream) =>
         stream.CanSeek
@@ -1142,7 +1142,7 @@ internal static partial class JavaCompat
             if (read == 0) break;
             offset += read;
         }
-        return bytes.Take(offset).Select(value => unchecked((sbyte)value)).ToArray();
+        return ToSignedBytes(bytes, 0, offset);
     }
     private sealed class JavaByteArrayInputStream : MemoryStream
     {
@@ -1165,8 +1165,7 @@ internal static partial class JavaCompat
     }
     internal static MemoryStream NewMemoryStream(sbyte[] bytes)
     {
-        var stream = new JavaByteArrayInputStream(
-            bytes.Select(value => unchecked((byte)value)).ToArray());
+        var stream = new JavaByteArrayInputStream(ToUnsignedBytes(bytes));
         InputStreamMark(stream, int.MaxValue);
         return stream;
     }
@@ -1182,13 +1181,57 @@ internal static partial class JavaCompat
         ArgumentNullException.ThrowIfNull(bytes);
         if (offset < 0 || length < 0 || offset > bytes.Length - length)
             throw new IndexOutOfRangeException();
-        var stream = new JavaByteArrayInputStream(
-            bytes.Skip(offset).Take(length).Select(value => unchecked((byte)value)).ToArray());
+        var stream = new JavaByteArrayInputStream(ToUnsignedBytes(bytes, offset, length));
         InputStreamMark(stream, int.MaxValue);
         return stream;
     }
-    internal static sbyte[] ToSignedBytes(MemoryStream stream) =>
-        stream.ToArray().Select(value => unchecked((sbyte)value)).ToArray();
+    internal static sbyte[] ToSignedBytes(MemoryStream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        // One copy straight out of the stream's buffer. An exposable stream
+        // (ByteArrayOutputStream, default MemoryStreams) hands it over directly;
+        // a non-exposable open stream passes it to WriteTo in one Write call.
+        // Neither moves the position.
+        if (stream.TryGetBuffer(out var contents))
+            return ToSignedBytes(contents.Array!, contents.Offset, contents.Count);
+        if (!stream.CanRead)
+            return ToSignedBytes(stream.ToArray()); // closed: only ToArray still works
+        var sink = new SignedByteSink(checked((int)stream.Length));
+        stream.WriteTo(sink);
+        var result = sink.Result;
+        if (result.Length != sink.Length) Array.Resize(ref result, checked((int)sink.Length));
+        return result;
+    }
+    private sealed class SignedByteSink : Stream
+    {
+        private int length;
+        internal SignedByteSink(int capacity) => Result = new sbyte[capacity];
+        internal sbyte[] Result { get; private set; }
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => length;
+        public override long Position
+        {
+            get => length;
+            set => throw new NotSupportedException();
+        }
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (Result.Length - length < count)
+            {
+                var grown = new sbyte[checked(length + count)];
+                Buffer.BlockCopy(Result, 0, grown, 0, length);
+                Result = grown;
+            }
+            Buffer.BlockCopy(buffer, offset, Result, length, count);
+            length += count;
+        }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
     internal static string WriteString(string path, object value, params object?[] _)
     {
         File.WriteAllText(path, StringValueOf(value));
@@ -1196,7 +1239,7 @@ internal static partial class JavaCompat
     }
     internal static string WriteAllBytes(string path, sbyte[] bytes, params object?[] _)
     {
-        File.WriteAllBytes(path, bytes.Select(value => unchecked((byte)value)).ToArray());
+        File.WriteAllBytes(path, ToUnsignedBytes(bytes));
         return path;
     }
     internal static string Move(string source, string destination, params object?[] _)

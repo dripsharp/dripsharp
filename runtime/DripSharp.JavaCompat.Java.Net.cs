@@ -401,14 +401,23 @@ internal static partial class JavaCompat
     }
     internal static string NewString(char[] value) => new(value);
     internal static string NewString(char[] value, int offset, int count) => new(value, offset, count);
-    internal static string NewString(int[] codePoints, int offset, int count) =>
-        string.Concat(codePoints.Skip(offset).Take(count).Select(CodePointToString));
+    internal static string NewString(int[] codePoints, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(codePoints);
+        RequireByteRange(codePoints.Length, offset, count);
+        var builder = new StringBuilder(count);
+        for (var index = offset; index < offset + count; index++)
+        {
+            var codePoint = codePoints[index];
+            if (codePoint is >= char.MinValue and <= char.MaxValue) builder.Append((char)codePoint);
+            else builder.Append(CodePointToString(codePoint));
+        }
+        return builder.ToString();
+    }
     internal static string NewString(sbyte[] value, Encoding encoding) =>
-        DecodeJavaBytes(value.Select(item => unchecked((byte)item)).ToArray(), encoding);
+        DecodeJavaBytes(ToUnsignedBytes(value), encoding);
     internal static string NewString(sbyte[] value, int offset, int count, Encoding encoding) =>
-        DecodeJavaBytes(
-            value.Skip(offset).Take(count).Select(item => unchecked((byte)item)).ToArray(),
-            encoding);
+        DecodeJavaBytes(ToUnsignedBytes(value, offset, count), encoding);
     internal static string NewString(byte[] value, Encoding encoding) =>
         DecodeJavaBytes(value, encoding);
     internal static string NewString(object value) => StringValueOf(value);

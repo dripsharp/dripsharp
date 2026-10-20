@@ -1644,7 +1644,9 @@ public
 #endif
 sealed class JavaDeflaterOutputStream : JavaOutputStream
 {
+    private const int ScratchSize = 8192;
     private readonly JavaZlibOutputStream compressed;
+    private byte[]? scratch;
 
     internal JavaDeflaterOutputStream(Stream destination, JavaDeflater deflater)
     {
@@ -1654,8 +1656,28 @@ sealed class JavaDeflaterOutputStream : JavaOutputStream
     }
 
     public override void Write(int value) => compressed.WriteByte(unchecked((byte)value));
-    public override void Write(sbyte[] buffer, int offset, int count) =>
-        compressed.Write(JavaCompat.ToUnsignedBytes(buffer), offset, count);
+    public override void Write(sbyte[] buffer, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        JavaCompat.RequireByteRange(buffer.Length, offset, count);
+        if (count == 0)
+        {
+            // Still reach the stream so a closed stream rejects the write.
+            compressed.Write(Array.Empty<byte>(), 0, 0);
+            return;
+        }
+        // Copy only [offset, offset + count) through a reused chunk, so a small
+        // write from a large buffer costs O(count), not O(buffer length).
+        var chunk = scratch ??= new byte[ScratchSize];
+        while (count > 0)
+        {
+            var length = Math.Min(count, chunk.Length);
+            Buffer.BlockCopy(buffer, offset, chunk, 0, length);
+            compressed.Write(chunk, 0, length);
+            offset += length;
+            count -= length;
+        }
+    }
     public override void Flush() => compressed.Flush();
 
     public override void Dispose()
@@ -4572,11 +4594,43 @@ internal static partial class JavaCompat
         IEnumerable<KeyValuePair<K, V>> values) where K : notnull =>
         values.ToDictionary(entry => entry.Key, entry => entry.Value);
 
-    internal static byte[] ToUnsignedBytes(sbyte[] values) =>
-        values.Select(value => unchecked((byte)value)).ToArray();
+    // sbyte[] <-> byte[] conversions are one Buffer.BlockCopy of the
+    // requested range. Both element types are one byte wide, so the copy keeps
+    // every bit pattern, and the result is a real array of the target type.
+    internal static byte[] ToUnsignedBytes(sbyte[] values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return ToUnsignedBytes(values, 0, values.Length);
+    }
+    internal static byte[] ToUnsignedBytes(sbyte[] values, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        RequireByteRange(values.Length, offset, length);
+        var result = new byte[length];
+        Buffer.BlockCopy(values, offset, result, 0, length);
+        return result;
+    }
     internal static byte[] ToUnsignedBytes(byte[] values) => values;
-    internal static sbyte[] ToSignedBytes(byte[] values) =>
-        values.Select(value => unchecked((sbyte)value)).ToArray();
+    internal static sbyte[] ToSignedBytes(byte[] values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return ToSignedBytes(values, 0, values.Length);
+    }
+    internal static sbyte[] ToSignedBytes(byte[] values, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        RequireByteRange(values.Length, offset, length);
+        var result = new sbyte[length];
+        Buffer.BlockCopy(values, offset, result, 0, length);
+        return result;
+    }
+    internal static void RequireByteRange(int arrayLength, int offset, int length)
+    {
+        if (offset < 0 || length < 0 || offset > arrayLength - length)
+            throw new ArgumentOutOfRangeException(
+                nameof(offset),
+                $"Range [{offset}, {offset} + {length}) is outside an array of length {arrayLength}.");
+    }
     internal static void ForEach<T>(IEnumerable<T> values, Action<T> action)
     {
         foreach (var value in values) action(value);

@@ -942,33 +942,37 @@ internal static partial class JavaCompat
     internal static sbyte[] StringGetBytes(string value, Encoding encoding)
     {
         if (ReferenceEquals(encoding, JavaStandardCharsets.UTF16))
-        {
-            return new byte[] { 0xfe, 0xff }
-                .Concat(Encoding.BigEndianUnicode.GetBytes(value))
-                .Select(item => unchecked((sbyte)item))
-                .ToArray();
-        }
+            return Utf16WithByteOrderMark(value);
         if (encoding.CodePage == Encoding.UTF8.CodePage)
-        {
-            encoding = (Encoding)new UTF8Encoding(false, false).Clone();
-            encoding.EncoderFallback = new EncoderReplacementFallback("?");
-        }
-        return encoding.GetBytes(value).Select(item => unchecked((sbyte)item)).ToArray();
+            encoding = JavaUtf8Encoder;
+        return ToSignedBytes(encoding.GetBytes(value));
+    }
+    // String.getBytes(UTF_8) replaces unpaired surrogates with '?'. The
+    // replacement fallback is immutable, so one shared encoder is thread-safe.
+    private static readonly Encoding JavaUtf8Encoder = CreateJavaUtf8Encoder();
+    private static Encoding CreateJavaUtf8Encoder()
+    {
+        var encoding = (Encoding)new UTF8Encoding(false, false).Clone();
+        encoding.EncoderFallback = new EncoderReplacementFallback("?");
+        return encoding;
+    }
+    private static sbyte[] Utf16WithByteOrderMark(string value)
+    {
+        var payload = Encoding.BigEndianUnicode.GetBytes(value);
+        var result = new sbyte[payload.Length + 2];
+        result[0] = unchecked((sbyte)0xfe);
+        result[1] = unchecked((sbyte)0xff);
+        Buffer.BlockCopy(payload, 0, result, 2, payload.Length);
+        return result;
     }
     internal static sbyte[] StringGetBytes(string value, string encoding)
     {
         if (encoding.Equals("UTF-16", StringComparison.OrdinalIgnoreCase))
-        {
-            var payload = Encoding.BigEndianUnicode.GetBytes(value);
-            return new byte[] { 0xfe, 0xff }.Concat(payload)
-                .Select(item => unchecked((sbyte)item)).ToArray();
-        }
+            return Utf16WithByteOrderMark(value);
         if (encoding.Equals("UTF-16BE", StringComparison.OrdinalIgnoreCase))
-            return Encoding.BigEndianUnicode.GetBytes(value)
-                .Select(item => unchecked((sbyte)item)).ToArray();
+            return ToSignedBytes(Encoding.BigEndianUnicode.GetBytes(value));
         if (encoding.Equals("UTF-16LE", StringComparison.OrdinalIgnoreCase))
-            return Encoding.Unicode.GetBytes(value)
-                .Select(item => unchecked((sbyte)item)).ToArray();
+            return ToSignedBytes(Encoding.Unicode.GetBytes(value));
         if (encoding.Equals("ISO-8859-1", StringComparison.OrdinalIgnoreCase))
         {
             var bytes = new List<sbyte>();
