@@ -3152,7 +3152,7 @@ public sealed class DecodeFilterBitmapLifetimeTests
         return decoded.ToArray();
     }
 
-    private static byte[] GrayJpeg(int width, int height)
+    internal static byte[] GrayJpeg(int width, int height)
     {
         using var bitmap = new SKBitmap(
             new SKImageInfo(width, height, SKColorType.Gray8, SKAlphaType.Opaque));
@@ -3311,7 +3311,7 @@ public sealed class ImageCodecAdapterTests
 
     // A 67x20 black page (default pixel 1) ANDed with the white region at
     // columns 3-66 of rows 0-15. The width leaves 5 padding bits per row.
-    private static byte[] MixedPage()
+    internal static byte[] MixedPage()
     {
         var data = Convert.FromBase64String(Jbig2Page);
         WriteInt(data, 11, 67);
@@ -3534,6 +3534,170 @@ public sealed class ImageCodecAdapterTests
         using var decoded = new MemoryStream();
         input.CopyTo(decoded);
         return decoded.ToArray();
+    }
+}
+
+// SampledImageReader always passes the decode filters a source region, the
+// whole image when nothing is clipped. As with ImageIO, a full-bounds region
+// with 1x1 subsampling reads the decoded image itself; real regions and
+// subsampling copy just the selected pixels, keeping the source's colour
+// type, so a grayscale DCT image stays one band.
+[Collection(nameof(NativeBitmapLifetimeCollection))]
+public sealed class ImageReadParameterTests
+{
+    private static (string Name, string Format, byte[] Data)[] Sources() =>
+    [
+        ("DCT RGB", "JPEG", IccRenderFixtures.SkiaJpeg(40, 24)),
+        ("DCT gray", "JPEG", DecodeFilterBitmapLifetimeTests.GrayJpeg(40, 24)),
+        ("JBIG2", "JBIG2", ImageCodecAdapterTests.MixedPage()),
+        ("JPX", "JPEG2000", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: true)),
+    ];
+
+    [Fact]
+    public void FullBoundsRegionReturnsTheDecodedImage()
+    {
+        foreach (var (name, format, data) in Sources())
+        {
+            var source = Reader(format, data).ReadDeferred(0, null);
+            var (width, height) = (source.Width, source.Height);
+            using var image = Compat.JavaImageReader.ApplyReadParameters(
+                source, Parameters(new SKRectI(0, 0, width, height), 1, 1, 0, 0));
+            Assert.True(ReferenceEquals(source, image), name);
+            // A region past the image bounds is clipped to them.
+            Assert.True(ReferenceEquals(image, Compat.JavaImageReader.ApplyReadParameters(
+                image, Parameters(new SKRectI(-3, -2, width + 5, height + 1), 1, 1, 0, 0))), name);
+            Assert.NotEqual(IntPtr.Zero, image.Handle);
+        }
+    }
+
+    [Fact]
+    public void RegionsAndSubsamplingCopyTheSelectedPixels()
+    {
+        foreach (var (name, format, data) in Sources())
+        {
+            using var full = Reader(format, data).ReadDeferred(0, null);
+            var (width, height) = (full.Width, full.Height);
+            var colorType = full.ColorType;
+            var bands = Compat.PdfCartonFontCompat.GetRaster(full).NumberOfBands;
+            var managed = Compat.PdfCartonFontCompat.IsNativePending(full);
+            foreach (var (region, periodX, periodY, offsetX, offsetY) in new[]
+                     {
+                         (new SKRectI(3, 2, width - 5, height - 3), 1, 1, 0, 0),
+                         (new SKRectI(0, 0, width, height), 2, 3, 1, 2),
+                         (new SKRectI(1, 1, width - 1, height - 2), 3, 1, 2, 0),
+                         (new SKRectI(0, 0, width, height), 1, 2, 0, 1),
+                     })
+            {
+                var label = $"{name} {region} {periodX}x{periodY}+{offsetX},{offsetY}";
+                using var image = Reader(format, data).ReadDeferred(
+                    0, Parameters(region, periodX, periodY, offsetX, offsetY));
+                Assert.Equal(
+                    ((region.Width - offsetX + periodX - 1) / periodX,
+                     (region.Height - offsetY + periodY - 1) / periodY),
+                    (image.Width, image.Height));
+                Assert.Equal(colorType, image.ColorType);
+                Assert.Equal(managed, Compat.PdfCartonFontCompat.IsNativePending(image));
+                Assert.Equal(
+                    Compat.PdfCartonFontCompat.GetImageType(full),
+                    Compat.PdfCartonFontCompat.GetImageType(image));
+                Assert.Equal(bands, Compat.PdfCartonFontCompat.GetRaster(image).NumberOfBands);
+                for (var y = 0; y < image.Height; y++)
+                    for (var x = 0; x < image.Width; x++)
+                        Assert.True(
+                            Compat.PdfCartonFontCompat.GetRgb(
+                                full,
+                                region.Left + offsetX + x * periodX,
+                                region.Top + offsetY + y * periodY) ==
+                            Compat.PdfCartonFontCompat.GetRgb(image, x, y),
+                            $"{label} at ({x}, {y})");
+            }
+        }
+    }
+
+    // The managed copy reads and writes whole rows through one reused buffer
+    // instead of allocating an int[] per pixel.
+    [Fact]
+    public void ManagedRegionCopyAllocatesNoPerPixelArrays()
+    {
+        var data = DecodeFilterBitmapLifetimeTests.Jpx(256, 256, alpha: false);
+        var parameters = Parameters(new SKRectI(1, 1, 256, 256), 1, 1, 0, 0);
+        const long raster = 255L * 255 * 3 * sizeof(int);
+        var decode = Allocated(() =>
+        {
+            using var image = Reader("JPEG2000", data).ReadDeferred(0, null);
+        });
+        var region = Allocated(() =>
+        {
+            using var image = Reader("JPEG2000", data).ReadDeferred(0, parameters);
+        });
+
+        Assert.True(region - decode < raster,
+            $"The region copy allocated {region - decode} bytes beyond the decode.");
+    }
+
+    // SampledImageReader reads a DeviceGray DCT image through a full-bounds
+    // region. DCTFilter must decode one gray sample per pixel (W*H bytes),
+    // which getImage expands to equal RGB components, as Java PDFBox's
+    // PDDeviceGray.toRGBImage does.
+    [Fact]
+    public void GrayDctImageDecodesOneBand()
+    {
+        const int width = 48;
+        const int height = 32;
+        var jpeg = DecodeFilterBitmapLifetimeTests.GrayJpeg(width, height);
+        using var expected = SKBitmap.Decode(jpeg);
+        Assert.Equal(SKColorType.Gray8, expected.ColorType);
+        using var document = new PDDocument();
+        var image = JPEGFactory.CreateFromByteArray(document, IccRenderFixtures.Signed(jpeg));
+        Assert.IsType<PDDeviceGray>(image.GetColorSpace());
+        using (var stream = image.CreateInputStream(new DecodeOptions(0, 0, width, height)))
+        using (var decoded = new MemoryStream())
+        {
+            stream.CopyTo(decoded);
+            Assert.Equal(width * height, decoded.Length);
+        }
+
+        var raw = image.GetRawRaster();
+        Assert.Equal(1, raw.NumberOfBands);
+        using var rgb = image.GetImage();
+        Assert.Equal((width, height), (rgb.Width, rgb.Height));
+        var samples = expected.GetPixelSpan();
+        var sample = new int[1];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var gray = samples[y * expected.RowBytes + x];
+                Assert.Equal(gray, raw.GetPixel(x, y, sample)[0]);
+                Assert.Equal(
+                    0xff000000u | (uint)gray << 16 | (uint)gray << 8 | gray,
+                    unchecked((uint)Compat.PdfCartonFontCompat.GetRgb(rgb, x, y)));
+            }
+        }
+    }
+
+    private static Compat.JavaImageReader Reader(string format, byte[] data)
+    {
+        var reader = DripSharp.PdfCarton.Filter.Filter.FindImageReader(format, "codec missing");
+        reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(data)));
+        return reader;
+    }
+
+    private static Compat.JavaImageReadParam Parameters(
+        SKRectI region, int periodX, int periodY, int offsetX, int offsetY)
+    {
+        var parameters = new Compat.JavaImageReadParam();
+        parameters.SetSourceSubsampling(periodX, periodY, offsetX, offsetY);
+        parameters.SetSourceRegion(region);
+        return parameters;
+    }
+
+    private static long Allocated(Action action)
+    {
+        action();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        action();
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }
 

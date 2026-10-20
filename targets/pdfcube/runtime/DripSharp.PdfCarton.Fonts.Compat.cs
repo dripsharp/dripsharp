@@ -1353,7 +1353,11 @@ public sealed class JavaImageReader : IDisposable
                 "Image index must not be negative.");
     }
 
-    private static SKBitmap ApplyReadParameters(
+    // Takes ownership of source: returns it when the parameters select every
+    // pixel unchanged (ImageIO reads a full-bounds region with 1x1
+    // subsampling without a copy), otherwise disposes it and returns the
+    // selected pixels in an image of the source's type and colour type.
+    internal static SKBitmap ApplyReadParameters(
         SKBitmap source,
         JavaImageReadParam? parameters)
     {
@@ -1388,25 +1392,30 @@ public sealed class JavaImageReader : IDisposable
             throw new ArgumentException(
                 "The source region and subsampling produce an empty image.");
         }
+        // Output pixel (x, y) reads source pixel (firstX + x * periodX,
+        // firstY + y * periodY), so a source-sized output is the source.
+        if (outputWidth == source.Width && outputHeight == source.Height)
+            return source;
 
+        var periodX = parameters.SubsamplingX;
+        var periodY = parameters.SubsamplingY;
+        // Source columns firstX .. Right - 1 hold every selected column.
+        var span = sourceRegion.Right - firstX;
         if (PdfCartonFontCompat.HasManagedImageData(source))
         {
             var colorModel = PdfCartonFontCompat.GetColorModel(source);
             var sourceRaster = PdfCartonFontCompat.GetRaster(source);
             var destinationRaster =
                 colorModel.CreateCompatibleWritableRaster(outputWidth, outputHeight);
+            var bands = sourceRaster.NumberOfBands;
+            var row = new int[checked(span * bands)];
             for (var y = 0; y < outputHeight; y++)
             {
-                for (var x = 0; x < outputWidth; x++)
-                {
-                    destinationRaster.SetPixel(
-                        x,
-                        y,
-                        sourceRaster.GetPixel(
-                            firstX + x * parameters.SubsamplingX,
-                            firstY + y * parameters.SubsamplingY,
-                            (int[]?)null));
-                }
+                sourceRaster.GetPixels(firstX, firstY + y * periodY, span, 1, row);
+                // Selected pixels move left in place, never over unread ones.
+                for (var x = 1; periodX != 1 && x < outputWidth; x++)
+                    Array.Copy(row, x * periodX * bands, row, x * bands, bands);
+                destinationRaster.SetPixels(0, y, outputWidth, 1, row);
             }
             // Like the source, the copy is read through its raster and
             // rendered only if drawn.
@@ -1419,27 +1428,35 @@ public sealed class JavaImageReader : IDisposable
             return managedDestination;
         }
 
+        // Native pixels are copied as bytes, so the copy keeps the source's
+        // colour type: a Gray8 image stays a one-band image.
+        var info = source.Info;
         var destination = new PdfCartonNativeBitmap(
-            new SKImageInfo(
-                outputWidth,
-                outputHeight,
-                SKColorType.Bgra8888,
-                source.AlphaType));
+            info.WithSize(outputWidth, outputHeight));
         var imageType = PdfCartonFontCompat.GetImageType(source);
-        using var input = new PdfCartonPixels(source);
-        using var output = new PdfCartonPixels(destination);
+        var pixelBytes = info.BytesPerPixel;
+        var input = source.GetPixelSpan();
+        var output = destination.GetPixelSpan();
         for (var y = 0; y < outputHeight; y++)
         {
+            var inputRow = input.Slice(
+                (firstY + y * periodY) * source.RowBytes + firstX * pixelBytes,
+                span * pixelBytes);
+            var outputRow = output.Slice(
+                y * destination.RowBytes,
+                outputWidth * pixelBytes);
+            if (periodX == 1)
+            {
+                inputRow.Slice(0, outputRow.Length).CopyTo(outputRow);
+                continue;
+            }
             for (var x = 0; x < outputWidth; x++)
             {
-                output.Set(
-                    x,
-                    y,
-                    input.Get(
-                        firstX + x * parameters.SubsamplingX,
-                        firstY + y * parameters.SubsamplingY));
+                inputRow.Slice(x * periodX * pixelBytes, pixelBytes)
+                    .CopyTo(outputRow.Slice(x * pixelBytes, pixelBytes));
             }
         }
+        destination.NotifyPixelsChanged();
         PdfCartonFontCompat.RegisterImageType(destination, imageType);
         source.Dispose();
         return destination;
