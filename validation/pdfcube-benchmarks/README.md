@@ -25,7 +25,11 @@ operators with integer or real operands, one COSFloat(String) parse, and one
 string-keyed JavaLinkedHashMap hit with a non-interned key),
 or `--filter '*ScratchFileBenchmarks*'` (build, save, load and save again a
 document of 1,000 to 12,000 two-page streams under a `SetupMixed` stream cache,
-and the ScratchFile free-page map alone).
+and the ScratchFile free-page map alone), or `--filter '*StringRegexBenchmarks*'`
+(the bundled glyph list through the public GlyphList constructor,
+FileSystemFontProvider loading the installed system fonts from an on-disk cache
+in a temporary `pdfbox.fontcache` directory, and one String.split(";") and
+String.matches("g\\d+") call).
 Benchmark setup and cleanup are excluded from timings. Read results into reused
 buffers; writes consume a prebuilt sample buffer. Small blends report per-blend
 cost from a batch of nonoverlapping rectangles, with the destination reset before

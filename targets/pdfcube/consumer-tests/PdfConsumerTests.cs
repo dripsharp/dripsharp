@@ -1214,3 +1214,187 @@ public sealed class NumberParsingConsumerTests
         return allocated;
     }
 }
+
+// GlyphList, FileSystemFontProvider and TrueTypeFont call String.split and
+// String.matches while loading font metadata; Pattern.matches and
+// String.replaceAll/replaceFirst share the same runtime path.
+public sealed class StringRegexConsumerTests
+{
+    private const int Calls = 1000;
+
+    // Expected arrays are java.lang.String.split(regex, limit) results from Java 25.
+    public static TheoryData<string, string, int, string[]> SplitCases => new()
+    {
+        { "a;b;c", ";", 0, new string[] { "a", "b", "c" } },
+        { "a;b;;", ";", 0, new string[] { "a", "b" } },
+        { "a;b;;", ";", -1, new string[] { "a", "b", "", "" } },
+        { "a;b;c", ";", 2, new string[] { "a", "b;c" } },
+        { ";a;b", ";", 0, new string[] { "", "a", "b" } },
+        { ";;", ";", 0, new string[] { } },
+        { ";;", ";", -1, new string[] { "", "", "" } },
+        { "", ";", 0, new string[] { "" } },
+        { "", ";", -1, new string[] { "" } },
+        { "abc", ";", 0, new string[] { "abc" } },
+        { "a;b;c", ";", 1, new string[] { "a;b;c" } },
+        { ";", ";", 1, new string[] { ";" } },
+        { "a;b;c;", ";", 3, new string[] { "a", "b", "c;" } },
+        { "a;b;c;", ";", 4, new string[] { "a", "b", "c", "" } },
+        { "a;b;c;", ";", 5, new string[] { "a", "b", "c", "" } },
+        { "a|b||", "\\|", 0, new string[] { "a", "b" } },
+        { "a.b", "\\.", 0, new string[] { "a", "b" } },
+        { "a\\b", "\\\\", 0, new string[] { "a", "b" } },
+        { "a b  c ", " ", 0, new string[] { "a", "b", "", "c" } },
+        { "boo:and:foo", "o", 0, new string[] { "b", "", ":and:f" } },
+        { "boo:and:foo", "o", -1, new string[] { "b", "", ":and:f", "", "" } },
+        { "boo:and:foo", "o", 2, new string[] { "b", "o:and:foo" } },
+        { "a]b}c", "]", 0, new string[] { "a", "b}c" } },
+        { "a-b-c", "-", 0, new string[] { "a", "b", "c" } },
+        { "xéy", "é", 0, new string[] { "x", "y" } },
+        { "abc", "", 0, new string[] { "a", "b", "c" } },
+        { "abc", "", -1, new string[] { "a", "b", "c", "" } },
+        { "abc", "", 2, new string[] { "a", "bc" } },
+        { "a1b22c", "\\d+", 0, new string[] { "a", "b", "c" } },
+        { "a1b22c3", "\\d", -1, new string[] { "a", "b", "", "c", "" } },
+        { "abab", "(?=b)", 0, new string[] { "a", "ba", "b" } },
+        { "bab", "(?=b)", 0, new string[] { "ba", "b" } },
+        { "bab", "(?=b)", -1, new string[] { "ba", "b" } },
+        { "a,b;c", "[,;]", 0, new string[] { "a", "b", "c" } },
+        { "a.b", ".", 0, new string[] { } },
+        { "a.b", ".", -1, new string[] { "", "", "", "" } },
+        { "a$b", "$", 0, new string[] { "a$b" } },
+        { "aXbxc", "(?i)x", 0, new string[] { "a", "b", "c" } },
+        { "a  b\tc", "\\s+", 0, new string[] { "a", "b", "c" } },
+        { "a b", "\\s", 2, new string[] { "a", "b" } },
+    };
+
+    [Theory]
+    [MemberData(nameof(SplitCases))]
+    public void SplitFollowsJavaSemantics(string value, string pattern, int limit, string[] expected)
+    {
+        Assert.Equal(expected, DripSharp.Runtime.JavaCompat.StringSplit(value, pattern, limit));
+        // The regex engine gives the same answer for patterns the fast path takes.
+        Assert.Equal(expected, DripSharp.Runtime.JavaCompat.RegexSplit(
+            DripSharp.Runtime.JavaCompat.CompileRegex(pattern), value, limit));
+    }
+
+    [Fact]
+    public void SplitWithoutAMatchReturnsTheInputInstance()
+    {
+        const string value = "no delimiter here";
+        Assert.Same(value, Assert.Single(DripSharp.Runtime.JavaCompat.StringSplit(value, ";", 0)));
+        Assert.Same(value, Assert.Single(DripSharp.Runtime.JavaCompat.StringSplit(value, "\\d", 0)));
+    }
+
+    [Fact]
+    public void SingleCharacterSplitDoesNotCompileARegex()
+    {
+        long fast = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.StringSplit("Euro;20AC;x", ";", 0).Length);
+        long escaped = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.StringSplit("Euro|20AC|x", "\\|", 0).Length);
+        // The same split through a one-character class, which uses the regex engine.
+        long regex = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.StringSplit("Euro;20AC;x", "[;]", 0).Length);
+        // Three substrings, a list and the result array; no Regex, matcher or Match.
+        Assert.True(fast <= 320, $"split(\";\") allocated {fast} bytes per call (regex engine: {regex}).");
+        Assert.True(escaped <= 320, $"split(\"\\\\|\") allocated {escaped} bytes per call (regex engine: {regex}).");
+        Assert.True(fast * 2 < regex, $"split(\";\") allocated {fast} bytes per call, regex engine {regex}.");
+    }
+
+    [Fact]
+    public void RepeatedRegexCallsCompileOnce()
+    {
+        Assert.True(DripSharp.Runtime.JavaCompat.StringMatches("g1234", "g\\d+"));
+        Assert.False(DripSharp.Runtime.JavaCompat.StringMatches("g12a", "g\\d+"));
+        Assert.Equal("a-b-", DripSharp.Runtime.JavaCompat.StringReplaceAll("a1b2", "\\d", "-"));
+        Assert.Equal("a-b2", DripSharp.Runtime.JavaCompat.StringReplaceFirst("a1b2", "\\d", "-"));
+        Assert.Equal(new[] { "a", "b", "c" }, DripSharp.Runtime.JavaCompat.StringSplit("a1b22c", "\\d+", 0));
+        long matches = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.StringMatches("g1234", "g\\d+") ? 1 : 0);
+        long replaceAll = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.StringReplaceAll("a1b2", "\\d", "-").Length);
+        long replaceFirst = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.StringReplaceFirst("a1b2", "\\d", "-").Length);
+        long split = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.StringSplit("a1b22c", "\\d+", 0).Length);
+        long compile = AllocatedPerCall(() => DripSharp.Runtime.JavaCompat.CompileRegex("g\\d+").GetHashCode());
+        // Compiling allocates the translator output, parse tree and interpreter
+        // code; a cached call allocates only the matcher, its Matches and the result.
+        Assert.True(matches * 2 < compile, $"matches allocated {matches} bytes per call; one compile is {compile}.");
+        Assert.True(replaceAll * 2 < compile, $"replaceAll allocated {replaceAll} bytes per call; one compile is {compile}.");
+        Assert.True(replaceFirst * 2 < compile, $"replaceFirst allocated {replaceFirst} bytes per call; one compile is {compile}.");
+        Assert.True(split * 2 < compile, $"split(\"\\\\d+\") allocated {split} bytes per call; one compile is {compile}.");
+    }
+
+    [Fact]
+    public void ConcurrentColdRegexCallsShareOneInstance()
+    {
+        string pattern = "cold" + Guid.NewGuid().ToString("N") + "\\d+";
+        var compiled = new System.Text.RegularExpressions.Regex[16];
+        using var start = new Barrier(compiled.Length);
+        var threads = Enumerable.Range(0, compiled.Length).Select(worker => new Thread(() =>
+        {
+            start.SignalAndWait();
+            compiled[worker] = DripSharp.Runtime.JavaCompat.CachedRegex(pattern, 0);
+        })).ToArray();
+        foreach (var thread in threads) thread.Start();
+        foreach (var thread in threads) thread.Join();
+        Assert.All(compiled, regex => Assert.Same(compiled[0], regex));
+    }
+
+    [Fact]
+    public void ConcurrentRegexCacheMissesRespectCapacity()
+    {
+        string prefix = "cap" + Guid.NewGuid().ToString("N");
+        int capacity = DripSharp.Runtime.JavaCompat.StringRegexCacheCapacity;
+        int overCapacity = 0;
+        Parallel.For(0, 16, worker =>
+        {
+            for (int index = 0; index < capacity; index++)
+            {
+                DripSharp.Runtime.JavaCompat.CachedRegex(prefix + worker + "x" + index, 0);
+                if (DripSharp.Runtime.JavaCompat.CachedRegexCount > capacity)
+                    Interlocked.Increment(ref overCapacity);
+            }
+        });
+        Assert.Equal(0, overCapacity);
+        Assert.InRange(DripSharp.Runtime.JavaCompat.CachedRegexCount, 1, capacity);
+    }
+
+    [Fact]
+    public void RegexCacheStaysCorrectPastItsCapacity()
+    {
+        for (int round = 0; round < 2; round++)
+        {
+            for (int index = 0; index < 600; index++)
+            {
+                string pattern = "x" + index + "\\d";
+                Assert.True(DripSharp.Runtime.JavaCompat.StringMatches("x" + index + "7", pattern));
+                Assert.False(DripSharp.Runtime.JavaCompat.StringMatches("x" + (index + 1) + "7", pattern));
+                Assert.Equal("[" + index + "]",
+                    DripSharp.Runtime.JavaCompat.StringReplaceFirst("x" + index + "7", pattern, "[" + index + "]"));
+            }
+        }
+        Assert.Equal(new[] { "a", "b" }, DripSharp.Runtime.JavaCompat.StringSplit("a1b", "\\d", 0));
+    }
+
+    [Fact]
+    public void ConcurrentCallsShareCompiledPatterns()
+    {
+        int failures = 0;
+        Parallel.For(0, 64, worker =>
+        {
+            for (int index = 0; index < 200; index++)
+            {
+                string pattern = "w" + (index % 40) + "[a-c]+";
+                if (!DripSharp.Runtime.JavaCompat.StringMatches("w" + (index % 40) + "abc", pattern) ||
+                    DripSharp.Runtime.JavaCompat.StringSplit("p" + worker + ";q", ";", 0).Length != 2)
+                    Interlocked.Increment(ref failures);
+            }
+        });
+        Assert.Equal(0, failures);
+    }
+
+    private static long AllocatedPerCall(Func<int> call)
+    {
+        int checksum = call();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 0; index < Calls; index++) checksum += call();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.NotEqual(int.MinValue, checksum);
+        return allocated / Calls;
+    }
+}

@@ -290,13 +290,106 @@ internal static partial class JavaCompat
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Regex, JavaRegexPatternText>
         OriginalRegexPatterns = new();
-    internal static string[] StringSplit(string value, string pattern, int limit)
-        => RegexSplit(CompileRegex(pattern), value, limit);
-    internal static bool StringMatches(string value, string pattern) => RegexMatcher(CompileRegex(pattern), value).Matches();
+    internal static string[] StringSplit(string value, string pattern, int limit) =>
+        JavaSplitFastPathDelimiter(pattern, out var delimiter)
+            ? SplitOnCharacter(value, delimiter, limit)
+            : RegexSplit(CachedRegex(pattern, 0), value, limit);
+    internal static bool StringMatches(string value, string pattern) => RegexMatcher(CachedRegex(pattern, 0), value).Matches();
     internal static string StringReplaceAll(string value, string pattern, string replacement) =>
-        RegexMatcher(CompileRegex(pattern), value).ReplaceAll(replacement);
+        RegexMatcher(CachedRegex(pattern, 0), value).ReplaceAll(replacement);
     internal static string StringReplaceFirst(string value, string pattern, string replacement) =>
-        RegexMatcher(CompileRegex(pattern), value).ReplaceFirst(replacement);
+        RegexMatcher(CachedRegex(pattern, 0), value).ReplaceFirst(replacement);
+
+    // String.split/matches/replaceAll/replaceFirst and Pattern.matches compile a
+    // pattern that never escapes the call, so the compiled Regex (immutable and
+    // safe to share across threads) is reused. Pattern.compile keeps returning a
+    // fresh instance, as Java does. Misses compile under a lock, so a pattern
+    // compiles once; the cache is cleared when it fills.
+    internal const int StringRegexCacheCapacity = 128;
+    private static readonly ConcurrentDictionary<(string Pattern, int Flags), Regex> StringRegexCache = new();
+    private static readonly object StringRegexCacheLock = new();
+
+    internal static int CachedRegexCount => StringRegexCache.Count;
+
+    internal static Regex CachedRegex(string pattern, int flags)
+    {
+        var key = (pattern, flags);
+        if (StringRegexCache.TryGetValue(key, out var cached)) return cached;
+        lock (StringRegexCacheLock)
+        {
+            if (StringRegexCache.TryGetValue(key, out cached)) return cached;
+            var compiled = CompileRegexCore(pattern, flags);
+            if (StringRegexCache.Count >= StringRegexCacheCapacity) StringRegexCache.Clear();
+            StringRegexCache[key] = compiled;
+            return compiled;
+        }
+    }
+
+    // java.lang.String.split skips the regex engine when the pattern is one
+    // character that is not a regex metacharacter, or a backslash followed by
+    // a character that is not an ASCII letter or digit, and that character is
+    // not a surrogate.
+    private static bool JavaSplitFastPathDelimiter(string pattern, out char delimiter)
+    {
+        delimiter = '\0';
+        if (pattern is null) return false;
+        char candidate;
+        if (pattern.Length == 1)
+        {
+            candidate = pattern[0];
+            if (".$|()[{^?*+\\".IndexOf(candidate) >= 0) return false;
+        }
+        else if (pattern.Length == 2 && pattern[0] == '\\')
+        {
+            candidate = pattern[1];
+            if (IsAsciiLetterOrDigit(candidate)) return false;
+        }
+        else
+        {
+            return false;
+        }
+        if (char.IsSurrogate(candidate)) return false;
+        delimiter = candidate;
+        return true;
+    }
+
+    // java.lang.String.split(char, int, false).
+    private static string[] SplitOnCharacter(string value, char delimiter, int limit)
+    {
+        var next = value.IndexOf(delimiter);
+        if (next < 0) return new[] { value };
+        var limited = limit > 0;
+        var parts = new List<string>();
+        var offset = 0;
+        var matches = 0;
+        while (next >= 0)
+        {
+            if (!limited || matches < limit - 1)
+            {
+                parts.Add(value.Substring(offset, next - offset));
+                offset = next + 1;
+                matches++;
+                next = value.IndexOf(delimiter, offset);
+            }
+            else
+            {
+                parts.Add(value.Substring(offset));
+                offset = value.Length;
+                matches++;
+                break;
+            }
+        }
+        if (offset == 0) return new[] { value };
+        if (!limited || matches < limit) parts.Add(value.Substring(offset));
+        var size = parts.Count;
+        if (limit == 0)
+        {
+            while (size > 0 && parts[size - 1].Length == 0) size--;
+        }
+        var result = new string[size];
+        parts.CopyTo(0, result, 0, size);
+        return result;
+    }
     private const int JavaRegexUnixLines = 0x01;
     private const int JavaRegexCaseInsensitive = 0x02;
     private const int JavaRegexComments = 0x04;
