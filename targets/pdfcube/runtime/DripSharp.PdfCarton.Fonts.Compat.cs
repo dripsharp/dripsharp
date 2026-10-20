@@ -1260,10 +1260,26 @@ public sealed class JavaImageReader : IDisposable
         return ApplyReadParameters(bitmap, parameters);
     }
 
+    // ImageIO's readRaster returns a four-component JPEG's stored samples,
+    // CMYK or YCCK, without colour conversion; DCTFilter interprets them.
     public JavaRaster ReadRaster(
         int imageIndex,
         JavaImageReadParam? parameters)
     {
+        RequireImageIndex(imageIndex);
+        if (imageIndex == 0 &&
+            formatName.Equals("JPEG", StringComparison.OrdinalIgnoreCase) &&
+            new JavaImageMetadata(RequireInput().Bytes).ComponentCount == 4 &&
+            PdfCartonImageCodecs.ReadJpegSamples(RequireInput().Bytes) is { } samples)
+        {
+            decodesOnCurrentThread++;
+            sizeIndex = 0;
+            imageSize = new SKSizeI(samples.Width, samples.Height);
+            return ApplyReadParameters(samples, parameters);
+        }
+        // Skia decodes other four-component JPEGs to RGB only, so their K is
+        // lost; ImageIO's libjpeg rejects most of them (arithmetic coding,
+        // 12-bit samples).
         using var image = ReadDeferred(imageIndex, parameters);
         var raster = PdfCartonFontCompat.GetImageData(image);
         if (!formatName.Equals("JPEG", StringComparison.OrdinalIgnoreCase))
@@ -1404,36 +1420,17 @@ public sealed class JavaImageReader : IDisposable
         SKBitmap source,
         JavaImageReadParam? parameters)
     {
-        if (parameters is null ||
-            (!parameters.SourceRegion.HasValue &&
-             parameters.SubsamplingX == 1 &&
-             parameters.SubsamplingY == 1))
+        if (parameters is null) return source;
+        int firstX, firstY, outputWidth, outputHeight, span;
+        try
         {
-            return source;
+            (firstX, firstY, outputWidth, outputHeight, span) =
+                Selection(source.Width, source.Height, parameters);
         }
-
-        var sourceRegion = parameters.SourceRegion ??
-            new SKRectI(0, 0, source.Width, source.Height);
-        sourceRegion = new SKRectI(
-            Math.Max(0, sourceRegion.Left),
-            Math.Max(0, sourceRegion.Top),
-            Math.Min(source.Width, sourceRegion.Right),
-            Math.Min(source.Height, sourceRegion.Bottom));
-        var firstX = sourceRegion.Left + parameters.SubsamplingOffsetX;
-        var firstY = sourceRegion.Top + parameters.SubsamplingOffsetY;
-        var outputWidth = Math.Max(
-            0,
-            (sourceRegion.Right - firstX + parameters.SubsamplingX - 1) /
-            parameters.SubsamplingX);
-        var outputHeight = Math.Max(
-            0,
-            (sourceRegion.Bottom - firstY + parameters.SubsamplingY - 1) /
-            parameters.SubsamplingY);
-        if (outputWidth == 0 || outputHeight == 0)
+        catch
         {
             source.Dispose();
-            throw new ArgumentException(
-                "The source region and subsampling produce an empty image.");
+            throw;
         }
         // Output pixel (x, y) reads source pixel (firstX + x * periodX,
         // firstY + y * periodY), so a source-sized output is the source.
@@ -1442,8 +1439,6 @@ public sealed class JavaImageReader : IDisposable
 
         var periodX = parameters.SubsamplingX;
         var periodY = parameters.SubsamplingY;
-        // Source columns firstX .. Right - 1 hold every selected column.
-        var span = sourceRegion.Right - firstX;
         if (PdfCartonFontCompat.HasManagedImageData(source))
         {
             var colorModel = PdfCartonFontCompat.GetColorModel(source);
@@ -1503,6 +1498,81 @@ public sealed class JavaImageReader : IDisposable
         PdfCartonFontCompat.RegisterImageType(destination, imageType);
         source.Dispose();
         return destination;
+    }
+
+    // The samples a read selects from a raster of interleaved byte samples:
+    // the source itself when that is every pixel, as for an image.
+    private static JavaRaster ApplyReadParameters(
+        JavaRaster source,
+        JavaImageReadParam? parameters)
+    {
+        if (parameters is null) return source;
+        var (firstX, firstY, outputWidth, outputHeight, _) =
+            Selection(source.Width, source.Height, parameters);
+        if (outputWidth == source.Width && outputHeight == source.Height)
+            return source;
+        var bands = source.NumberOfBands;
+        var destination = new JavaRaster(
+            PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE,
+            outputWidth,
+            outputHeight,
+            bands);
+        var input = source.GetByteData();
+        var output = destination.GetByteData();
+        var periodX = parameters.SubsamplingX;
+        for (var y = 0; y < outputHeight; y++)
+        {
+            var inputRow = ((firstY + y * parameters.SubsamplingY) * source.Width + firstX) * bands;
+            var outputRow = y * outputWidth * bands;
+            if (periodX == 1)
+            {
+                Array.Copy(input, inputRow, output, outputRow, outputWidth * bands);
+                continue;
+            }
+            for (var x = 0; x < outputWidth; x++)
+            {
+                Array.Copy(
+                    input,
+                    inputRow + x * periodX * bands,
+                    output,
+                    outputRow + x * bands,
+                    bands);
+            }
+        }
+        return destination;
+    }
+
+    // ImageIO's source region, clipped to the image, and subsampling: output
+    // pixel (x, y) is source pixel (FirstX + x * periodX, FirstY + y *
+    // periodY), and source columns FirstX .. FirstX + Span - 1 hold every
+    // selected column.
+    private static (int FirstX, int FirstY, int Width, int Height, int Span) Selection(
+        int width,
+        int height,
+        JavaImageReadParam parameters)
+    {
+        var sourceRegion = parameters.SourceRegion ?? new SKRectI(0, 0, width, height);
+        sourceRegion = new SKRectI(
+            Math.Max(0, sourceRegion.Left),
+            Math.Max(0, sourceRegion.Top),
+            Math.Min(width, sourceRegion.Right),
+            Math.Min(height, sourceRegion.Bottom));
+        var firstX = sourceRegion.Left + parameters.SubsamplingOffsetX;
+        var firstY = sourceRegion.Top + parameters.SubsamplingOffsetY;
+        var outputWidth = Math.Max(
+            0,
+            (sourceRegion.Right - firstX + parameters.SubsamplingX - 1) /
+            parameters.SubsamplingX);
+        var outputHeight = Math.Max(
+            0,
+            (sourceRegion.Bottom - firstY + parameters.SubsamplingY - 1) /
+            parameters.SubsamplingY);
+        if (outputWidth == 0 || outputHeight == 0)
+        {
+            throw new ArgumentException(
+                "The source region and subsampling produce an empty image.");
+        }
+        return (firstX, firstY, outputWidth, outputHeight, sourceRegion.Right - firstX);
     }
 }
 

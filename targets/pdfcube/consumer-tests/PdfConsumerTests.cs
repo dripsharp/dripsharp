@@ -4443,7 +4443,8 @@ public sealed class ImageReaderSizeTests
             {
                 var image = JPEGFactory.CreateFromByteArray(document, IccRenderFixtures.Signed(data));
                 Assert.Equal((width, height), (image.GetWidth(), image.GetHeight()));
-                Assert.IsType(colorSpace, image.GetColorSpace());
+                // The upstream PDDeviceCMYKTest replaces PDDeviceCMYK.INSTANCE with a subclass.
+                Assert.IsAssignableFrom(colorSpace, image.GetColorSpace());
             }
             Assert.True(decodes == Compat.JavaImageReader.DecodesOnCurrentThread, $"{name} decoded pixels.");
 
@@ -4957,4 +4958,227 @@ public sealed class RenderingBitmapLifetimeTests
         text.Append($"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
         return System.Text.Encoding.ASCII.GetBytes(text.ToString());
     }
+}
+
+// DCTFilter reads a four-component JPEG through ImageReader.readRaster, which
+// ImageIO answers with the stored samples, without colour conversion: CMYK as
+// stored, or YCC and K that DCTFilter converts to CMYK. The fixtures are
+// 61x45 crops of PDFBox's jpegcmyk.jpg: ycck.jpg (Adobe transform 2, jpegtran
+// -crop), ycck-progressive.jpg (jpegtran -progressive -restart 1 of it), and,
+// written from ycck.jpg's samples by Java ImageIO with components 1 and 4
+// sampled at 2x2 or 2x1 (Adobe transform 0) or 1x2 (transform 2): cmyk.jpg,
+// cmyk-h2v1.jpg and ycck-h1v2.jpg, one per upsampling method. Expected values
+// are Apache PDFBox 3.0.8 output on OpenJDK 25: the SHA-256 of the decoded
+// stream and the getImage sRGB of every eighth pixel in each direction.
+public sealed class FourComponentJpegTests
+{
+    private const string YcckDecoded =
+        "fd02b548166274dc8fa03e81720d7455a765b5a3082367c39047d427e1f89740";
+    private const string YcckColours =
+        "231f20231f20fffcfdfff399fef5a0ffffffffffff262323252122211f20ffffff231f20" +
+        "ffffffffffff201e1d221d1b272425ee2524f9fbfd242021fefefefefefe211f21004271" +
+        "231f1fea1d24e42324231e1ffefefe262323211d1f003f71fdfdfded1e24ed1c24e91f25" +
+        "252122231f20232021004174201e20ec1e24fffef5eb2126231f20231f20221f20003e6f";
+
+    public static TheoryData<string, string, string> Cases() => new()
+    {
+        { "ycck.jpg", YcckDecoded, YcckColours },
+        { "ycck-progressive.jpg", YcckDecoded, YcckColours },
+        {
+            "cmyk.jpg",
+            "1c21ce1da2d9e377dc7629533f6c96e961bc8c896628a94dacaaed923066b2a0",
+            "000000000203007481007e8200758100718000717c00020300000000000000718100" +
+            "040600708000707f000000000203000000bb9f3d00727f000000007080006f7e0000" +
+            "0060254e000000c3a538b9a03300000000707e000304000000602550006b79bea133" +
+            "c59951bda0330002030000000000005f264f000406baa032007183bea13400000000" +
+            "00000003045e244d"
+        },
+        {
+            "cmyk-h2v1.jpg",
+            "facd0d7549a3eddea741d37cd046802efb830993afba44371194e94d4d6af5cd",
+            "00000000020300717d008f89007b8300707f006f7e00020300000000000000707f00" +
+            "040600708000707f000000000203000000bba137006e8200000000707f006f7e0000" +
+            "00602550000000c4a430b99a30000000006f8000030400000060244e006c78bea138" +
+            "c59747bda1330002030000000000005f264f000406baa23200717fbea53500000000" +
+            "00000003045e244e"
+        },
+        {
+            "ycck-h1v2.jpg",
+            "35b791ba8c664db3befc61211ad1ded01208bd4b7b96798aa80d1d7260a72193",
+            "221f1f232122fffef5f3edbff7f7e7fffffffcf6f9252021231f20231c1dfdfeff27" +
+            "2425fffffffefefe231d1d241f21231d1fe03527f5fbfe231d1ffffffffcfcfc221f" +
+            "1d0040711f1e20e61e27e61c23211c1dfefefe262323221f20003f71ebeef0e32b26" +
+            "bc3634e62a26252122231f20231f20004072272123e91c24f2fafeed1c24231f2023" +
+            "1f20262223003e6e"
+        },
+    };
+
+    internal static byte[] Fixture(string name) =>
+        File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", name));
+
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public void DecodedSamplesMatchJavaPdfBox(string fixture, string decoded, string colours)
+    {
+        _ = colours;
+        Assert.Equal(decoded, DecodedHash(Fixture(fixture), 61, 45));
+    }
+
+    // Narrow components, replicated rather than triangle-filtered (3x45 with
+    // components 1 and 4 at 2x2, 2x45 at 2x1), and 3:1 and 1:4 sampling,
+    // replicated: written by Java ImageIO like cmyk.jpg.
+    public static TheoryData<string, int, string> Layouts() => new()
+    {
+        { "cmyk-narrow3.jpg", 3, "fbd904ef728593dfd0fdf025577dd62f26a69f90cbc069f8bcad8aaa2d35de1a" },
+        { "ycck-narrow2.jpg", 2, "fb54bd34df2ff2059cb8cdb1d1068f6205280d019ebe4b1059f9d26436422bce" },
+        { "cmyk-h3v1.jpg", 61, "1852d67f8e11c7d014f91aa30775698117b14b98e6b2cc4b15638d016666259b" },
+        { "ycck-h1v4.jpg", 61, "e36878a3ed1140040db15db48ac6c77a8385ed30dd01a9d28bf9f4423023128b" },
+    };
+
+    [Theory]
+    [MemberData(nameof(Layouts))]
+    public void SamplingLayoutsMatchJavaPdfBox(string fixture, int width, string decoded) =>
+        Assert.Equal(decoded, DecodedHash(Fixture(fixture), width, 45));
+
+    // ycck-progressive.jpg cut short and ended with EOI. Cut at its first RST0,
+    // the first (DC) scan's data runs out in its first restart interval, and
+    // the remaining intervals stay zero; cut after that scan, the image has
+    // DC values only. Both are block-smoothed, as by the libjpeg-turbo that
+    // the reference OpenJDK's ImageIO links.
+    [Fact]
+    public void IncompleteProgressiveDataMatchesJavaPdfBox()
+    {
+        var progressive = Fixture("ycck-progressive.jpg");
+        Assert.Equal(
+            "276a2909f924284c5f2879e8ca2c044b58cc09318ea79825d2033130e904e60d",
+            DecodedHash(EndAt(progressive, IndexOfMarker(progressive, 0xd0, 0)), 61, 45));
+        var afterFirstScan = IndexOfMarker(progressive, -1, IndexOfMarker(progressive, 0xda, 0) + 2);
+        Assert.Equal(
+            "58a28ecaa38683c23fa27cb23170933ecafa02ede26db42f2102140d1bacf9ed",
+            DecodedHash(EndAt(progressive, afterFirstScan), 61, 45));
+    }
+
+    // A frame header that ImageIO rejects (a zero sampling factor) fails
+    // the read with an IOException, which PDFStreamEngine's image error
+    // handling expects.
+    [Fact]
+    public void InvalidFrameHeaderThrowsIOException()
+    {
+        var data = Fixture("cmyk.jpg");
+        data[IndexOfMarker(data, 0xc0, 0) + 11] = 0x01;
+        Assert.Throws<IOException>(() => Reader(data).ReadRaster(0, null));
+    }
+
+    private static string DecodedHash(byte[] jpeg, int width, int height)
+    {
+        using var document = new PDDocument();
+        var image = JPEGFactory.CreateFromByteArray(document, Signed(jpeg));
+        // The upstream PDDeviceCMYKTest replaces PDDeviceCMYK.INSTANCE with a subclass.
+        Assert.IsAssignableFrom<PDDeviceCMYK>(image.GetColorSpace());
+        using var stream = image.CreateInputStream();
+        using var samples = new MemoryStream();
+        stream.CopyTo(samples);
+        Assert.Equal(width * height * 4, samples.Length);
+        Assert.Equal(4, image.GetRawRaster().NumberOfBands);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(samples.ToArray()))
+            .ToLowerInvariant();
+    }
+
+    // The offset of the first marker at or after start with the given code
+    // (-1: any marker other than RSTn).
+    private static int IndexOfMarker(byte[] data, int code, int start)
+    {
+        for (var index = start; index + 1 < data.Length; index++)
+        {
+            if (data[index] != 0xff) continue;
+            var next = data[index + 1];
+            if (code >= 0 ? next == code : next is not (0 or 0xff) and not (>= 0xd0 and <= 0xd7))
+                return index;
+        }
+        throw new InvalidOperationException("Marker not found.");
+    }
+
+    private static byte[] EndAt(byte[] data, int length) =>
+        [.. data.AsSpan(0, length), 0xff, 0xd9];
+
+    // PDDeviceCMYK converts through PDFBox's CMYK output profile: Java uses
+    // LCMS, PdfCarton its own ICC transform, so colours may differ by CMM
+    // interpolation, as IccBasedColorsMatchPdfBoxAcrossProfilesAndConcurrentRenders
+    // allows for its CMYK LUT profile. Without K a dark pixel turns light.
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public void RenderedColoursMatchJavaPdfBox(string fixture, string decoded, string colours)
+    {
+        _ = decoded;
+        const int tolerance = 4;
+        using var document = new PDDocument();
+        var image = JPEGFactory.CreateFromByteArray(document, Signed(Fixture(fixture)));
+        using var rgb = image.GetImage();
+        Assert.Equal((61, 45), (rgb.Width, rgb.Height));
+        var expected = Convert.FromHexString(colours);
+        var index = 0;
+        for (var y = 0; y < 45; y += 8)
+        {
+            for (var x = 0; x < 61; x += 8, index += 3)
+            {
+                var actual = Compat.PdfCartonFontCompat.GetRgb(rgb, x, y);
+                for (var channel = 0; channel < 3; channel++)
+                {
+                    var value = (actual >> (16 - channel * 8)) & 0xff;
+                    Assert.True(
+                        Math.Abs(value - expected[index + channel]) <= tolerance,
+                        $"{fixture} ({x}, {y}) channel {channel}: {value}, " +
+                        $"expected {expected[index + channel]} +/- {tolerance}.");
+                }
+            }
+        }
+    }
+
+    // ImageIO applies a read's source region and subsampling to the samples
+    // of the whole image.
+    [Fact]
+    public void RasterRegionsAndSubsamplingSelectTheDecodedSamples()
+    {
+        foreach (var fixture in new[] { "ycck.jpg", "cmyk.jpg" })
+        {
+            var full = Reader(Fixture(fixture)).ReadRaster(0, null);
+            Assert.Equal((61, 45, 4), (full.Width, full.Height, full.NumberOfBands));
+            foreach (var (region, periodX, periodY, offsetX, offsetY) in new[]
+                     {
+                         (new SKRectI(3, 2, 56, 42), 1, 1, 0, 0),
+                         (new SKRectI(0, 0, 61, 45), 2, 3, 1, 2),
+                         (new SKRectI(5, 4, 61, 45), 3, 2, 2, 1),
+                     })
+            {
+                var parameters = new Compat.JavaImageReadParam();
+                parameters.SetSourceSubsampling(periodX, periodY, offsetX, offsetY);
+                parameters.SetSourceRegion(region);
+                var selected = Reader(Fixture(fixture)).ReadRaster(0, parameters);
+                var firstX = region.Left + offsetX;
+                var firstY = region.Top + offsetY;
+                Assert.Equal(
+                    ((region.Right - firstX + periodX - 1) / periodX,
+                     (region.Bottom - firstY + periodY - 1) / periodY),
+                    (selected.Width, selected.Height));
+                for (var y = 0; y < selected.Height; y++)
+                {
+                    for (var x = 0; x < selected.Width; x++)
+                    {
+                        Assert.Equal(
+                            full.GetPixel(firstX + x * periodX, firstY + y * periodY, (int[]?)null),
+                            selected.GetPixel(x, y, (int[]?)null));
+                    }
+                }
+            }
+        }
+    }
+
+    private static Compat.JavaImageReader Reader(byte[] data)
+    {
+        var reader = DripSharp.PdfCarton.Filter.Filter.FindImageReader("JPEG", "codec missing");
+        reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(data)));
+        return reader;
+    }
+
+    private static sbyte[] Signed(byte[] bytes) => (sbyte[])(Array)bytes;
 }

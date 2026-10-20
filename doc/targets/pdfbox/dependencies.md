@@ -270,6 +270,10 @@ without another third-party dependency:
 * Full ICC parsing, color transforms, and Preflight validation.
 * JBIG2 decoding.
 * JPEG 2000/JPX decoding.
+* The stored CMYK or YCCK samples of four-component JPEG images, which ImageIO's
+  `readRaster` returns and `DCTFilter` interprets; Skia decodes JPEG only to
+  RGB. PdfCarton's authored decoder reproduces the samples that the reference
+  Java toolchain's ImageIO produces (its OpenJDK links libjpeg-turbo).
 * Unicode Bidirectional Algorithm behavior matching `java.text.Bidi`.
 * `Printable` and `Pageable`-style page layout and rendering over `SKCanvas`;
   SkiaSharp does not provide portable printer discovery or job submission.

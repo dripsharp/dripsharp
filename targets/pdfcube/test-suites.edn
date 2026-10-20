@@ -48,7 +48,7 @@
     "pdfcube-pdfbox"
     {:source "consumer-tests/PdfConsumerTests.cs"
      :destination "PdfConsumerTests.cs"
-     :sha256 "539df9489d191487427203c897cf988abe7f2ee2559d9cd87b8fa237a7efb013"}
+     :sha256 "88a43d58f498aaa36dd172680b00840a0c36c100795fdc67f5c4b011e4cf939a"}
     "pdfcube-preflight"
     {:source "consumer-tests/PreflightConsumerTests.cs"
      :destination "PreflightConsumerTests.cs"
@@ -58,7 +58,61 @@
      :destination "Fixtures/metadata.xmp"
      :sha256 "e0e15a9c1ad91ba8389c1e23e3fd598e299aa28c73b45dee49b923e054464fc6"
      :license "Apache-2.0"
-     :attribution "Authored for the PdfCarton generated consumer suite."}]}
+     :attribution "Authored for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/cmyk-h2v1.jpg"
+     :destination "Fixtures/cmyk-h2v1.jpg"
+     :sha256 "59d3794924159843ade3374561abb738f5e909071b386c02fa9e9225c55df952"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/cmyk-h3v1.jpg"
+     :destination "Fixtures/cmyk-h3v1.jpg"
+     :sha256 "67fc7b7d3bdc16cf69a2732b0ec82ded67d7573c1fe1ff945a4ea9dba3aee9cf"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/cmyk-narrow3.jpg"
+     :destination "Fixtures/cmyk-narrow3.jpg"
+     :sha256 "8df9039f95bbc0f0b326fb8bfaba98213e322c43d4768bf880b5becc0aaff508"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/ycck-h1v4.jpg"
+     :destination "Fixtures/ycck-h1v4.jpg"
+     :sha256 "49974eb3e7ac3701b877fb38b69f82e607a432d9800a6eed709e54fa3be11b1c"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/ycck-narrow2.jpg"
+     :destination "Fixtures/ycck-narrow2.jpg"
+     :sha256 "df420ec4070db7d9bc5b30900b54cb55bba6222c95b89beab4f759ad47a3335b"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/ycck-h1v2.jpg"
+     :destination "Fixtures/ycck-h1v2.jpg"
+     :sha256 "8d50477ef3e3097521f3287e01424af1336755f67d5646a85062a0d8e4bc061a"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/cmyk.jpg"
+     :destination "Fixtures/cmyk.jpg"
+     :sha256 "379ba4137f476522c1d928612e428de6e9398bbb87449d9e3b022f34a5ac0f70"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/ycck-progressive.jpg"
+     :destination "Fixtures/ycck-progressive.jpg"
+     :sha256 "71c0e89e1ee6367c16efefb089df50358fcbf2d59dbd4870c44fae0e6edee576"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}
+    {:source "consumer-tests/fixtures/ycck.jpg"
+     :destination "Fixtures/ycck.jpg"
+     :sha256 "f681dade6a99f38d949e4a1b6cc298af11175e03ef3e5321f40e5301af3f71c4"
+     :license "Apache-2.0"
+     :attribution
+     "Derived from Apache PDFBox 3.0.8 jpegcmyk.jpg for the PdfCarton generated consumer suite."}]}
   {:id :release-smoke
    :kind :focused-consumer
    :policy :shipped

@@ -23,6 +23,12 @@ internal static class PdfCartonImageCodecs
         return null;
     }
 
+    internal static JavaRaster? ReadJpegSamples(byte[] encoded)
+    {
+        ArgumentNullException.ThrowIfNull(encoded);
+        return null;
+    }
+
     internal static SKBitmap Decode(string formatName, byte[] encoded) =>
         throw new NotSupportedException(
             $"The `{formatName}` image codec is not part of this product.");
