@@ -1453,23 +1453,286 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
-    private static byte[] BlendGroupFixture()
+    // BufferedImage.setRGB is O(1) in Java. On an image from CreateImage (the
+    // gray + alpha transparency group of create2ByteGrayAlphaImage) each call
+    // used to re-render every pixel, so the per-pixel loop of
+    // GroupGraphics.removeBackdrop was O((width * height)^2).
+    [Fact]
+    public void SetRgbWritesOnePixelOfAnyImage()
     {
-        static string Stream(string entries, string data) =>
-            $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
-        var objects = new SortedDictionary<int, string>
+        const int Size = 1000;
+        using var gray = GrayAlphaImage(Size, Size);
+        using var grayPage = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        using var bgrPage = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
+        using var intBgr = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_INT_BGR);
+        using var materialized = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        _ = Compat.PdfCartonFontCompat.GetRaster(grayPage);
+        _ = Compat.PdfCartonFontCompat.GetRaster(bgrPage);
+        _ = Compat.PdfCartonFontCompat.GetRaster(intBgr);
+        // DataBufferByte.getData() moves the samples into a managed array.
+        _ = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(materialized).GetDataBuffer()).GetData();
+        foreach (var (name, image) in new[]
+                 {
+                     ("gray + alpha", gray), ("BYTE_GRAY", grayPage), ("3BYTE_BGR", bgrPage),
+                     ("INT_BGR", intBgr), ("BYTE_GRAY with getData", materialized),
+                 })
         {
-            [1] = "<< /Type /Catalog /Pages 2 0 R >>",
-            [2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            static int Argb(int x, int y) => unchecked((int)((uint)(x * 7 + y) % 256 << 24 |
+                (uint)((x + y * 3) % 256) * 0x010101u));
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (var y = 0; y < Size; y++)
+                for (var x = 0; x < Size; x++)
+                    Compat.PdfCartonFontCompat.SetRgb(image, x, y, Argb(x, y));
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+            // 10^6 one-pixel writes take well under a second; re-rendering the
+            // image on each one took hours.
+            Assert.True(elapsed < TimeSpan.FromSeconds(20), $"{name}: 10^6 SetRgb calls took {elapsed}.");
+
+            // The raster (getRGB) holds each written pixel, and the native
+            // pixels hold what the raster renders to.
+            var mismatches = 0;
+            var hasAlpha = Compat.PdfCartonFontCompat.GetColorModel(image).HasAlpha;
+            for (var y = 0; y < Size; y += 7)
+                for (var x = 0; x < Size; x += 3)
+                {
+                    var written = Argb(x, y);
+                    var argb = Compat.PdfCartonFontCompat.GetRgb(image, x, y);
+                    var native = Compat.PdfCartonPixels.Read(image, x, y);
+                    if ((uint)argb >> 24 != (hasAlpha ? (uint)written >> 24 : 255u) ||
+                        (argb & 0xffffff) != (written & 0xffffff) || (uint)native != (uint)argb)
+                        mismatches++;
+                }
+            Assert.Equal(0, mismatches);
+
+            for (var call = 0; call < 1000; call++)
+                _ = Compat.PdfCartonFontCompat.GetRgb(image, call % Size, call / Size);
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            var sum = 0L;
+            for (var call = 0; call < 100_000; call++)
+                sum += Compat.PdfCartonFontCompat.GetRgb(image, call % Size, call / Size);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Assert.True(allocated < 1024, $"{name}: 10^5 GetRgb calls allocated {allocated} bytes ({sum}).");
+        }
+    }
+
+    // In Java an image's raster is its only storage, so Graphics2D drawing
+    // shows in getRGB and survives setRGB. A CreateImage image keeps a
+    // managed raster beside its native pixels: it used to miss Skia's drawing,
+    // and setRGB re-rendered the stale raster over the drawn pixels.
+    [Fact]
+    public void CreatedImageRasterSeesNativeDrawing()
+    {
+        using var image = GrayAlphaImage(40, 20);
+        using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(image))
+        {
+            graphics.SetColor(new SKColor(0x99, 0x99, 0x99));
+            graphics.FillRect(0, 0, 10, 10);
+        }
+        Assert.Equal(unchecked((int)0xff999999), Compat.PdfCartonFontCompat.GetRgb(image, 5, 5));
+        Assert.Equal(0, Compat.PdfCartonFontCompat.GetRgb(image, 15, 5) >>> 24);
+
+        Compat.PdfCartonFontCompat.SetRgb(image, 15, 5, unchecked((int)0xff404040));
+        Assert.Equal(unchecked((int)0xff404040), Compat.PdfCartonFontCompat.GetRgb(image, 15, 5));
+        // The drawn pixels are still drawn, in the raster and natively.
+        Assert.Equal(unchecked((int)0xff999999), Compat.PdfCartonFontCompat.GetRgb(image, 5, 5));
+        Assert.Equal(new SKColor(0x99, 0x99, 0x99), Compat.PdfCartonPixels.Read(image, 5, 5));
+        Assert.Equal(new SKColor(0x40, 0x40, 0x40), Compat.PdfCartonPixels.Read(image, 15, 5));
+
+        // Drawing after a raster read is seen too; undrawn pixels keep their
+        // samples, and a copy of the image data holds the drawing.
+        using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(image))
+        {
+            graphics.SetColor(SKColors.White);
+            graphics.FillRect(20, 0, 10, 20);
+        }
+        var argb = new int[40 * 20];
+        Compat.PdfCartonFontCompat.GetRgb(image, 0, 0, 40, 20, argb, 0, 40);
+        Assert.Equal(unchecked((int)0xffffffff), argb[10 * 40 + 25]);
+        Assert.Equal(unchecked((int)0xff404040), argb[5 * 40 + 15]);
+        Assert.Equal(unchecked((int)0xff999999), argb[5 * 40 + 5]);
+        Assert.Equal(0, argb[15 * 40 + 35] >>> 24);
+        var samples = Compat.PdfCartonFontCompat.GetImageData(image).GetPixel(25, 10, (int[]?)null);
+        Assert.Equal(new[] { 255, 255 }, samples);
+    }
+
+    // A draw changes only the raster samples of the pixels it paints, so
+    // samples written into the retained raster survive drawing elsewhere,
+    // and SetRgb still writes the image's pixels after they are reallocated.
+    [Fact]
+    public void CreatedImageRasterWritesSurviveNativeDrawing()
+    {
+        using var image = GrayAlphaImage(4, 4);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+        raster.SetPixel(3, 3, [64, 255]);
+        using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(image))
+        {
+            graphics.ClearRect(0, 0, 1, 1);
+            graphics.SetColor(SKColors.White);
+            graphics.FillRect(0, 0, 2, 2);
+        }
+        raster.SetPixel(3, 2, [32, 255]);
+        Assert.Equal(unchecked((int)0xff404040), Compat.PdfCartonFontCompat.GetRgb(image, 3, 3));
+        Assert.Equal(unchecked((int)0xff202020), Compat.PdfCartonFontCompat.GetRgb(image, 3, 2));
+        Assert.Equal(unchecked((int)0xffffffff), Compat.PdfCartonFontCompat.GetRgb(image, 1, 1));
+        Assert.Equal(0, Compat.PdfCartonFontCompat.GetRgb(image, 2, 0) >>> 24);
+
+        Compat.PdfCartonFontCompat.SetRgb(image, 0, 3, unchecked((int)0xff808080));
+        Assert.True(image.TryAllocPixels(image.Info));
+        image.Erase(SKColors.Transparent);
+        Compat.PdfCartonFontCompat.SetRgb(image, 1, 3, unchecked((int)0xff909090));
+        Assert.Equal(new SKColor(0x90, 0x90, 0x90), Compat.PdfCartonPixels.Read(image, 1, 3));
+        Assert.Equal(unchecked((int)0xff808080), Compat.PdfCartonFontCompat.GetRgb(image, 0, 3));
+    }
+
+    // setRGB converts each channel on its own: red, green, blue and alpha land
+    // in their own samples and native channels, and the neighbours are kept.
+    [Fact]
+    public void SetRgbPreservesDistinctColorChannels()
+    {
+        const int Argb = unchecked((int)0x80c04020);
+        using var bgr = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
+        using var intArgb = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using var intBgr = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_INT_BGR);
+        using var srgb = Compat.PdfCartonFontCompat.CreateImage(
+            Compat.PdfCartonFontCompat.ComponentColorModel(
+                Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB),
+                true, false, Compat.PdfCartonTransparency.TRANSLUCENT,
+                Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE),
+            Compat.PdfCartonFontCompat.CreateInterleavedRaster(
+                Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE, 3, 3, 4, new Compat.JavaPoint(0, 0)),
+            false,
+            null);
+        foreach (var (name, image, hasAlpha, samples) in new[]
+                 {
+                     ("3BYTE_BGR", bgr, false, new[] { 0xc0, 0x40, 0x20 }),
+                     ("INT_ARGB", intArgb, true, new[] { 0xc0, 0x40, 0x20, 0x80 }),
+                     ("INT_BGR", intBgr, false, new[] { 0xc0, 0x40, 0x20 }),
+                     ("sRGB + alpha CreateImage", srgb, true, new[] { 0xc0, 0x40, 0x20, 0x80 }),
+                 })
+        {
+            var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+            var neighbour = Compat.PdfCartonFontCompat.GetRgb(image, 0, 1);
+            var neighbourNative = Compat.PdfCartonPixels.Read(image, 2, 1);
+            Compat.PdfCartonFontCompat.SetRgb(image, 1, 1, Argb);
+            var expected = hasAlpha ? Argb : Argb | unchecked((int)0xff000000);
+            Assert.True(expected == Compat.PdfCartonFontCompat.GetRgb(image, 1, 1), name);
+            Assert.True((uint)expected == (uint)Compat.PdfCartonPixels.Read(image, 1, 1), name);
+            Assert.True(samples.SequenceEqual(raster.GetPixel(1, 1, (int[]?)null)), name);
+            Assert.True(neighbour == Compat.PdfCartonFontCompat.GetRgb(image, 0, 1), name);
+            Assert.True(neighbourNative == Compat.PdfCartonPixels.Read(image, 2, 1), name);
+        }
+    }
+
+    // A non-isolated group inside a form XObject whose resources hold blend
+    // modes, with none in the page's own resources, leaves a GRAY or BGR page
+    // image as it is (PDFRenderer.hasBlendMode), so GroupGraphics.removeBackdrop
+    // reads the backdrop and writes the group pixel by pixel through
+    // getRGB/setRGB. A DeviceGray group is create2ByteGrayAlphaImage's
+    // CreateImage image: Multiply into it used to throw, and with the blend
+    // mode unused its backdrop removal re-rendered the image per pixel over a
+    // raster that missed the drawn content, leaving the content black.
+    // Every render matches the RGB one, whose backdrop removal for a DeviceRGB
+    // group is the DataBufferInt path (NonIsolatedBlendGroupRemovesItsBackdrop
+    // checks it against Java PDFBox), and the gray values computed by hand,
+    // within the one rounding step an 8-bit conversion may take.
+    [Fact]
+    public void FormBlendGroupsRenderOnGrayAndBgrPages()
+    {
+        foreach (var blend in new[] { true, false })
+            foreach (var groupSpace in new[] { "DeviceGray", "DeviceRGB" })
+            {
+                var expected = new (int X, int Y, int Gray)[]
+                {
+                    (5, 5, 204), // backdrop outside the group's content: 0.8
+                    (52, 52, 204),
+                    (95, 5, 204),
+                    // Multiply: 0.8 * 0.5; Normal: 0.5.
+                    (30, 70, blend ? 102 : 128),
+                    // Multiply at alpha 0.5: 0.8 * (0.5 + 0.5 * 0.25); Normal: 0.25.
+                    (70, 30, blend ? 128 : 64),
+                    (56, 44, blend ? 128 : 64),
+                };
+                var name = $"{groupSpace} group{(blend ? "" : ", blend mode unused")}";
+                using var document = Loader.LoadPDF((sbyte[])(Array)FormBlendGroupFixture(groupSpace, blend));
+                using var reference = new PDFRenderer(document).RenderImage(0, 10, ImageType.Rgb);
+                foreach (var (type, typeName) in new[] { (ImageType.Rgb, "RGB"), (ImageType.Gray, "GRAY"), (ImageType.Bgr, "BGR") })
+                {
+                    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                    using var image = new PDFRenderer(document).RenderImage(0, 10, type);
+                    var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+                    // Well under a second; the per-pixel re-render took hours.
+                    Assert.True(elapsed < TimeSpan.FromSeconds(30),
+                        $"{name}, {typeName}: rendering 1000x1000 pixels took {elapsed}.");
+                    foreach (var (x, y, gray) in expected)
+                    {
+                        // Pixel centres of the 1000x1000 render.
+                        var actual = Compat.PdfCartonFontCompat.GetRgb(image, x * 10 + 5, y * 10 + 5);
+                        var rgb = Compat.PdfCartonFontCompat.GetRgb(reference, x * 10 + 5, y * 10 + 5);
+                        for (var shift = 0; shift < 24; shift += 8)
+                        {
+                            var channel = actual >> shift & 255;
+                            Assert.True(Math.Abs(channel - (rgb >> shift & 255)) <= 1,
+                                $"{name}, {typeName}: pixel ({x},{y}) is {actual:x8}, the RGB render {rgb:x8}.");
+                            Assert.True(Math.Abs(channel - gray) <= 1,
+                                $"{name}, {typeName}: pixel ({x},{y}) is {actual:x8}, expected gray {gray}.");
+                        }
+                    }
+                }
+            }
+    }
+
+    // PageDrawer.create2ByteGrayAlphaImage: Java's gray + alpha image over
+    // an interleaved byte raster, alpha first in memory.
+    private static SKBitmap GrayAlphaImage(int width, int height)
+    {
+        var model = Compat.PdfCartonFontCompat.ComponentColorModel(
+            Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY),
+            true, false, Compat.PdfCartonTransparency.TRANSLUCENT,
+            Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+        var raster = Compat.PdfCartonFontCompat.CreateInterleavedRaster(
+            new Compat.JavaDataBufferByte(width * height * 2), width, height, width * 2, 2, [1, 0],
+            new Compat.JavaPoint(0, 0));
+        return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
+    }
+
+    private static byte[] BlendGroupFixture() =>
+        PdfFixture(new SortedDictionary<int, string>
+        {
             [3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /ExtGState << " +
                 "/MUL 5 0 R >> /XObject << /G 6 0 R >> >> /Contents 4 0 R >>",
-            [4] = Stream("", "0.8 0.6 0.4 rg 0 0 100 100 re f q /MUL gs /G Do Q"),
+            [4] = FixtureStream("", "0.8 0.6 0.4 rg 0 0 100 100 re f q /MUL gs /G Do Q"),
             [5] = "<< /Type /ExtGState /BM /Multiply >>",
-            [6] = Stream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency " +
+            [6] = FixtureStream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency " +
                 "/CS /DeviceRGB >> /Resources << /ExtGState << /MUL 5 0 R /HM 7 0 R >> >>",
                 "/MUL gs 0.5 0.5 1 rg 10 10 40 40 re f /HM gs 0 1 1 rg 55 55 35 35 re f"),
             [7] = "<< /Type /ExtGState /BM /Multiply /ca 0.5 >>",
-        };
+        });
+
+    // The blend modes are in the form's resources only; unless blend is set
+    // the content paints with Normal.
+    private static byte[] FormBlendGroupFixture(string groupSpace, bool blend) =>
+        PdfFixture(new SortedDictionary<int, string>
+        {
+            [3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << " +
+                "/XObject << /G 6 0 R >> >> /Contents 4 0 R >>",
+            [4] = FixtureStream("", "0.8 g 0 0 100 100 re f /G Do"),
+            [5] = "<< /Type /ExtGState /BM /Multiply >>",
+            [6] = FixtureStream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency " +
+                $"/CS /{groupSpace} >> /Resources << /ExtGState << /MUL 5 0 R /HM 7 0 R >> >>",
+                blend
+                    ? "/MUL gs 0.5 g 10 10 40 40 re f /HM gs 0.25 g 55 55 35 35 re f"
+                    : "0.5 g 10 10 40 40 re f 0.25 g 55 55 35 35 re f"),
+            [7] = "<< /Type /ExtGState /BM /Multiply /ca 0.5 >>",
+        });
+
+    private static string FixtureStream(string entries, string data) =>
+        $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
+
+    // A one-page document: catalog 1, pages 2, page 3 and the given objects.
+    private static byte[] PdfFixture(SortedDictionary<int, string> objects)
+    {
+        objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+        objects[2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
         var text = new System.Text.StringBuilder("%PDF-1.7\n");
         var offsets = new Dictionary<int, int>();
         foreach (var (number, body) in objects)

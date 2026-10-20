@@ -4133,14 +4133,7 @@ public class JavaColorModel
         var count = NumberOfComponents;
         if (components.Length < checked(width * count))
             throw new IndexOutOfRangeException();
-        // INT image types decode a data element as one packed int, so their
-        // component (non-packed) rasters are read as samples here.
-        if (Palette is null && explicitMasks is null &&
-            imageType != PdfCartonFontCompat.TYPE_BYTE_BINARY &&
-            raster.HasArrayStorage &&
-            raster.PackedPixelBits == 0 &&
-            !raster.IsSinglePixelPacked &&
-            raster.NumberOfBands == count)
+        if (ReadsComponentSamples(raster))
         {
             var length = width * count;
             if (samples is null || samples.Length < length) samples = new int[length];
@@ -4156,9 +4149,7 @@ public class JavaColorModel
             }
             return;
         }
-        if (IsIntImageType && raster.IsSinglePixelPacked &&
-            raster.NumberOfBands >= count &&
-            !raster.HasBitMasks(PackedMasks(imageType).AsSpan(0, count)))
+        if (ReadsForeignPackedSamples(raster))
         {
             // Another INT layout's packed raster: its bands are still red,
             // green, blue (and alpha), which Java's setData copies as samples.
@@ -4175,6 +4166,113 @@ public class JavaColorModel
             pixel = raster.GetDataElements(x, y, 1, 1, pixel);
             GetNormalizedComponents(pixel, components, x * count);
         }
+    }
+
+    // INT image types decode a data element as one packed int, so their
+    // component (non-packed) rasters are read as samples.
+    private bool ReadsComponentSamples(JavaRaster raster) =>
+        Palette is null && explicitMasks is null &&
+        imageType != PdfCartonFontCompat.TYPE_BYTE_BINARY &&
+        raster.HasArrayStorage &&
+        raster.PackedPixelBits == 0 &&
+        !raster.IsSinglePixelPacked &&
+        raster.NumberOfBands == NumberOfComponents;
+
+    // Another INT layout's packed raster: its bands are still red, green,
+    // blue (and alpha), which Java's setData copies as samples.
+    private bool ReadsForeignPackedSamples(JavaRaster raster) =>
+        IsIntImageType && raster.IsSinglePixelPacked &&
+        raster.NumberOfBands >= NumberOfComponents &&
+        !raster.HasBitMasks(PackedMasks(imageType).AsSpan(0, NumberOfComponents));
+
+    // The color RenderRaster stores for the raster's pixel (x, y): the
+    // components GetNormalizedRow reads for it, converted as RenderedColor
+    // converts them. The scratch arguments are reused across calls, so a
+    // caller that keeps them allocates nothing per pixel.
+    internal SKColor RenderedColorAt(
+        JavaRaster raster,
+        int x,
+        int y,
+        ref int[]? samples,
+        ref object? pixel)
+    {
+        var count = NumberOfComponents;
+        Span<float> components = stackalloc float[MaximumPixelComponents];
+        var pixelComponents = components.Slice(0, count);
+        if (ReadsComponentSamples(raster))
+        {
+            if (samples is null || samples.Length < count) samples = new int[MaximumPixelComponents];
+            raster.GetPixel(x, y, samples);
+            var maxima = componentMaxima ??= ComponentMaxima();
+            var clampSamples = raster.TransferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_INT;
+            for (var index = 0; index < count; index++)
+            {
+                var value = samples[index] / maxima[index];
+                pixelComponents[index] = clampSamples
+                    ? (float)JavaCompat.Clamp(value, 0d, 1d)
+                    : (float)value;
+            }
+        }
+        else if (ReadsForeignPackedSamples(raster))
+        {
+            var bands = raster.NumberOfBands;
+            if (samples is null || samples.Length < bands) samples = new int[Math.Max(bands, MaximumPixelComponents)];
+            raster.GetPixel(x, y, samples);
+            for (var component = 0; component < count; component++)
+                pixelComponents[component] = samples[component] / 255f;
+        }
+        else
+        {
+            pixel = raster.GetDataElements(x, y, pixel);
+            WriteNormalizedComponents(pixel, pixelComponents);
+        }
+        Span<float> rgb = stackalloc float[3];
+        ColorSpace.ConvertToRgb(pixelComponents, rgb);
+        return new SKColor(
+            PdfCartonFontCompat.ComponentByte(rgb[0]),
+            PdfCartonFontCompat.ComponentByte(rgb[1]),
+            PdfCartonFontCompat.ComponentByte(rgb[2]),
+            HasAlpha
+                ? PdfCartonFontCompat.ComponentByte(pixelComponents[NumberOfColorComponents])
+                : byte.MaxValue);
+    }
+
+    // Java's ColorModel.getRGB(Object): getAlpha, getRed, getGreen and
+    // getBlue packed as 0xAARRGGBB, from one conversion of the pixel.
+    internal int GetRgb(object pixel)
+    {
+        Span<float> components = stackalloc float[MaximumPixelComponents];
+        var count = NumberOfComponents;
+        var pixelComponents = components.Slice(0, count);
+        WriteNormalizedComponents(pixel, pixelComponents);
+        Span<float> rgb = stackalloc float[3];
+        ColorSpace.ConvertToRgb(pixelComponents, rgb);
+        static uint Channel(float value) =>
+            (uint)(int)JavaCompat.Round(JavaCompat.Clamp(value, 0f, 1f) * 255f);
+        var alpha = HasAlpha ? Channel(pixelComponents[NumberOfColorComponents]) : 255u;
+        return unchecked((int)(alpha << 24 | Channel(rgb[0]) << 16 | Channel(rgb[1]) << 8 |
+                               Channel(rgb[2])));
+    }
+
+    // Java's ColorModel.getDataElements(int rgb, Object pixel): the color
+    // converted from sRGB into this model's space, its alpha appended when
+    // the model has one. The scratch arguments are reused across calls.
+    internal object GetDataElements(int argb, ref float[]? components, object? pixel)
+    {
+        Span<float> rgb = stackalloc float[3];
+        rgb[0] = unchecked((byte)(argb >> 16)) / 255f;
+        rgb[1] = unchecked((byte)(argb >> 8)) / 255f;
+        rgb[2] = unchecked((byte)argb) / 255f;
+        if (components is null || components.Length < MaximumPixelComponents)
+            components = new float[MaximumPixelComponents];
+        var colorCount = NumberOfColorComponents;
+        Span<float> converted = stackalloc float[MaximumPixelComponents];
+        if (ColorSpace.ConvertFromRgb(rgb, converted) < colorCount)
+            throw new ArgumentException("The color space returned fewer components than the color model has.");
+        converted.Slice(0, colorCount).CopyTo(components);
+        if (HasAlpha)
+            components[colorCount] = unchecked((byte)(argb >> 24)) / 255f;
+        return GetDataElements(components, 0, pixel);
     }
 
     private double[] ComponentMaxima()
@@ -5384,6 +5482,9 @@ public class PdfCartonGraphics2D : IDisposable
     private readonly SKBitmap? bitmap;
     private readonly SKCanvas? canvas;
     private readonly bool ownsCanvas;
+    // The bitmap is a CreateImage image: native drawing is reported to its
+    // retained raster (BeginDrawing) and custom composites go through it.
+    private readonly bool tracksNativeDrawing;
     private readonly SKRectI initialDeviceClip;
     private int restoreCount;
     private bool disposed;
@@ -5438,6 +5539,7 @@ public class PdfCartonGraphics2D : IDisposable
         this.bitmap = bitmap;
         this.canvas = canvas;
         this.ownsCanvas = ownsCanvas;
+        tracksNativeDrawing = bitmap is not null && PdfCartonFontCompat.TracksNativeDrawing(bitmap);
         initialDeviceClip = canvas.DeviceClipBounds;
         restoreCount = canvas.Save();
         transform = canvas.TotalMatrix;
@@ -5705,7 +5807,9 @@ public class PdfCartonGraphics2D : IDisposable
             Color = background,
             BlendMode = SKBlendMode.Src
         };
-        RequireCanvas().DrawRect(new SKRect(x, y, x + width, y + height), clearPaint);
+        var rectangle = new SKRect(x, y, x + width, y + height);
+        using (BeginDrawing(rectangle))
+            RequireCanvas().DrawRect(rectangle, clearPaint);
     }
 
     public virtual void ClipRect(int x, int y, int width, int height)
@@ -5762,16 +5866,20 @@ public class PdfCartonGraphics2D : IDisposable
         using var snapshot = bitmap.Copy() ??
             throw new InvalidOperationException("Unable to copy the graphics bitmap.");
         using var imagePaint = new SKPaint();
-        RequireCanvas().DrawBitmap(
-            snapshot,
-            new SKRect(x, y, x + width, y + height),
-            new SKRect(
-                x + destinationX,
-                y + destinationY,
-                x + destinationX + width,
-                y + destinationY + height),
-            samplingOptions,
-            imagePaint);
+        var destination = new SKRect(
+            x + destinationX,
+            y + destinationY,
+            x + destinationX + width,
+            y + destinationY + height);
+        using (BeginDrawing(destination))
+        {
+            RequireCanvas().DrawBitmap(
+                snapshot,
+                new SKRect(x, y, x + width, y + height),
+                destination,
+                samplingOptions,
+                imagePaint);
+        }
     }
 
     public virtual void DrawRect(int x, int y, int width, int height)
@@ -6154,7 +6262,8 @@ public class PdfCartonGraphics2D : IDisposable
                 ? CreateImagePaint()
                 : CreateDrawingPaint(stroked);
             ApplyFallbackComposite(directPaint);
-            draw(RequireCanvas(), directPaint);
+            using (BeginDrawing(bounds))
+                draw(RequireCanvas(), directPaint);
             QuantizeBinaryDestination(bounds);
             return;
         }
@@ -6249,7 +6358,8 @@ public class PdfCartonGraphics2D : IDisposable
         activeCanvas.ResetMatrix();
         using var drawingPaint = CreateImagePaint();
         ApplyFallbackComposite(drawingPaint);
-        activeCanvas.DrawBitmap(source, bounds.Left, bounds.Top, drawingPaint);
+        using (BeginDrawing(bounds))
+            activeCanvas.DrawBitmap(source, bounds.Left, bounds.Top, drawingPaint);
         activeCanvas.RestoreToCount(restore);
     }
 
@@ -6261,6 +6371,28 @@ public class PdfCartonGraphics2D : IDisposable
         var sourceColorModel = PdfCartonFontCompat.GetColorModel(source);
         var destinationColorModel = PdfCartonFontCompat.GetColorModel(destination);
         var sourceRaster = PdfCartonFontCompat.GetRaster(source);
+        if (tracksNativeDrawing)
+        {
+            // As in Java, compose into the image's own raster, in its colour
+            // model, and render only the composed pixels. The output starts
+            // as the destination, which Java passes as both rasters.
+            var retained = PdfCartonFontCompat.GetDetachedRaster(destination)!;
+            var detachedInput = retained.CopyRegion(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+            var detachedOutput = retained.CopyRegion(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+            using (var context = composite.CreateContext(
+                       sourceColorModel,
+                       destinationColorModel,
+                       renderingHints))
+            {
+                context.Compose(sourceRaster, detachedInput, detachedOutput);
+            }
+            PdfCartonFontCompat.SetDetachedRasterRegion(
+                destination,
+                bounds.Left,
+                bounds.Top,
+                detachedOutput);
+            return;
+        }
         var destinationRaster = PdfCartonFontCompat.GetRaster(destination)
             .CopyRegion(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
         using var output = PdfCartonFontCompat.CreateNativeBitmap(
@@ -6377,6 +6509,15 @@ public class PdfCartonGraphics2D : IDisposable
             }
         }
     }
+
+    // Brackets native drawing into device bounds of the bitmap (disposed
+    // after the draw); null unless the bitmap is a CreateImage image.
+    private IDisposable? BeginDrawing(SKRectI bounds) =>
+        tracksNativeDrawing ? PdfCartonFontCompat.BeginNativeDrawing(bitmap!, bounds) : null;
+
+    // The same for a user-space rectangle under the current transform.
+    private IDisposable? BeginDrawing(SKRect userBounds) =>
+        tracksNativeDrawing ? BeginDrawing(DrawingBounds(userBounds, stroked: false)) : null;
 
     private SKCanvas RequireCanvas() =>
         !disposed
@@ -6946,6 +7087,13 @@ internal static class PdfCartonFontCompat
         // Set by CreateDeferredImage: the native pixels have not been rendered
         // from Raster yet. Read and cleared under a lock on this instance.
         internal bool NativePending { get; set; }
+        // Set by CreateDeferredImage: Raster is managed storage the native
+        // pixels are rendered from, not a view of them, so native drawing
+        // must be copied back into it (BeginNativeDrawing).
+        internal bool DetachedRaster { get; set; }
+        // A detached raster's view of the native pixels it renders to,
+        // created on first use under a lock on this instance.
+        internal PdfCartonBitmapView? NativeView;
         // Without ColorModel or Transparency (a decoded image, whose decoder
         // colour model is unknown), the transparency classified from the
         // pixels on first use; 0 until then. Written under a lock on this
@@ -8053,9 +8201,119 @@ internal static class PdfCartonFontCompat
             bitmap,
             new ImageMetadata(TYPE_CUSTOM, colorModel, raster, sampleModel)
             {
-                NativePending = true
+                NativePending = true,
+                DetachedRaster = true
             });
         return bitmap;
+    }
+
+    // True when bitmap is a CreateImage image, whose retained raster is its
+    // Java storage: drawing surfaces bracket native drawing into it with
+    // BeginNativeDrawing and compose custom composites into the raster.
+    internal static bool TracksNativeDrawing(SKBitmap bitmap) =>
+        ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) && metadata.DetachedRaster;
+
+    // Starts a native (Skia) draw into bounds of a CreateImage image. In Java
+    // the raster is the image's only storage, so disposing the result copies
+    // every pixel the draw changed into the retained raster, converted into
+    // its colour model as SetRgb converts a colour. Pixels the draw left
+    // alone keep their samples, including raster writes not yet rendered.
+    // Null for other images. The native pixels are rendered first, so a
+    // later deferred render cannot overwrite the drawing.
+    internal static IDisposable? BeginNativeDrawing(SKBitmap bitmap, SKRectI bounds)
+    {
+        if (!ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) ||
+            !metadata.DetachedRaster)
+            return null;
+        bounds.Intersect(new SKRectI(0, 0, bitmap.Width, bitmap.Height));
+        if (bounds.IsEmpty) return null;
+        EnsureNativePixels(bitmap);
+        lock (metadata)
+        {
+            var view = NativeView(bitmap, metadata);
+            var before = new uint[checked(bounds.Width * bounds.Height)];
+            var index = 0;
+            for (var y = bounds.Top; y < bounds.Bottom; y++)
+                for (var x = bounds.Left; x < bounds.Right; x++)
+                    before[index++] = (uint)view.Get(x, y);
+            return new NativeDrawing(bitmap, metadata, bounds, before);
+        }
+    }
+
+    private sealed class NativeDrawing(
+        SKBitmap bitmap,
+        ImageMetadata metadata,
+        SKRectI bounds,
+        uint[] before) : IDisposable
+    {
+        private int disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+            lock (metadata)
+            {
+                var raster = metadata.Raster!;
+                var colorModel = metadata.ColorModel!;
+                var view = NativeView(bitmap, metadata);
+                float[]? components = null;
+                object? element = null;
+                var index = 0;
+                for (var y = bounds.Top; y < bounds.Bottom; y++)
+                {
+                    for (var x = bounds.Left; x < bounds.Right; x++)
+                    {
+                        var drawn = view.Get(x, y);
+                        if ((uint)drawn == before[index++]) continue;
+                        element = colorModel.GetDataElements(ToArgb(drawn), ref components, element);
+                        raster.SetDataElements(x, y, element);
+                    }
+                }
+            }
+        }
+    }
+
+    // A detached raster's view of its bitmap's native pixels, replaced when
+    // the bitmap's pixels were reallocated. Called under a lock on metadata.
+    private static PdfCartonBitmapView NativeView(SKBitmap bitmap, ImageMetadata metadata)
+    {
+        var view = metadata.NativeView;
+        if (view is null || view.IsReallocated())
+            metadata.NativeView = view = new PdfCartonBitmapView(bitmap);
+        return view;
+    }
+
+    // A CreateImage image's retained raster; null for other images. Custom
+    // composites read and write the image through it (SetDetachedRasterRegion),
+    // as Java composes into the image's raster.
+    internal static JavaRaster? GetDetachedRaster(SKBitmap bitmap) =>
+        ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) && metadata.DetachedRaster
+            ? metadata.Raster
+            : null;
+
+    // Copies region's samples into a CreateImage image's retained raster at
+    // (x, y) and renders those pixels, and only those, natively.
+    internal static void SetDetachedRasterRegion(SKBitmap bitmap, int x, int y, JavaRaster region)
+    {
+        if (!ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) ||
+            !metadata.DetachedRaster)
+            throw new InvalidOperationException("The image has no retained raster.");
+        lock (metadata)
+        {
+            var raster = metadata.Raster!;
+            var colorModel = metadata.ColorModel!;
+            var width = region.Width;
+            var row = new int[checked(width * region.NumberOfBands)];
+            for (var line = 0; line < region.Height; line++)
+                raster.SetPixels(x, y + line, width, 1, region.GetPixels(0, line, width, 1, row));
+            if (metadata.NativePending) return;
+            var view = NativeView(bitmap, metadata);
+            int[]? samples = null;
+            object? pixel = null;
+            for (var line = y; line < y + region.Height; line++)
+                for (var column = x; column < x + width; column++)
+                    view.Set(column, line, colorModel.RenderedColorAt(raster, column, line, ref samples, ref pixel));
+        }
     }
 
     internal static bool IsNativePending(SKBitmap bitmap)
@@ -8078,6 +8336,30 @@ internal static class PdfCartonFontCompat
         }
     }
 
+    // Per-thread scratch for one-pixel GetRgb/SetRgb, which Java allocates
+    // per call. Data-element buffers hold the most bands or components any
+    // raster or color model has; callers read and write only their prefix.
+    private static class RgbScratch
+    {
+        private const int ElementLength = JavaColorSpace.MaximumComponents + 1;
+
+        [ThreadStatic] private static sbyte[]? bytes;
+        [ThreadStatic] private static short[]? words;
+        [ThreadStatic] private static int[]? ints;
+        [ThreadStatic] internal static float[]? Components;
+        [ThreadStatic] internal static int[]? Samples;
+
+        // A data-element buffer of the raster's transfer type; a color model
+        // whose elements have another type allocates its own, as without one.
+        internal static object Element(JavaRaster raster) =>
+            raster.TransferType switch
+            {
+                DATA_BUFFER_TYPE_USHORT => words ??= new short[ElementLength],
+                DATA_BUFFER_TYPE_INT => ints ??= new int[ElementLength],
+                _ => bytes ??= new sbyte[ElementLength]
+            };
+    }
+
     internal static int GetRgb(SKBitmap bitmap, int x, int y)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
@@ -8085,12 +8367,8 @@ internal static class PdfCartonFontCompat
             metadata.Raster is not null &&
             metadata.ColorModel is not null)
         {
-            var pixel = metadata.Raster.GetDataElements(x, y, null);
-            return unchecked(
-                (int)((uint)metadata.ColorModel.GetAlpha(pixel) << 24 |
-                      (uint)metadata.ColorModel.GetRed(pixel) << 16 |
-                      (uint)metadata.ColorModel.GetGreen(pixel) << 8 |
-                      (uint)metadata.ColorModel.GetBlue(pixel)));
+            var raster = metadata.Raster;
+            return metadata.ColorModel.GetRgb(raster.GetDataElements(x, y, RgbScratch.Element(raster)));
         }
         return ToArgb(PdfCartonPixels.Read(bitmap, x, y));
     }
@@ -8120,11 +8398,7 @@ internal static class PdfCartonFontCompat
                 for (var column = 0; column < width; column++)
                 {
                     pixel = raster.GetDataElements(x + column, y + row, pixel);
-                    values[offset + row * scansize + column] = unchecked(
-                        (int)((uint)colorModel.GetAlpha(pixel) << 24 |
-                              (uint)colorModel.GetRed(pixel) << 16 |
-                              (uint)colorModel.GetGreen(pixel) << 8 |
-                              (uint)colorModel.GetBlue(pixel)));
+                    values[offset + row * scansize + column] = colorModel.GetRgb(pixel);
                 }
             }
             return values;
@@ -8147,27 +8421,31 @@ internal static class PdfCartonFontCompat
             metadata.Raster is not null &&
             metadata.ColorModel is not null)
         {
-            var rgb = new[]
+            // Java: raster.setDataElements(x, y, colorModel.getDataElements(rgb, null)).
+            var colorModel = metadata.ColorModel;
+            var raster = metadata.Raster;
+            var scratch = RgbScratch.Element(raster);
+            var pixel = colorModel.GetDataElements(argb, ref RgbScratch.Components, scratch);
+            object? element = scratch;
+            if (!metadata.DetachedRaster)
             {
-                unchecked((byte)(argb >> 16)) / 255f,
-                unchecked((byte)(argb >> 8)) / 255f,
-                unchecked((byte)argb) / 255f
-            };
-            var converted = metadata.ColorModel.ColorSpace.FromRgb(rgb);
-            var components = new float[metadata.ColorModel.NumberOfComponents];
-            Array.Copy(
-                converted,
-                components,
-                metadata.ColorModel.NumberOfColorComponents);
-            if (metadata.ColorModel.HasAlpha)
-            {
-                components[metadata.ColorModel.NumberOfColorComponents] =
-                    unchecked((byte)(argb >> 24)) / 255f;
+                // A live view of the bitmap's own pixels writes the native
+                // pixel itself; otherwise (an INT_BGR view, or a view whose
+                // samples were materialized) render the one written pixel.
+                raster.SetDataElements(x, y, pixel);
+                if (!RendersAsStored(bitmap, colorModel, raster))
+                    PdfCartonPixels.Write(bitmap, x, y,
+                        colorModel.RenderedColorAt(raster, x, y, ref RgbScratch.Samples, ref element));
+                return;
             }
-            var pixel =
-                metadata.ColorModel.GetDataElements(components, 0, null);
-            metadata.Raster.SetDataElements(x, y, pixel);
-            RenderRetainedRaster(bitmap, metadata);
+            lock (metadata)
+            {
+                raster.SetDataElements(x, y, pixel);
+                // A deferred image renders the whole raster on first draw.
+                if (metadata.NativePending) return;
+                NativeView(bitmap, metadata).Set(
+                    x, y, colorModel.RenderedColorAt(raster, x, y, ref RgbScratch.Samples, ref element));
+            }
             return;
         }
         var color = FromArgb(argb);
