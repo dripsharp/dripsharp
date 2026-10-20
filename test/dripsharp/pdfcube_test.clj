@@ -599,6 +599,89 @@
            (render (method "org.apache.pdfbox.filter.JBIG2Filter" "decode" 5
                            ["global::SkiaSharp.SKBitmap image;"])))))))
 
+(deftest rendering-intermediates-are-owned
+  (let [config {:package {:id "DripSharp.PdfCarton"}}
+        render (fn [node] (:text (render-transformed config node)))
+        declaration (fn [kind type-name data statements]
+                      (csharp/declaration
+                       (csharp/raw (str "void " (or (:source-name data) "ctor") "()"))
+                       (csharp/block (mapv csharp/raw statements))
+                       (merge {:declaration-kind kind
+                               :source-qualified-name type-name}
+                              data)))
+        group-image "this.image = this.create2ByteGrayAlphaImage(this.width, this.height);"
+        group-ctor (fn [parameter-count]
+                     (declaration
+                      :constructor "org.apache.pdfbox.rendering.PageDrawer$TransparencyGroup"
+                      {:parameter-count parameter-count}
+                      [(str "global::DripSharp.PdfCarton.Pdmodel.Graphics.Form."
+                            "PDTransparencyGroupAttributes group = form.GetGroup();")
+                       group-image
+                       (str "this.image = global::DripSharp.Runtime.PdfCartonFontCompat."
+                            "CreateBitmap(this.width, this.height, "
+                            "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB);")
+                       (str "global::DripSharp.Runtime.PdfCartonGraphics2D g = "
+                            "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(this.image);")
+                       (str "g = new global::DripSharp.PdfCarton.Rendering.GroupGraphics("
+                            "this.image, g);")
+                       (str "global::DripSharp.Runtime.JavaCompat.DequePush("
+                            "this.__outer.transparencyGroupStack, this);")
+                       "try { } finally { }"]))]
+    (testing "a constructor key rewrites only constructors with that parameter count"
+      (let [rendered (render (group-ctor 4))]
+        (is (= 5 (count (re-seq #"__dripsharpOwned\.Own\(" rendered))))
+        (is (str/includes? rendered "this.__outer.transparencyGroupStack.Pop();"))
+        (is (str/ends-with? (str/trim (subs rendered 0 (str/last-index-of rendered "}")))
+                            "__dripsharpOwned.Release(this.image);")))
+      (let [other (group-ctor 3)]
+        (is (= (:text (csharp/render other)) (render other)))))
+    (testing "parameter types select one of two overloads with the same arity"
+      (let [device-n (fn [types statements]
+                       (declaration :method
+                                    "org.apache.pdfbox.pdmodel.graphics.color.PDDeviceN"
+                                    {:source-name "toRGBWithAttributes"
+                                     :parameter-count 1
+                                     :parameter-types types}
+                                    statements))
+            values (device-n ["float[]"] ["return value;"])]
+        (is (= (:text (csharp/render values)) (render values)))
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo #"missing the expected statement"
+             (render (device-n ["java.awt.image.WritableRaster"] ["return value;"]))))))
+    (testing "applyMask declares its scope first and releases every returned image"
+      (let [rendered (render (declaration
+                              :method "org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject"
+                              {:source-name "applyMask" :parameter-count 5}
+                              ["return image;"
+                               (str "mask = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
+                                    "PDImageXObject.scaleImage(mask, width, height, "
+                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY, "
+                                    "interpolateMask);")
+                               (str "mask = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
+                                    "PDImageXObject.scaleImage(mask, width, height, "
+                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY, false);")
+                               (str "image = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
+                                    "PDImageXObject.scaleImage(image, width, height, "
+                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB, "
+                                    "this.GetInterpolate());")
+                               (str "image = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
+                                    "PDImageXObject.scaleImage(image, width, height, "
+                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB, false);")
+                               "return image;"]))]
+        (is (< (.indexOf rendered "PdfCartonDisposalScope __dripsharpOwned")
+               (.indexOf rendered "return __dripsharpOwned.Release(image);")))
+        (is (= 2 (count (re-seq #"return __dripsharpOwned\.Release\(image\);" rendered))))))
+    (testing "the page drawer keeps one soft-mask image in a field it declares"
+      (let [drawer (csharp/declaration
+                    (csharp/raw "public class PageDrawer")
+                    (csharp/block [(csharp/raw "private int other;")])
+                    {:declaration-kind :type
+                     :source-qualified-name "org.apache.pdfbox.rendering.PageDrawer"})
+            rendered (render drawer)]
+        (is (< (.indexOf rendered "__dripsharpSoftMaskImage;")
+               (.indexOf rendered "__dripsharpReplaceSoftMaskImage(")
+               (.indexOf rendered "private int other;")))))))
+
 (deftest pdfbox-text-normalization-preserves-upstream-arabic-mark-order
   (let [declaration
         (csharp/declaration

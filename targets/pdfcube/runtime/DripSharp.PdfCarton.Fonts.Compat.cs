@@ -6719,6 +6719,20 @@ internal sealed class PdfCartonDisposalScope : IDisposable
         for (var index = resources.Count - 1; index >= 0; index--)
             resources[index].Dispose();
     }
+
+    // A resource that runs `action` once when disposed, so an owned side
+    // effect (clearing a field that references an owned bitmap) is undone on
+    // every exit unless it is Release-d.
+    internal static IDisposable Deferred(Action action) => new DeferredAction(action);
+
+    private sealed class DeferredAction : IDisposable
+    {
+        private Action? action;
+
+        internal DeferredAction(Action action) => this.action = action;
+
+        public void Dispose() => Interlocked.Exchange(ref action, null)?.Invoke();
+    }
 }
 
 internal static class PdfCartonFontCompat

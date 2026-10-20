@@ -10034,7 +10034,9 @@
             :name name
             :source-name (.getSimpleName method)
             :source-qualified-name (.getQualifiedName owner)
-            :parameter-count (count (.getParameters method))})
+            :parameter-count (count (.getParameters method))
+            :parameter-types (mapv #(.getQualifiedName (.getType ^CtParameter %))
+                                   (.getParameters method))})
           (source-ref method rule
                       {:declaration-id id :declaration-kind :method}))]
     (sequence-node
@@ -10504,7 +10506,8 @@
              body-node
              {:declaration-kind :constructor
               :name name
-              :source-qualified-name (.getQualifiedName owner)})
+              :source-qualified-name (.getQualifiedName owner)
+              :parameter-count (count (.getParameters constructor))})
             (source-ref constructor rule
                         {:declaration-id id :declaration-kind :constructor}))]
       (sequence-node

@@ -2879,3 +2879,391 @@ public sealed class DecodeFilterBitmapLifetimeTests
         return CoreJ2K.J2kImage.ToBytes(source, metadata);
     }
 }
+
+// Rendering allocates full-size intermediates that Java leaves to its
+// collector: soft-mask groups and their gray masks, transparency groups and
+// their backdrop alpha, masked, colour-keyed and DeviceN images, transfer,
+// stencil and printer copies, and page images forced to ARGB for blending.
+// They are disposed on success and failure; only the returned image and the
+// images a PDImageXObject caches stay live.
+[Collection(nameof(NativeBitmapLifetimeCollection))]
+public sealed class RenderingBitmapLifetimeTests
+{
+    private const int OneMaskedFill = 0;
+    private const int ManyMaskedFills = 1;
+    private const int GroupsAndBlending = 2;
+    private const int Images = 3;
+    private const int RotatedMask = 4;
+    private const int TwoBlendedGroups = 5;
+    private const int MaskedFills = 200;
+
+    private static readonly int[] Pages =
+        [OneMaskedFill, ManyMaskedFills, GroupsAndBlending, Images, RotatedMask, TwoBlendedGroups];
+
+    private static readonly string[] ImageNames = ["ImS", "ImS2", "ImM", "ImK", "ImN", "ImT", "ImD", "ImSt"];
+
+    [Fact]
+    public void RenderingDisposesItsIntermediateBitmaps()
+    {
+        using var document = Loader.LoadPDF(Signed(Fixture()));
+        var renderer = new PDFRenderer(document);
+        // ImageType.ToString overflows the stack (dripsharp-64), so types are named here.
+        var types = new[] { ("RGB", ImageType.Rgb), ("ARGB", ImageType.Argb), ("gray", ImageType.Gray) };
+        var expected = new Dictionary<(int, string), string>();
+        foreach (var page in Pages)
+            foreach (var (name, type) in types)
+            {
+                using var image = renderer.RenderImage(page, 2, type);
+                expected[(page, name)] = Hash(image);
+            }
+        Settle();
+        // Keep the image XObjects and the images they cache alive, so later
+        // renders reuse them instead of decoding (and caching) new ones.
+        var pinned = PinImages(document.GetPage(Images));
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        for (var round = 0; round < 3; round++)
+        {
+            foreach (var page in Pages)
+                foreach (var (name, type) in types)
+                {
+                    using (var image = renderer.RenderImage(page, 2, type))
+                        Assert.Equal(expected[(page, name)], Hash(image));
+                    // No collection ran in between, so the render disposed its bitmaps.
+                    AssertUnchanged(live, bytes, $"page {page} as {name}");
+                }
+        }
+
+        // Printing rasterizes each page into an image of its own first.
+        var printable = new DripSharp.PdfCarton.Printing.PDFPrintable(
+            document, DripSharp.PdfCarton.Printing.Scaling.ActualSize, false, 144);
+        using var paper = Compat.PdfCartonFontCompat.CreateBitmap(
+            612, 792, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        live = Compat.PdfCartonNativeBitmap.LiveCount;
+        bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        foreach (var page in Pages)
+        {
+            using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(paper))
+            {
+                Assert.Equal(Compat.JavaPrintConstants.PAGE_EXISTS,
+                    printable.Print(graphics, new Compat.JavaPageFormat(), page));
+            }
+            AssertUnchanged(live, bytes, $"printing page {page}");
+        }
+        GC.KeepAlive(pinned);
+    }
+
+    // Decoding a masked, colour-keyed or DeviceN image keeps only the result.
+    [Fact]
+    public void ImageDecodingDisposesItsIntermediateBitmaps()
+    {
+        using var document = Loader.LoadPDF(Signed(Fixture()));
+        var resources = document.GetPage(Images).GetResources();
+        var streams = ImageNames.Concat(["ImBad"]).ToDictionary(
+            name => name,
+            name => (COSStream)resources.GetXObject(COSName.GetPDFName(name)).GetCOSObject());
+        PDImageXObject Fresh(string name) => new(new PDStream(streams[name]), resources);
+        var expected = ImageNames.ToDictionary(name => name, name =>
+        {
+            using var image = Fresh(name).GetImage();
+            return Hash(image);
+        });
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        for (var round = 0; round < 5; round++)
+        {
+            foreach (var name in ImageNames)
+            {
+                using (var image = Fresh(name).GetImage())
+                    Assert.Equal(expected[name], Hash(image));
+                AssertUnchanged(live, bytes, name);
+            }
+            // The soft mask fails to decode after the image itself decoded.
+            Assert.ThrowsAny<Exception>(() => Fresh("ImBad").GetImage());
+            AssertUnchanged(live, bytes, "image with a corrupt soft mask");
+        }
+    }
+
+    // A fill failing anywhere in the page, including inside a soft-mask or
+    // transparency group render, leaves no bitmap behind.
+    [Fact]
+    public void FailedRendersDisposeTheirIntermediateBitmaps()
+    {
+        using var document = Loader.LoadPDF(Signed(Fixture()));
+        var pinned = PinImages(document.GetPage(Images));
+        foreach (var page in Pages)
+            using (new PDFRenderer(document).RenderImage(page, 2, ImageType.Rgb)) { }
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        foreach (var page in Pages)
+        {
+            var counting = new SamplingRenderer(document, int.MaxValue, null);
+            using (counting.RenderImage(page, 2, ImageType.Rgb)) { }
+            AssertUnchanged(live, bytes, $"page {page}");
+            Assert.True(counting.Fills > 1, $"page {page} has {counting.Fills} fills.");
+            foreach (var failAt in Enumerable.Range(1, 12).Where(fill => fill <= counting.Fills))
+            {
+                var failing = new SamplingRenderer(document, failAt, () => new InjectedFailure());
+                Assert.Throws<InjectedFailure>(() => failing.RenderImage(page, 2, ImageType.Rgb));
+                AssertUnchanged(live, bytes, $"page {page} failing at fill {failAt}");
+            }
+        }
+        GC.KeepAlive(pinned);
+    }
+
+    // A group whose content fails in its Do operator is skipped and the page
+    // goes on: the next group does not take the failed group's (disposed)
+    // image as its backdrop.
+    [Fact]
+    public void RecoverableGroupFailuresKeepRendering()
+    {
+        using var document = Loader.LoadPDF(Signed(Fixture()));
+        using (new PDFRenderer(document).RenderImage(TwoBlendedGroups, 2, ImageType.Rgb)) { }
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var renderer = new SamplingRenderer(document, 2, () => new IOException("group content failed"));
+        using (var image = renderer.RenderImage(TwoBlendedGroups, 2, ImageType.Rgb))
+            Assert.Equal((288, 288), (image.Width, image.Height));
+        Assert.True(renderer.Fills > 3, $"rendered {renderer.Fills} fills.");
+        AssertUnchanged(live, bytes, "page with a failed group");
+    }
+
+    // renderPageToGraphics draws into the caller's graphics; a soft-masked
+    // last paint is replaced by the caller's paint before its mask is
+    // disposed, so the graphics stays usable.
+    [Fact]
+    public void RenderPageToGraphicsLeavesCallerGraphicsUsable()
+    {
+        using var document = Loader.LoadPDF(Signed(Fixture()));
+        using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
+            144, 144, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var pinned = PinImages(document.GetPage(Images));
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        foreach (var page in new[] { OneMaskedFill, GroupsAndBlending, Images })
+        {
+            using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
+            {
+                new PDFRenderer(document).RenderPageToGraphics(page, graphics);
+                Assert.IsNotType<SoftMask>(graphics.GetPaint());
+                graphics.FillRect(0, 0, 10, 10);
+            }
+            AssertUnchanged(live, bytes, $"page {page} drawn into caller graphics");
+        }
+        GC.KeepAlive(pinned);
+    }
+
+    // Each fill under an ExtGState soft mask renders the mask anew; the
+    // previous mask is disposed, so 200 masked fills peak like one.
+    [Fact]
+    public void SoftMaskedFillsKeepOneMaskLive()
+    {
+        using var document = Loader.LoadPDF(Signed(Fixture()));
+        long Peak(int page)
+        {
+            Settle();
+            var renderer = new SamplingRenderer(document, int.MaxValue, null)
+            {
+                Baseline = Compat.PdfCartonNativeBitmap.OutstandingBytes
+            };
+            using (renderer.RenderImage(page, 2, ImageType.Rgb)) { }
+            return renderer.Peak;
+        }
+        var single = Peak(OneMaskedFill);
+        var many = Peak(ManyMaskedFills);
+        Assert.True(single > 0);
+        Assert.True(many <= 2 * single,
+            $"{MaskedFills} masked fills peaked at {many} native bytes, one at {single}.");
+    }
+
+    private static object[] PinImages(PDPage page)
+    {
+        var resources = page.GetResources();
+        return ImageNames.SelectMany(name =>
+        {
+            var image = (PDImageXObject)resources.GetXObject(COSName.GetPDFName(name));
+            return new object[] { image, image.GetImage() };
+        }).ToArray();
+    }
+
+    private sealed class InjectedFailure : Exception
+    {
+    }
+
+    // Counts fills, fails the given one, and samples the compat bitmap bytes
+    // outstanding around every fill.
+    private sealed class SamplingRenderer(PDDocument document, int failAt, Func<Exception>? failure)
+        : PDFRenderer(document)
+    {
+        internal int Fills { get; private set; }
+        internal long Baseline { get; init; }
+        internal long Peak { get; private set; }
+
+        protected internal override PageDrawer CreatePageDrawer(PageDrawerParameters parameters) =>
+            new Drawer(parameters, this);
+
+        private void Fill(Action fill)
+        {
+            if (++Fills == failAt) throw failure!();
+            Sample();
+            fill();
+            Sample();
+        }
+
+        private void Sample() =>
+            Peak = Math.Max(Peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - Baseline);
+
+        private sealed class Drawer(PageDrawerParameters parameters, SamplingRenderer owner)
+            : PageDrawer(parameters)
+        {
+            public override void FillPath(int windingRule) =>
+                owner.Fill(() => base.FillPath(windingRule));
+        }
+    }
+
+    private static string Hash(SKBitmap image)
+    {
+        using var rgba = new SKBitmap(new SKImageInfo(
+            image.Width, image.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        Assert.True(image.CopyTo(rgba, SKColorType.Rgba8888));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(rgba.GetPixelSpan()));
+    }
+
+    private static void AssertUnchanged(long live, long bytes, string name) =>
+        Assert.True(
+            live == Compat.PdfCartonNativeBitmap.LiveCount &&
+            bytes == Compat.PdfCartonNativeBitmap.OutstandingBytes,
+            $"{name} left {Compat.PdfCartonNativeBitmap.LiveCount - live} bitmaps " +
+            $"({Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes} bytes) undisposed.");
+
+    private static void Settle()
+    {
+        for (var pass = 0; pass < 3; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
+
+    private static sbyte[] Signed(byte[] bytes) => (sbyte[])(Array)bytes;
+
+    // Six pages: one fill under a luminosity soft mask; 200 such fills; an
+    // alpha soft mask, a non-isolated group with a blend mode (drawn plain
+    // and under the soft mask) and a page-level blend mode; images with soft
+    // masks (scaled either way, with /Matte), a stencil /Mask, a colour key,
+    // DeviceN attributes, a transfer function, a soft-masked image, a
+    // downscaled image and stencil masks painted with a colour and a shading
+    // pattern, and transfer functions on a soft-masked image and one that
+    // fails; the soft-masked fill on a rotated page; and a blended group
+    // drawn twice over a fill. ImBad, which no
+    // page draws, has a soft mask that fails to decode.
+    private static byte[] Fixture()
+    {
+        static string Stream(string entries, string data) =>
+            $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
+        static string Hex(int count, Func<int, int> sample) =>
+            string.Concat(Enumerable.Range(0, count).Select(index => (sample(index) & 255).ToString("X2"))) + ">";
+        static string Image(int width, int height, string colorSpace, int components, string extra,
+            Func<int, int> sample) =>
+            Stream($"/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace {colorSpace} " +
+                $"/BitsPerComponent 8 /Filter /ASCIIHexDecode {extra}",
+                Hex(width * height * components, sample));
+        static string Stencil(int size) =>
+            Stream($"/Type /XObject /Subtype /Image /Width {size} /Height {size} /ImageMask true " +
+                "/BitsPerComponent 1 /Filter /ASCIIHexDecode",
+                Hex(size * size / 8, index => index % 2 == 0 ? 0xF0 : 0x3C));
+        const string Resources = "/ExtGState << /SM 10 0 R /SA 11 0 R /MUL 12 0 R /TR 14 0 R /TRB 18 0 R >> " +
+            "/XObject << /G 13 0 R /ImS 20 0 R /ImS2 22 0 R /ImM 24 0 R /ImK 26 0 R /ImN 27 0 R " +
+            "/ImT 28 0 R /ImD 29 0 R /ImSt 30 0 R /ImBad 32 0 R >> /Pattern << /P0 15 0 R >>";
+        static string Page(int contents, string extra = "") =>
+            $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 144 144] {extra} /Resources << {Resources} >> " +
+            $"/Contents {contents} 0 R >>";
+        var manyFills = string.Concat(Enumerable.Range(0, MaskedFills).Select(index =>
+            $"1 0 0 rg {index % 20 * 7} {index / 20 * 7} 6 6 re f\n"));
+        var objects = new SortedDictionary<int, string>
+        {
+            [1] = "<< /Type /Catalog /Pages 2 0 R >>",
+            [2] = "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R 7 0 R 8 0 R] /Count 6 >>",
+            [3] = Page(40),
+            [4] = Page(41),
+            [5] = Page(42),
+            [6] = Page(43),
+            [7] = Page(44, "/Rotate 90"),
+            [8] = Page(45),
+            [10] = "<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G 16 0 R /BC [0] >> >>",
+            [11] = "<< /Type /ExtGState /SMask << /Type /Mask /S /Alpha /G 17 0 R >> >>",
+            [12] = "<< /Type /ExtGState /BM /Multiply >>",
+            [13] = Stream("/Type /XObject /Subtype /Form /BBox [0 0 144 144] /Group << /S /Transparency " +
+                "/CS /DeviceRGB >> /Resources << /ExtGState << /MUL 12 0 R >> >>",
+                "0 0 1 rg 10 10 60 60 re f /MUL gs 1 1 0 rg 40 40 60 60 re f"),
+            [14] = "<< /Type /ExtGState /TR << /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >> >>",
+            [15] = "<< /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 144 0] " +
+                "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >>",
+            // A transfer function that fails to parse once its output image exists.
+            [18] = "<< /Type /ExtGState /TR << /FunctionType 7 /Domain [0 1] >> >>",
+            [16] = Stream("/Type /XObject /Subtype /Form /BBox [0 0 144 144] /Group << /S /Transparency " +
+                "/CS /DeviceGray >>", "0.8 g 20 20 100 100 re f 0.3 g 60 0 40 144 re f"),
+            [17] = Stream("/Type /XObject /Subtype /Form /BBox [0 0 144 144] /Group << /S /Transparency " +
+                "/CS /DeviceRGB >> /Resources << /ExtGState << /H << /ca 0.5 >> >> >>",
+                "/H gs 0 0 0 rg 20 20 100 100 re f"),
+            [20] = Image(8, 8, "/DeviceRGB", 3, "/SMask 21 0 R", index => index * 7),
+            [21] = Image(4, 4, "/DeviceGray", 1, "", index => index * 16),
+            [22] = Image(4, 4, "/DeviceRGB", 3, "/SMask 23 0 R", index => index * 21),
+            [23] = Image(8, 8, "/DeviceGray", 1, "/Matte [0.5 0.5 0.5]", index => index * 4),
+            [24] = Image(8, 8, "/DeviceRGB", 3, "/Mask 25 0 R", index => index * 5),
+            [25] = Stencil(8),
+            [26] = Image(8, 8, "/DeviceRGB", 3, "/Mask [0 100 0 100 0 100]", index => index * 11),
+            [27] = Image(8, 8, "[/DeviceN [/Cyan /Spot] /DeviceCMYK 31 0 R << /Subtype /NChannel " +
+                "/Process << /ColorSpace /DeviceCMYK /Components [/Cyan /Magenta /Yellow /Black] >> " +
+                "/Colorants << /Spot [/Separation /Spot /DeviceRGB << /FunctionType 2 /Domain [0 1] " +
+                "/C0 [1 1 1] /C1 [1 0 0] /N 1 >>] >> >>]", 2, "", index => index * 9),
+            [28] = Image(8, 8, "/DeviceRGB", 3, "", index => index * 13),
+            [29] = Image(64, 64, "/DeviceRGB", 3, "", index => index * 3),
+            [30] = Stencil(8),
+            [31] = Stream("/FunctionType 4 /Domain [0 1 0 1] /Range [0 1 0 1 0 1 0 1]", "{ pop 0 0 0 }"),
+            [32] = Image(8, 8, "/DeviceRGB", 3, "/SMask 33 0 R", index => index),
+            [33] = Stream("/Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray " +
+                "/BitsPerComponent 8 /Filter /DCTDecode", "not a jpeg"),
+            [40] = Stream("", "q /SM gs 1 0 0 rg 10 10 6 6 re f Q"),
+            [41] = Stream("", "q /SM gs\n" + manyFills + "Q"),
+            [42] = Stream("", "q /SA gs 0 1 0 rg 0 0 30 30 re f Q q /SM gs /G Do Q /G Do " +
+                "q /MUL gs 0 1 0 rg 50 50 40 40 re f Q"),
+            [43] = Stream("", string.Join(" ",
+                "q /TR gs 30 0 0 30 4 4 cm /ImT Do Q",
+                "q /SM gs 30 0 0 30 38 4 cm /ImT Do Q",
+                "q 30 0 0 30 72 4 cm /ImS Do Q",
+                "q 30 0 0 30 106 4 cm /ImS2 Do Q",
+                "q 30 0 0 30 4 38 cm /ImM Do Q",
+                "q 30 0 0 30 38 38 cm /ImK Do Q",
+                "q 30 0 0 30 72 38 cm /ImN Do Q",
+                "q 8 0 0 8 106 38 cm /ImD Do Q",
+                "q 1 0 0 rg 30 0 0 30 4 72 cm /ImSt Do Q",
+                "q /Pattern cs /P0 scn 30 0 0 30 38 72 cm /ImSt Do Q",
+                "q /TR gs 30 0 0 30 72 72 cm /ImS Do Q",
+                "q /TRB gs 30 0 0 30 106 72 cm /ImT Do Q",
+                "0 0 1 rg 100 100 20 20 re f 110 110 20 20 re f")),
+            [44] = Stream("", "q /SM gs 1 0 0 rg 10 10 30 20 re f 50 50 30 20 re f Q"),
+            [45] = Stream("", "1 0 0 rg 0 0 144 144 re f /G Do /G Do"),
+        };
+        var text = new System.Text.StringBuilder("%PDF-1.7\n");
+        var offsets = new Dictionary<int, int>();
+        foreach (var (number, body) in objects)
+        {
+            offsets[number] = text.Length;
+            text.Append($"{number} 0 obj\n{body}\nendobj\n");
+        }
+        var size = objects.Keys.Max() + 1;
+        var xref = text.Length;
+        text.Append($"xref\n0 {size}\n");
+        for (var number = 0; number < size; number++)
+            text.Append(offsets.TryGetValue(number, out var offset)
+                ? $"{offset:D10} 00000 n \n"
+                : "0000000000 65535 f \n");
+        text.Append($"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return System.Text.Encoding.ASCII.GetBytes(text.ToString());
+    }
+}
