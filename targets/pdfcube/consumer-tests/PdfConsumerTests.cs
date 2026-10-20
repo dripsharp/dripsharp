@@ -6,6 +6,7 @@ using DripSharp.PdfCarton.Pdfparser;
 using DripSharp.PdfCarton.Pdmodel;
 using DripSharp.PdfCarton.Pdmodel.Common;
 using DripSharp.PdfCarton.Pdmodel.Font;
+using DripSharp.PdfCarton.Pdmodel.Graphics.Blend;
 using DripSharp.PdfCarton.Pdmodel.Graphics.Color;
 using DripSharp.PdfCarton.Pdmodel.Graphics.Image;
 using DripSharp.PdfCarton.Rendering;
@@ -938,6 +939,238 @@ public sealed class RasterConversionConsumerTests
                     }
                 }
             }
+        }
+    }
+
+    // Per-pixel accessors of a bitmap-backed raster read and write exactly what
+    // its row accessors do, for every bitmap layout GetRaster views.
+    [Fact]
+    public void BitmapRasterPixelAccessorsMatchRowAccessors()
+    {
+        var cases = new (string Name, SKColorType Color, SKAlphaType Alpha, int Padding, int Type)[]
+        {
+            ("INT_ARGB", SKColorType.Bgra8888, SKAlphaType.Unpremul, 0, Compat.PdfCartonFontCompat.TYPE_INT_ARGB),
+            ("INT_RGB, padded rows", SKColorType.Bgra8888, SKAlphaType.Opaque, 12,
+                Compat.PdfCartonFontCompat.TYPE_INT_RGB),
+            ("INT_BGR", SKColorType.Bgra8888, SKAlphaType.Opaque, 0, Compat.PdfCartonFontCompat.TYPE_INT_BGR),
+            ("premultiplied BGRA", SKColorType.Bgra8888, SKAlphaType.Premul, 0,
+                Compat.PdfCartonFontCompat.TYPE_INT_ARGB),
+            ("RGBA as 4BYTE_ABGR, padded rows", SKColorType.Rgba8888, SKAlphaType.Unpremul, 8,
+                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR),
+            ("3BYTE_BGR", SKColorType.Bgra8888, SKAlphaType.Opaque, 0, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR),
+            ("gray, padded rows", SKColorType.Gray8, SKAlphaType.Opaque, 5,
+                Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY),
+            ("custom BGRA", SKColorType.Bgra8888, SKAlphaType.Unpremul, 0, Compat.PdfCartonFontCompat.TYPE_CUSTOM),
+        };
+        foreach (var (name, color, alpha, padding, type) in cases)
+        {
+            var info = new SKImageInfo(Width, Height, color, alpha);
+            using var bitmap = new SKBitmap(info, info.RowBytes + padding);
+            using var expected = new SKBitmap(info, info.RowBytes + padding);
+            bitmap.Erase(SKColors.Transparent);
+            expected.Erase(SKColors.Transparent);
+            Compat.PdfCartonFontCompat.RegisterImageType(bitmap, type);
+            Compat.PdfCartonFontCompat.RegisterImageType(expected, type);
+            var raster = Compat.PdfCartonFontCompat.GetRaster(bitmap);
+            var rows = Compat.PdfCartonFontCompat.GetRaster(expected);
+            var bands = raster.NumberOfBands;
+            var buffer = raster.GetDataBuffer();
+            var random = new Random(name.Length);
+            var pixel = new int[bands];
+            var floats = new float[bands];
+            for (var y = 0; y < Height; y++)
+            {
+                var row = new int[Width * bands];
+                for (var index = 0; index < row.Length; index++)
+                    row[index] = random.Next(256);
+                rows.SetPixels(0, y, Width, 1, row);
+                for (var x = 0; x < Width; x++)
+                {
+                    Array.Copy(row, x * bands, pixel, 0, bands);
+                    switch (x % 4)
+                    {
+                        case 0:
+                            raster.SetPixel(x, y, pixel);
+                            break;
+                        case 1:
+                            for (var band = 0; band < bands; band++) floats[band] = pixel[band];
+                            raster.SetPixel(x, y, floats);
+                            break;
+                        case 2:
+                            raster.SetDataElements(x, y, pixel.Select(value => unchecked((sbyte)value)).ToArray());
+                            break;
+                        default:
+                            // A DataBuffer element is the gray sample or a packed ARGB pixel.
+                            buffer.SetElement(y * Width + x, bands == 1
+                                ? pixel[0]
+                                : pixel[0] << 16 | pixel[1] << 8 | pixel[2] | (bands == 4 ? pixel[3] : 255) << 24);
+                            break;
+                    }
+                }
+            }
+            Assert.True(expected.GetPixelSpan().SequenceEqual(bitmap.GetPixelSpan()), name);
+            for (var y = 0; y < Height; y++)
+            {
+                var row = rows.GetPixels(0, y, Width, 1, (int[]?)null);
+                Assert.Equal(row, raster.GetPixels(0, y, Width, 1, (int[]?)null));
+                for (var x = 0; x < Width; x++)
+                {
+                    var samples = row.AsSpan(x * bands, bands).ToArray();
+                    Assert.Equal(samples, raster.GetPixel(x, y, (int[]?)null));
+                    Assert.Equal(samples.Select(value => (float)value), raster.GetPixel(x, y, (float[]?)null));
+                    Assert.Equal(
+                        bands == 1
+                            ? samples[0]
+                            : samples[0] << 16 | samples[1] << 8 | samples[2] | (bands == 4 ? samples[3] : 255) << 24,
+                        buffer.GetElement(y * Width + x));
+                    var elements = raster.GetDataElements(x, y, null);
+                    Assert.Equal(raster.GetDataElements(x, y, 1, 1, null), elements);
+                    if (elements is sbyte[] bytes)
+                        Assert.Equal(samples, bytes.Select(value => value & 0xff));
+                    else if (type != Compat.PdfCartonFontCompat.TYPE_INT_BGR)
+                        Assert.Equal(
+                            samples[0] << 16 | samples[1] << 8 | samples[2] | (bands == 4 ? samples[3] << 24 : 0),
+                            Assert.IsType<int[]>(elements)[0]);
+                    // Writing a pixel's own data elements back leaves it unchanged.
+                    raster.SetDataElements(x, y, elements);
+                }
+            }
+            Assert.True(expected.GetPixelSpan().SequenceEqual(bitmap.GetPixelSpan()), $"{name} round trip");
+        }
+    }
+
+    // Raster writes to a bitmap reach Skia: drawing it after per-pixel writes
+    // shows them, even when the bitmap was drawn before the writes. Compat
+    // draws and direct Skia draws (unscaled and scaled, which Skia samples
+    // from a cached image of the bitmap if it is stale) are separate cases.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void BitmapRasterWritesAreVisibleToLaterDraws(bool directSkia, bool scaled)
+    {
+        using var source = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        source.Erase(SKColors.Red);
+        using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+            Width * 2, Height * 2, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using var graphics = new Compat.PdfCartonGraphics2D(target);
+        using var canvasTarget = new SKBitmap(
+            new SKImageInfo(Width * 2, Height * 2, SKColorType.Bgra8888, SKAlphaType.Premul));
+        using var canvas = new SKCanvas(canvasTarget);
+        var scale = scaled ? 2 : 1;
+        SKColor Drawn(int x, int y)
+        {
+            if (!directSkia)
+            {
+                graphics.DrawImage(source, 0, 0, null);
+                return target.GetPixel(x, y);
+            }
+            canvas.Clear(SKColors.Transparent);
+            if (scaled)
+                canvas.DrawBitmap(source, new SKRect(0, 0, Width * 2, Height * 2),
+                    new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.Nearest), null);
+            else
+                canvas.DrawBitmap(source, 0, 0, SKSamplingOptions.Default, null);
+            canvas.Flush();
+            return canvasTarget.GetPixel(x, y);
+        }
+        Assert.Equal(SKColors.Red, Drawn(0, 0));
+        var raster = Compat.PdfCartonFontCompat.GetRaster(source);
+        for (var step = 0; step < 3; step++)
+        {
+            raster.SetPixel(step * 3, step, [0, 0, 255, 255]);
+            for (var written = 0; written <= step; written++)
+                Assert.Equal(SKColors.Blue, Drawn(written * 3 * scale, written * scale));
+            Assert.Equal(SKColors.Red, Drawn(Width * scale - 1, Height * scale - 1));
+        }
+    }
+
+    // GetRaster and RegisterImageType replace a bitmap's metadata atomically.
+    [Fact]
+    public void ConcurrentRasterAndTypeRegistrationOnOneBitmapDoNotThrow()
+    {
+        using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+        Parallel.For(0, 8, new ParallelOptions { MaxDegreeOfParallelism = 8 }, worker =>
+        {
+            var pixel = new[] { worker, 2, 3, 255 };
+            for (var iteration = 0; iteration < 20_000 && failures.IsEmpty; iteration++)
+            {
+                try
+                {
+                    if ((worker + iteration) % 2 == 0)
+                        Compat.PdfCartonFontCompat.RegisterImageType(bitmap, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+                    else
+                        Compat.PdfCartonFontCompat.GetRaster(bitmap).SetPixel(iteration % 8, worker, pixel);
+                }
+                catch (Exception failure)
+                {
+                    failures.Enqueue(failure);
+                }
+            }
+        });
+        Assert.Empty(failures);
+        Assert.Equal(Compat.PdfCartonFontCompat.TYPE_INT_ARGB, Compat.PdfCartonFontCompat.GetImageType(bitmap));
+        Assert.Equal(new[] { 7, 2, 3, 255 }, Compat.PdfCartonFontCompat.GetRaster(bitmap).GetPixel(0, 7, (int[]?)null));
+    }
+
+    // A retained raster views the bitmap's pixels until they are reallocated;
+    // GetRaster then views the new pixels, and a disposed bitmap's view throws.
+    [Fact]
+    public void RetainedBitmapRastersFollowReallocationAndDisposal()
+    {
+        var bitmap = new SKBitmap(new SKImageInfo(4, 4, SKColorType.Bgra8888, SKAlphaType.Opaque));
+        bitmap.Erase(SKColors.Red);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(bitmap);
+        Assert.Same(raster, Compat.PdfCartonFontCompat.GetRaster(bitmap));
+        Assert.Equal(new[] { 255, 0, 0 }, raster.GetPixel(3, 3, (int[]?)null));
+
+        Assert.True(bitmap.TryAllocPixels(new SKImageInfo(64, 32, SKColorType.Bgra8888, SKAlphaType.Opaque)));
+        bitmap.Erase(SKColors.Lime);
+        var reallocated = Compat.PdfCartonFontCompat.GetRaster(bitmap);
+        Assert.NotSame(raster, reallocated);
+        Assert.Equal(64, reallocated.Width);
+        Assert.Equal(new[] { 0, 255, 0 }, reallocated.GetPixel(63, 31, (int[]?)null));
+        // The replaced view refuses access rather than touching released pixels.
+        Assert.Throws<InvalidOperationException>(() => raster.SetPixel(0, 0, new[] { 1, 2, 3 }));
+        Assert.Throws<InvalidOperationException>(() => raster.GetDataBuffer().GetElement(0));
+
+        bitmap.Dispose();
+        Assert.ThrowsAny<ObjectDisposedException>(() => reallocated.GetPixel(0, 0, (int[]?)null));
+        Assert.ThrowsAny<ObjectDisposedException>(() => reallocated.SetPixel(0, 0, new[] { 1, 2, 3 }));
+    }
+
+    // BlendComposite reads the destination through a copy of the page raster.
+    // An INT page's copy holds its packed pixels, which the page's colour model
+    // decodes, so a Multiply fill blends with the backdrop instead of
+    // replacing it.
+    [Fact]
+    public void MultiplyFillBlendsWithIntPages()
+    {
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_INT_ARGB,
+                     Compat.PdfCartonFontCompat.TYPE_INT_RGB,
+                     Compat.PdfCartonFontCompat.TYPE_INT_BGR,
+                     Compat.PdfCartonFontCompat.TYPE_CUSTOM
+                 })
+        {
+            using var page = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            page.Erase(new SKColor(80, 120, 160));
+            using (var graphics = new Compat.PdfCartonGraphics2D(page))
+            {
+                graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                    Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+                graphics.SetComposite(BlendComposite.GetInstance(BlendMode.Multiply, 1));
+                graphics.SetColor(new SKColor(128, 192, 224));
+                graphics.FillRect(4, 4, 16, 8);
+            }
+            var inside = page.GetPixel(10, 6);
+            Assert.True(
+                Math.Abs(inside.Red - 40) <= 1 && Math.Abs(inside.Green - 90) <= 1 &&
+                Math.Abs(inside.Blue - 141) <= 1 && inside.Alpha == 255,
+                $"type {type}: blended {inside}, expected about #ff285a8d.");
+            Assert.Equal(new SKColor(80, 120, 160), page.GetPixel(30, 18));
         }
     }
 }
