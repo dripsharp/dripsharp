@@ -1444,6 +1444,192 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // As Java's ColorSpace.getInstance, each standard space is one shared
+    // instance, and the default colour models use it.
+    [Fact]
+    public void StandardColorSpacesAreSharedInstances()
+    {
+        foreach (var kind in new[]
+                 {
+                     Compat.JavaColorSpace.CS_sRGB,
+                     Compat.JavaColorSpace.CS_GRAY,
+                     Compat.JavaColorSpace.CS_CIEXYZ
+                 })
+        {
+            Assert.Same(
+                Compat.PdfCartonFontCompat.GetColorSpace(kind),
+                Compat.PdfCartonFontCompat.GetColorSpace(kind));
+        }
+        var srgb = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB);
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_INT_ARGB,
+                     Compat.PdfCartonFontCompat.TYPE_INT_RGB,
+                     Compat.PdfCartonFontCompat.TYPE_INT_BGR,
+                     Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR,
+                     Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR,
+                     Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY
+                 })
+        {
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(4, 4, type);
+            Assert.Same(srgb, Compat.PdfCartonFontCompat.GetColorModel(image).ColorSpace);
+        }
+        using var gray = Compat.PdfCartonFontCompat.CreateBitmap(
+            4, 4, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        Assert.Same(
+            Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY),
+            Compat.PdfCartonFontCompat.GetColorModel(gray).ColorSpace);
+        var indexed = new Compat.JavaColorModel(
+            1, 2, new sbyte[] { 0, -1 }, new sbyte[] { 0, -1 }, new sbyte[] { 0, -1 });
+        Assert.Same(srgb, indexed.ColorSpace);
+    }
+
+    // BlendComposite converts the source through CIE XYZ only when the
+    // colour spaces differ. sRGB layers drawn on sRGB pages share the space,
+    // so, as in Java PDFBox, a Multiply blend uses the source components
+    // unchanged: over white it reproduces every source colour exactly, and
+    // over the same colour it gives the plain float product (Java PDFBox
+    // 3.0.8 produces the same 512 pixels).
+    [Fact]
+    public void MultiplyBlendOfSrgbOnSrgbSkipsColourConversion()
+    {
+        static SKColor ColorAt(int index) =>
+            new((byte)index, (byte)(index * 67 + 29), (byte)(index * 151 + 101));
+        static byte Product(byte source, byte destination)
+        {
+            float s = source / 255f, d = destination / 255f;
+            var value = s * d;
+            value = s + 1f * (value - s);
+            value = d + 1f * (value - d);
+            return (byte)(int)(value * 255f + 0.5f);
+        }
+
+        using var page = Compat.PdfCartonFontCompat.CreateBitmap(
+            256, 2, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        for (var index = 0; index < 256; index++)
+        {
+            page.SetPixel(index, 0, SKColors.White);
+            page.SetPixel(index, 1, ColorAt(index));
+        }
+        using (var graphics = new Compat.PdfCartonGraphics2D(page))
+        {
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+            graphics.SetComposite(BlendComposite.GetInstance(BlendMode.Multiply, 1));
+            for (var index = 0; index < 256; index++)
+            {
+                graphics.SetColor(ColorAt(index));
+                graphics.FillRect(index, 0, 1, 2);
+            }
+        }
+        for (var index = 0; index < 256; index++)
+        {
+            var color = ColorAt(index);
+            Assert.Equal(color, page.GetPixel(index, 0));
+            Assert.Equal(
+                new SKColor(
+                    Product(color.Red, color.Red),
+                    Product(color.Green, color.Green),
+                    Product(color.Blue, color.Blue)),
+                page.GetPixel(index, 1));
+        }
+
+        // The conversion allocated four arrays per pixel (about 160 bytes in
+        // all); without it the blend allocates about four bytes per pixel,
+        // for the layer and raster copies.
+        using var large = Compat.PdfCartonFontCompat.CreateBitmap(
+            256, 256, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        large.Erase(new SKColor(80, 120, 160));
+        using (var graphics = new Compat.PdfCartonGraphics2D(large))
+        {
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+            graphics.SetComposite(BlendComposite.GetInstance(BlendMode.Multiply, 1));
+            graphics.SetColor(new SKColor(128, 192, 224));
+            graphics.FillRect(0, 0, 8, 8);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            graphics.FillRect(0, 0, 256, 256);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.True(allocated < 256 * 256 * 16,
+                $"A 256x256 Multiply blend allocated {allocated} bytes.");
+        }
+        Assert.Equal(new SKColor(40, 90, 141), large.GetPixel(128, 128));
+    }
+
+    // Every blend mode at 70% alpha over an RGB and a gray backdrop. The
+    // sRGB layer and the RGB page share their colour space, so separable
+    // modes blend without a CIE XYZ conversion, as in Java. Expected pixels
+    // are Java PDFBox 3.0.8's rendering of the same page.
+    [Fact]
+    public void BlendModeFillsRenderAsJavaPdfBox()
+    {
+        (BlendMode Mode, uint RgbBackdrop, uint GrayBackdrop)[] expected =
+        [
+            (BlendMode.Multiply, 0xff425965, 0xff6e4a38),
+            (BlendMode.Screen, 0xffb1b6ea, 0xffc7a492),
+            (BlendMode.Overlay, 0xff6d8bdc, 0xffb56e4b),
+            (BlendMode.Darken, 0xff4d7569, 0xff806e4a),
+            (BlendMode.Lighten, 0xffa699e6, 0xffb58080),
+            (BlendMode.ColorDodge, 0xffcae0f8, 0xffd9bc96),
+            (BlendMode.ColorBurn, 0xff2e2ea0, 0xff6a2626),
+            (BlendMode.HardLight, 0xff988485, 0xffb56e4a),
+            (BlendMode.SoftLight, 0xff6890dd, 0xff967765),
+            (BlendMode.Difference, 0xff7052c2, 0xff5c395c),
+            (BlendMode.Exclusion, 0xff868bc9, 0xff7f8080),
+            (BlendMode.Hue, 0xffae7d70, 0xff808080),
+            (BlendMode.Saturation, 0xff4d99e6, 0xff808080),
+            (BlendMode.Color, 0xffae7d70, 0xffb66f4b),
+            (BlendMode.Luminosity, 0xff4591de, 0xff7f7f7f)
+        ];
+        using var document = new PDDocument();
+        var page = new PDPage(new PDRectangle(expected.Length * 10, 20));
+        document.AddPage(page);
+        using (var content = new PDPageContentStream(document, page))
+        {
+            content.SetNonStrokingColor(0.3f, 0.6f, 0.9f);
+            content.AddRect(0, 10, expected.Length * 10, 10);
+            content.Fill();
+            content.SetNonStrokingColor(0.5f);
+            content.AddRect(0, 0, expected.Length * 10, 10);
+            content.Fill();
+            for (var index = 0; index < expected.Length; index++)
+            {
+                var state = new Pdmodel.Graphics.State.PDExtendedGraphicsState();
+                state.SetBlendMode(expected[index].Mode);
+                state.SetNonStrokingAlphaConstant(0.7f);
+                content.SaveGraphicsState();
+                content.SetGraphicsStateParameters(state);
+                content.SetNonStrokingColor(0.8f, 0.4f, 0.2f);
+                content.AddRect(index * 10, 0, 10, 20);
+                content.Fill();
+                content.RestoreGraphicsState();
+            }
+        }
+
+        var mismatches = new List<string>();
+        void CheckPixel(uint argb, int actual, string label)
+        {
+            for (var shift = 0; shift < 32; shift += 8)
+            {
+                if (Math.Abs((int)((argb >> shift) & 0xff) - ((actual >> shift) & 0xff)) > 1)
+                {
+                    mismatches.Add($"{label}: expected 0x{argb:x8}, got 0x{actual:x8}");
+                    return;
+                }
+            }
+        }
+
+        using var rgb = new PDFRenderer(document).RenderImage(0);
+        for (var index = 0; index < expected.Length; index++)
+        {
+            var (mode, rgbBackdrop, grayBackdrop) = expected[index];
+            var x = index * 10 + 5;
+            CheckPixel(rgbBackdrop, Compat.PdfCartonFontCompat.GetRgb(rgb, x, 5), $"{mode} on RGB");
+            CheckPixel(grayBackdrop, Compat.PdfCartonFontCompat.GetRgb(rgb, x, 15), $"{mode} on gray");
+        }
+        Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
+    }
+
     // DataBufferInt.getData() returns an INT image's storage, as in Java:
     // the same array on every call, which Skia drawing, raster reads and
     // GetRgb share with it.
@@ -3879,6 +4065,29 @@ public sealed class ImageCodecAdapterTests
 
         Assert.True(adapter - decoder < raster + buffer * 3 / 2,
             $"JPX adapter allocated {adapter - decoder} bytes beyond the decoder.");
+    }
+
+    // Gray and RGB JPX images use the shared standard colour spaces, as the
+    // Java JPEG 2000 reader's ColorSpace.getInstance does.
+    [Fact]
+    public void JpxDecodeUsesSharedStandardColorSpaces()
+    {
+        var samples = new int[16 * 8];
+        for (var index = 0; index < samples.Length; index++)
+            samples[index] = (index * 5 & 255) - 128;
+        var grayData = CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(16, 8, 1, 8, new bool[1], [samples]));
+        using (var gray = Compat.PdfCartonImageCodecs.Decode("JPX", grayData))
+        {
+            Assert.Same(
+                Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY),
+                Compat.PdfCartonFontCompat.GetColorModel(gray).ColorSpace);
+        }
+        using var rgb = Compat.PdfCartonImageCodecs.Decode(
+            "JPX", DecodeFilterBitmapLifetimeTests.Jpx(16, 8, alpha: false));
+        Assert.Same(
+            Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB),
+            Compat.PdfCartonFontCompat.GetColorModel(rgb).ColorSpace);
     }
 
     // JBIG2Filter and JPXFilter read without rendering native pixels; only a

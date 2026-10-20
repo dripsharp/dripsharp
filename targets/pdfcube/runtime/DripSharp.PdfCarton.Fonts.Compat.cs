@@ -4006,11 +4006,10 @@ public class JavaColorModel
     {
         this.imageType = imageType;
         explicitTransparency = transparency;
-        ColorSpace = imageType == PdfCartonFontCompat.TYPE_BYTE_GRAY
-            ? new JavaColorSpace(JavaColorSpace.CS_GRAY)
-            : new JavaIccColorSpace(
-                JavaColorSpace.CS_sRGB,
-                PdfCartonFontCompat.GetIccProfile(JavaColorSpace.CS_sRGB));
+        ColorSpace = PdfCartonFontCompat.GetColorSpace(
+            imageType == PdfCartonFontCompat.TYPE_BYTE_GRAY
+                ? JavaColorSpace.CS_GRAY
+                : JavaColorSpace.CS_sRGB);
         if (imageType == PdfCartonFontCompat.TYPE_BYTE_BINARY)
             Palette = [SKColors.Black, SKColors.White];
     }
@@ -4098,9 +4097,7 @@ public class JavaColorModel
         }
 
         imageType = PdfCartonFontCompat.TYPE_CUSTOM;
-        explicitColorSpace = new JavaIccColorSpace(
-            JavaColorSpace.CS_sRGB,
-            PdfCartonFontCompat.GetIccProfile(JavaColorSpace.CS_sRGB));
+        explicitColorSpace = PdfCartonFontCompat.GetColorSpace(JavaColorSpace.CS_sRGB);
         explicitAlpha = false;
         explicitDataType = PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE;
         explicitPixelSize = pixelBits;
@@ -8653,17 +8650,25 @@ internal static class PdfCartonFontCompat
         return new JavaIccProfile(ToSignedBytes(profile.ToArray()));
     }
 
+    // As Java's ColorSpace.getInstance, each standard space is one shared
+    // instance. Colour spaces compare by identity, so BlendComposite (and any
+    // other srcColorSpace.equals(dstColorSpace) check) sees the default colour
+    // models' spaces as equal and skips the CIE XYZ conversion.
+    private static readonly Lazy<JavaColorSpace> SrgbColorSpace = new(() =>
+        new JavaIccColorSpace(
+            JavaColorSpace.CS_sRGB,
+            GetIccProfile(JavaColorSpace.CS_sRGB)));
+    private static readonly JavaColorSpace GrayColorSpace =
+        new(JavaColorSpace.CS_GRAY);
+    private static readonly JavaColorSpace CieXyzColorSpace =
+        new(JavaColorSpace.CS_CIEXYZ);
+
     internal static JavaColorSpace GetColorSpace(int colorSpace) =>
         colorSpace switch
         {
-            JavaColorSpace.CS_sRGB =>
-                new JavaIccColorSpace(
-                    JavaColorSpace.CS_sRGB,
-                    GetIccProfile(JavaColorSpace.CS_sRGB)),
-            JavaColorSpace.CS_GRAY =>
-                new JavaColorSpace(JavaColorSpace.CS_GRAY),
-            JavaColorSpace.CS_CIEXYZ =>
-                new JavaColorSpace(JavaColorSpace.CS_CIEXYZ),
+            JavaColorSpace.CS_sRGB => SrgbColorSpace.Value,
+            JavaColorSpace.CS_GRAY => GrayColorSpace,
+            JavaColorSpace.CS_CIEXYZ => CieXyzColorSpace,
             _ => throw new ArgumentException(
                 $"Unsupported standard color-space identifier `{colorSpace}`.",
                 nameof(colorSpace))

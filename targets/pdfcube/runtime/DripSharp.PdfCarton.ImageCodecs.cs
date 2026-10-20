@@ -265,7 +265,7 @@ internal static class PdfCartonImageCodecs
     private static JavaColorSpace CreateColorSpace(int components) =>
         components switch
         {
-            1 => new JavaColorSpace(JavaColorSpace.CS_GRAY),
+            1 => PdfCartonFontCompat.GetColorSpace(JavaColorSpace.CS_GRAY),
             3 => PdfCartonFontCompat.GetColorSpace(JavaColorSpace.CS_sRGB),
             4 => new JavaColorSpace(JavaColorSpace.TYPE_CMYK),
             _ => new JavaColorSpace(0, components + 10, components)
