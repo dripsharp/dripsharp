@@ -2420,6 +2420,14 @@ public sealed class JavaRaster
 
     internal bool IsSinglePixelPacked => bitMasks is not null;
 
+    // Sets every packed pixel to one value, as Arrays.fill on the int data.
+    internal void FillStorage(int value)
+    {
+        if (bitMasks is null || storage is not int[] packed)
+            throw new InvalidOperationException("Only single-pixel-packed int rasters can be filled.");
+        packed.AsSpan().Fill(value);
+    }
+
     internal bool HasBitMasks(ReadOnlySpan<int> masks) =>
         bitMasks is not null && masks.SequenceEqual(bitMasks);
 
@@ -3571,14 +3579,16 @@ public sealed class JavaColor : JavaPaint, IEquatable<JavaColor>
     public static implicit operator SKColor(JavaColor color) => color.Value;
     public static implicit operator JavaColor(SKColor color) => new(color);
 
+    // Java's ColorPaintContext: a raster of the default ARGB model holding
+    // the colour's ARGB value, so the pixels and the model agree on alpha,
+    // opaque colours included.
     private sealed class SolidPaintContext : JavaPaintContext
     {
-        private readonly List<SKBitmap> rasters = new();
-        private readonly SKColor color;
+        private readonly int argb;
         private readonly JavaColorModel colorModel =
             new(PdfCartonFontCompat.TYPE_INT_ARGB);
 
-        internal SolidPaintContext(SKColor color) => this.color = color;
+        internal SolidPaintContext(SKColor color) => argb = unchecked((int)(uint)color);
 
         public JavaColorModel GetColorModel() => colorModel;
 
@@ -3588,23 +3598,12 @@ public sealed class JavaColor : JavaPaint, IEquatable<JavaColor>
             _ = y;
             if (width <= 0 || height <= 0)
                 throw new ArgumentException("Raster dimensions must be positive.");
-            var bitmap = new PdfCartonNativeBitmap(new SKImageInfo(
-                width,
-                height,
-                SKColorType.Bgra8888,
-                color.Alpha == byte.MaxValue
-                    ? SKAlphaType.Opaque
-                    : SKAlphaType.Unpremul));
-            bitmap.Erase(color);
-            rasters.Add(bitmap);
-            return new JavaRaster(bitmap);
+            var raster = colorModel.CreateCompatibleWritableRaster(width, height);
+            raster.FillStorage(argb);
+            return raster;
         }
 
-        public void Dispose()
-        {
-            foreach (var raster in rasters) raster.Dispose();
-            rasters.Clear();
-        }
+        public void Dispose() { }
     }
 }
 

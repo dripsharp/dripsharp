@@ -1049,6 +1049,61 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // An opaque colour under an ExtGState /SMask reaches SoftMask through the
+    // colour's paint context. Java fills that context's raster with the ARGB
+    // value of its default ARGB model, so the mask scales an alpha of 255.
+    // Fills, strokes and glyphs then show through the mask. Expected colours
+    // were rendered by Apache PDFBox 3.0.8.
+    [Fact]
+    public void SoftMaskedSolidPaintsRenderLikePdfBox()
+    {
+        const string fill = "1 0 0 rg 10 10 180 180 re f";
+        const string stroke = "0 0 1 RG 20 w 30 100 m 170 100 l S";
+        foreach (var (kind, content, expected) in new (string, string, (int X, int Y, int[] Rgb)[])[]
+                 {
+                     ("/Luminosity", fill, [(50, 150, [255, 51, 51]), (150, 50, [255, 127, 127]),
+                         (100, 100, [255, 25, 25]), (195, 195, [255, 255, 255]), (15, 15, [255, 255, 255])]),
+                     ("/Alpha", fill, [(50, 150, [255, 0, 0]), (150, 50, [255, 127, 127]),
+                         (100, 100, [255, 0, 0]), (195, 195, [255, 255, 255]), (15, 15, [255, 255, 255])]),
+                     ("/Luminosity", stroke, [(60, 100, [51, 51, 255]), (100, 100, [25, 25, 255]),
+                         (150, 100, [127, 127, 255]), (190, 100, [255, 255, 255]), (100, 50, [255, 255, 255])]),
+                     ("/Alpha", stroke, [(60, 100, [0, 0, 255]), (100, 100, [0, 0, 255]),
+                         (150, 100, [127, 127, 255]), (190, 100, [255, 255, 255]), (100, 50, [255, 255, 255])]),
+                 })
+        {
+            var rgba = IccRenderFixtures.Render(SoftMaskedPdf(kind, content));
+            foreach (var (x, y, rgb) in expected)
+            {
+                var offset = (y * 200 + x) * 4;
+                for (var channel = 0; channel < 3; channel++)
+                    Assert.True(Math.Abs(rgba[offset + channel] - rgb[channel]) <= 2,
+                        $"{kind} {content} ({x},{y}): got [{rgba[offset]}, {rgba[offset + 1]}, {rgba[offset + 2]}].");
+            }
+        }
+
+        // PDFBox draws the 120 pt Helvetica "I" over 1040 pixels; the darkest
+        // one, fully covered inside the 0.8 gray mask area, is [255, 51, 51]
+        // under the luminosity mask and pure red under the alpha mask. The
+        // substituted font may differ, so the glyph area is only bounded.
+        foreach (var (kind, darkest) in new[] { ("/Luminosity", 51), ("/Alpha", 0) })
+        {
+            var rgba = IccRenderFixtures.Render(
+                SoftMaskedPdf(kind, "1 0 0 rg BT /F1 120 Tf 20 40 Td (I) Tj ET"));
+            var marked = 0;
+            var minimum = 255;
+            for (var offset = 0; offset < rgba.Length; offset += 4)
+            {
+                if (rgba[offset] + rgba[offset + 1] + rgba[offset + 2] == 765) continue;
+                marked++;
+                Assert.True(rgba[offset] >= 253 && Math.Abs(rgba[offset + 1] - rgba[offset + 2]) <= 2,
+                    $"{kind} glyph pixel is not a tint of red.");
+                minimum = Math.Min(minimum, rgba[offset + 1]);
+            }
+            Assert.InRange(marked, 600, 1600);
+            Assert.InRange(minimum, darkest - 2, darkest + 2);
+        }
+    }
+
     private static Compat.JavaRaster Fill(Compat.JavaRaster raster, int max, int seed)
     {
         var random = new Random(seed);
@@ -1108,7 +1163,10 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
-    private static byte[] SoftMaskedShadingPdf(string kind)
+    private static byte[] SoftMaskedShadingPdf(string kind) =>
+        SoftMaskedPdf(kind, "10 10 180 180 re W n /Sh1 sh");
+
+    private static byte[] SoftMaskedPdf(string kind, string content)
     {
         static byte[] Ascii(string text) => System.Text.Encoding.ASCII.GetBytes(text);
         static string Stream(string entries, string data) =>
@@ -1119,9 +1177,9 @@ public sealed class RasterConversionConsumerTests
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /ExtGState << /GS1 5 0 R >> " +
             "/Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Function << " +
-            "/FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true] >> >> >> " +
-            "/Contents 4 0 R >>",
-            Stream("", "q /GS1 gs 10 10 180 180 re W n /Sh1 sh Q"),
+            "/FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true] >> >> " +
+            "/Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents 4 0 R >>",
+            Stream("", $"q /GS1 gs {content} Q"),
             $"<< /Type /ExtGState /SMask << /Type /Mask /S {kind} /G 6 0 R >> >>",
             Stream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Group << /S /Transparency " +
                 "/CS /DeviceRGB >> /Resources << /ExtGState << /A 7 0 R >> >>",
