@@ -336,6 +336,19 @@ sealed class JavaByteBuffer : IDisposable
         cursor += length;
         return this;
     }
+    // FileChannel.read(ByteBuffer): one read of up to remaining() bytes from
+    // the channel's FileStream straight into the backing array.
+    internal int ReadFrom(FileStream stream)
+    {
+        ThrowIfDisposed();
+        var count = upperBound - cursor;
+        if (count == 0) return 0;
+        ThrowIfReadOnly();
+        var read = stream.Read(JavaCompat.AsUnsignedBytes(bytes!), storageOffset + cursor, count);
+        if (read == 0) return -1;
+        cursor += read;
+        return read;
+    }
     public JavaByteBuffer putShort(short value)
     {
         WriteRelative(unchecked((ushort)value), 2);
@@ -636,15 +649,7 @@ internal sealed class JavaFileChannel : IDisposable
     internal int read(JavaByteBuffer destination)
     {
         ThrowIfDisposed();
-        var count = destination.Remaining;
-        if (count == 0) return 0;
-        var unsigned = new byte[count];
-        var read = stream.Read(unsigned, 0, count);
-        if (read == 0) return -1;
-        var signed = new sbyte[read];
-        Buffer.BlockCopy(unsigned, 0, signed, 0, read);
-        destination.put(signed);
-        return read;
+        return destination.ReadFrom(stream);
     }
     internal void close() => Dispose();
     internal JavaByteBuffer map(JavaFileChannelMapMode mode, long offset, long size)

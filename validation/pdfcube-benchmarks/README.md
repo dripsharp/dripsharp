@@ -40,6 +40,10 @@ the 40-glyph minus 10-glyph time is the per-glyph cost at each font count),
 or `--filter '*EncryptedStreamBenchmarks*'` (build and save a document with one
 1 MiB or 8 MiB /FlateDecode stream, unencrypted or AES-128 protected, and load
 the AES-128 file and read the decrypted, decoded stream with 4 KiB reads),
+or `--filter '*StreamBoundaryBenchmarks*'` (8 MiB through IOUtils.copy between
+FileStream, MemoryStream, RandomAccessInputStream and RandomAccessOutputStream,
+Stream.CopyTo from a RandomAccessInputStream, and loading a PDF through
+RandomAccessReadBufferedFile and saving it),
 or `--filter '*PerPixelRasterBenchmarks*'` (page-sized upstream loops that read
 and write a bitmap-backed raster one pixel at a time: getStencilImage on a
 2480x3508 /ImageMask, and resetting plus Multiply-filling a 2480x3508 page

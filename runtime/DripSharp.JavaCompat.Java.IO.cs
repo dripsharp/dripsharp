@@ -7,6 +7,7 @@
 #nullable enable
 
 using System;
+using System.Buffers;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -659,11 +660,8 @@ internal sealed class JavaRandomAccessFile : IDisposable
             throw new IndexOutOfRangeException();
         if (length == 0) return 0;
         ThrowIfDisposed();
-        var unsigned = new byte[length];
-        var count = stream.Read(unsigned, 0, length);
-        if (count == 0) return -1;
-        Buffer.BlockCopy(unsigned, 0, destination, offset, count);
-        return count;
+        var count = stream.Read(JavaCompat.AsUnsignedBytes(destination), offset, length);
+        return count == 0 ? -1 : count;
     }
     internal void readFully(sbyte[] destination)
     {
@@ -704,11 +702,9 @@ internal sealed class JavaRandomAccessFile : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(source);
-        var unsigned = new byte[source.Length];
-        Buffer.BlockCopy(source, 0, unsigned, 0, source.Length);
         try
         {
-            stream.Write(unsigned, 0, unsigned.Length);
+            stream.Write(JavaCompat.AsUnsignedBytes(source), 0, source.Length);
             stream.Flush();
         }
         catch (NotSupportedException error) { throw new IOException(error.Message, error); }
@@ -786,10 +782,22 @@ abstract class JavaInputStream : Stream, IDisposable
 
     public override int Read(byte[] buffer, int offset, int count)
     {
-        var signed = new sbyte[count];
-        var readCount = Read(signed, 0, count);
-        if (readCount > 0) Buffer.BlockCopy(signed, 0, buffer, offset, readCount);
-        return Math.Max(0, readCount);
+        JavaCompat.CheckStreamRange(buffer, offset, count);
+        if (count == 0) return Math.Max(0, Read(Array.Empty<sbyte>(), 0, 0));
+        // Java overrides may System.arraycopy into the array, which needs a
+        // real sbyte[]; one pooled chunk bounds the copy by what is delivered.
+        var length = Math.Min(count, JavaCompat.StreamBoundaryChunk);
+        var signed = ArrayPool<sbyte>.Shared.Rent(length);
+        try
+        {
+            var readCount = Read(signed, 0, length);
+            if (readCount > 0) Buffer.BlockCopy(signed, 0, buffer, offset, readCount);
+            return Math.Max(0, readCount);
+        }
+        finally
+        {
+            ArrayPool<sbyte>.Shared.Return(signed);
+        }
     }
 
     public override int ReadByte() => Read();
@@ -907,9 +915,29 @@ abstract class JavaOutputStream : Stream, IDisposable
 
     public override void Write(byte[] buffer, int offset, int count)
     {
-        var signed = new sbyte[count];
-        Buffer.BlockCopy(buffer, offset, signed, 0, count);
-        Write(signed, 0, count);
+        JavaCompat.CheckStreamRange(buffer, offset, count);
+        if (count == 0)
+        {
+            Write(Array.Empty<sbyte>(), 0, 0);
+            return;
+        }
+        // Java overrides receive a real sbyte[] (see Read); a pooled chunk
+        // keeps the copy bounded however much the .NET caller writes.
+        var signed = ArrayPool<sbyte>.Shared.Rent(Math.Min(count, JavaCompat.StreamBoundaryChunk));
+        try
+        {
+            for (var written = 0; written < count;)
+            {
+                var length = Math.Min(count - written, JavaCompat.StreamBoundaryChunk);
+                Buffer.BlockCopy(buffer, offset + written, signed, 0, length);
+                Write(signed, 0, length);
+                written += length;
+            }
+        }
+        finally
+        {
+            ArrayPool<sbyte>.Shared.Return(signed);
+        }
     }
 
     public override void WriteByte(byte value) => Write(value);
@@ -1315,13 +1343,11 @@ internal sealed class JavaDataInputStream : IDisposable
         ArgumentNullException.ThrowIfNull(destination);
         if (offset < 0 || length < 0 || offset > destination.Length - length)
             throw new ArgumentOutOfRangeException();
-        var unsigned = new byte[length];
         var total = 0;
         while (total < length)
         {
-            var count = input.Read(unsigned, total, length - total);
+            var count = JavaCompat.InputStreamRead(input, destination, offset + total, length - total);
             if (count <= 0) throw new EndOfStreamException();
-            Buffer.BlockCopy(unsigned, total, destination, offset + total, count);
             total += count;
         }
     }
@@ -1647,17 +1673,71 @@ internal static partial class JavaCompat
     internal static IOException NewIOException(Exception cause) => new(cause.Message, cause);
     internal static IOException NewIOException(string? message, Exception? cause) => new(message, cause);
     internal static FileNotFoundException NewFileNotFoundException() => new JavaFileNotFoundException();
-    internal static void OutputStreamWrite(Stream stream, sbyte[] values) =>
-        OutputStreamWrite(stream, values, 0, values.Length);
+    // Largest temporary chunk used when bytes cross between Java's sbyte[]
+    // and .NET's byte[]; below the large-object-heap threshold.
+    internal const int StreamBoundaryChunk = 64 * 1024;
+
+    // Reinterprets a Java byte array for a .NET byte[] API. Pass it only to
+    // code that copies with Buffer.BlockCopy or spans (the exact BCL FileStream
+    // and MemoryStream): Array.Copy between it and a real byte[] or sbyte[]
+    // throws ArrayTypeMismatchException.
+    internal static byte[] AsUnsignedBytes(sbyte[] values) =>
+        System.Runtime.CompilerServices.Unsafe.As<byte[]>(values);
+
+    private static bool AcceptsReinterpretedBytes(Stream stream)
+    {
+        var type = stream.GetType();
+        return type == typeof(FileStream) || type == typeof(MemoryStream) ||
+               type == typeof(JavaByteArrayInputStream) ||
+               type == typeof(JavaByteArrayOutputStream);
+    }
+
+    internal static void CheckStreamRange(byte[] buffer, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (offset > buffer.Length - count)
+            throw new ArgumentException("Offset and count exceed the buffer length.");
+    }
+
+    internal static void OutputStreamWrite(Stream stream, sbyte[] values)
+    {
+        if (stream is JavaOutputStream java) java.Write(values);
+        else OutputStreamWrite(stream, values, 0, values.Length);
+    }
     internal static void OutputStreamWrite(Stream stream, sbyte[] values, int offset, int count)
     {
+        // Java overrides receive the caller's array, as java.io dispatch does.
+        if (stream is JavaOutputStream java)
+        {
+            java.Write(values, offset, count);
+            return;
+        }
         ArgumentNullException.ThrowIfNull(values);
         if (offset < 0 || count < 0 || offset > values.Length - count)
             throw new IndexOutOfRangeException();
-        var buffer = new byte[count];
-        for (var index = 0; index < count; index++)
-            buffer[index] = unchecked((byte)values[offset + index]);
-        stream.Write(buffer, 0, buffer.Length);
+        if (AcceptsReinterpretedBytes(stream))
+        {
+            stream.Write(AsUnsignedBytes(values), offset, count);
+            return;
+        }
+        var buffer = ArrayPool<byte>.Shared.Rent(Math.Min(count, StreamBoundaryChunk));
+        try
+        {
+            var written = 0;
+            do
+            {
+                var length = Math.Min(count - written, StreamBoundaryChunk);
+                Buffer.BlockCopy(values, offset + written, buffer, 0, length);
+                stream.Write(buffer, 0, length);
+                written += length;
+            } while (written < count);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
     internal static void OutputStreamWrite(Stream stream, int value) =>
         stream.WriteByte(unchecked((byte)value));
@@ -1718,14 +1798,37 @@ internal static partial class JavaCompat
                    byteArrayAtBoundary.Position >= byteArrayAtBoundary.Length
                 ? -1
                 : 0;
-        var buffer = new byte[count];
-        var read = stream is JavaByteArrayInputStream byteArray
-            ? byteArray.ReadJava(buffer, 0, count)
-            : stream.Read(buffer, 0, count);
-        if (read <= 0) return read == 0 ? -1 : read;
-        for (var index = 0; index < read; index++)
-            values[offset + index] = unchecked((sbyte)buffer[index]);
-        return read;
+        if (AcceptsReinterpretedBytes(stream))
+        {
+            var direct = stream is JavaByteArrayInputStream byteArray
+                ? byteArray.ReadJava(AsUnsignedBytes(values), offset, count)
+                : stream.Read(AsUnsignedBytes(values), offset, count);
+            return direct == 0 ? -1 : direct;
+        }
+        var buffer = ArrayPool<byte>.Shared.Rent(Math.Min(count, StreamBoundaryChunk));
+        try
+        {
+            var total = 0;
+            while (true)
+            {
+                var length = Math.Min(count - total, StreamBoundaryChunk);
+                int read;
+                // After the first chunk a failure is a short read, as in
+                // Java's InputStream.read: the bytes delivered are kept.
+                try { read = stream.Read(buffer, 0, length); }
+                catch (IOException) when (total > 0) { return total; }
+                if (read <= 0) return total > 0 ? total : -1;
+                Buffer.BlockCopy(buffer, 0, values, offset + total, read);
+                total += read;
+                // Keep filling only seekable (file or memory) streams, whose
+                // reads do not block; a pipe or socket returns what it has.
+                if (total == count || read < length || !stream.CanSeek) return total;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
     internal static void MemoryStreamWriteTo(MemoryStream source, Stream destination)
     {

@@ -18,6 +18,62 @@ namespace DripSharp.PdfCarton.Tests;
 
 public sealed class PdfConsumerTests
 {
+    // Loading reads 4 KiB file-channel pages and saving copies each stream
+    // with IOUtils.copy; both used to allocate temporary arrays per chunk,
+    // several times the size of the file in all. What remains is mostly
+    // RandomAccessReadBufferedFile's 1,000-page (4 MiB) cache, as upstream.
+    [Fact]
+    public void LoadingAndSavingALargeFileAllocatesFarLessThanItsSize()
+    {
+        const int size = 16 << 20;
+        var payload = new byte[size];
+        for (var index = 0; index < size; index++)
+            payload[index] = unchecked((byte)(index * 7 + (index >> 10)));
+        var path = Path.GetTempFileName();
+        try
+        {
+            using (var document = new PDDocument())
+            {
+                document.AddPage(new PDPage());
+                var stream = document.GetDocument().CreateCOSStream();
+                using (var output = stream.CreateOutputStream())
+                    output.Write(payload);
+                document.GetDocumentCatalog().GetCOSObject()
+                    .SetItem(COSName.GetPDFName("Payload"), stream);
+                using var file = File.Create(path);
+                document.Save(file);
+            }
+
+            long Save(Stream output)
+            {
+                using var document = Loader.LoadPDF(new RandomAccessReadBufferedFile(path));
+                document.Save(output);
+                return output.Length;
+            }
+
+            var saved = new MemoryStream(2 * size);
+            Save(saved);
+            saved.SetLength(0);
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            var length = Save(saved);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+
+            Assert.True(length > size);
+            Assert.True(allocated < 6 << 20, $"Load and save allocated {allocated} bytes for {length}.");
+            using var reloaded = Loader.LoadPDF(new RandomAccessReadBuffer(
+                (sbyte[])(Array)saved.ToArray()));
+            using var input = reloaded.GetDocumentCatalog().GetCOSObject()
+                .GetCOSStream(COSName.GetPDFName("Payload")).CreateInputStream();
+            var roundTrip = new MemoryStream();
+            input.CopyTo(roundTrip);
+            Assert.Equal(payload, roundTrip.ToArray());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void DocumentCanBeConstructedSavedAndConsumedAgain()
     {
