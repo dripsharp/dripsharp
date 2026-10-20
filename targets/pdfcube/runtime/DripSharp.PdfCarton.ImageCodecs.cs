@@ -7,6 +7,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using CoreJ2K;
 using JBig2Decoder.NETStandard;
 using SkiaSharp;
@@ -45,13 +46,11 @@ internal static class PdfCartonImageCodecs
 
     private static SKBitmap DecodeJbig2(byte[] encoded)
     {
-        var decoder = new JBIG2StreamDecoder
-        {
-            TolerateMissingSegments = false
-        };
-        var samples = decoder.DecodeJBIG2(encoded, out var width, out var height);
+        var page = Jbig2PageReader.Read(encoded);
+        var width = (int)page.GetWidth();
+        var height = (int)page.GetHeight();
         if (width <= 0 || height <= 0 ||
-            samples.Length != checked(width * height * 3))
+            page.data.Size() < (long)width * height)
         {
             throw new IOException("JBIG2 decoder returned invalid image dimensions.");
         }
@@ -62,12 +61,123 @@ internal static class PdfCartonImageCodecs
             [0, -1],
             [0, -1],
             [0, -1]);
-        var raster = colorModel.CreateCompatibleWritableRaster(width, height);
-        var values = new int[checked(width * height)];
-        for (var index = 0; index < values.Length; index++)
-            values[index] = samples[index * 3] < 128 ? 0 : 1;
-        raster.SetPixels(0, 0, width, height, values);
-        return PdfCartonFontCompat.CreateImage(colorModel, raster, false, null);
+        var raster = JavaRaster.Packed(
+            width,
+            height,
+            1,
+            PackPage(page.data.w, width, height));
+        // JBIG2Filter reads the raster; a draw renders the pixels on demand.
+        return PdfCartonFontCompat.CreateDeferredImage(colorModel, raster, false, null);
+    }
+
+    // Packs the page's row-major bit set (pixel i is bit i % 64 of word
+    // i / 64, 1 = black) MSB-first into rows of (width + 7) / 8 bytes, as
+    // palette indices (0 = black, 1 = white) with zero row padding.
+    private static sbyte[] PackPage(long[] words, int width, int height)
+    {
+        var stride = (width + 7) / 8;
+        var packed = new sbyte[checked(stride * height)];
+        long rowStart = 0;
+        for (var row = 0; row < height; row++, rowStart += width)
+        {
+            var offset = row * stride;
+            for (var column = 0; column < width; column += 8)
+            {
+                var index = rowStart + column;
+                var word = (int)(index >> 6);
+                var shift = (int)(index & 63);
+                var bits = (ulong)words[word] >> shift;
+                if (shift > 56 && word + 1 < words.Length)
+                    bits |= (ulong)words[word + 1] << (64 - shift);
+                var count = Math.Min(8, width - column);
+                var white = ~(uint)bits & ((1u << count) - 1);
+                packed[offset++] = unchecked((sbyte)ReversedBits[white]);
+            }
+        }
+        return packed;
+    }
+
+    private static readonly byte[] ReversedBits = CreateReversedBits();
+
+    private static byte[] CreateReversedBits()
+    {
+        var table = new byte[256];
+        for (var value = 0; value < table.Length; value++)
+        {
+            var reversed = 0;
+            for (var bit = 0; bit < 8; bit++)
+                if ((value & 1 << bit) != 0) reversed |= 0x80 >> bit;
+            table[value] = (byte)reversed;
+        }
+        return table;
+    }
+
+    // The pinned decoder's only entry point, DecodeJBIG2, expands the page to
+    // 3 bytes of RGB per pixel. Read runs DecodeJBIG2's steps up to the page
+    // bitmap through the decoder's private members instead: the vendored
+    // source is an exact pinned snapshot (doc/targets/pdfbox/dependencies.md)
+    // and is not patched. Advancing the pin must keep these members.
+    private static class Jbig2PageReader
+    {
+        private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+
+        private static readonly FieldInfo ReaderField = Field("reader");
+        private static readonly FieldInfo PagesKnownField = Field("noOfPagesKnown");
+        private static readonly FieldInfo RandomAccessField = Field("randomAccessOrganisation");
+        private static readonly FieldInfo PageCountField = Field("noOfPages");
+        private static readonly FieldInfo HuffmanField = Field("huffmanDecoder");
+        private static readonly FieldInfo MmrField = Field("mmrDecoder");
+        private static readonly FieldInfo ArithmeticField = Field("arithmeticDecoder");
+        private static readonly Func<JBIG2StreamDecoder, bool> CheckHeader =
+            Method<Func<JBIG2StreamDecoder, bool>>("CheckHeader");
+        private static readonly Action<JBIG2StreamDecoder> SetFileHeaderFlags =
+            Method<Action<JBIG2StreamDecoder>>("SetFileHeaderFlags");
+        private static readonly Func<JBIG2StreamDecoder, int> GetNoOfPages =
+            Method<Func<JBIG2StreamDecoder, int>>("GetNoOfPages");
+        private static readonly Action<JBIG2StreamDecoder> ReadSegments =
+            Method<Action<JBIG2StreamDecoder>>("ReadSegments");
+
+        internal static JBIG2Bitmap Read(byte[] data)
+        {
+            // A new decoder is already in ResetDecoder's state and has no
+            // global data: JBIG2Filter prepends JBIG2Globals to the stream.
+            var decoder = new JBIG2StreamDecoder
+            {
+                TolerateMissingSegments = false
+            };
+            var reader = new Big2StreamReader(data);
+            ReaderField.SetValue(decoder, reader);
+            if (!CheckHeader(decoder))
+            {
+                // An embedded stream: sequential organisation, one page.
+                PagesKnownField.SetValue(decoder, true);
+                RandomAccessField.SetValue(decoder, false);
+                PageCountField.SetValue(decoder, 1);
+                reader.MovePointer(-8);
+            }
+            else
+            {
+                SetFileHeaderFlags(decoder);
+                if ((bool)PagesKnownField.GetValue(decoder)!)
+                    PageCountField.SetValue(decoder, GetNoOfPages(decoder));
+            }
+
+            HuffmanField.SetValue(decoder, new HuffmanDecoder(reader));
+            MmrField.SetValue(decoder, new MMRDecoder(reader));
+            ArithmeticField.SetValue(decoder, new ArithmeticDecoder(reader));
+            ReadSegments(decoder);
+            return decoder.GetPageAsJBIG2Bitmap(1);
+        }
+
+        private static FieldInfo Field(string name) =>
+            typeof(JBIG2StreamDecoder).GetField(name, Private) ??
+            throw new MissingFieldException(nameof(JBIG2StreamDecoder), name);
+
+        private static T Method<T>(string name)
+            where T : Delegate =>
+            (T)(typeof(JBIG2StreamDecoder).GetMethod(name, Private) ??
+                throw new MissingMethodException(nameof(JBIG2StreamDecoder), name))
+                .CreateDelegate(typeof(T));
     }
 
     private static SKBitmap DecodeJpx(byte[] encoded)
@@ -93,17 +203,21 @@ internal static class PdfCartonImageCodecs
         var raster = colorModel.CreateCompatibleWritableRaster(
             image.Width,
             image.Height);
+        // One component buffer serves every component.
+        var samples = new int[checked(image.Width * image.Height)];
         for (var component = 0; component < image.NumberOfComponents; component++)
         {
+            image.CopyComponentTo(component, samples);
             raster.SetSamples(
                 0,
                 0,
                 image.Width,
                 image.Height,
                 component,
-                image.GetComponent(component));
+                samples);
         }
-        return PdfCartonFontCompat.CreateImage(
+        // JPXFilter reads the raster; a draw renders the pixels on demand.
+        return PdfCartonFontCompat.CreateDeferredImage(
             colorModel,
             raster,
             isRasterPremultiplied: false,

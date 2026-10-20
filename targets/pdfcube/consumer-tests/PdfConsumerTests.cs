@@ -2850,7 +2850,7 @@ public sealed class DecodeFilterBitmapLifetimeTests
         return data.ToArray();
     }
 
-    private static byte[] Jpx(int width, int height, bool alpha)
+    internal static byte[] Jpx(int width, int height, bool alpha)
     {
         var count = alpha ? 4 : 3;
         var components = new int[count][];
@@ -2877,6 +2877,215 @@ public sealed class DecodeFilterBitmapLifetimeTests
             };
         }
         return CoreJ2K.J2kImage.ToBytes(source, metadata);
+    }
+}
+
+// The JBIG2 adapter packs the decoder's page bits straight into a 1-bit
+// raster, without an RGB or int-per-pixel copy, and both codec adapters
+// render native pixels only when the image is drawn.
+public sealed class ImageCodecAdapterTests
+{
+    // A 64x16 all-white MMR generic region embedded as a JBIG2 stream.
+    private const string Jbig2Page =
+        "AAAAADAAAQAAABMAAABAAAAAEAAAAAAAAAAAAAAAAAAAASYAAQAAABQAAABAAAAAEAAAAAAAAAAAAAH//wAAAAIxAAEAAAAA";
+
+    // A 67x20 black page (default pixel 1) ANDed with the white region at
+    // columns 3-66 of rows 0-15. The width leaves 5 padding bits per row.
+    private static byte[] MixedPage()
+    {
+        var data = Convert.FromBase64String(Jbig2Page);
+        WriteInt(data, 11, 67);
+        WriteInt(data, 15, 20);
+        data[27] = 0x04;
+        WriteInt(data, 49, 3);
+        data[57] = 1;
+        return data;
+    }
+
+    [Fact]
+    public void Jbig2DecodeWritesPaletteBitsWithZeroRowPadding()
+    {
+        var expected = new byte[9 * 20];
+        for (var row = 0; row < 16; row++)
+        {
+            expected[row * 9] = 0x1f;
+            for (var column = 1; column < 8; column++) expected[row * 9 + column] = 0xff;
+            expected[row * 9 + 8] = 0xe0;
+        }
+
+        Assert.Equal(expected, Decode(MixedPage()));
+    }
+
+    [Fact]
+    public void Jbig2ImagesRenderTheirPixelsWhenDrawn()
+    {
+        using var image = Compat.PdfCartonImageCodecs.Decode("JBIG2", MixedPage());
+        using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
+            67, 20, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
+            graphics.DrawImage(image, 0, 0, (object)null!);
+
+        foreach (var (x, y, white) in new[]
+                 {
+                     (0, 0, false), (2, 15, false), (3, 0, true), (66, 15, true),
+                     (66, 16, false), (40, 19, false)
+                 })
+        {
+            Assert.Equal(white ? -1 : unchecked((int)0xff000000),
+                Compat.PdfCartonFontCompat.GetRgb(canvas, x, y));
+        }
+    }
+
+    // A 300 DPI A4 page: 310 bytes x 3508 rows packed. The decoder's own bit
+    // set is the same size, so the decode allocates about twice the packed
+    // page, not the 26 MB RGB and 35 MB int[] copies it used to.
+    [Fact]
+    public void Jbig2DecodeAllocatesAboutTwiceThePackedPage()
+    {
+        var data = Convert.FromBase64String(Jbig2Page);
+        WriteInt(data, 11, 2480);
+        WriteInt(data, 15, 3508);
+        const long packed = 310L * 3508;
+        using (Compat.PdfCartonImageCodecs.Decode("JBIG2", data))
+        {
+        }
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        using var image = Compat.PdfCartonImageCodecs.Decode("JBIG2", data);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal((2480, 3508), (image.Width, image.Height));
+        Assert.True(allocated < packed * 5 / 2, $"JBIG2 decode allocated {allocated} bytes.");
+    }
+
+    // Each JPX component is copied through one reusable W*H buffer: the
+    // adapter adds the raster and that buffer to the decoder's allocation,
+    // not one int[] per component.
+    [Fact]
+    public void JpxDecodeReusesOneComponentBuffer()
+    {
+        var data = DecodeFilterBitmapLifetimeTests.Jpx(256, 256, alpha: true);
+        const long buffer = 256L * 256 * sizeof(int);
+        const long raster = 256L * 256 * 4;
+        var decoder = Allocated(() =>
+        {
+            using var stream = new MemoryStream(data, writable: false);
+            using var image = CoreJ2K.J2kImage.FromStream(stream, out _);
+        });
+        var adapter = Allocated(() =>
+        {
+            using var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
+        });
+
+        Assert.True(adapter - decoder < raster + buffer * 3 / 2,
+            $"JPX adapter allocated {adapter - decoder} bytes beyond the decoder.");
+    }
+
+    // JBIG2Filter and JPXFilter read without rendering native pixels; only a
+    // draw renders them. Transparency is classified from the raster until
+    // then, as the rendered alpha would be.
+    [Fact]
+    public void FilterReadsRenderNativePixelsOnlyWhenDrawn()
+    {
+        foreach (var (format, data, transparency) in new[]
+                 {
+                     ("JBIG2", MixedPage(), Compat.PdfCartonTransparency.OPAQUE),
+                     ("JPEG2000", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: false),
+                         Compat.PdfCartonTransparency.OPAQUE),
+                     ("JPEG2000", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: true),
+                         Compat.PdfCartonTransparency.TRANSLUCENT),
+                 })
+        {
+            foreach (var subsampling in new[] { 1, 2 })
+            {
+                using var image = Reader(format, data).ReadDeferred(0, Subsampled(subsampling));
+                Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
+                Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
+                Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
+
+                using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
+                    image.Width, image.Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+                using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
+                    graphics.DrawImage(image, 0, 0, (object)null!);
+                Assert.False(Compat.PdfCartonFontCompat.IsNativePending(image));
+                Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
+                if (transparency == Compat.PdfCartonTransparency.OPAQUE)
+                    Assert.Equal(image.GetPixel(image.Width - 1, 1),
+                        canvas.GetPixel(image.Width - 1, 1));
+            }
+        }
+    }
+
+    // The public reader returns images whose native pixels are rendered, so
+    // Skia reads and raw canvas draws see the decoded pixels.
+    [Fact]
+    public void PublicCodecReadersReturnRenderedPixels()
+    {
+        foreach (var (format, data) in new[]
+                 {
+                     ("JBIG2", MixedPage()),
+                     ("JPEG2000", DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: false)),
+                 })
+        {
+            foreach (var subsampling in new[] { 1, 2 })
+            {
+                using var expected = Reader(format, data).ReadDeferred(0, Subsampled(subsampling));
+                using var image = Reader(format, data).Read(0, Subsampled(subsampling));
+                Assert.False(Compat.PdfCartonFontCompat.IsNativePending(image));
+                using var target = new SKBitmap(image.Width, image.Height);
+                using (var canvas = new SKCanvas(target))
+                using (var skImage = SKImage.FromBitmap(image))
+                    canvas.DrawImage(skImage, 0, 0, SKSamplingOptions.Default, null);
+                foreach (var (x, y) in new[] { (0, 0), (image.Width - 1, 1), (image.Width / 2, image.Height - 1) })
+                {
+                    var color = unchecked((uint)Compat.PdfCartonFontCompat.GetRgb(expected, x, y));
+                    Assert.Equal(color, (uint)image.GetPixel(x, y));
+                    Assert.Equal(color, (uint)target.GetPixel(x, y));
+                }
+            }
+        }
+    }
+
+    private static Compat.JavaImageReader Reader(string format, byte[] data)
+    {
+        var reader = DripSharp.PdfCarton.Filter.Filter.FindImageReader(format, "codec missing");
+        reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(data)));
+        return reader;
+    }
+
+    private static Compat.JavaImageReadParam Subsampled(int subsampling)
+    {
+        var parameters = new Compat.JavaImageReadParam();
+        parameters.SetSourceSubsampling(subsampling, subsampling, 0, 0);
+        return parameters;
+    }
+
+    private static long Allocated(Action action)
+    {
+        action();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        action();
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    private static void WriteInt(byte[] data, int offset, int value)
+    {
+        data[offset] = (byte)(value >> 24);
+        data[offset + 1] = (byte)(value >> 16);
+        data[offset + 2] = (byte)(value >> 8);
+        data[offset + 3] = (byte)value;
+    }
+
+    private static byte[] Decode(byte[] jbig2)
+    {
+        var stream = new COSStream();
+        using (var output = stream.CreateRawOutputStream())
+            output.Write(jbig2);
+        stream.SetItem(COSName.Filter, COSName.Jbig2Decode);
+        using var input = stream.CreateInputStream();
+        using var decoded = new MemoryStream();
+        input.CopyTo(decoded);
+        return decoded.ToArray();
     }
 }
 

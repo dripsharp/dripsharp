@@ -564,8 +564,10 @@
                "return image;"]))]
     (testing "the JBIG2 image, its repacking and graphics are owned by one scope"
       (is (str/includes? jbig2 "using global::DripSharp.Runtime.PdfCartonDisposalScope __dripsharpOwned"))
-      (is (= 3 (count (re-seq #"__dripsharpOwned\.Own\(" jbig2)))))
+      (is (= 3 (count (re-seq #"__dripsharpOwned\.Own\(" jbig2))))
+      (is (str/includes? jbig2 "__dripsharpOwned.Own(reader.ReadDeferred(0, irp))")))
     (testing "readJPX releases only the image it returns"
+      (is (str/includes? jpx "__dripsharpOwned.Own(reader.ReadDeferred(0, irp))"))
       (is (= 4 (count (re-seq #"__dripsharpOwned\.Own\(" jpx))))
       (is (< (.indexOf jpx "__dripsharpOwned.Release(result.GetJPXSMask());")
              (.indexOf jpx "return __dripsharpOwned.Release(image);"))))

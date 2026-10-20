@@ -3799,12 +3799,14 @@
      {:every? true}]]
    ;; The SMaskInData path replaces the decoded image with `bim`; the image
    ;; returned and the soft mask stored in the result are released to the
-   ;; caller, the rest (everything on failure) is disposed.
+   ;; caller, the rest (everything on failure) is disposed. ReadDeferred skips
+   ;; the native render: the image is read through its raster, and drawing
+   ;; it into `bim` renders it.
    ["org.apache.pdfbox.filter.JPXFilter" "readJPX"]
    [["global::SkiaSharp.SKBitmap image;"
      (str owned-resources-declaration "\nglobal::SkiaSharp.SKBitmap image;")]
     ["image = reader.Read(0, irp);"
-     "image = __dripsharpOwned.Own(reader.Read(0, irp));"]
+     "image = __dripsharpOwned.Own(reader.ReadDeferred(0, irp));"]
     [(str "global::SkiaSharp.SKBitmap smask = "
           "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
           "image.Width, image.Height, "
@@ -3830,12 +3832,13 @@
     ["return image;"
      (str "__dripsharpOwned.Release(result.GetJPXSMask());\n"
           "return __dripsharpOwned.Release(image);")]]
-   ;; Neither the decoded image nor its 1-bit repacking escapes.
+   ;; Neither the decoded image nor its 1-bit repacking escapes. ReadDeferred
+   ;; skips the native render unless the repacking draws the image.
    ["org.apache.pdfbox.filter.JBIG2Filter" "decode" 5]
    [["global::SkiaSharp.SKBitmap image;"
      (str owned-resources-declaration "\nglobal::SkiaSharp.SKBitmap image;")]
     ["image = reader.Read(0, irp);"
-     "image = __dripsharpOwned.Own(reader.Read(0, irp));"]
+     "image = __dripsharpOwned.Own(reader.ReadDeferred(0, irp));"]
     [(str "global::SkiaSharp.SKBitmap packedImage = "
           "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
           "image.Width, image.Height, "

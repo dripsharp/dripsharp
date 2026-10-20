@@ -1212,6 +1212,24 @@ public sealed class JavaImageReader : IDisposable
 
     public SKBitmap Read(int imageIndex, JavaImageReadParam? parameters)
     {
+        var bitmap = ReadDeferred(imageIndex, parameters);
+        try
+        {
+            PdfCartonFontCompat.EnsureNativePixels(bitmap);
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
+        return bitmap;
+    }
+
+    // Read without rendering a JBIG2 or JPX image's native pixels, for callers
+    // that read its raster or draw it through compat graphics (JBIG2Filter
+    // and JPXFilter, via java_project.clj).
+    internal SKBitmap ReadDeferred(int imageIndex, JavaImageReadParam? parameters)
+    {
         RequireImageIndex(imageIndex);
         var bitmap = Decode(imageIndex);
         return ApplyReadParameters(bitmap, parameters);
@@ -1221,7 +1239,7 @@ public sealed class JavaImageReader : IDisposable
         int imageIndex,
         JavaImageReadParam? parameters)
     {
-        using var image = Read(imageIndex, parameters);
+        using var image = ReadDeferred(imageIndex, parameters);
         var raster = PdfCartonFontCompat.GetImageData(image);
         if (!formatName.Equals("JPEG", StringComparison.OrdinalIgnoreCase))
             return raster;
@@ -1389,7 +1407,9 @@ public sealed class JavaImageReader : IDisposable
                             (int[]?)null));
                 }
             }
-            var managedDestination = PdfCartonFontCompat.CreateImage(
+            // Like the source, the copy is read through its raster and
+            // rendered only if drawn.
+            var managedDestination = PdfCartonFontCompat.CreateDeferredImage(
                 colorModel,
                 destinationRaster,
                 isRasterPremultiplied: false,
@@ -2240,6 +2260,10 @@ public sealed class JavaRaster
             height,
             pixelBits,
             new sbyte[checked((width * pixelBits + 7) / 8 * height)]);
+
+    // Wraps rows of (width * pixelBits + 7) / 8 bytes without copying them.
+    internal static JavaRaster Packed(int width, int height, int pixelBits, sbyte[] data) =>
+        new(width, height, pixelBits, data);
 
     // Java's SinglePixelPackedSampleModel, as DirectColorModel's compatible
     // raster: one int per pixel, each band selected by its bit mask. Data
@@ -7567,11 +7591,39 @@ internal static class PdfCartonFontCompat
         }
         if (bitmap.AlphaType == SKAlphaType.Opaque)
             return PdfCartonTransparency.OPAQUE;
+        if (metadata is { Raster: { } raster, ColorModel: { } colorModel })
+        {
+            lock (metadata)
+            {
+                // Unrendered pixels: classify the alpha they will render to.
+                if (metadata.NativePending)
+                    return RasterTransparency(colorModel, raster);
+            }
+        }
         using var access = new PdfCartonPixels(bitmap);
         for (var y = 0; y < bitmap.Height; y++)
             for (var x = 0; x < bitmap.Width; x++)
                 if (access.Get(x, y).Alpha is not 0 and not byte.MaxValue)
                     return PdfCartonTransparency.TRANSLUCENT;
+        return PdfCartonTransparency.BITMASK;
+    }
+
+    // The alpha bytes RenderRaster writes: ComponentByte of the normalized
+    // alpha component.
+    private static int RasterTransparency(JavaColorModel colorModel, JavaRaster raster)
+    {
+        var count = colorModel.NumberOfComponents;
+        var alphaIndex = colorModel.NumberOfColorComponents;
+        var components = new float[checked(raster.Width * count)];
+        int[]? samples = null;
+        object? pixel = null;
+        for (var y = 0; y < raster.Height; y++)
+        {
+            colorModel.GetNormalizedRow(raster, y, components, ref samples, ref pixel);
+            for (var x = 0; x < raster.Width; x++)
+                if (ComponentByte(components[x * count + alphaIndex]) is not 0 and not byte.MaxValue)
+                    return PdfCartonTransparency.TRANSLUCENT;
+        }
         return PdfCartonTransparency.BITMASK;
     }
 
@@ -7603,6 +7655,7 @@ internal static class PdfCartonFontCompat
     {
         ArgumentNullException.ThrowIfNull(bitmap);
         if (!GetColorModel(bitmap).HasAlpha) return null;
+        EnsureNativePixels(bitmap);
         var raster = new JavaRaster(
             DATA_BUFFER_TYPE_BYTE,
             bitmap.Width,
@@ -7826,6 +7879,12 @@ internal static class PdfCartonFontCompat
                 NativePending = true
             });
         return bitmap;
+    }
+
+    internal static bool IsNativePending(SKBitmap bitmap)
+    {
+        if (!ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata)) return false;
+        lock (metadata) return metadata.NativePending;
     }
 
     // Renders a deferred image's native pixels from its retained raster once,
