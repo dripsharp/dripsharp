@@ -427,8 +427,12 @@ namespace DripSharp.Runtime
         internal static bool IsValid(int value) =>
             value >= 0 && value <= 0x10ffff && (value < 0xd800 || value > 0xdfff);
 
+        // BMP values use the char overloads, which never allocate; only a
+        // supplementary value needs its UTF-16 pair as a string here.
         internal static global::System.Globalization.UnicodeCategory GetUnicodeCategory(Rune value)
         {
+            if (value.Value <= char.MaxValue)
+                return global::System.Globalization.CharUnicodeInfo.GetUnicodeCategory((char)value.Value);
             var text = char.ConvertFromUtf32(value.Value);
             return global::System.Globalization.CharUnicodeInfo.GetUnicodeCategory(text, 0);
         }
@@ -449,6 +453,8 @@ namespace DripSharp.Runtime
 
         internal static Rune ToUpperInvariant(Rune value)
         {
+            if (value.Value <= char.MaxValue)
+                return new Rune(char.ToUpperInvariant((char)value.Value));
             var text = char.ConvertFromUtf32(value.Value).ToUpperInvariant();
             return new Rune(char.ConvertToUtf32(text, 0));
         }

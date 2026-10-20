@@ -2,6 +2,7 @@ using DripSharp.PdfCarton;
 using DripSharp.PdfCarton.Cos;
 using DripSharp.PdfCarton.Filter;
 using DripSharp.PdfCarton.IO;
+using DripSharp.PdfCarton.Pdfparser;
 using DripSharp.PdfCarton.Pdmodel;
 using DripSharp.PdfCarton.Pdmodel.Common;
 using DripSharp.PdfCarton.Pdmodel.Font;
@@ -1062,5 +1063,154 @@ public sealed class BitSetConsumerTests
         for (var index = bits.nextSetBit(from); index >= 0 && index < to; index = bits.nextSetBit(index + 1))
             result.Add(index);
         return result;
+    }
+}
+
+// Every real token reaches Float.parseFloat through COSFloat(String), and
+// PDFStreamParser calls Character.isDigit for every character of every number.
+public sealed class NumberParsingConsumerTests
+{
+    private const int Tokens = 1000;
+
+    // Expected bits are Float.floatToIntBits(Float.parseFloat(text)) from Java 17,
+    // which folds every NaN to 0x7fc00000.
+    [Theory]
+    [InlineData("12.345", 0x4145851f)]
+    [InlineData("612", 0x44190000)]
+    [InlineData("-3.125", unchecked((int)0xc0480000))]
+    [InlineData("1.F", 0x3f800000)]
+    [InlineData(".5e-3f", 0x3a03126f)]
+    [InlineData("1.5D", 0x3fc00000)]
+    [InlineData("+.5", 0x3f000000)]
+    [InlineData("00012.50000", 0x41480000)]
+    [InlineData("1E+10", 0x501502f9)]
+    [InlineData("\n\t12.345\0 ", 0x4145851f)]
+    [InlineData("0X1.8P1", 0x40400000)]
+    [InlineData("-0x.8p+1d", unchecked((int)0xbf800000))]
+    [InlineData("-0x1.8P-1F", unchecked((int)0xbf400000))]
+    [InlineData("0x1.fffffeP127f", 0x7f7fffff)]
+    [InlineData("+NaN", 0x7fc00000)]
+    public void RealTokensFollowTheJavaFloatingLiteralGrammar(string text, int bits)
+    {
+        float value = new COSFloat(text).FloatValue();
+        Assert.Equal(bits, float.IsNaN(value) ? 0x7fc00000 : BitConverter.SingleToInt32Bits(value));
+    }
+
+    // Java's Float.parseFloat rejects each of these with NumberFormatException,
+    // which COSFloat reports as an IOException.
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData(".")]
+    [InlineData("+")]
+    [InlineData("-.")]
+    [InlineData("e5")]
+    [InlineData("1e+")]
+    [InlineData("1e5.0")]
+    [InlineData("1..5")]
+    [InlineData("1_000")]
+    [InlineData("1.5 f")]
+    [InlineData("1.5ff")]
+    [InlineData("+-1")]
+    [InlineData(" 1.5")]
+    [InlineData("1.5 ")]
+    [InlineData("١")]
+    [InlineData("0x")]
+    [InlineData("0x.p1")]
+    [InlineData("0x1.8")]
+    [InlineData("0x1p+")]
+    [InlineData("0x1p1.0")]
+    [InlineData("Infinityf")]
+    [InlineData("infinity")]
+    [InlineData("NAN")]
+    public void MalformedRealTokensAreRejected(string text) =>
+        Assert.Throws<IOException>(() => new COSFloat(text));
+
+    [Fact]
+    public void ParsingARealTokenAllocatesOnlyTheCosFloat()
+    {
+        string[] texts = { "12.345", "-0.5", ".75", "1000.0625" };
+        Assert.Equal(12.345f, new COSFloat(texts[0]).FloatValue());
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        float total = 0;
+        for (int index = 0; index < Tokens; index++)
+            total += new COSFloat(texts[index % texts.Length]).FloatValue();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal(Tokens / 4 * (12.345f - 0.5f + 0.75f + 1000.0625f), total, 1f);
+        // A COSFloat instance is a few dozen bytes; nothing else is needed.
+        Assert.True(allocated <= 64L * Tokens, $"{Tokens} real tokens allocated {allocated} bytes.");
+    }
+
+    [Fact]
+    public void ContentStreamNumbersDoNotAllocatePerDigit()
+    {
+        // Same tokens and COS types; the long line has 36 more digits per line.
+        const string shortLine = "0.5 -0.5 1.5 2.5 3.5 4.5 cm\n";
+        const string longLine = "1000000.5 -2000000.5 3000000.5 4000000.5 5000000.5 6000000.5 cm\n";
+        long shortBytes = AllocatedWhileParsing(shortLine, -0.5f);
+        long longBytes = AllocatedWhileParsing(longLine, -2000000.5f);
+        long extraDigits = (long)(longLine.Length - shortLine.Length) * Tokens;
+        // Longer token text costs a few bytes per digit; a string per digit
+        // (as the netstandard Rune polyfill allocated) costs over twenty.
+        Assert.True(
+            longBytes - shortBytes <= 8 * extraDigits,
+            $"{extraDigits} extra digits allocated {longBytes - shortBytes} extra bytes.");
+    }
+
+    // The production runtime is netstandard2.0, so these calls go through its
+    // Rune polyfill; char.ConvertFromUtf32 there used to allocate per query.
+    [Fact]
+    public void CharacterQueriesDoNotAllocateForAsciiAndBmp()
+    {
+        Assert.True(DripSharp.Runtime.JavaCompat.IsDigit('7'));
+        Assert.True(DripSharp.Runtime.JavaCompat.IsDigit(0x0661));
+        Assert.False(DripSharp.Runtime.JavaCompat.IsDigit(0x4e2d));
+        Assert.True(DripSharp.Runtime.JavaCompat.IsLetterOrDigit(0x00e9));
+        Assert.Equal(9, DripSharp.Runtime.JavaCompat.CharacterType('7'));
+        Assert.Equal(2, DripSharp.Runtime.JavaCompat.CharacterType('a'));
+        Assert.Equal(5, DripSharp.Runtime.JavaCompat.CharacterType(0x4e2d));
+        Assert.Equal(0, DripSharp.Runtime.JavaCompat.CharacterType(0xd800));
+        Assert.Equal('A', DripSharp.Runtime.JavaCompat.ToUpperCase('a'));
+        Assert.Equal(0x00c9, DripSharp.Runtime.JavaCompat.ToUpperCase(0x00e9));
+        Assert.Equal(0x03a9, DripSharp.Runtime.JavaCompat.ToUpperCase(0x03c9));
+        var omega = new DripSharp.Runtime.Rune(0x03c9);
+        Assert.Equal(System.Globalization.UnicodeCategory.LowercaseLetter, DripSharp.Runtime.Rune.GetUnicodeCategory(omega));
+        Assert.Equal(0x03a9, DripSharp.Runtime.Rune.ToUpperInvariant(omega).Value);
+
+        int[] codePoints = { '7', 'a', 'Z', ' ', '.', 0x00e9, 0x0661, 0x03c9, 0x4e2d, 0xff21 };
+        long checksum = Query(codePoints);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 0; index < Tokens; index++) checksum -= Query(codePoints);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.NotEqual(0, checksum);
+        Assert.Equal(0, allocated);
+    }
+
+    private static long Query(int[] codePoints)
+    {
+        long total = 0;
+        foreach (int codePoint in codePoints)
+        {
+            var rune = new DripSharp.Runtime.Rune(codePoint);
+            total += (DripSharp.Runtime.JavaCompat.IsDigit(codePoint) ? 1 : 0) +
+                (DripSharp.Runtime.JavaCompat.IsLetterOrDigit(codePoint) ? 1 : 0) +
+                DripSharp.Runtime.JavaCompat.CharacterType(codePoint) +
+                DripSharp.Runtime.JavaCompat.ToUpperCase(codePoint) +
+                (int)DripSharp.Runtime.Rune.GetUnicodeCategory(rune) +
+                DripSharp.Runtime.Rune.ToUpperInvariant(rune).Value;
+        }
+        return total;
+    }
+
+    private static long AllocatedWhileParsing(string line, float second)
+    {
+        byte[] content = System.Text.Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat(line, Tokens)));
+        Assert.Equal(7 * Tokens, new PDFStreamParser((sbyte[])(Array)content).Parse().Count);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        IList<object> tokens = new PDFStreamParser((sbyte[])(Array)content).Parse();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal(7 * Tokens, tokens.Count);
+        Assert.Equal(second, Assert.IsType<COSFloat>(tokens[1]).FloatValue());
+        return allocated;
     }
 }

@@ -11,7 +11,11 @@ namespace PdfCarton.Benchmarks;
 /// drives the public PDFStreamEngine over an uncompressed page content stream of
 /// Operators cheap operators ("q 1 0 0 1 0 0 cm Q"), so the timing is dominated by
 /// tokenizing, Operator.getOperator and the engine's operator-map lookup rather
-/// than by graphics work. StringKeyLookup isolates one JavaLinkedHashMap hit
+/// than by graphics work. ProcessRealPage parses the same number of operators
+/// written with real operands ("q 0.5 0 0 0.75 12.25 -3.125 cm Q"), so every
+/// digit goes through Character.isDigit and every real through COSFloat and
+/// Float.parseFloat. ParseRealToken isolates COSFloat(String) for one token.
+/// StringKeyLookup isolates one JavaLinkedHashMap hit
 /// with a non-interned string key, the lookup PDFStreamEngine.processOperator
 /// performs for every operator. Building the document is setup and is not timed.
 /// </summary>
@@ -20,9 +24,11 @@ public class ContentStreamBenchmarks
 {
     private PDDocument document = null!;
     private PDPage page = null!;
+    private PDPage realPage = null!;
     private CountingEngine engine = null!;
     private readonly DripSharp.Runtime.JavaLinkedHashMap<string, int> operators = new();
     private readonly string probe = new(new[] { 'c', 'm' });
+    private readonly string[] realTokens = { "12.345", "-0.5", "612", ".75", "1000.0625", "-3.125" };
 
     [Params(3000, 30000)]
     public int Operators { get; set; }
@@ -31,24 +37,32 @@ public class ContentStreamBenchmarks
     public void Setup()
     {
         document = new PDDocument();
-        page = new PDPage();
-        document.AddPage(page);
+        page = AddPage("q 1 0 0 1 0 0 cm Q\n", out var length);
+        realPage = AddPage("q 0.5 0 0 0.75 12.25 -3.125 cm Q\n", out var realLength);
+        engine = new CountingEngine();
+        if (ProcessPage() != Operators || ProcessRealPage() != Operators)
+            throw new InvalidOperationException("Content stream lost operators.");
+        foreach (var name in new[] { "q", "Q", "cm", "BT", "ET", "Tj", "Tf", "re", "f", "S" })
+            operators[name] = operators.Count;
+        Console.WriteLine($"Content stream: operators={Operators} bytes={length} real-bytes={realLength}");
+    }
+
+    private PDPage AddPage(string operatorsLine, out int length)
+    {
+        var added = new PDPage();
+        document.AddPage(added);
         var content = new System.Text.StringBuilder();
         for (var index = 0; index < Operators / 3; index++)
-            content.Append("q 1 0 0 1 0 0 cm Q\n");
+            content.Append(operatorsLine);
         var stream = document.GetDocument().CreateCOSStream();
         using (var output = stream.CreateOutputStream())
         {
             var bytes = System.Text.Encoding.ASCII.GetBytes(content.ToString());
             output.Write(bytes, 0, bytes.Length);
         }
-        page.GetCOSObject().SetItem(COSName.Contents, stream);
-        engine = new CountingEngine();
-        if (ProcessPage() != Operators)
-            throw new InvalidOperationException("Content stream lost operators.");
-        foreach (var name in new[] { "q", "Q", "cm", "BT", "ET", "Tj", "Tf", "re", "f", "S" })
-            operators[name] = operators.Count;
-        Console.WriteLine($"Content stream: operators={Operators} bytes={content.Length}");
+        added.GetCOSObject().SetItem(COSName.Contents, stream);
+        length = content.Length;
+        return added;
     }
 
     [Benchmark]
@@ -57,6 +71,23 @@ public class ContentStreamBenchmarks
         engine.Processed = 0;
         engine.ProcessPage(page);
         return engine.Processed;
+    }
+
+    [Benchmark]
+    public int ProcessRealPage()
+    {
+        engine.Processed = 0;
+        engine.ProcessPage(realPage);
+        return engine.Processed;
+    }
+
+    [Benchmark(OperationsPerInvoke = 1200)]
+    public float ParseRealToken()
+    {
+        var total = 0f;
+        for (var index = 0; index < 1200; index++)
+            total += new COSFloat(realTokens[index % realTokens.Length]).FloatValue();
+        return total;
     }
 
     [Benchmark(OperationsPerInvoke = 1000)]

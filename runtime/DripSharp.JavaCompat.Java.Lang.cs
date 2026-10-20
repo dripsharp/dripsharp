@@ -709,30 +709,58 @@ internal static partial class JavaCompat
 
     private static string JavaString(object? value) => StringValueOf(value);
 
-    internal static bool IsDigit(int codePoint) =>
-        Rune.IsValid(codePoint) &&
-        Rune.GetUnicodeCategory(new Rune(codePoint)) == UnicodeCategory.DecimalDigitNumber;
-
-    internal static bool IsLetterOrDigit(int codePoint) =>
-        Rune.IsValid(codePoint) &&
-        (Rune.IsLetter(new Rune(codePoint)) || IsDigit(codePoint));
-
-    internal static bool IsUnicodeIdentifierStart(int codePoint)
+    // Character queries run for every character PDF, CMap and Type 1 tokenizers
+    // read. ASCII is answered directly, and other BMP code points use the char
+    // overload, which never allocates on any target framework. Surrogate code
+    // units and values outside Unicode have no category, as before.
+    private static bool TryGetUnicodeCategory(int codePoint, out UnicodeCategory category)
     {
-        if (!Rune.IsValid(codePoint)) return false;
-        var category = Rune.GetUnicodeCategory(new Rune(codePoint));
-        return Rune.IsLetter(new Rune(codePoint)) ||
-               category is UnicodeCategory.LetterNumber or UnicodeCategory.CurrencySymbol or UnicodeCategory.ConnectorPunctuation;
+        if ((uint)codePoint <= char.MaxValue)
+        {
+            category = CharUnicodeInfo.GetUnicodeCategory((char)codePoint);
+            return category != UnicodeCategory.Surrogate;
+        }
+        if (!Rune.IsValid(codePoint))
+        {
+            category = UnicodeCategory.OtherNotAssigned;
+            return false;
+        }
+        category = Rune.GetUnicodeCategory(new Rune(codePoint));
+        return true;
     }
 
-    internal static bool IsUnicodeIdentifierPart(int codePoint)
+    private static bool IsLetterCategory(UnicodeCategory category) =>
+        category is UnicodeCategory.UppercaseLetter or UnicodeCategory.LowercaseLetter or
+            UnicodeCategory.TitlecaseLetter or UnicodeCategory.ModifierLetter or
+            UnicodeCategory.OtherLetter;
+
+    internal static bool IsDigit(int codePoint)
     {
-        if (!Rune.IsValid(codePoint)) return false;
-        var category = Rune.GetUnicodeCategory(new Rune(codePoint));
-        return IsUnicodeIdentifierStart(codePoint) ||
-               category is UnicodeCategory.DecimalDigitNumber or UnicodeCategory.NonSpacingMark or
-                   UnicodeCategory.SpacingCombiningMark or UnicodeCategory.Format;
+        if ((uint)codePoint < 0x80) return (uint)(codePoint - '0') <= 9;
+        return TryGetUnicodeCategory(codePoint, out var category) &&
+            category == UnicodeCategory.DecimalDigitNumber;
     }
+
+    internal static bool IsLetterOrDigit(int codePoint)
+    {
+        if ((uint)codePoint < 0x80)
+            return (uint)(codePoint - '0') <= 9 || (uint)((codePoint | 0x20) - 'a') <= 'z' - 'a';
+        return TryGetUnicodeCategory(codePoint, out var category) &&
+            (IsLetterCategory(category) || category == UnicodeCategory.DecimalDigitNumber);
+    }
+
+    internal static bool IsUnicodeIdentifierStart(int codePoint) =>
+        TryGetUnicodeCategory(codePoint, out var category) && IsUnicodeIdentifierStart(category);
+
+    private static bool IsUnicodeIdentifierStart(UnicodeCategory category) =>
+        IsLetterCategory(category) ||
+        category is UnicodeCategory.LetterNumber or UnicodeCategory.CurrencySymbol or UnicodeCategory.ConnectorPunctuation;
+
+    internal static bool IsUnicodeIdentifierPart(int codePoint) =>
+        TryGetUnicodeCategory(codePoint, out var category) &&
+        (IsUnicodeIdentifierStart(category) ||
+         category is UnicodeCategory.DecimalDigitNumber or UnicodeCategory.NonSpacingMark or
+             UnicodeCategory.SpacingCombiningMark or UnicodeCategory.Format);
 
     internal static string CodePointToString(int codePoint)
     {
@@ -752,8 +780,28 @@ internal static partial class JavaCompat
             ? char.ConvertToUtf32(first, value[index + 1])
             : first;
     }
-    internal static int CharacterType(int codePoint) =>
-        !Rune.IsValid(codePoint) ? 0 : Rune.GetUnicodeCategory(new Rune(codePoint)) switch
+    // A nested holder keeps the table independent of JavaCompat's static
+    // initialization order across its partial files.
+    private static class AsciiCharacterTypes
+    {
+        internal static readonly sbyte[] Values = Table();
+
+        private static sbyte[] Table()
+        {
+            var types = new sbyte[0x80];
+            for (var index = 0; index < types.Length; index++)
+                types[index] = (sbyte)CharacterType(CharUnicodeInfo.GetUnicodeCategory((char)index));
+            return types;
+        }
+    }
+
+    internal static int CharacterType(int codePoint)
+    {
+        if ((uint)codePoint < 0x80) return AsciiCharacterTypes.Values[codePoint];
+        return TryGetUnicodeCategory(codePoint, out var category) ? CharacterType(category) : 0;
+    }
+
+    private static int CharacterType(UnicodeCategory category) => category switch
     {
         UnicodeCategory.UppercaseLetter => 1,
         UnicodeCategory.LowercaseLetter => 2,
@@ -795,9 +843,14 @@ internal static partial class JavaCompat
         return digit >= 0 && digit < radix ? digit : -1;
     }
     internal static bool IsWhitespace(char value) => char.IsWhiteSpace(value);
-    internal static int ToUpperCase(int codePoint) => Rune.IsValid(codePoint)
-        ? Rune.ToUpperInvariant(new Rune(codePoint)).Value
-        : codePoint;
+    internal static int ToUpperCase(int codePoint)
+    {
+        if ((uint)codePoint < 0x80)
+            return (uint)(codePoint - 'a') <= 'z' - 'a' ? codePoint - ('a' - 'A') : codePoint;
+        if ((uint)codePoint <= char.MaxValue)
+            return char.IsSurrogate((char)codePoint) ? codePoint : char.ToUpperInvariant((char)codePoint);
+        return Rune.IsValid(codePoint) ? Rune.ToUpperInvariant(new Rune(codePoint)).Value : codePoint;
+    }
     internal static StringBuilder AppendCodePoint(StringBuilder builder, int codePoint) =>
         builder.Append(CodePointToString(codePoint));
 
@@ -1208,29 +1261,96 @@ internal static partial class JavaCompat
         if (!negative) return (long)magnitude;
         return magnitude == negativeLimit ? minimum : -(long)magnitude;
     }
+    private enum FloatingLiteralKind { Decimal, Hexadecimal, NaN, PositiveInfinity, NegativeInfinity }
+
     // Java accepts ASCII trim, decimal/hex literals and optional type suffixes,
     // but never locale grouping, localized digits, or case-insensitive specials.
-    private static string FloatingLiteral(string value)
+    // The scanner validates that grammar in place, so a plain token is parsed
+    // without a regular expression or a substring. On success [start, end) is
+    // the literal without surrounding control characters or its type suffix,
+    // and for hexadecimal literals [digits, exponent) holds the significand.
+    private static FloatingLiteralKind ScanFloatingLiteral(
+        string value, out int start, out int end, out int digits, out int exponent)
     {
         if (value is null) throw new NullReferenceException();
-        var start = 0;
-        var end = value.Length;
+        start = 0;
+        end = value.Length;
         while (start < end && value[start] <= ' ') start++;
         while (end > start && value[end - 1] <= ' ') end--;
-        var text = value.Substring(start, end - start);
-        if (Regex.IsMatch(text, @"\A[+-]?(?:NaN|Infinity)\z")) return text;
-        if (!Regex.IsMatch(text, @"\A[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|0[xX](?:[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|\.[0-9a-fA-F]+)[pP][+-]?[0-9]+)[fFdD]?\z"))
-            throw new JavaNumberFormatException(text.Length == 0 ? "empty String" : $"For input string: \"{text}\"");
-        return text.Length > 0 && "fFdD".IndexOf(text[text.Length - 1]) >= 0
-            ? text.Substring(0, text.Length - 1) : text;
+        var index = start;
+        var negative = false;
+        if (index < end && value[index] is '+' or '-')
+        {
+            negative = value[index] == '-';
+            index++;
+        }
+        digits = index;
+        exponent = end;
+        if (IsLiteralAt(value, index, end, "NaN")) return FloatingLiteralKind.NaN;
+        if (IsLiteralAt(value, index, end, "Infinity"))
+            return negative ? FloatingLiteralKind.NegativeInfinity : FloatingLiteralKind.PositiveInfinity;
+        var hexadecimal = end - index >= 2 && value[index] == '0' && value[index + 1] is 'x' or 'X';
+        if (hexadecimal) index += 2;
+        digits = index;
+        var significandDigits = SkipDigits(value, ref index, end, hexadecimal);
+        if (index < end && value[index] == '.')
+        {
+            index++;
+            significandDigits += SkipDigits(value, ref index, end, hexadecimal);
+        }
+        var valid = significandDigits > 0;
+        exponent = index;
+        if (valid && index < end &&
+            (hexadecimal ? value[index] is 'p' or 'P' : value[index] is 'e' or 'E'))
+        {
+            index++;
+            if (index < end && value[index] is '+' or '-') index++;
+            valid = SkipDigits(value, ref index, end, false) > 0;
+        }
+        else if (hexadecimal)
+        {
+            valid = false;
+        }
+        var literalEnd = index;
+        if (index < end && value[index] is 'f' or 'F' or 'd' or 'D') index++;
+        if (!valid || index != end)
+        {
+            throw new JavaNumberFormatException(start == end
+                ? "empty String"
+                : $"For input string: \"{value.Substring(start, end - start)}\"");
+        }
+        end = literalEnd;
+        return hexadecimal ? FloatingLiteralKind.Hexadecimal : FloatingLiteralKind.Decimal;
     }
 
-    private static ulong HexFloatingBits(string text, int precision, int minimumExponent, int maximumExponent)
+    private static bool IsLiteralAt(string value, int index, int end, string literal) =>
+        end - index == literal.Length &&
+        string.CompareOrdinal(value, index, literal, 0, literal.Length) == 0;
+
+    private static int SkipDigits(string value, ref int index, int end, bool hexadecimal)
     {
-        var negative = text[0] == '-';
+        var begin = index;
+        while (index < end)
+        {
+            var character = value[index];
+            if ((uint)(character - '0') > 9 &&
+                (!hexadecimal || (uint)((character | 0x20) - 'a') > 'f' - 'a'))
+                break;
+            index++;
+        }
+        return index - begin;
+    }
+
+    // Decimal text goes to the runtime's correctly rounded parser; only a literal
+    // with surrounding control characters or a type suffix needs a copy.
+    private static string DecimalLiteralText(string value, int start, int end) =>
+        start == 0 && end == value.Length ? value : value.Substring(start, end - start);
+
+    private static ulong HexFloatingBits(
+        string text, bool negative, int begin, int p, int end,
+        int precision, int minimumExponent, int maximumExponent)
+    {
         var sign = negative ? 1UL << (precision == 53 ? 63 : 31) : 0UL;
-        var begin = text[0] == '+' || negative ? 3 : 2;
-        var p = text.IndexOfAny(new[] { 'p', 'P' });
         var significand = BigInteger.Zero;
         var fractionDigits = 0;
         var fraction = false;
@@ -1242,7 +1362,7 @@ internal static partial class JavaCompat
             if (fraction) fractionDigits++;
         }
         if (significand.IsZero) return sign;
-        var exponent = BigInteger.Parse(text.Substring(p + 1), CultureInfo.InvariantCulture) - 4 * fractionDigits;
+        var exponent = BigInteger.Parse(text.Substring(p + 1, end - p - 1), CultureInfo.InvariantCulture) - 4 * fractionDigits;
         var length = 0;
         for (var n = significand; n > 0; n >>= 1) length++;
         var top = exponent + length - 1;
@@ -1271,19 +1391,33 @@ internal static partial class JavaCompat
 
     internal static double ParseDouble(string value)
     {
-        var text = FloatingLiteral(value);
-        if (text.EndsWith("NaN", StringComparison.Ordinal)) return double.NaN;
-        if (text.IndexOf("0x", StringComparison.OrdinalIgnoreCase) >= 0)
-            return BitConverter.Int64BitsToDouble(unchecked((long)HexFloatingBits(text, 53, -1022, 1023)));
-        return double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
+        switch (ScanFloatingLiteral(value, out var start, out var end, out var digits, out var exponent))
+        {
+            case FloatingLiteralKind.NaN: return double.NaN;
+            case FloatingLiteralKind.PositiveInfinity: return double.PositiveInfinity;
+            case FloatingLiteralKind.NegativeInfinity: return double.NegativeInfinity;
+            case FloatingLiteralKind.Hexadecimal:
+                return BitConverter.Int64BitsToDouble(unchecked((long)HexFloatingBits(
+                    value, value[start] == '-', digits, exponent, end, 53, -1022, 1023)));
+            default:
+                return double.Parse(
+                    DecimalLiteralText(value, start, end), NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
     }
     internal static float ParseFloat(string value)
     {
-        var text = FloatingLiteral(value);
-        if (text.EndsWith("NaN", StringComparison.Ordinal)) return float.NaN;
-        if (text.IndexOf("0x", StringComparison.OrdinalIgnoreCase) >= 0)
-            return BitConverter.ToSingle(BitConverter.GetBytes(unchecked((uint)HexFloatingBits(text, 24, -126, 127))), 0);
-        return float.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
+        switch (ScanFloatingLiteral(value, out var start, out var end, out var digits, out var exponent))
+        {
+            case FloatingLiteralKind.NaN: return float.NaN;
+            case FloatingLiteralKind.PositiveInfinity: return float.PositiveInfinity;
+            case FloatingLiteralKind.NegativeInfinity: return float.NegativeInfinity;
+            case FloatingLiteralKind.Hexadecimal:
+                return BitConverter.ToSingle(BitConverter.GetBytes(unchecked((uint)HexFloatingBits(
+                    value, value[start] == '-', digits, exponent, end, 24, -126, 127))), 0);
+            default:
+                return float.Parse(
+                    DecimalLiteralText(value, start, end), NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
     }
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
@@ -1400,9 +1534,8 @@ internal static partial class JavaCompat
     internal static bool CharacterIsDefined(int codePoint)
     {
         if (codePoint is >= 0xd800 and <= 0xdfff) return true;
-        return Rune.IsValid(codePoint) &&
-            Rune.GetUnicodeCategory(new Rune(codePoint)) !=
-                UnicodeCategory.OtherNotAssigned;
+        return TryGetUnicodeCategory(codePoint, out var category) &&
+            category != UnicodeCategory.OtherNotAssigned;
     }
     internal static bool IsBmpCodePoint(int codePoint) => (uint)codePoint <= 0xffff;
     internal static bool IsValidCodePoint(int codePoint) => (uint)codePoint <= 0x10ffff;

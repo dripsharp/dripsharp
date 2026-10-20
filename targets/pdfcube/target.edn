@@ -36,7 +36,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 16732 :total-lines 18883}}
+    :budget {:authored-lines 16871 :total-lines 19022}}
    :required-capabilities
    #{:java-compat :java-io :java-nio :java-regex-unicode}}
   {:id "pdfcube-fontbox"
@@ -53,7 +53,7 @@
      :pdfcube/image-codecs-unsupported]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 30235 :total-lines 47719}}
+    :budget {:authored-lines 30374 :total-lines 47858}}
    :required-capabilities
    #{:font-discovery :icc :java-bidi :java-compat :java-regex-unicode
      :skia-geometry}}
@@ -67,7 +67,7 @@
    {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 16732 :total-lines 24196}}
+    :budget {:authored-lines 16871 :total-lines 24335}}
    :required-capabilities #{:java-compat :java-regex-unicode :xml}}
   {:id "pdfcube-pdfbox"
    :path "profiles/pdfbox.edn"

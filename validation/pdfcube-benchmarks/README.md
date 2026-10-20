@@ -21,7 +21,8 @@ Select individual classes with `--filter '*RasterBenchmarks*'`,
 `--filter '*FlateBenchmarks*'` (/FlateDecode and whole embedded-font loading
 at 64 KiB to 4 MiB, server GC), or `--filter '*ContentStreamBenchmarks*'`
 (PDFStreamEngine.processPage over 3,000 and 30,000 cheap `q`/`cm`/`Q`
-operators, and one string-keyed JavaLinkedHashMap hit with a non-interned key),
+operators with integer or real operands, one COSFloat(String) parse, and one
+string-keyed JavaLinkedHashMap hit with a non-interned key),
 or `--filter '*ScratchFileBenchmarks*'` (build, save, load and save again a
 document of 1,000 to 12,000 two-page streams under a `SetupMixed` stream cache,
 and the ScratchFile free-page map alone).

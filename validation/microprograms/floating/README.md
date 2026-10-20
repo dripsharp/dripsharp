@@ -14,7 +14,7 @@ export JAVA_TOOL_OPTIONS=-Xmx28g
 clojure -J-Xmx28g -M -m dripsharp.floating-microprogram --seed 73 --samples 24
 ```
 
-There are 964 recorded operations and at most 24 seeded operations, below the
+There are 976 recorded operations and at most 24 seeded operations, below the
 existing 1,000-operation microprogram limit. Seeded operations alternate double
 conversion and float text, with the actual decimal input saved before either
 implementation runs. Each path builds its fixed runner once per invocation;

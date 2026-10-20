@@ -11,7 +11,7 @@
         rows (micro/validate-snapshot! record)]
     (is (= record (floating/snapshot 73 24)))
     (is (= rows (compat/select-cases (:input record) {:family "floating"})))
-    (is (= 988 (count rows)))
+    (is (= 1000 (count rows)))
     (is (= #{"none" "illegal-argument"} (set (map :expected-exception rows))))
     (is (= :explicit-local-only
            (get-in (registry/registry) [:translated-microprograms :families "floating" :execution])))
