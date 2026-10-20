@@ -1736,6 +1736,46 @@ internal ref struct PdfCartonPixels
         changed = true;
     }
 
+    // Writes one full row, storing exactly what Set stores for each color.
+    internal void SetRow(int y, ReadOnlySpan<SKColor> colors)
+    {
+        if ((uint)y >= (uint)info.Height || colors.Length != info.Width)
+            throw new ArgumentOutOfRangeException();
+        var offset = y * rowBytes;
+        if (info.ColorType == SKColorType.Bgra8888 &&
+            info.AlphaType != SKAlphaType.Premul &&
+            BitConverter.IsLittleEndian)
+        {
+            // SKColor is 0xAARRGGBB, so its little-endian bytes are BGRA.
+            var output = MemoryMarshal.Cast<byte, uint>(bytes.Slice(offset, colors.Length * 4));
+            var input = MemoryMarshal.Cast<SKColor, uint>(colors);
+            changed = true;
+            if (info.AlphaType != SKAlphaType.Opaque)
+            {
+                input.CopyTo(output);
+                return;
+            }
+            for (var x = 0; x < input.Length; x++) output[x] = input[x] | 0xff000000;
+            return;
+        }
+        if (info.ColorType == SKColorType.Gray8)
+        {
+            for (var x = 0; x < colors.Length; x++)
+            {
+                var color = colors[x];
+                if (color.Red == color.Green && color.Red == color.Blue)
+                {
+                    bytes[offset + x] = color.Red;
+                    changed = true;
+                }
+                else
+                    Set(x, y, color);
+            }
+            return;
+        }
+        for (var x = 0; x < colors.Length; x++) Set(x, y, colors[x]);
+    }
+
     // The caller validates the region and sample array before entering these bulk
     // paths. Other formats and alpha modes retain the per-pixel conversion above.
     internal bool TryGetPixels(int x, int y, int width, int height, int[] pixels)
@@ -1891,6 +1931,8 @@ public sealed class JavaRaster
     private readonly int scanlineStride;
     private readonly int[] bandOffsets;
     private readonly int packedPixelBits;
+    private readonly int[]? bitMasks;
+    private readonly int[]? bitShifts;
 
     internal JavaRaster(SKBitmap bitmap)
     {
@@ -1980,6 +2022,37 @@ public sealed class JavaRaster
             pixelBits,
             new sbyte[checked((width * pixelBits + 7) / 8 * height)]);
 
+    // Java's SinglePixelPackedSampleModel, as DirectColorModel's compatible
+    // raster: one int per pixel, each band selected by its bit mask. Data
+    // elements are the packed ints; pixels and samples are the band values.
+    private JavaRaster(int width, int height, int[] bitMasks, int[] packedData)
+    {
+        if (width <= 0 || height <= 0 || bitMasks.Length == 0)
+            throw new ArgumentException("Raster dimensions and band count must be positive.");
+        this.width = width;
+        this.height = height;
+        numberOfBands = bitMasks.Length;
+        transferType = PdfCartonFontCompat.DATA_BUFFER_TYPE_INT;
+        pixelStride = 1;
+        scanlineStride = width;
+        bandOffsets = new int[numberOfBands];
+        this.bitMasks = (int[])bitMasks.Clone();
+        bitShifts = new int[numberOfBands];
+        for (var band = 0; band < numberOfBands; band++)
+            bitShifts[band] = JavaCompat.TrailingZeroCount(unchecked((uint)bitMasks[band]));
+        if (packedData.Length < checked(width * height))
+            throw new ArgumentException("Packed raster storage is truncated.", nameof(packedData));
+        storage = packedData;
+    }
+
+    internal static JavaRaster SinglePixelPacked(int width, int height, int[] bitMasks) =>
+        new(width, height, bitMasks, new int[checked(width * height)]);
+
+    internal bool IsSinglePixelPacked => bitMasks is not null;
+
+    internal bool HasBitMasks(ReadOnlySpan<int> masks) =>
+        bitMasks is not null && masks.SequenceEqual(bitMasks);
+
     internal static JavaRaster BinarySnapshot(SKBitmap bitmap)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
@@ -2051,6 +2124,8 @@ public sealed class JavaRaster
     public JavaRaster CreateCompatibleWritableRaster() =>
         packedPixelBits != 0
             ? Packed(Width, Height, packedPixelBits)
+            : bitMasks is not null
+            ? SinglePixelPacked(Width, Height, bitMasks)
             : new(
                 TransferType,
                 Width,
@@ -2068,6 +2143,8 @@ public sealed class JavaRaster
                 packedPixelBits,
                 (sbyte[])storage!.Clone());
         }
+        if (bitMasks is not null)
+            return new JavaRaster(Width, Height, bitMasks, (int[])storage!.Clone());
         var copy = new JavaRaster(
             TransferType,
             Width,
@@ -2085,6 +2162,8 @@ public sealed class JavaRaster
         ValidateRegion(x, y, width, height);
         var copy = packedPixelBits != 0
             ? Packed(width, height, packedPixelBits)
+            : bitMasks is not null
+            ? SinglePixelPacked(width, height, bitMasks)
             : new JavaRaster(TransferType, width, height, NumberOfBands, bandOffsets);
         var row = new int[checked(width * NumberOfBands)];
         for (var offset = 0; offset < height; offset++)
@@ -2183,6 +2262,63 @@ public sealed class JavaRaster
         return pixels;
     }
 
+    // Managed samples back this raster: an array-backed raster or a bitmap
+    // view whose storage GetByteData/GetUShortData materialized.
+    internal bool HasSampleStorage => storage is not null;
+
+    // Reads row y's samples from managed storage, band-interleaved exactly as
+    // GetPixels returns them. Callers check HasSampleStorage.
+    internal void ReadRowSamples(int y, int[] samples)
+    {
+        if ((uint)y >= (uint)height || samples.Length < width * numberOfBands)
+            throw new IndexOutOfRangeException();
+        var rowStart = y * scanlineStride;
+        if (packedPixelBits != 0)
+        {
+            var packed = (sbyte[])storage!;
+            var mask = (1 << packedPixelBits) - 1;
+            for (var x = 0; x < width; x++)
+            {
+                var bitOffset = x * packedPixelBits;
+                samples[x] = unchecked((byte)packed[rowStart + (bitOffset >> 3)]) >>
+                    (8 - packedPixelBits - (bitOffset & 7)) & mask;
+            }
+            return;
+        }
+        var offset = 0;
+        if (bitMasks is not null)
+        {
+            var pixels = (int[])storage!;
+            for (var x = 0; x < width; x++)
+            {
+                var pixel = unchecked((uint)pixels[rowStart + x]);
+                for (var band = 0; band < numberOfBands; band++)
+                    samples[offset++] = unchecked((int)((pixel & (uint)bitMasks[band]) >> bitShifts![band]));
+            }
+            return;
+        }
+        switch (storage)
+        {
+            case sbyte[] bytes:
+                for (var x = 0; x < width; x++, rowStart += pixelStride)
+                    for (var band = 0; band < numberOfBands; band++)
+                        samples[offset++] = unchecked((byte)bytes[rowStart + bandOffsets[band]]);
+                return;
+            case short[] words:
+                for (var x = 0; x < width; x++, rowStart += pixelStride)
+                    for (var band = 0; band < numberOfBands; band++)
+                        samples[offset++] = unchecked((ushort)words[rowStart + bandOffsets[band]]);
+                return;
+            case int[] integers:
+                for (var x = 0; x < width; x++, rowStart += pixelStride)
+                    for (var band = 0; band < numberOfBands; band++)
+                        samples[offset++] = integers[rowStart + bandOffsets[band]];
+                return;
+            default:
+                throw new InvalidOperationException("Raster does not use array-backed storage.");
+        }
+    }
+
     public object GetDataElements(
         int x,
         int y,
@@ -2215,6 +2351,16 @@ public sealed class JavaRaster
                 }
             }
             return values;
+        }
+
+        if (bitMasks is not null)
+        {
+            var packed = output as int[] ?? new int[checked(width * height)];
+            if (packed.Length < width * height) throw new IndexOutOfRangeException();
+            var data = (int[])storage!;
+            for (var row = 0; row < height; row++)
+                Array.Copy(data, (y + row) * scanlineStride + x, packed, row * width, width);
+            return packed;
         }
 
         var length = checked(width * height * NumberOfBands);
@@ -2339,6 +2485,15 @@ public sealed class JavaRaster
             PdfCartonPixels.Write(bitmap, x, y, NumberOfBands == 1
                 ? new SKColor(red, red, red)
                 : new SKColor(red, Value(1), Value(2), NumberOfBands == 4 ? Value(3) : (byte)255));
+            return;
+        }
+
+        if (bitMasks is not null)
+        {
+            if (values is not int[] packedValues)
+                throw new ArgumentException("Raster data elements do not match its transfer type.");
+            if (packedValues.Length == 0) throw new IndexOutOfRangeException();
+            ((int[])storage!)[y * scanlineStride + x] = packedValues[0];
             return;
         }
 
@@ -2486,6 +2641,12 @@ public sealed class JavaRaster
             var mask = (1 << packedPixelBits) - 1;
             return unchecked((byte)((sbyte[])storage!)[index]) >> shift & mask;
         }
+        if (bitMasks is not null)
+        {
+            return unchecked((int)(
+                ((uint)((int[])storage!)[y * scanlineStride + x] & (uint)bitMasks[band]) >>
+                bitShifts![band]));
+        }
         return storage is not null
             ? GetStorageElement(StorageIndex(x, y, band))
             : Component(PdfCartonPixels.Read(bitmap!, x, y), band);
@@ -2505,6 +2666,14 @@ public sealed class JavaRaster
             var current = unchecked((byte)bytes[index]);
             bytes[index] = unchecked(
                 (sbyte)(current & ~mask | (value & componentMask) << shift));
+            return;
+        }
+        if (bitMasks is not null)
+        {
+            var data = (int[])storage!;
+            var index = y * scanlineStride + x;
+            var bandMask = bitMasks[band];
+            data[index] = data[index] & ~bandMask | value << bitShifts![band] & bandMask;
             return;
         }
         if (storage is not null)
@@ -2558,6 +2727,19 @@ public sealed class JavaRaster
         storage = dataType == PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE
             ? new sbyte[checked(Width * Height * NumberOfBands)]
             : new short[checked(Width * Height * NumberOfBands)];
+        if (bitmap.ColorType == SKColorType.Gray8 && storage is sbyte[] grayStorage)
+        {
+            // A gray bitmap's row bytes are its samples (TYPE_BYTE_GRAY).
+            var pixels = bitmap.GetPixelSpan();
+            var rowBytes = bitmap.RowBytes;
+            for (var y = 0; y < Height; y++)
+            {
+                MemoryMarshal.Cast<byte, sbyte>(pixels.Slice(y * rowBytes, Width))
+                    .CopyTo(grayStorage.AsSpan(y * Width, Width));
+            }
+            GC.KeepAlive(bitmap);
+            return;
+        }
         using var access = new PdfCartonPixels(bitmap);
         for (var y = 0; y < Height; y++)
         {
@@ -3589,6 +3771,10 @@ public class JavaColorModel
     // The model GetRaster/GetColorModel derive from a bitmap's image type.
     internal bool IsImageTypeModel =>
         explicitColorSpace is null && Palette is null && explicitMasks is null;
+    private bool IsIntImageType =>
+        imageType is PdfCartonFontCompat.TYPE_INT_RGB or
+            PdfCartonFontCompat.TYPE_INT_ARGB or
+            PdfCartonFontCompat.TYPE_INT_BGR;
 
     private double[]? componentMaxima;
 
@@ -3607,13 +3793,13 @@ public class JavaColorModel
         var count = NumberOfComponents;
         if (components.Length < checked(width * count))
             throw new IndexOutOfRangeException();
+        // INT image types decode a data element as one packed int, so their
+        // component (non-packed) rasters are read as samples here.
         if (Palette is null && explicitMasks is null &&
-            imageType is not PdfCartonFontCompat.TYPE_INT_RGB and
-                not PdfCartonFontCompat.TYPE_INT_ARGB and
-                not PdfCartonFontCompat.TYPE_INT_BGR and
-                not PdfCartonFontCompat.TYPE_BYTE_BINARY &&
+            imageType != PdfCartonFontCompat.TYPE_BYTE_BINARY &&
             raster.HasArrayStorage &&
             raster.PackedPixelBits == 0 &&
+            !raster.IsSinglePixelPacked &&
             raster.NumberOfBands == count)
         {
             var length = width * count;
@@ -3628,6 +3814,20 @@ public class JavaColorModel
                     ? (float)JavaCompat.Clamp(value, 0d, 1d)
                     : (float)value;
             }
+            return;
+        }
+        if (IsIntImageType && raster.IsSinglePixelPacked &&
+            raster.NumberOfBands >= count &&
+            !raster.HasBitMasks(PackedMasks(imageType).AsSpan(0, count)))
+        {
+            // Another INT layout's packed raster: its bands are still red,
+            // green, blue (and alpha), which Java's setData copies as samples.
+            var bands = raster.NumberOfBands;
+            if (samples is null || samples.Length < width * bands) samples = new int[width * bands];
+            raster.ReadRowSamples(y, samples);
+            for (var x = 0; x < width; x++)
+                for (var component = 0; component < count; component++)
+                    components[x * count + component] = samples[x * bands + component] / 255f;
             return;
         }
         for (var x = 0; x < width; x++)
@@ -3665,13 +3865,21 @@ public class JavaColorModel
                 height,
                 1);
         }
+        if (explicitColorSpace is null && explicitMasks is null &&
+            imageType is PdfCartonFontCompat.TYPE_INT_RGB or
+                PdfCartonFontCompat.TYPE_INT_ARGB or
+                PdfCartonFontCompat.TYPE_INT_BGR)
+        {
+            // Java's DirectColorModel packs a pixel into one int, in the
+            // layout GetDataElements and GetNormalizedComponents use.
+            return JavaRaster.SinglePixelPacked(
+                width,
+                height,
+                PackedMasks(imageType).AsSpan(0, NumberOfComponents).ToArray());
+        }
         var dataType = explicitColorSpace is not null
             ? explicitDataType
-            : imageType is PdfCartonFontCompat.TYPE_INT_RGB or
-                PdfCartonFontCompat.TYPE_INT_ARGB or
-                PdfCartonFontCompat.TYPE_INT_BGR
-                ? PdfCartonFontCompat.DATA_BUFFER_TYPE_INT
-                : PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE;
+            : PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE;
         return new JavaRaster(dataType, width, height, NumberOfComponents);
     }
 
@@ -3685,7 +3893,19 @@ public class JavaColorModel
         components ??= new float[offset + NumberOfComponents];
         if (components.Length < offset + NumberOfComponents)
             throw new IndexOutOfRangeException();
+        WriteNormalizedComponents(pixel, components.AsSpan(offset, NumberOfComponents));
+        return components;
+    }
 
+    // Color spaces have at most fifteen components, plus alpha.
+    private const int MaximumPixelComponents = JavaColorSpace.MaximumComponents + 1;
+
+    // Writes GetNormalizedComponents' values for pixel into components, which
+    // holds exactly NumberOfComponents values.
+    private void WriteNormalizedComponents(object pixel, Span<float> components)
+    {
+        ArgumentNullException.ThrowIfNull(pixel);
+        const int offset = 0;
         if (Palette is not null)
         {
             var paletteIndex = pixel switch
@@ -3707,7 +3927,7 @@ public class JavaColorModel
             components[offset + 2] = color.Blue / 255f;
             if (HasAlpha)
                 components[offset + NumberOfColorComponents] = color.Alpha / 255f;
-            return components;
+            return;
         }
 
 
@@ -3723,13 +3943,12 @@ public class JavaColorModel
                 components[offset + component] =
                     ((packedValue & mask) >> shift) / (float)maximum;
             }
-            return components;
+            return;
         }
 
-        if (pixel is int[] packed && packed.Length == 1 &&
-            imageType is PdfCartonFontCompat.TYPE_INT_RGB or
-                PdfCartonFontCompat.TYPE_INT_ARGB or
-                PdfCartonFontCompat.TYPE_INT_BGR)
+        // Like Java's DirectColorModel, the packed pixel is element zero of
+        // any int[] (callers reuse larger buffers).
+        if (pixel is int[] packed && packed.Length > 0 && IsIntImageType)
         {
             var value = packed[0];
             if (imageType == PdfCartonFontCompat.TYPE_INT_BGR)
@@ -3747,7 +3966,7 @@ public class JavaColorModel
             if (HasAlpha)
                 components[offset + NumberOfColorComponents] =
                     ((value >> 24) & 0xff) / 255f;
-            return components;
+            return;
         }
 
         for (var component = 0; component < NumberOfComponents; component++)
@@ -3772,7 +3991,6 @@ public class JavaColorModel
                     nameof(pixel))
             };
         }
-        return components;
     }
 
     public object GetDataElements(float[] components, int offset, object? pixel)
@@ -3907,9 +4125,14 @@ public class JavaColorModel
 
     public int GetBlue(object pixel) => GetRgbComponent(pixel, 2);
 
+    // The getters convert through stack buffers, so per-pixel callers such as
+    // SoftMask allocate nothing (a public array override of the color space
+    // still sees, and allocates, the arrays it is declared with).
     public int GetAlpha(object pixel)
     {
-        var components = GetNormalizedComponents(pixel, null, 0);
+        Span<float> components = stackalloc float[MaximumPixelComponents];
+        var count = NumberOfComponents;
+        WriteNormalizedComponents(pixel, components.Slice(0, count));
         return HasAlpha
             ? (int)JavaCompat.Round(
                 JavaCompat.Clamp(components[NumberOfColorComponents], 0f, 1f) * 255f)
@@ -3918,9 +4141,205 @@ public class JavaColorModel
 
     private int GetRgbComponent(object pixel, int component)
     {
-        var components = GetNormalizedComponents(pixel, null, 0);
-        var rgb = ColorSpace.ToRgb(components);
+        Span<float> components = stackalloc float[MaximumPixelComponents];
+        var count = NumberOfComponents;
+        WriteNormalizedComponents(pixel, components.Slice(0, count));
+        Span<float> rgb = stackalloc float[3];
+        ColorSpace.ConvertToRgb(components.Slice(0, count), rgb);
         return (int)JavaCompat.Round(JavaCompat.Clamp(rgb[component], 0f, 1f) * 255f);
+    }
+
+    // The color RenderRaster stores for a data element: one ToRgb of its
+    // normalized components, each channel rounded to a byte.
+    internal SKColor RenderedColor(object pixel)
+    {
+        Span<float> components = stackalloc float[MaximumPixelComponents];
+        var count = NumberOfComponents;
+        var pixelComponents = components.Slice(0, count);
+        WriteNormalizedComponents(pixel, pixelComponents);
+        Span<float> rgb = stackalloc float[3];
+        ColorSpace.ConvertToRgb(pixelComponents, rgb);
+        return new SKColor(
+            PdfCartonFontCompat.ComponentByte(rgb[0]),
+            PdfCartonFontCompat.ComponentByte(rgb[1]),
+            PdfCartonFontCompat.ComponentByte(rgb[2]),
+            HasAlpha
+                ? PdfCartonFontCompat.ComponentByte(pixelComponents[NumberOfColorComponents])
+                : byte.MaxValue);
+    }
+
+    // A converter from raster sample rows to rendered colors, or null when the
+    // rendered color of a pixel is not a function of a single sample (index or
+    // gray) or of each band separately (sRGB/gray components, packed ints).
+    // Its tables hold RenderedColor results, so output is unchanged.
+    internal RasterRowConverter? CreateRowConverter(JavaRaster raster)
+    {
+        if (!raster.HasSampleStorage || explicitMasks is not null ||
+            ColorSpace.OverridesArrayConversions)
+            return null;
+        var count = NumberOfComponents;
+        var bands = raster.NumberOfBands;
+        if (raster.IsSinglePixelPacked)
+        {
+            // An INT image type reads a packed raster's red, green, blue (and
+            // alpha) bands: decoded from its own layout, or copied as samples
+            // from another (GetNormalizedRow).
+            if (explicitColorSpace is not null || Palette is not null || !IsIntImageType ||
+                SeparableColorCount(ColorSpace) != 3 || bands < count)
+                return null;
+            var colors = new SKColor[256];
+            var packed = new int[1];
+            for (var value = 0; value < colors.Length; value++)
+            {
+                packed[0] = value * 0x01010101;
+                colors[value] = RenderedColor(packed);
+            }
+            return new RasterRowConverter(RasterRowConverter.RgbBands, colors, bands, HasAlpha);
+        }
+
+        var transferType = raster.TransferType;
+        var domain = raster.PackedPixelBits != 0
+            ? 1 << raster.PackedPixelBits
+            : transferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE
+            ? 256
+            : transferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT &&
+                (long)raster.Width * raster.Height >= 65536
+            ? 65536
+            : 0;
+        if (domain == 0) return null;
+        // The data element GetDataElements returns for a pixel whose bands
+        // all hold sample (reused: RenderedColor does not retain it).
+        var words = transferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT
+            ? new short[bands]
+            : null;
+        var bytes = new sbyte[bands];
+        object Element(int sample)
+        {
+            if (words is not null)
+            {
+                words.AsSpan().Fill(unchecked((short)sample));
+                return words;
+            }
+            bytes.AsSpan().Fill(unchecked((sbyte)sample));
+            return bytes;
+        }
+
+        if (bands == 1 && (Palette is not null || count == 1))
+        {
+            // Indices past the palette keep the per-pixel conversion, which
+            // reports them exactly as before.
+            var colors = new SKColor[Palette is null ? domain : Math.Min(domain, Palette.Length)];
+            for (var sample = 0; sample < colors.Length; sample++)
+                colors[sample] = RenderedColor(Element(sample));
+            return new RasterRowConverter(this, colors, Element);
+        }
+
+        var colorCount = SeparableColorCount(ColorSpace);
+        if (Palette is not null || bands != count ||
+            colorCount == 0 || colorCount != NumberOfColorComponents)
+            return null;
+        // Every band carries the same sample, so each table entry holds each
+        // band's own rendered channel.
+        var table = new SKColor[domain];
+        for (var sample = 0; sample < domain; sample++)
+            table[sample] = RenderedColor(Element(sample));
+        return new RasterRowConverter(
+            colorCount == 1 ? RasterRowConverter.GrayBands : RasterRowConverter.RgbBands,
+            table,
+            bands,
+            HasAlpha);
+    }
+
+    // The bit masks of an INT image type's packed pixel, alpha last.
+    private static int[] PackedMasks(int imageType) =>
+        imageType == PdfCartonFontCompat.TYPE_INT_BGR
+            ? [0xff, 0xff00, 0xff0000, unchecked((int)0xff000000)]
+            : [0xff0000, 0xff00, 0xff, unchecked((int)0xff000000)];
+
+    // 3 or 1 when JavaColorSpace.ToRgb clamps each RGB component on its own
+    // or repeats the gray one; 0 for any other conversion.
+    private static int SeparableColorCount(JavaColorSpace colorSpace)
+    {
+        if (colorSpace is JavaIccColorSpace { IsSrgb: false }) return 0;
+        return colorSpace.Type switch
+        {
+            JavaColorSpace.TYPE_GRAY when colorSpace.NumberOfComponents == 1 => 1,
+            JavaColorSpace.TYPE_RGB when colorSpace.NumberOfComponents == 3 => 3,
+            _ => 0
+        };
+    }
+}
+
+// Converts rows of raster samples (as JavaRaster.ReadRowSamples returns them)
+// to the colors RenderRaster stores, through tables built by
+// JavaColorModel.CreateRowConverter.
+internal sealed class RasterRowConverter
+{
+    internal const int Indexed = 0;
+    internal const int GrayBands = 1;
+    internal const int RgbBands = 2;
+
+    private readonly int mode;
+    private readonly SKColor[] table;
+    private readonly int bands;
+    private readonly bool hasAlpha;
+    private readonly JavaColorModel? colorModel;
+    private readonly Func<int, object>? element;
+
+    // Band tables: entry s holds each channel rendered from sample s in that
+    // channel's band (gray from band 0); alpha comes from the last band.
+    internal RasterRowConverter(int mode, SKColor[] table, int bands, bool hasAlpha)
+    {
+        this.mode = mode;
+        this.table = table;
+        this.bands = bands;
+        this.hasAlpha = hasAlpha;
+    }
+
+    internal RasterRowConverter(JavaColorModel colorModel, SKColor[] table, Func<int, object> element)
+    {
+        mode = Indexed;
+        this.table = table;
+        bands = 1;
+        this.colorModel = colorModel;
+        this.element = element;
+    }
+
+    internal void Convert(int[] samples, Span<SKColor> row)
+    {
+        switch (mode)
+        {
+            case Indexed:
+                for (var x = 0; x < row.Length; x++)
+                {
+                    var sample = samples[x];
+                    row[x] = (uint)sample < (uint)table.Length
+                        ? table[sample]
+                        : colorModel!.RenderedColor(element!(sample));
+                }
+                return;
+            case GrayBands:
+                for (int x = 0, offset = 0; x < row.Length; x++, offset += bands)
+                {
+                    var gray = table[samples[offset]].Red;
+                    row[x] = new SKColor(
+                        gray,
+                        gray,
+                        gray,
+                        hasAlpha ? table[samples[offset + 1]].Alpha : byte.MaxValue);
+                }
+                return;
+            default:
+                for (int x = 0, offset = 0; x < row.Length; x++, offset += bands)
+                {
+                    row[x] = new SKColor(
+                        table[samples[offset]].Red,
+                        table[samples[offset + 1]].Green,
+                        table[samples[offset + 2]].Blue,
+                        hasAlpha ? table[samples[offset + 3]].Alpha : byte.MaxValue);
+                }
+                return;
+        }
     }
 }
 
@@ -4019,7 +4438,7 @@ public class JavaColorSpace
         return result.Length;
     }
 
-    private bool OverridesArrayConversions
+    internal bool OverridesArrayConversions
     {
         get
         {
@@ -4037,6 +4456,8 @@ public class JavaColorSpace
         }
     }
 
+    // JavaColorModel.SeparableColorCount relies on the gray and RGB cases
+    // converting each component on its own.
     internal virtual void ToRgb(ReadOnlySpan<float> components, Span<float> rgb)
     {
         if (components.Length < NumberOfComponents)
@@ -6779,6 +7200,23 @@ internal static class PdfCartonFontCompat
             bitmap.Width,
             bitmap.Height,
             1);
+        if (bitmap.ColorType is SKColorType.Bgra8888 or SKColorType.Rgba8888)
+        {
+            // Alpha is the fourth byte of every pixel, premultiplied or not.
+            var alpha = raster.GetByteData();
+            var pixels = bitmap.GetPixelSpan();
+            var rowBytes = bitmap.RowBytes;
+            var opaque = bitmap.AlphaType == SKAlphaType.Opaque;
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                var input = pixels.Slice(y * rowBytes, bitmap.Width * 4);
+                var output = alpha.AsSpan(y * bitmap.Width, bitmap.Width);
+                for (var x = 0; x < output.Length; x++)
+                    output[x] = unchecked((sbyte)(opaque ? byte.MaxValue : input[x * 4 + 3]));
+            }
+            GC.KeepAlive(bitmap);
+            return raster;
+        }
         using var access = new PdfCartonPixels(bitmap);
         var sample = new int[1];
         for (var y = 0; y < bitmap.Height; y++)
@@ -6864,6 +7302,7 @@ internal static class PdfCartonFontCompat
         JavaColorModel colorModel,
         JavaRaster raster)
     {
+        if (TryRenderSampleRows(bitmap, colorModel, raster)) return;
         var width = bitmap.Width;
         var count = colorModel.NumberOfComponents;
         var alphaIndex = colorModel.NumberOfColorComponents;
@@ -6891,6 +7330,29 @@ internal static class PdfCartonFontCompat
                         hasAlpha ? ComponentByte(pixelComponents[alphaIndex]) : byte.MaxValue));
             }
         }
+    }
+
+    // Bulk rows for managed samples whose rendered colors come from per-sample
+    // tables (indexed, gray, sRGB and packed INT models): no per-pixel color
+    // conversion, and whole rows written to the native pixels at once.
+    private static bool TryRenderSampleRows(
+        SKBitmap bitmap,
+        JavaColorModel colorModel,
+        JavaRaster raster)
+    {
+        if (raster.Width != bitmap.Width || raster.Height != bitmap.Height) return false;
+        var converter = colorModel.CreateRowConverter(raster);
+        if (converter is null) return false;
+        var samples = new int[checked(raster.Width * raster.NumberOfBands)];
+        var row = new SKColor[raster.Width];
+        using var output = new PdfCartonPixels(bitmap);
+        for (var y = 0; y < raster.Height; y++)
+        {
+            raster.ReadRowSamples(y, samples);
+            converter.Convert(samples, row);
+            output.SetRow(y, row);
+        }
+        return true;
     }
 
     internal static byte ComponentByte(float value) =>
@@ -6999,6 +7461,28 @@ internal static class PdfCartonFontCompat
     {
         ArgumentNullException.ThrowIfNull(bitmap);
         values ??= new int[checked(offset + (height - 1) * scansize + width)];
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Raster is not null &&
+            metadata.ColorModel is not null)
+        {
+            // Like Java's getRGB, one data-element buffer serves every pixel.
+            var raster = metadata.Raster;
+            var colorModel = metadata.ColorModel;
+            object? pixel = null;
+            for (var row = 0; row < height; row++)
+            {
+                for (var column = 0; column < width; column++)
+                {
+                    pixel = raster.GetDataElements(x + column, y + row, pixel);
+                    values[offset + row * scansize + column] = unchecked(
+                        (int)((uint)colorModel.GetAlpha(pixel) << 24 |
+                              (uint)colorModel.GetRed(pixel) << 16 |
+                              (uint)colorModel.GetGreen(pixel) << 8 |
+                              (uint)colorModel.GetBlue(pixel)));
+                }
+            }
+            return values;
+        }
         for (var row = 0; row < height; row++)
         {
             for (var column = 0; column < width; column++)

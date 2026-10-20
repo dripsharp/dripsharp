@@ -11,6 +11,7 @@ using DripSharp.PdfCarton.Pdmodel.Graphics.Image;
 using DripSharp.PdfCarton.Rendering;
 using SkiaSharp;
 using Xunit;
+using Compat = DripSharp.Runtime;
 
 namespace DripSharp.PdfCarton.Tests;
 
@@ -487,6 +488,388 @@ internal static class IccRenderFixtures
     }
 
     internal static sbyte[] Signed(byte[] bytes) => (sbyte[])(Array)bytes;
+}
+
+// Raster rendering and color-model pixel access: rendered rasters must store
+// what the color model's getters report for every pixel, without per-pixel
+// allocation.
+public sealed class RasterConversionConsumerTests
+{
+    private const int Width = 37;
+    private const int Height = 23;
+
+    // Every bulk row layout, plus layouts that keep per-pixel conversion,
+    // renders exactly the getters' colors (Java's getRGB) for random samples.
+    [Fact]
+    public void RenderedRastersStoreTheColorModelsColors()
+    {
+        var srgb = new Compat.JavaIccColorSpace(
+            Compat.JavaColorSpace.CS_sRGB,
+            Compat.PdfCartonFontCompat.GetIccProfile(Compat.JavaColorSpace.CS_sRGB));
+        var iccGray = new Compat.JavaIccColorSpace(
+            new Compat.JavaIccProfile(IccRenderFixtures.Signed(IccRenderFixtures.GrayProfile())));
+        Compat.JavaColorModel Indexed(int bits, int size) => new(
+            bits,
+            size,
+            Enumerable.Range(0, size).Select(i => (sbyte)(i * 37)).ToArray(),
+            Enumerable.Range(0, size).Select(i => (sbyte)(i * 91 + 5)).ToArray(),
+            Enumerable.Range(0, size).Select(i => (sbyte)(250 - i * 13)).ToArray());
+        Compat.JavaColorModel Component(Compat.JavaColorSpace space, bool alpha, int type) =>
+            new(space, alpha, type);
+        var cases = new (string Name, Compat.JavaColorModel Model, bool Premultiplied, int Size, int Max)[]
+        {
+            ("INT_ARGB packed", new(Compat.PdfCartonFontCompat.TYPE_INT_ARGB), false, Width, 255),
+            ("INT_ARGB packed, premultiplied", new(Compat.PdfCartonFontCompat.TYPE_INT_ARGB), true, Width, 255),
+            ("INT_RGB packed", new(Compat.PdfCartonFontCompat.TYPE_INT_RGB), false, Width, 255),
+            ("INT_BGR packed", new(Compat.PdfCartonFontCompat.TYPE_INT_BGR), false, Width, 255),
+            ("BYTE_BINARY 1-bit", new(Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY), false, Width, 1),
+            ("indexed 1-bit", Indexed(1, 2), false, Width, 1),
+            ("indexed 2-bit", Indexed(2, 3), false, Width, 2),
+            ("indexed 4-bit", Indexed(4, 16), false, Width, 15),
+            ("indexed 8-bit", Indexed(8, 200), false, Width, 199),
+            ("sRGB bytes with alpha", Component(srgb, true, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE), false, Width, 255),
+            ("gray bytes with alpha", Component(new Compat.JavaColorSpace(Compat.JavaColorSpace.CS_GRAY), true,
+                Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE), false, Width, 255),
+            ("sRGB 16-bit", Component(srgb, false, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT), false, 256, 65535),
+            ("sRGB 4-bit components in bytes", new(srgb, false, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE, [4, 4, 4]),
+                false, Width, 255),
+            ("ICC gray bytes", Component(iccGray, false, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE), false, Width, 255),
+            ("CMYK bytes", Component(new Compat.JavaColorSpace(Compat.JavaColorSpace.TYPE_CMYK), false,
+                Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE), false, Width, 255),
+        };
+        foreach (var (name, model, premultiplied, size, max) in cases)
+        {
+            var raster = Fill(
+                model.CreateCompatibleWritableRaster(size, size == Width ? Height : size), max, name.Length);
+            using var image = Compat.PdfCartonFontCompat.CreateImage(model, raster, premultiplied, null);
+            AssertStored(name, image, model, raster);
+        }
+    }
+
+    // Image-type bitmaps take rasters through SetImageData, including a gray
+    // bitmap's own materialized samples (SampledImageReader.from1Bit), a BGR
+    // bitmap's band-offset samples and DeviceRGB's ToRGBImage byte raster.
+    [Fact]
+    public void SetImageDataStoresTheColorModelsColors()
+    {
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY,
+                     Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR,
+                     Compat.PdfCartonFontCompat.TYPE_INT_RGB,
+                     Compat.PdfCartonFontCompat.TYPE_INT_ARGB
+                 })
+        {
+            using var own = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var raster = Compat.PdfCartonFontCompat.GetRaster(own);
+            if (raster.TransferType == Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE)
+                _ = ((Compat.JavaDataBufferByte)raster.GetDataBuffer()).GetData();
+            Fill(raster, 255, type);
+            Compat.PdfCartonFontCompat.SetImageData(own, raster);
+            AssertStored($"type {type} own raster", own, Compat.PdfCartonFontCompat.GetColorModel(own), raster);
+
+            using var target = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var bands = type == Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY ? 1 : 3;
+            var source = Fill(Compat.PdfCartonFontCompat.CreateInterleavedRaster(
+                Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE, Width, Height, bands,
+                new Compat.JavaPoint(0, 0)), 255, type + 1);
+            if (type == Compat.PdfCartonFontCompat.TYPE_INT_ARGB) continue;
+            Compat.PdfCartonFontCompat.SetImageData(target, source);
+            AssertStored($"type {type} byte raster", target, new Compat.JavaColorModel(type), source);
+        }
+    }
+
+    // Java's setData copies band samples, so a packed raster in another INT
+    // layout keeps its red, green and blue (DeviceRGB's ToRGBImage included).
+    [Fact]
+    public void PackedRastersCopyAcrossIntLayouts()
+    {
+        foreach (var (sourceType, targetType) in new[]
+                 {
+                     (Compat.PdfCartonFontCompat.TYPE_INT_BGR, Compat.PdfCartonFontCompat.TYPE_INT_RGB),
+                     (Compat.PdfCartonFontCompat.TYPE_INT_RGB, Compat.PdfCartonFontCompat.TYPE_INT_BGR),
+                     (Compat.PdfCartonFontCompat.TYPE_INT_ARGB, Compat.PdfCartonFontCompat.TYPE_INT_RGB),
+                     (Compat.PdfCartonFontCompat.TYPE_INT_ARGB, Compat.PdfCartonFontCompat.TYPE_INT_BGR),
+                 })
+        {
+            var source = Fill(new Compat.JavaColorModel(sourceType)
+                .CreateCompatibleWritableRaster(Width, Height), 255, sourceType);
+            // DeviceRGB's ToRGBImage is SetImageData into a new INT_RGB image.
+            using var target = targetType == Compat.PdfCartonFontCompat.TYPE_INT_RGB
+                ? PDDeviceRGB.Instance.ToRGBImage(source)
+                : Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, targetType);
+            if (targetType != Compat.PdfCartonFontCompat.TYPE_INT_RGB)
+                Compat.PdfCartonFontCompat.SetImageData(target, source);
+            var pixels = target.GetPixelSpan();
+            var sample = new int[source.NumberOfBands];
+            for (var y = 0; y < Height; y++)
+            {
+                for (var x = 0; x < Width; x++)
+                {
+                    source.GetPixel(x, y, sample);
+                    var offset = y * target.RowBytes + x * 4;
+                    Assert.True(
+                        pixels[offset + 2] == sample[0] && pixels[offset + 1] == sample[1] &&
+                        pixels[offset] == sample[2],
+                        $"{sourceType} -> {targetType} ({x},{y}): stored " +
+                        $"[{pixels[offset + 2]}, {pixels[offset + 1]}, {pixels[offset]}], " +
+                        $"samples [{string.Join(", ", sample)}].");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void IndexesPastThePaletteStillFailToRender()
+    {
+        var model = new Compat.JavaColorModel(8, 3, [1, 2, 3], [4, 5, 6], [7, 8, 9]);
+        var raster = model.CreateCompatibleWritableRaster(4, 2);
+        raster.SetPixel(3, 1, [200]);
+        var error = Assert.ThrowsAny<ArgumentException>(
+            () => Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null).Dispose());
+        Assert.Contains("Palette index 200", error.Message);
+    }
+
+    [Fact]
+    public void ColorModelGettersDoNotAllocate()
+    {
+        var srgb = new Compat.JavaIccColorSpace(
+            Compat.JavaColorSpace.CS_sRGB,
+            Compat.PdfCartonFontCompat.GetIccProfile(Compat.JavaColorSpace.CS_sRGB));
+        var cases = new (Compat.JavaColorModel Model, object Pixel, int[] Argb)[]
+        {
+            (new(Compat.PdfCartonFontCompat.TYPE_INT_ARGB), new[] { unchecked((int)0x80402010) }, [128, 64, 32, 16]),
+            (new(Compat.PdfCartonFontCompat.TYPE_INT_RGB), new[] { 0x402010 }, [255, 64, 32, 16]),
+            (new(Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY), new sbyte[] { 77 }, [255, 77, 77, 77]),
+            (new(srgb, true, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE), new sbyte[] { 10, 20, 30, 40 },
+                [40, 10, 20, 30]),
+            (new(8, 3, [1, 2, 3], [4, 5, 6], [7, 8, 9]), new sbyte[] { 2 }, [255, 3, 6, 9]),
+            (new(new Compat.JavaColorSpace(Compat.JavaColorSpace.TYPE_CMYK), false,
+                Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE), new sbyte[] { 0, 0, 0, 0 }, [255, 255, 255, 255]),
+        };
+        foreach (var (model, pixel, argb) in cases)
+        {
+            Assert.Equal(argb, new[] { model.GetAlpha(pixel), model.GetRed(pixel), model.GetGreen(pixel), model.GetBlue(pixel) });
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            var sum = 0;
+            for (var i = 0; i < 1000; i++)
+                sum += model.GetAlpha(pixel) + model.GetRed(pixel) + model.GetGreen(pixel) + model.GetBlue(pixel);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Assert.Equal(1000 * argb.Sum(), sum);
+            Assert.Equal(0, allocated);
+        }
+    }
+
+    // Java's DirectColorModel compatible raster packs one int per pixel.
+    [Fact]
+    public void IntCompatibleRastersPackOneIntPerPixel()
+    {
+        foreach (var (type, pixel, packed) in new[]
+                 {
+                     (Compat.PdfCartonFontCompat.TYPE_INT_RGB, new[] { 10, 20, 30 }, 0x000A141E),
+                     (Compat.PdfCartonFontCompat.TYPE_INT_ARGB, new[] { 10, 20, 30, 40 }, 0x280A141E),
+                     (Compat.PdfCartonFontCompat.TYPE_INT_BGR, new[] { 10, 20, 30 }, 0x001E140A),
+                 })
+        {
+            var model = new Compat.JavaColorModel(type);
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            var raster = model.CreateCompatibleWritableRaster(500, 400);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Assert.True(allocated <= 4L * 500 * 400 + 1024, $"type {type}: {allocated} bytes.");
+            Assert.Equal(pixel.Length, raster.NumberOfBands);
+            Assert.Equal(500 * 400, raster.GetDataBuffer().Size);
+
+            raster.SetPixel(1, 2, pixel);
+            var element = Assert.IsType<int[]>(raster.GetDataElements(1, 2, null));
+            Assert.Equal(new[] { packed }, element);
+            Assert.Equal(pixel, raster.GetPixel(1, 2, (int[]?)null));
+            Assert.Equal(packed, raster.GetDataBuffer().GetElement(2 * 500 + 1));
+            Assert.Equal(pixel[..3], new[] { model.GetRed(element), model.GetGreen(element), model.GetBlue(element) });
+            // A reused larger buffer holds the packed pixel in element zero.
+            var reused = raster.GetDataElements(1, 2, new int[4]);
+            Assert.Equal(pixel[..3], new[] { model.GetRed(reused), model.GetGreen(reused), model.GetBlue(reused) });
+            Assert.Equal(pixel.Length == 4 ? pixel[3] : 255, model.GetAlpha(reused));
+            Assert.Equal(pixel.Select(value => value / 255f),
+                model.GetNormalizedComponents(reused, null, 0));
+
+            var copy = raster.CreateCompatibleWritableRaster();
+            copy.SetDataElements(3, 4, element);
+            Assert.Equal(pixel, copy.GetPixel(3, 4, (int[]?)null));
+        }
+    }
+
+    // DeviceRGB, 8-bit gray and 1-bit gray images decode to exactly their
+    // samples, allocating buffers of the raster's size rather than per pixel.
+    [Fact]
+    public void ImageDecodingAllocatesOnlyRasterSizedBuffers()
+    {
+        const int width = 400;
+        const int height = 300;
+        var rgb = new byte[width * height * 3];
+        for (var i = 0; i < rgb.Length; i++) rgb[i] = (byte)(i * 13 + i / 1201);
+        var gray = new byte[width * height];
+        for (var i = 0; i < gray.Length; i++) gray[i] = (byte)(i * 5 + i / 401);
+        var bits = new byte[width / 8 * height];
+        for (var i = 0; i < bits.Length; i++) bits[i] = (byte)(i * 37 + i / 83);
+        foreach (var (name, samples, bitsPerComponent, space) in new (string, byte[], int, PDColorSpace)[]
+                 {
+                     ("DeviceRGB", rgb, 8, PDDeviceRGB.Instance),
+                     ("DeviceGray", gray, 8, PDDeviceGray.Instance),
+                     ("1-bit DeviceGray", bits, 1, PDDeviceGray.Instance),
+                 })
+        {
+            // A fresh image each time: PDImageXObject caches its decoded image.
+            using var document = new PDDocument();
+            PDImageXObject Image() => new(document, new MemoryStream(samples), null!,
+                width, height, bitsPerComponent, space);
+            Image().GetImage().Dispose();
+            var image = Image();
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            using var bitmap = image.GetImage();
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Assert.True(allocated < 8L * width * height,
+                $"{name}: decoding allocated {allocated} bytes for {width * height} pixels.");
+            for (var y = 0; y < height; y += 7)
+            {
+                for (var x = 0; x < width; x += 3)
+                {
+                    var color = bitmap.GetPixel(x, y);
+                    var index = y * width + x;
+                    var expected = name switch
+                    {
+                        "DeviceRGB" => new SKColor(rgb[index * 3], rgb[index * 3 + 1], rgb[index * 3 + 2]),
+                        "DeviceGray" => new SKColor(gray[index], gray[index], gray[index]),
+                        _ => (bits[index / 8] >> (7 - x % 8) & 1) == 0 ? SKColors.Black : SKColors.White,
+                    };
+                    Assert.True(expected == color, $"{name} ({x},{y}): {color} != {expected}.");
+                }
+            }
+        }
+    }
+
+    // A shading under an ExtGState /SMask goes through SoftMask's per-pixel
+    // getters and compatible INT_ARGB rasters, and the alpha mask through
+    // SetImageData. Expected colors were rendered by Apache PDFBox 3.0.8.
+    [Fact]
+    public void SoftMaskedShadingsRenderLikePdfBoxWithoutPerPixelAllocations()
+    {
+        (int X, int Y)[] points = [(50, 150), (150, 50), (100, 100), (110, 110), (195, 195), (5, 5)];
+        foreach (var (kind, expected) in new (string, int[][])[]
+                 {
+                     ("/Alpha", [[192, 0, 63], [159, 127, 223], [127, 0, 127], [114, 0, 140], [255, 255, 255], [255, 255, 255]]),
+                     ("/Luminosity", [[205, 51, 101], [159, 127, 223], [140, 25, 140], [128, 25, 151], [255, 255, 255], [255, 255, 255]]),
+                 })
+        {
+            var pdf = SoftMaskedShadingPdf(kind);
+            var first = IccRenderFixtures.Render(pdf);
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            var second = IccRenderFixtures.Render(pdf);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Assert.Equal(first, second);
+            // Per-pixel getter arrays cost about 300 bytes per page pixel.
+            Assert.True(allocated < 150L * 200 * 200, $"{kind}: rendering allocated {allocated} bytes.");
+            for (var point = 0; point < points.Length; point++)
+            {
+                var offset = (points[point].Y * 200 + points[point].X) * 4;
+                for (var channel = 0; channel < 3; channel++)
+                    Assert.True(Math.Abs(second[offset + channel] - expected[point][channel]) <= 2,
+                        $"{kind} {points[point]}: got [{second[offset]}, {second[offset + 1]}, {second[offset + 2]}].");
+            }
+        }
+    }
+
+    private static Compat.JavaRaster Fill(Compat.JavaRaster raster, int max, int seed)
+    {
+        var random = new Random(seed);
+        var pixel = new int[raster.NumberOfBands];
+        for (var y = 0; y < raster.Height; y++)
+        {
+            for (var x = 0; x < raster.Width; x++)
+            {
+                for (var band = 0; band < pixel.Length; band++) pixel[band] = random.Next(max + 1);
+                raster.SetPixel(x, y, pixel);
+            }
+        }
+        return raster;
+    }
+
+    // Compares stored native pixels with the getters' color of each pixel.
+    private static void AssertStored(
+        string name,
+        SKBitmap image,
+        Compat.JavaColorModel model,
+        Compat.JavaRaster raster)
+    {
+        var pixels = image.GetPixelSpan();
+        object? pixel = null;
+        for (var y = 0; y < raster.Height; y++)
+        {
+            for (var x = 0; x < raster.Width; x++)
+            {
+                pixel = raster.GetDataElements(x, y, pixel);
+                var red = model.GetRed(pixel);
+                var green = model.GetGreen(pixel);
+                var blue = model.GetBlue(pixel);
+                var alpha = image.AlphaType == SKAlphaType.Opaque ? 255 : model.GetAlpha(pixel);
+                if (image.AlphaType == SKAlphaType.Premul)
+                {
+                    red = (red * alpha + 127) / 255;
+                    green = (green * alpha + 127) / 255;
+                    blue = (blue * alpha + 127) / 255;
+                }
+                int[] expected, actual;
+                if (image.ColorType == SKColorType.Gray8)
+                {
+                    Assert.True(red == green && green == blue, $"{name}: gray model rendered color.");
+                    expected = [red];
+                    actual = [pixels[y * image.RowBytes + x]];
+                }
+                else
+                {
+                    var offset = y * image.RowBytes + x * 4;
+                    expected = [red, green, blue, alpha];
+                    actual = [pixels[offset + 2], pixels[offset + 1], pixels[offset], pixels[offset + 3]];
+                }
+                Assert.True(expected.SequenceEqual(actual),
+                    $"{name} ({x},{y}): stored [{string.Join(", ", actual)}], " +
+                    $"expected [{string.Join(", ", expected)}].");
+            }
+        }
+    }
+
+    private static byte[] SoftMaskedShadingPdf(string kind)
+    {
+        static byte[] Ascii(string text) => System.Text.Encoding.ASCII.GetBytes(text);
+        static string Stream(string entries, string data) =>
+            $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
+        string[] objects =
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /ExtGState << /GS1 5 0 R >> " +
+            "/Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Function << " +
+            "/FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true] >> >> >> " +
+            "/Contents 4 0 R >>",
+            Stream("", "q /GS1 gs 10 10 180 180 re W n /Sh1 sh Q"),
+            $"<< /Type /ExtGState /SMask << /Type /Mask /S {kind} /G 6 0 R >> >>",
+            Stream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Group << /S /Transparency " +
+                "/CS /DeviceRGB >> /Resources << /ExtGState << /A 7 0 R >> >>",
+                "0.8 0.8 0.8 rg 20 20 100 100 re f /A gs 1 1 1 rg 80 80 100 100 re f"),
+            "<< /Type /ExtGState /ca 0.5 >>",
+        ];
+        var text = new System.Text.StringBuilder("%PDF-1.7\n");
+        var offsets = new List<int>();
+        for (var index = 0; index < objects.Length; index++)
+        {
+            offsets.Add(text.Length);
+            text.Append($"{index + 1} 0 obj\n{objects[index]}\nendobj\n");
+        }
+        var xref = text.Length;
+        text.Append($"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+        foreach (var offset in offsets) text.Append($"{offset:D10} 00000 n \n");
+        text.Append($"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return Ascii(text.ToString());
+    }
 }
 
 // /FlateDecode through the public FlateFilterDecoderStream and font loading.
