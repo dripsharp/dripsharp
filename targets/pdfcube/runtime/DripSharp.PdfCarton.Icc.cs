@@ -411,7 +411,7 @@ internal sealed class PdfCartonIccProfileData
         z = 200f * (fy - fz);
     }
 
-    private static void XyzD50ToSrgb(float xyz0, float xyz1, float xyz2, Span<float> rgb)
+    internal static void XyzD50ToSrgb(float xyz0, float xyz1, float xyz2, Span<float> rgb)
     {
         var x = 0.9555766f * xyz0 - 0.0230393f * xyz1 + 0.0631636f * xyz2;
         var y = -0.0282895f * xyz0 + 1.0099416f * xyz1 + 0.0210077f * xyz2;
@@ -430,7 +430,7 @@ internal sealed class PdfCartonIccProfileData
         rgb[2] = Gamma(blue);
     }
 
-    private static void SrgbToXyzD50(
+    internal static void SrgbToXyzD50(
         ReadOnlySpan<float> rgb,
         out float x,
         out float y,

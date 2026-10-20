@@ -4937,12 +4937,36 @@ public class JavaColorSpace
         }
     }
 
+    // CS_CIEXYZ holds D50-relative XYZ (the ICC PCS), as Java's does. Java's
+    // ICC_ColorSpace.toRGB stores each component as
+    // (short)(value * 65535 / (1 + 32767/32768f) + 0.5f) and reads it back as
+    // an unsigned 16-bit PCS sample (1.0 = 32768), so negative values and
+    // values of 2 or more wrap around rather than clamp; this keeps that.
+    private static float CieXyzSample(float value)
+    {
+        var scaled = value * 32768f + 0.5f;
+        var narrowed = float.IsNaN(scaled) ? 0
+            : scaled >= int.MaxValue ? int.MaxValue
+            : scaled <= int.MinValue ? int.MinValue
+            : (int)scaled;
+        return (narrowed & 0xffff) / 32768f;
+    }
+
     // JavaColorModel.SeparableColorCount relies on the gray and RGB cases
     // converting each component on its own.
     internal virtual void ToRgb(ReadOnlySpan<float> components, Span<float> rgb)
     {
         if (components.Length < NumberOfComponents)
             throw new ArgumentException("The component array is too short.", nameof(components));
+        if (Kind == CS_CIEXYZ)
+        {
+            PdfCartonIccProfileData.XyzD50ToSrgb(
+                CieXyzSample(components[0]),
+                CieXyzSample(components[1]),
+                CieXyzSample(components[2]),
+                rgb);
+            return;
+        }
         static float Clamp(float value) => JavaCompat.Clamp(value, 0f, 1f);
         switch (Type)
         {
@@ -4972,6 +4996,11 @@ public class JavaColorSpace
     {
         if (rgb.Length < 3)
             throw new ArgumentException("RGB input must have three components.", nameof(rgb));
+        if (Kind == CS_CIEXYZ)
+        {
+            PdfCartonIccProfileData.SrgbToXyzD50(rgb, out output[0], out output[1], out output[2]);
+            return 3;
+        }
         var red = JavaCompat.Clamp(rgb[0], 0f, 1f);
         var green = JavaCompat.Clamp(rgb[1], 0f, 1f);
         var blue = JavaCompat.Clamp(rgb[2], 0f, 1f);

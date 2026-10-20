@@ -260,6 +260,220 @@ public sealed class PdfConsumerTests
         Assert.Equal(colors, IccRenderFixtures.Colors(destination));
     }
 
+    // Expected values are Java 25's ColorSpace.getInstance(CS_CIEXYZ) (D50
+    // XYZ, the ICC PCS) and Apache PDFBox 3.0.8 run on it. Java converts
+    // through a 16-bit LittleCMS transform (quantized samples, interpolated
+    // curves); the exact matrix-and-curve conversion here differs from it by
+    // under 0.0004 on these values, and CieTolerance (a quarter of an 8-bit
+    // level) leaves room for platform differences in Pow.
+    private const float CieTolerance = 0.001f;
+
+    private static void AssertCie(float[] expected, float[] actual, string label)
+    {
+        Assert.Equal(expected.Length, actual.Length);
+        for (var index = 0; index < expected.Length; index++)
+            Assert.True(Math.Abs(expected[index] - actual[index]) <= CieTolerance,
+                $"{label}: expected [{string.Join(", ", expected)}], " +
+                $"got [{string.Join(", ", actual)}].");
+    }
+
+    [Fact]
+    public void CieXyzColorSpaceConvertsD50XyzToAndFromSrgb()
+    {
+        var xyz = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_CIEXYZ);
+        (float[] Xyz, float[] Rgb)[] toRgb =
+        [
+            ([0.9642f, 1f, 0.8249f], [1f, 0.99998474f, 1f]),
+            ([0f, 0f, 0f], [0f, 0f, 0f]),
+            ([0.4360747f, 0.2225045f, 0.0139322f], [1f, 3.9673457E-4f, 3.9673457E-4f]),
+            ([0.3850649f, 0.7168786f, 0.0971045f], [0f, 0.99998474f, 0f]),
+            ([0.1430804f, 0.0606169f, 0.7141733f], [0f, 0f, 1f]),
+            ([0.1801f, 0.1868f, 0.154f], [0.46947432f, 0.46938276f, 0.46924543f]),
+            ([0.5f, 0.5f, 0.5f], [0.7439536f, 0.72565806f, 0.81200886f]),
+            ([1f, 1f, 1f], [1f, 0.98706037f, 1f]),
+            ([0.2f, 0.3f, 0.1f], [0.3363241f, 0.6517891f, 0.32504767f]),
+            ([0.05f, 0.02f, 0.6f], [0f, 0.096192874f, 0.92732126f]),
+            ([0.9505f, 1f, 1.089f], [0.9199206f, 1f, 1f]),
+            ([0.01f, 0.02f, 0.03f], [0f, 0.18809797f, 0.21602197f]),
+            // Java stores each component in a 16-bit sample with a narrowing
+            // cast, so 2.5 wraps around to 0.5.
+            ([2.5f, 2.5f, 2.5f], [0.7439536f, 0.72565806f, 0.81200886f])
+        ];
+        foreach (var (input, expected) in toRgb)
+            AssertCie(expected, xyz.ToRgb(input), $"toRGB [{string.Join(", ", input)}]");
+
+        (float[] Rgb, float[] Xyz)[] fromRgb =
+        [
+            ([1f, 1f, 1f], [0.9642029f, 1f, 0.82489014f]),
+            ([0f, 0f, 0f], [0f, 0f, 0f]),
+            ([1f, 0f, 0f], [0.43585205f, 0.22238159f, 0.013916016f]),
+            ([0f, 1f, 0f], [0.38531494f, 0.717041f, 0.09713745f]),
+            ([0f, 0f, 1f], [0.14300537f, 0.060577393f, 0.71383667f]),
+            ([0.5f, 0.5f, 0.5f], [0.20639038f, 0.2140503f, 0.1765747f]),
+            ([0.2f, 0.4f, 0.6f], [0.111206055f, 0.12194824f, 0.24075317f])
+        ];
+        foreach (var (input, expected) in fromRgb)
+            AssertCie(expected, xyz.FromRgb(input), $"fromRGB [{string.Join(", ", input)}]");
+    }
+
+    private static COSArray CieFloats(params float[] values)
+    {
+        var array = new COSArray();
+        foreach (var value in values)
+            array.Add(new COSFloat(value));
+        return array;
+    }
+
+    private static PDLab CieLab(float x, float y, float z)
+    {
+        var lab = new PDLab();
+        lab.SetWhitePoint(new PDTristimulus(new[] { x, y, z }));
+        return lab;
+    }
+
+    // White point (1, 1, 1) makes CalRGB and CalGray convert through CIE XYZ
+    // (PDFBOX-2971); the matrix holds sRGB's D50 primaries.
+    private static PDCalRGB CieCalRgb()
+    {
+        var calRgb = new PDCalRGB();
+        calRgb.SetWhitePoint(new PDTristimulus(new[] { 1f, 1f, 1f }));
+        calRgb.SetGamma(new PDGamma(CieFloats(2.2f, 2.2f, 2.2f)));
+        ((COSDictionary)((COSArray)calRgb.GetCOSObject()).GetObject(1)).SetItem(
+            COSName.Matrix,
+            CieFloats(0.4360747f, 0.2225045f, 0.0139322f, 0.3850649f, 0.7168786f,
+                0.0971045f, 0.1430804f, 0.0606169f, 0.7141733f));
+        return calRgb;
+    }
+
+    private static PDCalGray CieCalGray()
+    {
+        var calGray = new PDCalGray();
+        calGray.SetWhitePoint(new PDTristimulus(new[] { 1f, 1f, 1f }));
+        calGray.SetGamma(2.2f);
+        return calGray;
+    }
+
+    [Fact]
+    public void CalibratedColorSpacesConvertThroughCieXyzAsJavaPdfBox()
+    {
+        var labD50 = CieLab(0.9642f, 1f, 0.8249f);
+        var labD65 = CieLab(0.9505f, 1f, 1.089f);
+        (float[] Lab, float[] D50, float[] D65)[] labs =
+        [
+            ([100f, 0f, 0f], [1f, 0.99998474f, 1f], [0.9199206f, 1f, 1f]),
+            ([50f, 0f, 0f], [0.46631572f, 0.46630046f, 0.46634623f],
+                [0.42681012f, 0.47109178f, 0.53946745f]),
+            ([0f, 0f, 0f], [0f, 0f, 0f], [0f, 0f, 0f]),
+            ([53.24f, 80.09f, 67.2f], [0.9824827f, 0f, 0.025803005f],
+                [0.9729915f, 0.05600061f, 0.08740368f]),
+            ([87.73f, -86.18f, 83.18f], [0f, 1f, 0f], [0f, 1f, 0.1878233f]),
+            ([32.3f, 79.19f, -107.86f], [0.35559624f, 0f, 1f], [0f, 0f, 1f]),
+            ([75f, 20f, -30f], [0.7874266f, 0.67899597f, 0.9427481f],
+                [0.70337987f, 0.68966204f, 1f])
+        ];
+        foreach (var (input, d50, d65) in labs)
+        {
+            AssertCie(d50, labD50.ToRGB(input), $"Lab D50 [{string.Join(", ", input)}]");
+            AssertCie(d65, labD65.ToRGB(input), $"Lab D65 [{string.Join(", ", input)}]");
+        }
+
+        var calRgb = CieCalRgb();
+        var identity = new PDCalRGB();
+        identity.SetWhitePoint(new PDTristimulus(new[] { 1f, 1f, 1f }));
+        (float[] Input, float[] Matrix, float[] Identity)[] rgbs =
+        [
+            ([1f, 1f, 1f], [0.99998474f, 0.99998474f, 1f], [1f, 0.98706037f, 1f]),
+            ([0f, 0f, 0f], [0f, 0f, 0f], [0f, 0f, 0f]),
+            ([1f, 0f, 0f], [1f, 3.9673457E-4f, 3.9673457E-4f], [1f, 0f, 0.29756618f]),
+            ([0f, 1f, 0f], [0f, 0.99998474f, 0f], [0f, 1f, 0f]),
+            ([0f, 0f, 1f], [0f, 0f, 1f], [0f, 0.20106813f, 1f]),
+            ([0.5f, 0.5f, 0.5f], [0.50379187f, 0.5038987f, 0.5039597f],
+                [0.7439536f, 0.72565806f, 0.81200886f]),
+            ([0.2f, 0.4f, 0.6f], [0.18609904f, 0.40047303f, 0.6056611f],
+                [0f, 0.79220265f, 0.88925004f])
+        ];
+        foreach (var (input, matrix, unit) in rgbs)
+        {
+            AssertCie(matrix, calRgb.ToRGB(input), $"CalRGB [{string.Join(", ", input)}]");
+            AssertCie(unit, identity.ToRGB(input), $"CalRGB identity [{string.Join(", ", input)}]");
+        }
+
+        var calGray = CieCalGray();
+        (float Gray, float[] Rgb)[] grays =
+        [
+            (0f, [0f, 0f, 0f]),
+            (0.25f, [0.24425116f, 0.23739986f, 0.26976424f]),
+            (0.5f, [0.50995654f, 0.49701685f, 0.5580835f]),
+            (0.75f, [0.76424813f, 0.7454948f, 0.8340429f]),
+            (1f, [1f, 0.98706037f, 1f])
+        ];
+        foreach (var (gray, expected) in grays)
+            AssertCie(expected, calGray.ToRGB(new[] { gray }), $"CalGray {gray}");
+    }
+
+    // Fills and 8-bit images in Lab, CalRGB and CalGray render as Apache
+    // PDFBox 3.0.8 renders them (Java 25, page rendered at 72 DPI). They
+    // match exactly; one 8-bit rounding step is allowed.
+    [Fact]
+    public void CalibratedFillsAndImagesRenderAsJavaPdfBox()
+    {
+        using var document = new PDDocument();
+        var page = new PDPage(new PDRectangle(70, 10));
+        document.AddPage(page);
+        var lab = CieLab(0.9642f, 1f, 0.8249f);
+        var calRgb = CieCalRgb();
+        var calGray = CieCalGray();
+        var labImage = new PDImageXObject(document, new MemoryStream([191, 155, 102, 128, 128, 128]),
+            null!, 2, 1, 8, lab);
+        var calImage = new PDImageXObject(document, new MemoryStream([51, 102, 153, 128, 128, 128]),
+            null!, 2, 1, 8, calRgb);
+        var grayImage = new PDImageXObject(document, new MemoryStream([64, 191]),
+            null!, 2, 1, 8, calGray);
+        using (var content = new PDPageContentStream(document, page))
+        {
+            content.SetNonStrokingColor(new PDColor(new[] { 75f, 20f, -30f }, lab));
+            content.AddRect(0, 0, 10, 10);
+            content.Fill();
+            content.SetNonStrokingColor(new PDColor(new[] { 0.2f, 0.4f, 0.6f }, calRgb));
+            content.AddRect(10, 0, 10, 10);
+            content.Fill();
+            content.SetNonStrokingColor(new PDColor(new[] { 0.5f }, calGray));
+            content.AddRect(20, 0, 10, 10);
+            content.Fill();
+            content.DrawImage(labImage, 30, 0, 20, 10);
+            content.DrawImage(calImage, 50, 0, 10, 10);
+            content.DrawImage(grayImage, 60, 0, 10, 10);
+        }
+
+        static void AssertPixel(uint expected, int actual, string label)
+        {
+            for (var shift = 0; shift < 32; shift += 8)
+                Assert.True(
+                    Math.Abs((int)((expected >> shift) & 0xff) - ((actual >> shift) & 0xff)) <= 1,
+                    $"{label}: expected 0x{expected:x8}, got 0x{actual:x8}.");
+        }
+
+        using var rendered = new PDFRenderer(document).RenderImage(0);
+        (int X, uint Argb)[] pixels =
+        [
+            (5, 0xffc9adf0), (15, 0xff2f669a), (25, 0xff827f8e), (35, 0xffd2abdd),
+            (45, 0xff787776), (52, 0xff2f669a), (57, 0xff818081), (62, 0xff3e3c45),
+            (67, 0xffc2bdd4)
+        ];
+        foreach (var (x, argb) in pixels)
+            AssertPixel(argb, Compat.PdfCartonFontCompat.GetRgb(rendered, x, 5), $"page x={x}");
+
+        using var labPixels = labImage.GetImage();
+        AssertPixel(0xffd2abdd, Compat.PdfCartonFontCompat.GetRgb(labPixels, 0, 0), "Lab image 0");
+        AssertPixel(0xff787776, Compat.PdfCartonFontCompat.GetRgb(labPixels, 1, 0), "Lab image 1");
+        using var calPixels = calImage.GetImage();
+        AssertPixel(0xff2f669a, Compat.PdfCartonFontCompat.GetRgb(calPixels, 0, 0), "CalRGB image 0");
+        AssertPixel(0xff818081, Compat.PdfCartonFontCompat.GetRgb(calPixels, 1, 0), "CalRGB image 1");
+        using var grayPixels = grayImage.GetImage();
+        AssertPixel(0xff3e3c45, Compat.PdfCartonFontCompat.GetRgb(grayPixels, 0, 0), "CalGray image 0");
+        AssertPixel(0xffc2bdd4, Compat.PdfCartonFontCompat.GetRgb(grayPixels, 1, 0), "CalGray image 1");
+    }
+
     private sealed class ConstantFromRgbSpace : DripSharp.Runtime.JavaColorSpace
     {
         public ConstantFromRgbSpace() : base(0, TYPE_RGB, 3)
