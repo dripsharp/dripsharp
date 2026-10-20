@@ -4785,6 +4785,203 @@ public sealed class ImageReaderSizeTests
 // They are disposed on success and failure; only the returned image and the
 // images a PDImageXObject caches stay live.
 [Collection(nameof(NativeBitmapLifetimeCollection))]
+// SKCanvas.DrawBitmap copies every pixel of a mutable bitmap per draw, so a
+// 100x100 subrect of a page cost a page copy. Raster draws now wrap the
+// source's live pixels; canvases that may record keep Skia's copy.
+public sealed class BitmapDrawCopyTests
+{
+    private static SKBitmap Page(int width, int height)
+    {
+        var page = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var random = new Random(56);
+        for (var y = 0; y < height; y++)
+            for (var x = 0; x < width; x++)
+                Compat.PdfCartonFontCompat.SetRgb(page, x, y, random.Next() | (x % 7 == 0 ? 0x40 << 24 : unchecked((int)0xff000000)));
+        return page;
+    }
+
+    private static IntPtr Pixels(SKImage image)
+    {
+        using var pixmap = image.PeekPixels();
+        return pixmap.GetPixels();
+    }
+
+    [Fact]
+    public void RasterDrawsWrapTheSourcePixelsInsteadOfCopyingThem()
+    {
+        using var page = Page(2480, 3508);
+        using var target = new SKBitmap(100, 100);
+        using (var view = Compat.PdfCartonFontCompat.DrawableImage(page, target))
+            Assert.Equal(page.GetPixels(), Pixels(view!));
+        // A canvas that may record, or a source sharing the target's pixels, gets a copy.
+        using (var copy = Compat.PdfCartonFontCompat.DrawableImage(page, null))
+            Assert.NotEqual(page.GetPixels(), Pixels(copy!));
+        using (var copy = Compat.PdfCartonFontCompat.DrawableImage(page, page))
+            Assert.NotEqual(page.GetPixels(), Pixels(copy!));
+        using var subset = new SKBitmap();
+        Assert.True(page.ExtractSubset(subset, new SKRectI(10, 10, 60, 60)));
+        using (var copy = Compat.PdfCartonFontCompat.DrawableImage(subset, page))
+            Assert.NotEqual(subset.GetPixels(), Pixels(copy!));
+
+        // A subrect draw reads the live pixels: later writes show on the next draw.
+        using var graphics = new Compat.PdfCartonGraphics2D(target);
+        graphics.DrawImage(page, 0, 0, 100, 100, 1000, 1000, 1100, 1100, null);
+        Assert.Equal((uint)Compat.PdfCartonFontCompat.GetRgb(page, 1051, 1050), (uint)target.GetPixel(51, 50));
+        Compat.PdfCartonFontCompat.SetRgb(page, 1050, 1050, unchecked((int)0xff123456));
+        graphics.DrawImage(page, 0, 0, 100, 100, 1000, 1000, 1100, 1100, null);
+        Assert.Equal(0xff123456u, (uint)target.GetPixel(50, 50));
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (SKImage Image, WeakReference Source) LiveImage(SKBitmap target)
+    {
+        var source = Compat.PdfCartonFontCompat.CreateBitmap(64, 64, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        source.Erase(SKColors.Red);
+        return (Compat.PdfCartonFontCompat.DrawableImage(source, target)!, new WeakReference(source));
+    }
+
+    private static void Collect()
+    {
+        for (var pass = 0; pass < 3; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
+
+    // A live image, and a shader made from it, keep their source bitmap
+    // reachable until Skia releases them, and no longer.
+    [Fact]
+    public void LiveImagesRetainTheirSourceUntilReleased()
+    {
+        using var target = new SKBitmap(new SKImageInfo(64, 64, SKColorType.Bgra8888, SKAlphaType.Premul));
+        using var canvas = new SKCanvas(target);
+        var (image, source) = LiveImage(target);
+        Collect();
+        Assert.True(source.IsAlive);
+        canvas.DrawImage(image, 0, 0, SKSamplingOptions.Default, null);
+        Assert.Equal(SKColors.Red, target.GetPixel(10, 10));
+        image.Dispose();
+        Collect();
+        Assert.False(source.IsAlive);
+
+        (image, source) = LiveImage(target);
+        var shader = image.ToShader(SKShaderTileMode.Repeat, SKShaderTileMode.Repeat,
+            SKSamplingOptions.Default, SKMatrix.Identity);
+        image.Dispose();
+        Collect();
+        Assert.True(source.IsAlive);
+        canvas.Clear(SKColors.Transparent);
+        using (var paint = new SKPaint { Shader = shader })
+            canvas.DrawPaint(paint);
+        Assert.Equal(SKColors.Red, target.GetPixel(10, 10));
+        shader.Dispose();
+        Collect();
+        Assert.False(source.IsAlive);
+    }
+
+    public static TheoryData<int, int> DrawCases()
+    {
+        var data = new TheoryData<int, int>();
+        for (var hint = 0; hint < 4; hint++)
+            for (var transform = 0; transform < 4; transform++)
+                data.Add(hint, transform);
+        return data;
+    }
+
+    private static void Configure(Compat.PdfCartonGraphics2D graphics, int hint, int transform)
+    {
+        graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+            Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
+        if (hint > 0)
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_INTERPOLATION, hint switch
+            {
+                1 => Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR,
+                2 => Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_BILINEAR,
+                _ => Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_BICUBIC,
+            });
+        graphics.SetTransform(transform switch
+        {
+            0 => SKMatrix.Identity,
+            1 => SKMatrix.CreateScaleTranslation(1.7f, 1.3f, 0.4f, 0.3f),
+            2 => SKMatrix.Concat(SKMatrix.CreateTranslation(20, -10), SKMatrix.CreateRotation(0.3f)),
+            _ => SKMatrix.CreateScale(0.35f, 0.5f),
+        });
+    }
+
+    // The same draws through a bitmap-backed graphics (live pixels) and a
+    // canvas-backed one (Skia's copy) give identical pixels.
+    [Theory]
+    [MemberData(nameof(DrawCases))]
+    public void LivePixelDrawsMatchCopiedDraws(int hint, int transform)
+    {
+        using var page = Page(300, 240);
+        var info = new SKImageInfo(160, 140, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using var live = new SKBitmap(info);
+        using var copied = new SKBitmap(info);
+        using var copiedCanvas = new SKCanvas(copied);
+        using (var liveGraphics = new Compat.PdfCartonGraphics2D(live))
+        using (var copiedGraphics = new Compat.PdfCartonGraphics2D(copiedCanvas))
+        {
+            foreach (var graphics in new[] { liveGraphics, copiedGraphics })
+            {
+                Configure(graphics, hint, transform);
+                graphics.DrawImage(page, 3, 5, 103, 95, 150, 100, 250, 190, null);
+                graphics.SetComposite(Compat.JavaAlphaComposite.GetInstance(Compat.JavaAlphaComposite.SRC_OVER, 0.6f));
+                graphics.DrawImage(page, SKMatrix.CreateScaleTranslation(0.4f, 0.45f, 30.5f, 20.25f), null);
+            }
+        }
+        Assert.Equal(copied.Bytes, live.Bytes);
+    }
+
+    // CopyArea snapshots only the source area under an integer translation;
+    // the pixels match the former whole-bitmap snapshot drawn by Skia.
+    [Theory]
+    [MemberData(nameof(DrawCases))]
+    public void CopyAreaMatchesAWholeBitmapSnapshot(int hint, int transform)
+    {
+        var translation = transform switch
+        {
+            0 => SKMatrix.Identity,
+            1 => SKMatrix.CreateTranslation(0.4f, 0.3f),
+            2 => SKMatrix.CreateTranslation(-7f, 12f),
+            _ => SKMatrix.CreateScale(1.5f, 0.75f),
+        };
+        foreach (var (x, y, width, height, dx, dy) in new[]
+                 {
+                     (40, 30, 100, 80, 15, 10), (0, 0, 60, 50, 100, 90), (200, 150, 100, 90, -150, -120),
+                     (-20, -10, 50, 40, 30, 30), (500, 500, 10, 10, -400, -400), (10, 10, 0, 5, 3, 3),
+                     (0, 0, int.MaxValue, 100, -128, 0), (0, 0, 100, int.MaxValue, 0, -100),
+                 })
+        {
+            using var actual = Page(300, 240);
+            using var expected = Page(300, 240);
+            using (var graphics = new Compat.PdfCartonGraphics2D(actual))
+            {
+                Configure(graphics, hint, 0);
+                graphics.SetTransform(translation);
+                graphics.CopyArea(x, y, width, height, dx, dy);
+            }
+            using (var snapshot = expected.Copy())
+            using (var canvas = new SKCanvas(expected))
+            using (var paint = new SKPaint())
+            {
+                canvas.SetMatrix(translation);
+                var options = hint switch
+                {
+                    0 or 1 => SKSamplingOptions.Default,
+                    2 => new SKSamplingOptions(SKFilterMode.Linear),
+                    _ => new SKSamplingOptions(SKCubicResampler.Mitchell),
+                };
+                canvas.DrawBitmap(snapshot, new SKRect(x, y, x + width, y + height),
+                    new SKRect(x + dx, y + dy, x + dx + width, y + dy + height), options, paint);
+            }
+            Assert.True(expected.Bytes.AsSpan().SequenceEqual(actual.Bytes),
+                $"hint {hint} transform {transform} area ({x},{y},{width},{height}) by ({dx},{dy})");
+        }
+    }
+}
+
 public sealed class RenderingBitmapLifetimeTests
 {
     private const int OneMaskedFill = 0;

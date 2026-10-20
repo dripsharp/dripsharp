@@ -3282,12 +3282,8 @@ public sealed class PdfCartonAffineTransformOp
             interpolationType == TYPE_BICUBIC
                 ? new SKSamplingOptions(SKCubicResampler.Mitchell)
                 : new SKSamplingOptions(SKFilterMode.Linear);
-        canvas.DrawBitmap(
-            source,
-            0,
-            0,
-            sampling,
-            paint);
+        using var image = PdfCartonFontCompat.DrawableImage(source, destination);
+        canvas.DrawImage(image!, 0, 0, sampling, paint);
         return destination;
     }
 }
@@ -3707,15 +3703,17 @@ public sealed class JavaTexturePaint : JavaPaint
 
         // The repeating image shader for a canvas whose matrix is userToDevice;
         // null when that matrix cannot be inverted (nothing is drawn).
-        internal SKShader? CreateShader(SKMatrix userToDevice)
+        // rasterTarget is the bitmap the shader is drawn on, as for DrawableImage.
+        internal SKShader? CreateShader(SKMatrix userToDevice, SKBitmap? rasterTarget)
         {
             if (!userToDevice.TryInvert(out var deviceToUser)) return null;
             PdfCartonFontCompat.EnsureNativePixels(image);
-            return image.ToShader(
+            using var view = PdfCartonFontCompat.DrawableImage(image, rasterTarget);
+            return view?.ToShader(
                 SKShaderTileMode.Repeat,
                 SKShaderTileMode.Repeat,
                 sampling,
-                SKMatrix.Concat(deviceToUser, deviceFromImage));
+                SKMatrix.Concat(deviceToUser, deviceFromImage)) ?? SKShader.CreateEmpty();
         }
 
         public JavaRaster GetRaster(int x, int y, int width, int height)
@@ -3727,7 +3725,7 @@ public sealed class JavaTexturePaint : JavaPaint
                 height,
                 PdfCartonFontCompat.TYPE_INT_ARGB);
             rasters.Add(bitmap);
-            using (var shader = CreateShader(SKMatrix.CreateTranslation(x, y)))
+            using (var shader = CreateShader(SKMatrix.CreateTranslation(x, y), bitmap))
             {
                 if (shader is not null)
                 {
@@ -5786,8 +5784,9 @@ public class PdfCartonGraphics2D : IDisposable
         _ = observer;
         PdfCartonFontCompat.EnsureNativePixels(image);
         RenderImageLayer(
-            (layer, imagePaint) => layer.DrawBitmap(
-                image,
+            image,
+            (layer, view, imagePaint) => layer.DrawImage(
+                view,
                 new SKRect(sourceX1, sourceY1, sourceX2, sourceY2),
                 new SKRect(
                     destinationX1,
@@ -5902,12 +5901,13 @@ public class PdfCartonGraphics2D : IDisposable
             imageTransform = SKMatrix.Identity;
         }
         RenderImageLayer(
-            (layer, imagePaint) =>
+            image,
+            (layer, view, imagePaint) =>
             {
                 var restore = layer.Save();
                 layer.Concat(imageTransform);
-                layer.DrawBitmap(
-                    image,
+                layer.DrawImage(
+                    view,
                     0,
                     0,
                     samplingOptions,
@@ -6018,19 +6018,38 @@ public class PdfCartonGraphics2D : IDisposable
         if (bitmap is null)
             throw new InvalidOperationException("This graphics instance has no bitmap.");
         PdfCartonBitmapView.Publish(bitmap);
-        using var snapshot = bitmap.Copy() ??
-            throw new InvalidOperationException("Unable to copy the graphics bitmap.");
+        var activeCanvas = RequireCanvas();
+        // Under an integer translation, snapshot the source area plus the
+        // pixels around it that sampling can reach. Otherwise snapshot the
+        // whole bitmap: filtering at other offsets rounds by the image origin.
+        var area = new SKRectI(0, 0, bitmap.Width, bitmap.Height);
+        var matrix = activeCanvas.TotalMatrix;
+        if (width > 0 && height > 0 && matrix is
+                { ScaleX: 1, ScaleY: 1, SkewX: 0, SkewY: 0, Persp0: 0, Persp1: 0, Persp2: 1 } &&
+            matrix.TransX == Math.Floor(matrix.TransX) && matrix.TransY == Math.Floor(matrix.TransY))
+        {
+            area = new SKRectI((int)Math.Max(0L, x - 3L), (int)Math.Max(0L, y - 3L),
+                (int)Math.Min(area.Right, (long)x + width + 3), (int)Math.Min(area.Bottom, (long)y + height + 3));
+            if (area.Width <= 0 || area.Height <= 0) area = new SKRectI(0, 0, 1, 1);
+        }
+        using var snapshot = new SKBitmap(bitmap.Info.WithSize(area.Width, area.Height));
+        using (var pixels = bitmap.PeekPixels())
+            if (!pixels.ReadPixels(snapshot.Info, snapshot.GetPixels(), snapshot.RowBytes, area.Left, area.Top))
+                throw new InvalidOperationException("Unable to copy the graphics bitmap.");
         using var imagePaint = new SKPaint();
+        var source = new SKRect(x, y, x + width, y + height);
+        source.Offset(-area.Left, -area.Top);
         var destination = new SKRect(
             x + destinationX,
             y + destinationY,
             x + destinationX + width,
             y + destinationY + height);
         using (BeginDrawing(destination))
+        using (var image = PdfCartonFontCompat.DrawableImage(snapshot, bitmap))
         {
-            RequireCanvas().DrawBitmap(
-                snapshot,
-                new SKRect(x, y, x + width, y + height),
+            activeCanvas.DrawImage(
+                image!,
+                source,
                 destination,
                 samplingOptions,
                 imagePaint);
@@ -6312,7 +6331,7 @@ public class PdfCartonGraphics2D : IDisposable
             if (shape is SKRect rectangle)
             {
                 RenderLayer(
-                    (layer, drawingPaint) =>
+                    (layer, _, drawingPaint) =>
                         layer.DrawRect(rectangle, drawingPaint),
                     stroked: !fill,
                     imagePaint: false, userBounds: rectangle);
@@ -6325,7 +6344,7 @@ public class PdfCartonGraphics2D : IDisposable
                     integerRectangle.Right,
                     integerRectangle.Bottom);
                 RenderLayer(
-                    (layer, drawingPaint) =>
+                    (layer, _, drawingPaint) =>
                         layer.DrawRect(convertedRectangle, drawingPaint),
                     stroked: !fill,
                     imagePaint: false, userBounds: convertedRectangle);
@@ -6336,7 +6355,7 @@ public class PdfCartonGraphics2D : IDisposable
                 using var lease = PdfCartonFontCompat.BorrowPath(shape);
                 var path = lease.Path;
                 RenderLayer(
-                    (layer, drawingPaint) =>
+                    (layer, _, drawingPaint) =>
                         layer.DrawPath(path, drawingPaint),
                     stroked: !fill,
                     imagePaint: false, userBounds: PathBounds(path));
@@ -6371,8 +6390,12 @@ public class PdfCartonGraphics2D : IDisposable
         return result;
     }
 
-    private void RenderImageLayer(Action<SKCanvas, SKPaint> draw, SKRect userBounds) =>
-        RenderLayer(draw, stroked: false, imagePaint: true, userBounds);
+    private void RenderImageLayer(SKBitmap image, Action<SKCanvas, SKImage, SKPaint> draw, SKRect userBounds) =>
+        RenderLayer((target, targetBitmap, imagePaint) =>
+        {
+            using var view = PdfCartonFontCompat.DrawableImage(image, targetBitmap);
+            draw(target, view!, imagePaint);
+        }, stroked: false, imagePaint: true, userBounds);
 
     private static SKRect? PathBounds(SKPath path) =>
         path.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd
@@ -6405,8 +6428,9 @@ public class PdfCartonGraphics2D : IDisposable
             : new SKRectI((int)left, (int)top, (int)right, (int)bottom);
     }
 
+    // draw gets the canvas, its bitmap (null if not known to be raster) and the paint.
     private void RenderLayer(
-        Action<SKCanvas, SKPaint> draw,
+        Action<SKCanvas, SKBitmap?, SKPaint> draw,
         bool stroked,
         bool imagePaint,
         SKRect? userBounds,
@@ -6423,7 +6447,7 @@ public class PdfCartonGraphics2D : IDisposable
                 : CreateDrawingPaint(stroked, shader);
             ApplyFallbackComposite(directPaint);
             using (BeginDrawing(bounds))
-                draw(RequireCanvas(), directPaint);
+                draw(RequireCanvas(), bitmap, directPaint);
             QuantizeBinaryDestination(bounds);
             return;
         }
@@ -6444,7 +6468,7 @@ public class PdfCartonGraphics2D : IDisposable
             using var sourcePaint = imagePaint
                 ? CreateImagePaint()
                 : CreateDrawingPaint(stroked, shader);
-            draw(layer, sourcePaint);
+            draw(layer, source, sourcePaint);
         }
         CompositeLayer(source, bounds);
     }
@@ -6465,9 +6489,9 @@ public class PdfCartonGraphics2D : IDisposable
         // Texture paints, TilingPaint's among them, fill with a Skia shader.
         if (context is JavaTexturePaint.TexturePaintContext texture)
         {
-            using var shader = texture.CreateShader(transform);
+            using var shader = texture.CreateShader(transform, bitmap);
             if (shader is not null)
-                RenderLayer((layer, drawingPaint) => layer.DrawPath(shape, drawingPaint),
+                RenderLayer((layer, _, drawingPaint) => layer.DrawPath(shape, drawingPaint),
                     stroked, imagePaint: false, PathBounds(shape), shader);
             return;
         }
@@ -6495,7 +6519,8 @@ public class PdfCartonGraphics2D : IDisposable
                 null);
             using var sourceCanvas = new SKCanvas(source);
             using var replacePaint = new SKPaint { BlendMode = SKBlendMode.Src };
-            sourceCanvas.DrawBitmap(paintBitmap, 0, 0, replacePaint);
+            using var paintImage = PdfCartonFontCompat.DrawableImage(paintBitmap, source);
+            sourceCanvas.DrawImage(paintImage!, 0, 0, replacePaint);
         }
 
         using var mask = PdfCartonFontCompat.CreateNativeBitmap(
@@ -6512,8 +6537,9 @@ public class PdfCartonGraphics2D : IDisposable
         }
         using (var sourceCanvas = new SKCanvas(source))
         using (var maskPaint = new SKPaint { BlendMode = SKBlendMode.DstIn })
+        using (var maskImage = PdfCartonFontCompat.DrawableImage(mask, source))
         {
-            sourceCanvas.DrawBitmap(mask, 0, 0, maskPaint);
+            sourceCanvas.DrawImage(maskImage!, 0, 0, maskPaint);
         }
         if (composite is JavaAlphaComposite)
             DrawAlphaLayer(source, bounds);
@@ -6529,7 +6555,8 @@ public class PdfCartonGraphics2D : IDisposable
         using var drawingPaint = CreateImagePaint();
         ApplyFallbackComposite(drawingPaint);
         using (BeginDrawing(bounds))
-            activeCanvas.DrawBitmap(source, bounds.Left, bounds.Top, drawingPaint);
+        using (var image = PdfCartonFontCompat.DrawableImage(source, bitmap))
+            activeCanvas.DrawImage(image!, bounds.Left, bounds.Top, drawingPaint);
         activeCanvas.RestoreToCount(restore);
     }
 
@@ -8033,11 +8060,8 @@ internal static class PdfCartonFontCompat
         var sampling = hints == SCALE_SMOOTH
             ? new SKSamplingOptions(SKCubicResampler.Mitchell)
             : SKSamplingOptions.Default;
-        canvas.DrawBitmap(
-            source,
-            new SKRect(0, 0, width, height),
-            sampling,
-            paint);
+        using var image = DrawableImage(source, destination);
+        canvas.DrawImage(image!, new SKRect(0, 0, width, height), sampling, paint);
         return destination;
     }
 
@@ -8569,6 +8593,35 @@ internal static class PdfCartonFontCompat
             RenderRaster(bitmap, metadata.ColorModel!, metadata.Raster!);
             metadata.NativePending = false;
         }
+    }
+
+    private static readonly SKImageRasterReleaseDelegate KeepSourceAlive = (_, _) => { };
+
+    // SKCanvas.DrawBitmap and SKBitmap.ToShader go through an image that
+    // copies all of a mutable bitmap's pixels, however little is drawn. A
+    // raster canvas reads them only while it draws, so for one this image
+    // wraps the live pixels instead (and keeps source alive while it lives).
+    // rasterTarget is the canvas's bitmap: null for a canvas that may record
+    // or defer, which, like a source sharing the target's pixels, gets the copy.
+    internal static SKImage? DrawableImage(SKBitmap source, SKBitmap? rasterTarget)
+    {
+        if (rasterTarget is not null && !SharesPixels(source, rasterTarget))
+        {
+            using var pixmap = source.PeekPixels();
+            if (pixmap is not null && SKImage.FromPixels(pixmap, KeepSourceAlive, source) is { } view)
+                return view;
+        }
+        return SKImage.FromBitmap(source);
+    }
+
+    private static bool SharesPixels(SKBitmap first, SKBitmap second)
+    {
+        long start = (long)first.GetPixels(), other = (long)second.GetPixels();
+        var shares = ReferenceEquals(first, second) || start != 0 && other != 0 &&
+                     start < other + second.ByteCount && other < start + first.ByteCount;
+        GC.KeepAlive(first);
+        GC.KeepAlive(second);
+        return shares;
     }
 
     // Per-thread scratch for one-pixel GetRgb/SetRgb, which Java allocates
