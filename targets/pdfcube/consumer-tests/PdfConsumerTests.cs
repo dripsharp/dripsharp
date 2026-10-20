@@ -870,6 +870,76 @@ public sealed class RasterConversionConsumerTests
         text.Append($"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
         return Ascii(text.ToString());
     }
+
+    // Raster.getData copies and materialized data buffers of a bitmap-backed
+    // raster hold exactly the samples its per-pixel reads return, at the
+    // band offsets of the raster layout, and outlive the bitmap.
+    [Fact]
+    public void BitmapRasterSnapshotsPreserveComponents()
+    {
+        var cases = new (string Name, SKColorType Color, SKAlphaType Alpha, int Padding, int Type, int[] Offsets)[]
+        {
+            ("BGR", SKColorType.Bgra8888, SKAlphaType.Opaque, 0, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR, [2, 1, 0]),
+            ("RGBA source as BGR, padded rows", SKColorType.Rgba8888, SKAlphaType.Opaque, 12,
+                Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR, [2, 1, 0]),
+            ("BGRA unpremultiplied", SKColorType.Bgra8888, SKAlphaType.Unpremul, 0,
+                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [0, 1, 2, 3]),
+            ("RGBA unpremultiplied, padded rows", SKColorType.Rgba8888, SKAlphaType.Unpremul, 8,
+                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [0, 1, 2, 3]),
+            ("BGRA premultiplied", SKColorType.Bgra8888, SKAlphaType.Premul, 0,
+                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [0, 1, 2, 3]),
+            ("gray, padded rows", SKColorType.Gray8, SKAlphaType.Opaque, 5,
+                Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY, [0]),
+        };
+        foreach (var (name, color, alpha, padding, type, offsets) in cases)
+        {
+            var info = new SKImageInfo(Width, Height, color, alpha);
+            var bitmap = new SKBitmap(info, info.RowBytes + padding);
+            var pixels = bitmap.GetPixelSpan();
+            var random = new Random(name.Length);
+            random.NextBytes(pixels);
+            if (alpha == SKAlphaType.Premul)
+            {
+                // Premultiplied components never exceed alpha.
+                for (var index = 0; index < pixels.Length; index += 4)
+                    for (var component = 0; component < 3; component++)
+                        pixels[index + component] = (byte)(pixels[index + component] % (pixels[index + 3] + 1));
+            }
+            bitmap.NotifyPixelsChanged();
+            Compat.PdfCartonFontCompat.RegisterImageType(bitmap, type);
+
+            var view = Compat.PdfCartonFontCompat.GetRaster(bitmap);
+            var bands = view.NumberOfBands;
+            Assert.Equal(offsets.Length, bands);
+            var expected = new int[Height][];
+            for (var y = 0; y < Height; y++)
+                expected[y] = view.GetPixels(0, y, Width, 1, (int[]?)null);
+
+            var snapshot = Compat.PdfCartonFontCompat.GetImageData(bitmap);
+            var materialized = new Compat.JavaRaster(bitmap);
+            var materializedData = ((Compat.JavaDataBufferByte)materialized.GetDataBuffer()).GetData();
+            var snapshotData = ((Compat.JavaDataBufferByte)snapshot.GetDataBuffer()).GetData();
+            bitmap.Dispose();
+
+            for (var y = 0; y < Height; y++)
+            {
+                Assert.Equal(expected[y], snapshot.GetPixels(0, y, Width, 1, (int[]?)null));
+                Assert.Equal(expected[y], materialized.GetPixels(0, y, Width, 1, (int[]?)null));
+                for (var x = 0; x < Width; x++)
+                {
+                    for (var band = 0; band < bands; band++)
+                    {
+                        var index = (y * Width + x) * bands + offsets[band];
+                        var sample = expected[y][x * bands + band];
+                        Assert.True(
+                            sample == (snapshotData[index] & 0xff) && sample == (materializedData[index] & 0xff),
+                            $"{name} ({x}, {y}) band {band}: expected {sample}, snapshot " +
+                            $"{snapshotData[index] & 0xff}, materialized {materializedData[index] & 0xff}.");
+                    }
+                }
+            }
+        }
+    }
 }
 
 // /FlateDecode through the public FlateFilterDecoderStream and font loading.
@@ -1779,5 +1849,227 @@ public sealed class StringRegexConsumerTests
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.NotEqual(int.MinValue, checksum);
         return allocated / Calls;
+    }
+}
+
+// Compat bitmaps are counted process-wide, so these tests run alone.
+[CollectionDefinition(nameof(NativeBitmapLifetimeCollection), DisableParallelization = true)]
+public sealed class NativeBitmapLifetimeCollection
+{
+}
+
+// DCT, JPX and JBIG2 decoding allocate full-size native bitmaps that Java
+// leaves to its collector. The filters dispose them on every exit, and every
+// compat bitmap reports its pixel bytes as GC memory pressure until it is
+// disposed or finalized.
+[Collection(nameof(NativeBitmapLifetimeCollection))]
+public sealed class DecodeFilterBitmapLifetimeTests
+{
+    // A 64x16 all-white MMR generic region as an embedded JBIG2 stream: page
+    // information, immediate generic region and end-of-page segments.
+    private const string Jbig2Page =
+        "AAAAADAAAQAAABMAAABAAAAAEAAAAAAAAAAAAAAAAAAAASYAAQAAABQAAABAAAAAEAAAAAAAAAAAAAH//wAAAAIxAAEAAAAA";
+
+    private static (string Name, COSName Filter, COSStream Stream)[] Cases()
+    {
+        var jbig2 = Convert.FromBase64String(Jbig2Page);
+        return
+        [
+            ("DCT RGB", COSName.DctDecode, Encoded(IccRenderFixtures.SkiaJpeg(96, 64), COSName.DctDecode)),
+            ("DCT gray", COSName.DctDecode, Encoded(GrayJpeg(48, 32), COSName.DctDecode)),
+            ("JPX RGB", COSName.JpxDecode, Encoded(Jpx(40, 24, alpha: false), COSName.JpxDecode)),
+            ("JPX SMaskInData", COSName.JpxDecode, Encoded(Jpx(40, 24, alpha: true), COSName.JpxDecode,
+                stream => stream.SetInt(COSName.SmaskInData, 1))),
+            ("JBIG2", COSName.Jbig2Decode, Encoded(jbig2, COSName.Jbig2Decode)),
+            ("JBIG2 repacked to 1 bit", COSName.Jbig2Decode, Encoded(jbig2, COSName.Jbig2Decode,
+                stream => stream.SetInt(COSName.BitsPerComponent, 8))),
+        ];
+    }
+
+    [Fact]
+    public void DecodeFiltersDisposeTheirIntermediateBitmaps()
+    {
+        var cases = Cases();
+        // The soft mask escapes through the decode result, so that case is
+        // decoded through the filter and its caller disposes the mask.
+        byte[] DecodeCase(int index) =>
+            cases[index].Name == "JPX SMaskInData" ? DecodeJpxOwningMask(cases[index].Stream) : Decode(cases[index].Stream);
+        var expected = cases.Select((_, index) => DecodeCase(index)).ToArray();
+        Assert.Equal(96 * 64 * 3, expected[0].Length);
+        Assert.Equal(48 * 32, expected[1].Length);
+        Assert.Equal(40 * 24 * 3, expected[2].Length);
+        Assert.Equal(40 * 24 * 3, expected[3].Length);
+        Assert.Equal(64 / 8 * 16, expected[4].Length);
+        Assert.Equal(expected[4], expected[5]);
+        Assert.Equal(expected[3], Decode(cases[3].Stream));
+
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        for (var round = 0; round < 10; round++)
+        {
+            foreach (var (test, index) in cases.Select((test, index) => (test, index)))
+            {
+                Assert.Equal(expected[index], DecodeCase(index));
+                // No collection ran in between, so the decode disposed its bitmaps.
+                AssertUnchanged(live, bytes, test.Name);
+            }
+        }
+
+        // Malformed data fails without leaving a bitmap behind.
+        foreach (var filter in new[] { COSName.DctDecode, COSName.JpxDecode, COSName.Jbig2Decode })
+        {
+            Assert.ThrowsAny<IOException>(() => Decode(Encoded([0xff, 0xd8, 1, 2, 3], filter)));
+            AssertUnchanged(live, bytes, $"malformed {filter.GetName()}");
+        }
+    }
+
+    // A failure after the bitmaps exist, here writing the decoded bytes,
+    // disposes them too; the JPX soft mask never reaches a caller then.
+    [Fact]
+    public void DecodeFiltersDisposeTheirBitmapsWhenWritingTheOutputFails()
+    {
+        var cases = Cases();
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        foreach (var (name, filterName, stream) in cases)
+        {
+            var filter = FilterFactory.Instance.GetFilter(filterName);
+            using var encoded = stream.CreateRawInputStream();
+            Assert.ThrowsAny<IOException>(() => filter.Decode(encoded, new FailingOutput(), stream, 0));
+            AssertUnchanged(live, bytes, name);
+        }
+    }
+
+    private static void AssertUnchanged(long live, long bytes, string name) =>
+        Assert.True(
+            live == Compat.PdfCartonNativeBitmap.LiveCount &&
+            bytes == Compat.PdfCartonNativeBitmap.OutstandingBytes,
+            $"{name} left {Compat.PdfCartonNativeBitmap.LiveCount - live} bitmaps " +
+            $"({Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes} bytes) undisposed.");
+
+    private sealed class FailingOutput : MemoryStream
+    {
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new IOException("output failed");
+
+        public override void Write(ReadOnlySpan<byte> buffer) =>
+            throw new IOException("output failed");
+
+        public override void WriteByte(byte value) =>
+            throw new IOException("output failed");
+    }
+
+    [Fact]
+    public void CompatBitmapsReleaseTheirMemoryPressureOnDisposeOrFinalization()
+    {
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+
+        var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+            300, 200, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        Assert.Equal(live + 1, Compat.PdfCartonNativeBitmap.LiveCount);
+        Assert.Equal(bytes + 300L * 4 * 200, Compat.PdfCartonNativeBitmap.OutstandingBytes);
+        bitmap.Dispose();
+        bitmap.Dispose();
+        Assert.Equal(live, Compat.PdfCartonNativeBitmap.LiveCount);
+        Assert.Equal(bytes, Compat.PdfCartonNativeBitmap.OutstandingBytes);
+
+        AbandonBitmaps(10);
+        Assert.Equal(live + 10, Compat.PdfCartonNativeBitmap.LiveCount);
+        Assert.Equal(bytes + 10L * 64 * 64, Compat.PdfCartonNativeBitmap.OutstandingBytes);
+        Settle();
+        Assert.Equal(live, Compat.PdfCartonNativeBitmap.LiveCount);
+        Assert.Equal(bytes, Compat.PdfCartonNativeBitmap.OutstandingBytes);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void AbandonBitmaps(int count)
+    {
+        for (var index = 0; index < count; index++)
+            _ = Compat.PdfCartonFontCompat.CreateBitmap(
+                64, 64, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+    }
+
+    private static void Settle()
+    {
+        for (var pass = 0; pass < 3; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
+
+    private static COSStream Encoded(
+        byte[] data, COSName filter, Action<COSStream>? configure = null)
+    {
+        var stream = new COSStream();
+        using (var output = stream.CreateRawOutputStream())
+            output.Write(data);
+        stream.SetItem(COSName.Filter, filter);
+        configure?.Invoke(stream);
+        return stream;
+    }
+
+    private static byte[] Decode(COSStream stream)
+    {
+        using var input = stream.CreateInputStream();
+        using var output = new MemoryStream();
+        input.CopyTo(output);
+        return output.ToArray();
+    }
+
+    private static byte[] DecodeJpxOwningMask(COSStream stream)
+    {
+        using var encoded = stream.CreateRawInputStream();
+        using var decoded = new MemoryStream();
+        var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
+        using var smask = result.GetJPXSMask();
+        Assert.Equal((40, 24), (smask.Width, smask.Height));
+        return decoded.ToArray();
+    }
+
+    private static byte[] GrayJpeg(int width, int height)
+    {
+        using var bitmap = new SKBitmap(
+            new SKImageInfo(width, height, SKColorType.Gray8, SKAlphaType.Opaque));
+        var pixels = bitmap.GetPixelSpan();
+        for (var index = 0; index < pixels.Length; index++)
+            pixels[index] = (byte)(index * 5);
+        bitmap.NotifyPixelsChanged();
+        using var data = bitmap.Encode(SKEncodedImageFormat.Jpeg, 90);
+        return data.ToArray();
+    }
+
+    private static byte[] Jpx(int width, int height, bool alpha)
+    {
+        var count = alpha ? 4 : 3;
+        var components = new int[count][];
+        for (var component = 0; component < count; component++)
+        {
+            components[component] = new int[width * height];
+            for (var index = 0; index < width * height; index++)
+                components[component][index] = (index * (component + 3) & 255) - 128;
+        }
+        var source = new CoreJ2K.Util.InterleavedImageSource(
+            width, height, count, 8, new bool[count], components);
+        CoreJ2K.j2k.fileformat.metadata.J2KMetadata? metadata = null;
+        if (alpha)
+        {
+            var channels = new CoreJ2K.j2k.fileformat.metadata.ChannelDefinitionData();
+            for (var color = 0; color < 3; color++) channels.AddColorChannel(color, color + 1);
+            // CoreJ2K maps component c to the channel associated with c + 1,
+            // so the usual whole-image association (0) fails to decode
+            // (dripsharp-62).
+            channels.AddChannel(3, CoreJ2K.j2k.fileformat.metadata.ChannelType.Opacity, 4);
+            metadata = new CoreJ2K.j2k.fileformat.metadata.J2KMetadata
+            {
+                ChannelDefinitions = channels
+            };
+        }
+        return CoreJ2K.J2kImage.ToBytes(source, metadata);
     }
 }

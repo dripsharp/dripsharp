@@ -73,8 +73,8 @@
     (is (every? #(= expected ((:text-transform %) source))
                 codec-assets))
     (is (every? #(= expected
-                     ((:text-transform %)
-                      ((:text-transform %) source)))
+                    ((:text-transform %)
+                     ((:text-transform %) source)))
                 codec-assets))))
 
 (defn- structured-type
@@ -363,7 +363,7 @@
         parse-offset
         (csharp/declaration
          (csharp/raw
-         (str "internal static bool parseTZoffset(string text, "
+          (str "internal static bool parseTZoffset(string text, "
                "global::System.DateTimeOffset? cal, Position initialWhere)"))
          (csharp/block [])
          {:declaration-kind :method
@@ -516,6 +516,88 @@
               :source-name "toRGBImageAWT"
               :source-qualified-name
               "org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace"})))))))
+
+(deftest decode-filters-own-their-intermediate-bitmaps
+  (let [method (fn [type-name source-name parameter-count statements]
+                 (csharp/declaration
+                  (csharp/raw (str "private object " source-name "()"))
+                  (csharp/block (mapv csharp/raw statements))
+                  {:declaration-kind :method
+                   :source-name source-name
+                   :parameter-count parameter-count
+                   :source-qualified-name type-name}))
+        render (fn [declaration]
+                 (:text (render-transformed
+                         {:package {:id "DripSharp.PdfCarton"}}
+                         declaration)))
+        read-statement "image = reader.Read(0, irp);"
+        jbig2 (render
+               (method
+                "org.apache.pdfbox.filter.JBIG2Filter" "decode" 5
+                ["global::SkiaSharp.SKBitmap image;"
+                 read-statement
+                 (str "global::SkiaSharp.SKBitmap packedImage = "
+                      "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+                      "image.Width, image.Height, "
+                      "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_BINARY);")
+                 (str "global::DripSharp.Runtime.PdfCartonGraphics2D graphics = "
+                      "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage);")
+                 "image = packedImage;"]))
+        jpx (render
+             (method
+              "org.apache.pdfbox.filter.JPXFilter" "readJPX" 3
+              ["global::SkiaSharp.SKBitmap image;"
+               read-statement
+               (str "global::SkiaSharp.SKBitmap smask = "
+                    "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+                    "image.Width, image.Height, "
+                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY);")
+               "result.setJPXSMask(smask);"
+               (str "global::SkiaSharp.SKBitmap bim = "
+                    "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+                    "image.Width, image.Height, "
+                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_RGB);")
+               (str "global::DripSharp.Runtime.PdfCartonGraphics2D g2d = "
+                    "(global::DripSharp.Runtime.PdfCartonGraphics2D)("
+                    "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(bim)!);")
+               "image = bim;"
+               "return image;"]))]
+    (testing "the JBIG2 image, its repacking and graphics are owned by one scope"
+      (is (str/includes? jbig2 "using global::DripSharp.Runtime.PdfCartonDisposalScope __dripsharpOwned"))
+      (is (= 3 (count (re-seq #"__dripsharpOwned\.Own\(" jbig2)))))
+    (testing "readJPX releases only the image it returns"
+      (is (= 4 (count (re-seq #"__dripsharpOwned\.Own\(" jpx))))
+      (is (< (.indexOf jpx "__dripsharpOwned.Release(result.GetJPXSMask());")
+             (.indexOf jpx "return __dripsharpOwned.Release(image);"))))
+    (testing "DCT keeps an array copy of the raster and disposes the image"
+      (let [dct (render
+                 (method
+                  "org.apache.pdfbox.filter.DCTFilter" "readImageRaster" 2
+                  ["global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"
+                   "raster = global::DripSharp.Runtime.PdfCartonFontCompat.GetRaster(image);"]))]
+        (is (str/includes? dct "using global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"))
+        (is (str/includes? dct "PdfCartonFontCompat.GetImageData(image);"))))
+    (testing "only the JPX decode overload with the readJPX call is rewritten"
+      (let [overload (method "org.apache.pdfbox.filter.JPXFilter" "decode" 4
+                             ["return this.Decode(encoded, decoded, parameters, index, options);"])]
+        (is (= (render overload)
+               (:text (csharp/render overload)))))
+      (let [decode (render (method "org.apache.pdfbox.filter.JPXFilter" "decode" 5
+                                   [(str "global::SkiaSharp.SKBitmap image = "
+                                         "this.readJPX(encoded, options, result);")
+                                    "return result;"
+                                    "return result;"]))]
+        (is (str/includes? decode "using global::SkiaSharp.SKBitmap image = this.readJPX("))
+        (is (str/includes? decode "__dripsharpOwned.Own(result.GetJPXSMask());"))
+        (testing "every successful exit hands the soft mask to the caller"
+          (is (= 2 (count (re-seq #"__dripsharpOwned\.Release\(result\.GetJPXSMask\(\)\);\s*return result;"
+                                  decode)))))))
+    (testing "an upstream change to a rewritten statement fails generation"
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"missing the expected statement"
+           (render (method "org.apache.pdfbox.filter.JBIG2Filter" "decode" 5
+                           ["global::SkiaSharp.SKBitmap image;"])))))))
 
 (deftest pdfbox-text-normalization-preserves-upstream-arabic-mark-order
   (let [declaration

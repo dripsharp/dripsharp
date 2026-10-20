@@ -3668,7 +3668,7 @@
          declaration)))))
 
 (defn- replace-rendered-statement
-  [declaration rendered-statement replacement-statement]
+  [declaration rendered-statement replacement-statement {:keys [every?]}]
   (let [found? (volatile! false)
         transformed
         (update
@@ -3676,7 +3676,7 @@
          :body
          csharp/transform
          (fn [current]
-           (if (and (not @found?)
+           (if (and (or every? (not @found?))
                     (contains? #{:raw :sequence} (:kind current))
                     (= rendered-statement (:text (csharp/render-raw current))))
              (do
@@ -3690,12 +3690,22 @@
               :declaration-data (:data declaration)}))
     transformed))
 
+(def ^:private owned-resources-declaration
+  (str "using global::DripSharp.Runtime.PdfCartonDisposalScope __dripsharpOwned = "
+       "new global::DripSharp.Runtime.PdfCartonDisposalScope();"))
+
 (def ^:private owned-bitmap-statement-rewrites
   "Java leaves intermediate BufferedImages to the garbage collector, but their
   SKBitmap translations own native pixel memory. Each entry rewrites rendered
   statements of one translated method so a non-escaping intermediate bitmap is
-  disposed deterministically (a `using` local) and an owned result is disposed
-  when the method fails before returning it. Keys are [declaring type, method]."
+  disposed deterministically (a `using` local, or Own-ed by a
+  PdfCartonDisposalScope that disposes everything not Release-d as the result)
+  and an owned result is disposed when the method fails before returning it.
+  Compat-allocated bitmaps also report GC memory pressure as a backstop (see
+  PdfCartonNativeBitmap in the PdfCarton Fonts.Compat runtime). Keys are
+  [declaring type, method] or [declaring type, method, parameter count]; a
+  rewrite's optional third element {:every? true} replaces every matching
+  statement instead of the first."
   {["org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace" "toRGBImageAWT"]
    ;; `src` only feeds ColorConvertOp.filter, which reads its retained
    ;; raster, or the 1-pixel drawImage branch, which renders it on demand.
@@ -3723,22 +3733,97 @@
           "} catch {\n"
           "dest.Dispose();\n"
           "throw;\n"
-          "}")]]})
+          "}")]]
+   ;; The decoded image is read only through its raster. Raster.getData's
+   ;; array copy outlives the image, which is disposed on every exit,
+   ;; including the CMYK throw that falls back to readRaster.
+   ["org.apache.pdfbox.filter.DCTFilter" "readImageRaster"]
+   [["global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"
+     "using global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"]
+    ["raster = global::DripSharp.Runtime.PdfCartonFontCompat.GetRaster(image);"
+     "raster = global::DripSharp.Runtime.PdfCartonFontCompat.GetImageData(image);"]]
+   ;; readJPX's image only feeds the decoded bytes. Its soft mask reaches
+   ;; the caller only through the returned result, so it is disposed when
+   ;; writing the decoded bytes fails.
+   ["org.apache.pdfbox.filter.JPXFilter" "decode" 5]
+   [["global::SkiaSharp.SKBitmap image = this.readJPX(encoded, options, result);"
+     (str "using global::SkiaSharp.SKBitmap image = "
+          "this.readJPX(encoded, options, result);\n"
+          owned-resources-declaration "\n"
+          "__dripsharpOwned.Own(result.GetJPXSMask());")]
+    ["return result;"
+     "__dripsharpOwned.Release(result.GetJPXSMask());\nreturn result;"
+     {:every? true}]]
+   ;; The SMaskInData path replaces the decoded image with `bim`; the image
+   ;; returned and the soft mask stored in the result are released to the
+   ;; caller, the rest (everything on failure) is disposed.
+   ["org.apache.pdfbox.filter.JPXFilter" "readJPX"]
+   [["global::SkiaSharp.SKBitmap image;"
+     (str owned-resources-declaration "\nglobal::SkiaSharp.SKBitmap image;")]
+    ["image = reader.Read(0, irp);"
+     "image = __dripsharpOwned.Own(reader.Read(0, irp));"]
+    [(str "global::SkiaSharp.SKBitmap smask = "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+          "image.Width, image.Height, "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY);")
+     (str "global::SkiaSharp.SKBitmap smask = __dripsharpOwned.Own("
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+          "image.Width, image.Height, "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY));")]
+    [(str "global::SkiaSharp.SKBitmap bim = "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+          "image.Width, image.Height, "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_RGB);")
+     (str "global::SkiaSharp.SKBitmap bim = __dripsharpOwned.Own("
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+          "image.Width, image.Height, "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_RGB));")]
+    [(str "global::DripSharp.Runtime.PdfCartonGraphics2D g2d = "
+          "(global::DripSharp.Runtime.PdfCartonGraphics2D)("
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(bim)!);")
+     (str "global::DripSharp.Runtime.PdfCartonGraphics2D g2d = __dripsharpOwned.Own("
+          "(global::DripSharp.Runtime.PdfCartonGraphics2D)("
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(bim)!));")]
+    ["return image;"
+     (str "__dripsharpOwned.Release(result.GetJPXSMask());\n"
+          "return __dripsharpOwned.Release(image);")]]
+   ;; Neither the decoded image nor its 1-bit repacking escapes.
+   ["org.apache.pdfbox.filter.JBIG2Filter" "decode" 5]
+   [["global::SkiaSharp.SKBitmap image;"
+     (str owned-resources-declaration "\nglobal::SkiaSharp.SKBitmap image;")]
+    ["image = reader.Read(0, irp);"
+     "image = __dripsharpOwned.Own(reader.Read(0, irp));"]
+    [(str "global::SkiaSharp.SKBitmap packedImage = "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+          "image.Width, image.Height, "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_BINARY);")
+     (str "global::SkiaSharp.SKBitmap packedImage = __dripsharpOwned.Own("
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
+          "image.Width, image.Height, "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_BINARY));")]
+    [(str "global::DripSharp.Runtime.PdfCartonGraphics2D graphics = "
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage);")
+     (str "global::DripSharp.Runtime.PdfCartonGraphics2D graphics = __dripsharpOwned.Own("
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage));")]]})
 
 (defn- own-intermediate-bitmaps
   [configuration node]
   (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
     node
     (reduce-kv
-     (fn [node [type-name method-name] rewrites]
+     (fn [node [type-name method-name parameter-count] rewrites]
        (update-declaration
         node
         :method
         type-name
         (fn [declaration]
-          (if (= method-name (get-in declaration [:data :source-name]))
-            (reduce (fn [declaration [rendered replacement]]
-                      (replace-rendered-statement declaration rendered replacement))
+          (if (and (= method-name (get-in declaration [:data :source-name]))
+                   (or (nil? parameter-count)
+                       (= parameter-count
+                          (get-in declaration [:data :parameter-count]))))
+            (reduce (fn [declaration [rendered replacement options]]
+                      (replace-rendered-statement
+                       declaration rendered replacement options))
                     declaration
                     rewrites)
             declaration))))
@@ -3892,7 +3977,7 @@
                (csharp/transform-namespaces
                 node
                 (into {} (map (fn [name] [(str destination "." name)
-                                         (str base-compatibility-namespace "." name)])
+                                          (str base-compatibility-namespace "." name)])
                               ["JavaFile" "JavaFileBridge" "JavaFileBoundary"])))
                node)]
     (->> node
@@ -3907,12 +3992,12 @@
 
 (defn- compatibility-asset [configuration asset]
   (let [asset (if (= base-compatibility-namespace
-                    (compatibility-namespace configuration))
+                     (compatibility-namespace configuration))
                 asset
                 (assoc asset
-           :text-replacements
-           {(str "namespace " base-compatibility-namespace)
-            (str "namespace " (compatibility-namespace configuration))}))]
+                       :text-replacements
+                       {(str "namespace " base-compatibility-namespace)
+                        (str "namespace " (compatibility-namespace configuration))}))]
     (if (and (= :fontbox (:pdfcube-product configuration))
              (some #(str/ends-with? (str (:source asset)) %)
                    ["DripSharp.JavaCompat.Java.IO.cs"

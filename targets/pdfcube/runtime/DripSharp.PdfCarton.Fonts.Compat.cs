@@ -18,6 +18,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 #endif
 using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Xml;
 using SkiaSharp;
 
@@ -1310,7 +1311,7 @@ public sealed class JavaImageReader : IDisposable
         using var stream = new MemoryStream(
             RequireInput().Bytes,
             writable: false);
-        var bitmap = SKBitmap.Decode(stream) ??
+        var bitmap = PdfCartonNativeBitmap.DecodeStream(stream) ??
             throw new IOException(
                 $"Unable to decode {formatName} image data.");
         PdfCartonFontCompat.RegisterImageType(
@@ -1397,7 +1398,7 @@ public sealed class JavaImageReader : IDisposable
             return managedDestination;
         }
 
-        var destination = new SKBitmap(
+        var destination = new PdfCartonNativeBitmap(
             new SKImageInfo(
                 outputWidth,
                 outputHeight,
@@ -1734,6 +1735,53 @@ internal ref struct PdfCartonPixels
                 throw new InvalidOperationException("Unable to write bitmap pixel.");
         }
         changed = true;
+    }
+
+    // Copies every pixel's components, exactly as Get returns them, into
+    // interleaved byte samples of a width x height raster: band b of pixel
+    // (x, y) lands at (y * width + x) * bands + bandOffsets[b]. Bands are gray,
+    // or red, green, blue and alpha. False for formats Get converts.
+    internal bool TryCopyComponents(int width, int height, Span<sbyte> samples, int[] bandOffsets)
+    {
+        var bands = bandOffsets.Length;
+        if (width != info.Width || height != info.Height ||
+            samples.Length < checked(width * height * bands))
+            return false;
+        if (info.ColorType == SKColorType.Gray8)
+        {
+            if (bands != 1) return false;
+            for (var y = 0; y < height; y++)
+            {
+                var input = bytes.Slice(y * rowBytes, width);
+                var output = samples.Slice(y * width);
+                for (var x = 0; x < width; x++)
+                    output[x + bandOffsets[0]] = unchecked((sbyte)input[x]);
+            }
+            return true;
+        }
+        if (info.ColorType is not SKColorType.Bgra8888 and not SKColorType.Rgba8888 ||
+            info.AlphaType == SKAlphaType.Premul ||
+            bands is not 3 and not 4)
+            return false;
+        var redIndex = info.ColorType == SKColorType.Bgra8888 ? 2 : 0;
+        var blueIndex = 2 - redIndex;
+        var opaque = info.AlphaType == SKAlphaType.Opaque;
+        int red = bandOffsets[0], green = bandOffsets[1], blue = bandOffsets[2];
+        var alpha = bands == 4 ? bandOffsets[3] : -1;
+        for (var y = 0; y < height; y++)
+        {
+            var input = bytes.Slice(y * rowBytes, width * 4);
+            var output = samples.Slice(y * width * bands, width * bands);
+            for (int x = 0, source = 0, target = 0; x < width; x++, source += 4, target += bands)
+            {
+                output[target + red] = unchecked((sbyte)input[source + redIndex]);
+                output[target + green] = unchecked((sbyte)input[source + 1]);
+                output[target + blue] = unchecked((sbyte)input[source + blueIndex]);
+                if (alpha >= 0)
+                    output[target + alpha] = opaque ? (sbyte)-1 : unchecked((sbyte)input[source + 3]);
+            }
+        }
+        return true;
     }
 
     // Writes one full row, storing exactly what Set stores for each color.
@@ -2151,6 +2199,12 @@ public sealed class JavaRaster
             Height,
             NumberOfBands,
             bandOffsets);
+        if (bitmap is not null && storage is null && copy.storage is sbyte[] samples)
+        {
+            using var access = new PdfCartonPixels(bitmap);
+            if (access.TryCopyComponents(Width, Height, samples, bandOffsets))
+                return copy;
+        }
         var row = new int[checked(Width * NumberOfBands)];
         for (var y = 0; y < Height; y++)
             copy.SetPixels(0, y, Width, 1, GetPixels(0, y, Width, 1, row));
@@ -2727,20 +2781,10 @@ public sealed class JavaRaster
         storage = dataType == PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE
             ? new sbyte[checked(Width * Height * NumberOfBands)]
             : new short[checked(Width * Height * NumberOfBands)];
-        if (bitmap.ColorType == SKColorType.Gray8 && storage is sbyte[] grayStorage)
-        {
-            // A gray bitmap's row bytes are its samples (TYPE_BYTE_GRAY).
-            var pixels = bitmap.GetPixelSpan();
-            var rowBytes = bitmap.RowBytes;
-            for (var y = 0; y < Height; y++)
-            {
-                MemoryMarshal.Cast<byte, sbyte>(pixels.Slice(y * rowBytes, Width))
-                    .CopyTo(grayStorage.AsSpan(y * Width, Width));
-            }
-            GC.KeepAlive(bitmap);
-            return;
-        }
         using var access = new PdfCartonPixels(bitmap);
+        if (storage is sbyte[] samples &&
+            access.TryCopyComponents(Width, Height, samples, bandOffsets))
+            return;
         for (var y = 0; y < Height; y++)
         {
             for (var x = 0; x < Width; x++)
@@ -3135,13 +3179,13 @@ public sealed class JavaColor : JavaPaint, IEquatable<JavaColor>
             _ = y;
             if (width <= 0 || height <= 0)
                 throw new ArgumentException("Raster dimensions must be positive.");
-            var bitmap = new SKBitmap(
+            var bitmap = new PdfCartonNativeBitmap(new SKImageInfo(
                 width,
                 height,
                 SKColorType.Bgra8888,
                 color.Alpha == byte.MaxValue
                     ? SKAlphaType.Opaque
-                    : SKAlphaType.Unpremul);
+                    : SKAlphaType.Unpremul));
             bitmap.Erase(color);
             rasters.Add(bitmap);
             return new JavaRaster(bitmap);
@@ -3227,12 +3271,12 @@ public sealed class JavaTexturePaint : JavaPaint
         {
             if (width <= 0 || height <= 0)
                 throw new ArgumentException("Raster dimensions must be positive.");
-            var bitmap = new SKBitmap(
+            var bitmap = new PdfCartonNativeBitmap(new SKImageInfo(
                 width,
                 height,
                 image.ColorType,
                 image.AlphaType,
-                image.ColorSpace);
+                image.ColorSpace));
             using var input = new PdfCartonPixels(image);
             using var output = new PdfCartonPixels(bitmap);
             for (var row = 0; row < height; row++)
@@ -6364,6 +6408,98 @@ public sealed class JavaArea
     public override int GetHashCode() => Bounds.GetHashCode();
 }
 
+// Native-bitmap lifetime. Java leaves BufferedImages to the garbage collector,
+// but SKBitmap pixels are native memory the GC cannot see. Two parts:
+// - Backstop: every compat-allocated bitmap is a PdfCartonNativeBitmap, which
+//   reports its pixel bytes as GC memory pressure and removes exactly that
+//   amount once, when it is disposed or finalized, so undisposed bitmaps still
+//   pace collections.
+// - Ownership: a translated intermediate that never escapes its method is
+//   disposed deterministically. The translator's owned-bitmap statement
+//   rewrites (src/dripsharp/pdfcube/java_project.clj) make it a `using` local
+//   or Own it in a PdfCartonDisposalScope, and CreateDeferredImage skips the
+//   native render for images that are only read through their raster.
+internal sealed class PdfCartonNativeBitmap : SKBitmap
+{
+    private static long liveCount;
+    private static long outstandingBytes;
+    private readonly long pressure;
+    private int registered;
+
+    internal PdfCartonNativeBitmap(SKImageInfo info)
+        : base(info)
+    {
+        pressure = (long)RowBytes * Height;
+        if (pressure > 0) GC.AddMemoryPressure(pressure);
+        Interlocked.Add(ref outstandingBytes, pressure);
+        Interlocked.Increment(ref liveCount);
+        registered = 1;
+    }
+
+    // Compat bitmaps not yet disposed or finalized, and their pixel bytes.
+    internal static long LiveCount => Interlocked.Read(ref liveCount);
+    internal static long OutstandingBytes => Interlocked.Read(ref outstandingBytes);
+
+    // SKBitmap.Decode(Stream), allocating the pixels as a compat bitmap.
+    internal static SKBitmap? DecodeStream(Stream stream)
+    {
+        using var codec = SKCodec.Create(stream);
+        if (codec is null) return null;
+        var info = codec.Info;
+        if (info.AlphaType == SKAlphaType.Unpremul)
+            info.AlphaType = SKAlphaType.Premul;
+        var bitmap = new PdfCartonNativeBitmap(info);
+        var result = codec.GetPixels(info, bitmap.GetPixels(out _));
+        if (result is SKCodecResult.Success or SKCodecResult.IncompleteInput)
+            return bitmap;
+        bitmap.Dispose();
+        return null;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (Interlocked.Exchange(ref registered, 0) != 1) return;
+        if (pressure > 0) GC.RemoveMemoryPressure(pressure);
+        Interlocked.Add(ref outstandingBytes, -pressure);
+        Interlocked.Decrement(ref liveCount);
+    }
+}
+
+// Owns the native resources (bitmaps, graphics contexts) of one translated
+// method that do not escape it. Dispose releases every owned resource not
+// handed back with Release, newest first, on success and failure alike.
+internal sealed class PdfCartonDisposalScope : IDisposable
+{
+    private List<IDisposable>? owned;
+
+    // Null resources are ignored, so optional results can be owned as is.
+    internal T? Own<T>(T? resource)
+        where T : class, IDisposable
+    {
+        if (resource is not null) (owned ??= new List<IDisposable>()).Add(resource);
+        return resource;
+    }
+
+    // Transfers ownership of `resource` to the caller (the method's result).
+    internal T? Release<T>(T? resource)
+        where T : class, IDisposable
+    {
+        if (resource is not null)
+            owned?.RemoveAll(candidate => ReferenceEquals(candidate, resource));
+        return resource;
+    }
+
+    public void Dispose()
+    {
+        var resources = owned;
+        owned = null;
+        if (resources is null) return;
+        for (var index = resources.Count - 1; index >= 0; index--)
+            resources[index].Dispose();
+    }
+}
+
 internal static class PdfCartonFontCompat
 {
     internal const int SCALE_SMOOTH = 4;
@@ -6718,7 +6854,7 @@ internal static class PdfCartonFontCompat
                 ? SKAlphaType.Opaque
                 : SKAlphaType.Unpremul,
             source.ColorSpace);
-        var bitmap = new SKBitmap(info);
+        var bitmap = new PdfCartonNativeBitmap(info);
         var result = codec.GetPixels(info, bitmap.GetPixels());
         if (result == SKCodecResult.Success || result == SKCodecResult.IncompleteInput)
             return bitmap;
@@ -7045,12 +7181,12 @@ internal static class PdfCartonFontCompat
         if (width == 0 || height == 0)
             throw new ArgumentException("Scaled image dimensions cannot be zero.");
 
-        var destination = new SKBitmap(
+        var destination = new PdfCartonNativeBitmap(new SKImageInfo(
             width,
             height,
             source.ColorType,
             source.AlphaType,
-            source.ColorSpace);
+            source.ColorSpace));
         using var canvas = new SKCanvas(destination);
         using var paint = new SKPaint();
         var sampling = hints == SCALE_SMOOTH
@@ -7082,7 +7218,7 @@ internal static class PdfCartonFontCompat
         var alphaType = type is TYPE_INT_ARGB or TYPE_4BYTE_ABGR
             ? SKAlphaType.Unpremul
             : SKAlphaType.Opaque;
-        var bitmap = new SKBitmap(new SKImageInfo(width, height, colorType, alphaType));
+        var bitmap = new PdfCartonNativeBitmap(new SKImageInfo(width, height, colorType, alphaType));
         bitmap.Erase(
             alphaType == SKAlphaType.Opaque
                 ? SKColors.Black
@@ -7398,7 +7534,7 @@ internal static class PdfCartonFontCompat
             throw new ArgumentException(
                 "Raster band count does not match the color model.",
                 nameof(raster));
-        var bitmap = new SKBitmap(
+        var bitmap = new PdfCartonNativeBitmap(
             new SKImageInfo(
                 raster.Width,
                 raster.Height,
@@ -7547,13 +7683,13 @@ internal static class PdfCartonFontCompat
                 "Invalid transparency constant.",
                 nameof(transparency));
         }
-        var bitmap = new SKBitmap(
+        var bitmap = new PdfCartonNativeBitmap(new SKImageInfo(
             width,
             height,
             SKColorType.Bgra8888,
             transparency == PdfCartonTransparency.OPAQUE
                 ? SKAlphaType.Opaque
-                : SKAlphaType.Unpremul);
+                : SKAlphaType.Unpremul));
         ImageMetadataByBitmap.Add(
             bitmap,
             new ImageMetadata(
