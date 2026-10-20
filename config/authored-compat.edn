@@ -9,8 +9,8 @@
    :charset nil
    :capability :java-compat
    :source-files 14
-   :max-source-lines 16031
-   :max-emitted-lines 16033
+   :max-source-lines 16259
+   :max-emitted-lines 16261
    :source-inventory-sha256
    "11f7c0ca56758d8846f825746b57118e787755cdc4befb84b47a8d11d796405b"
    :public-types
