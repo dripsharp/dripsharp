@@ -3915,9 +3915,9 @@ public sealed class JavaBasicStroke : JavaStroke
     public float DashPhase { get; }
     public object CreateStrokedShape(object shape)
     {
-        using var path = PdfCartonFontCompat.CreatePath(shape);
+        using var path = PdfCartonFontCompat.BorrowPath(shape);
         using var paint = CreateSkiaPaint();
-        return paint.GetFillPath(path) ?? new SKPath();
+        return paint.GetFillPath(path.Path) ?? new SKPath();
     }
 
     internal SKPaint CreateSkiaPaint()
@@ -6003,8 +6003,8 @@ public class PdfCartonGraphics2D : IDisposable
     public virtual void Clip(object shape)
     {
         ArgumentNullException.ThrowIfNull(shape);
-        using var path = PdfCartonFontCompat.CreatePath(shape);
-        IntersectClip(path);
+        using var path = PdfCartonFontCompat.BorrowPath(shape);
+        IntersectClip(path.Path);
     }
 
     public virtual void CopyArea(
@@ -6332,7 +6332,9 @@ public class PdfCartonGraphics2D : IDisposable
             }
             else
             {
-                using var path = PdfCartonFontCompat.CreatePath(shape);
+                // A shape that is already a path is drawn in place.
+                using var lease = PdfCartonFontCompat.BorrowPath(shape);
+                var path = lease.Path;
                 RenderLayer(
                     (layer, drawingPaint) =>
                         layer.DrawPath(path, drawingPaint),
@@ -6342,8 +6344,8 @@ public class PdfCartonGraphics2D : IDisposable
         }
         else
         {
-            using var path = PdfCartonFontCompat.CreatePath(shape);
-            RenderPaintLayer(path, stroked: !fill);
+            using var lease = PdfCartonFontCompat.BorrowPath(shape);
+            RenderPaintLayer(lease.Path, stroked: !fill);
         }
     }
 
@@ -6794,7 +6796,11 @@ public class JavaPoint : JavaPoint2D, IEquatable<JavaPoint>
         checked((int)Math.Floor(value + 0.5d));
 }
 
-public sealed class JavaPathIterator
+// A lazy java.awt.geom.PathIterator over a Skia path, as upstream's are: it
+// reads the path's segments in place, one at a time, and transforms each
+// as it is read. A path lent by its owner is never copied; a path made for
+// the iterator alone is disposed with it, once it is exhausted at the latest.
+public sealed class JavaPathIterator : IDisposable
 {
     public const int WIND_EVEN_ODD = 0;
     public const int WIND_NON_ZERO = 1;
@@ -6804,105 +6810,153 @@ public sealed class JavaPathIterator
     public const int SEG_CUBICTO = 3;
     public const int SEG_CLOSE = 4;
 
-    private readonly List<(int Verb, double[] Coordinates)> segments = new();
-    private int index;
+    private readonly SKPath source;
+    private readonly bool ownsSource;
+    private readonly SKMatrix transform;
+    private readonly bool transformed;
+    private readonly int windingRule;
+    private readonly int count;
+    private readonly SKPoint[] points = new SKPoint[4];
+    private SKPath.RawIterator? iterator;
+    private SKPathVerb verb;
+    private bool loaded;
+    private int remaining;
 
-    internal JavaPathIterator(SKPath path, object? transform)
+    internal JavaPathIterator(SKPath path, object? transform, bool ownsPath = false)
     {
         ArgumentNullException.ThrowIfNull(path);
-        Path = new SKPath(path);
-        if (transform is SKMatrix matrix &&
-            !PdfCartonFontCompat.IsDefaultMatrix(matrix))
+        source = path;
+        ownsSource = ownsPath;
+        if ((path.SegmentMasks & SKPathSegmentMask.Conic) != 0)
         {
-            Path.Transform(matrix);
+            Dispose();
+            throw new NotSupportedException(
+                "A conic Skia segment cannot be represented by java.awt.geom.PathIterator.");
         }
-
-        using var iterator = Path.CreateRawIterator();
-        var points = new SKPoint[4];
-        while (true)
+        if (transform is SKMatrix matrix && !PdfCartonFontCompat.IsDefaultMatrix(matrix))
         {
-            var verb = iterator.Next(points);
-            switch (verb)
-            {
-                case SKPathVerb.Move:
-                    segments.Add((SEG_MOVETO, Coordinates(points[0])));
-                    break;
-                case SKPathVerb.Line:
-                    segments.Add((SEG_LINETO, Coordinates(points[1])));
-                    break;
-                case SKPathVerb.Quad:
-                    segments.Add((SEG_QUADTO, Coordinates(points[1], points[2])));
-                    break;
-                case SKPathVerb.Cubic:
-                    segments.Add((SEG_CUBICTO, Coordinates(points[1], points[2], points[3])));
-                    break;
-                case SKPathVerb.Close:
-                    segments.Add((SEG_CLOSE, Array.Empty<double>()));
-                    break;
-                case SKPathVerb.Done:
-                    return;
-                case SKPathVerb.Conic:
-                    throw new NotSupportedException(
-                        "A conic Skia segment cannot be represented by java.awt.geom.PathIterator.");
-                default:
-                    throw new NotSupportedException($"Unsupported Skia path verb `{verb}`.");
-            }
+            this.transform = matrix;
+            transformed = true;
         }
+        windingRule = path.FillType is SKPathFillType.EvenOdd or SKPathFillType.InverseEvenOdd
+            ? WIND_EVEN_ODD
+            : WIND_NON_ZERO;
+        count = remaining = path.VerbCount;
+        if (remaining == 0) Dispose();
     }
 
-    internal SKPath Path { get; }
-
-    public bool IsDone() => index >= segments.Count;
+    public bool IsDone() => remaining <= 0;
 
     public void Next()
     {
-        if (!IsDone()) index++;
+        if (IsDone()) return;
+        Load();
+        loaded = false;
+        if (--remaining == 0) Dispose();
     }
 
     public int CurrentSegment(double[] coordinates)
     {
         ArgumentNullException.ThrowIfNull(coordinates);
-        if (IsDone()) throw new InvalidOperationException("Path iterator is exhausted.");
-        var segment = segments[index];
-        if (coordinates.Length < segment.Coordinates.Length)
+        var (first, length) = Segment(coordinates.Length);
+        for (var point = 0; point < length; point++)
         {
-            throw new IndexOutOfRangeException("Path coordinate array is too small.");
+            coordinates[point * 2] = points[first + point].X;
+            coordinates[point * 2 + 1] = points[first + point].Y;
         }
-        segment.Coordinates.CopyTo(coordinates, 0);
-        return segment.Verb;
+        return SegmentType();
     }
 
     public int CurrentSegment(float[] coordinates)
     {
         ArgumentNullException.ThrowIfNull(coordinates);
-        if (IsDone()) throw new InvalidOperationException("Path iterator is exhausted.");
-        var segment = segments[index];
-        if (coordinates.Length < segment.Coordinates.Length)
+        var (first, length) = Segment(coordinates.Length);
+        for (var point = 0; point < length; point++)
         {
-            throw new IndexOutOfRangeException("Path coordinate array is too small.");
+            coordinates[point * 2] = points[first + point].X;
+            coordinates[point * 2 + 1] = points[first + point].Y;
         }
-        for (var coordinate = 0; coordinate < segment.Coordinates.Length; coordinate++)
-        {
-            coordinates[coordinate] = (float)segment.Coordinates[coordinate];
-        }
-        return segment.Verb;
+        return SegmentType();
     }
 
-    public int GetWindingRule() =>
-        Path.FillType is SKPathFillType.EvenOdd or SKPathFillType.InverseEvenOdd
-            ? WIND_EVEN_ODD
-            : WIND_NON_ZERO;
+    public int GetWindingRule() => windingRule;
 
-    private static double[] Coordinates(params SKPoint[] points)
+    public void Dispose()
     {
-        var result = new double[points.Length * 2];
-        for (var index = 0; index < points.Length; index++)
-        {
-            result[index * 2] = points[index].X;
-            result[index * 2 + 1] = points[index].Y;
-        }
-        return result;
+        remaining = 0;
+        iterator?.Dispose();
+        iterator = null;
+        if (ownsSource) source.Dispose();
     }
+
+    // Path2D.append(PathIterator, connect): the segments not yet iterated.
+    internal void AppendTo(SKPath path, bool connect)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (IsDone()) return;
+        var mode = connect ? SKPathAddMode.Extend : SKPathAddMode.Append;
+        using var rest = remaining < count || ReferenceEquals(path, source)
+            ? new SKPath()
+            : null;
+        if (rest is null)
+        {
+            if (transformed) path.AddPath(source, in transform, mode);
+            else path.AddPath(source, mode);
+            Dispose();
+            return;
+        }
+        Load();
+        if (verb is not (SKPathVerb.Move or SKPathVerb.Close)) rest.MoveTo(points[0]);
+        for (; !IsDone(); Next())
+        {
+            Load();
+            switch (verb)
+            {
+                case SKPathVerb.Move: rest.MoveTo(points[0]); break;
+                case SKPathVerb.Line: rest.LineTo(points[1]); break;
+                case SKPathVerb.Quad: rest.QuadTo(points[1], points[2]); break;
+                case SKPathVerb.Cubic: rest.CubicTo(points[1], points[2], points[3]); break;
+                default: rest.Close(); break;
+            }
+        }
+        path.AddPath(rest, mode);
+    }
+
+    private void Load()
+    {
+        if (loaded) return;
+        iterator ??= source.CreateRawIterator();
+        verb = iterator.Next(points);
+        if (transformed) transform.MapPoints(points, points);
+        loaded = true;
+    }
+
+    private (int First, int Length) Segment(int capacity)
+    {
+        if (IsDone()) throw new InvalidOperationException("Path iterator is exhausted.");
+        Load();
+        var segment = verb switch
+        {
+            SKPathVerb.Move => (0, 1),
+            SKPathVerb.Line => (1, 1),
+            SKPathVerb.Quad => (1, 2),
+            SKPathVerb.Cubic => (1, 3),
+            SKPathVerb.Close => (0, 0),
+            _ => throw new NotSupportedException($"Unsupported Skia path verb `{verb}`.")
+        };
+        if (capacity < segment.Item2 * 2)
+            throw new IndexOutOfRangeException("Path coordinate array is too small.");
+        return segment;
+    }
+
+    private int SegmentType() => verb switch
+    {
+        SKPathVerb.Move => SEG_MOVETO,
+        SKPathVerb.Line => SEG_LINETO,
+        SKPathVerb.Quad => SEG_QUADTO,
+        SKPathVerb.Cubic => SEG_CUBICTO,
+        _ => SEG_CLOSE
+    };
 }
 
 public sealed class JavaEllipse
@@ -6945,7 +6999,7 @@ public sealed class JavaEllipse
             }
         }
 
-        using var path = new SKPath();
+        var path = new SKPath();
         for (var step = 0; step < steps; step++)
         {
             var angle = step * 2 * Math.PI / steps;
@@ -6961,7 +7015,7 @@ public sealed class JavaEllipse
             }
         }
         path.Close();
-        return new JavaPathIterator(path, transform);
+        return new JavaPathIterator(path, transform, ownsPath: true);
     }
 
     internal SKPath ToPath()
@@ -6976,7 +7030,8 @@ public sealed class JavaEllipse
     }
 }
 
-public sealed class JavaArea
+// Owns its path: Dispose releases it at once instead of at finalization.
+public sealed class JavaArea : IDisposable
 {
     private readonly SKPath path;
 
@@ -6999,6 +7054,8 @@ public sealed class JavaArea
     }
 
     public void Reset() => path.Reset();
+
+    public void Dispose() => path.Dispose();
 
     public JavaPathIterator GetPathIterator(object? transform) =>
         new(path, transform);
@@ -9208,12 +9265,13 @@ internal static class PdfCartonFontCompat
     internal static JavaPathIterator PathIterator(SKPath path, object? transform) =>
         new(path, transform);
 
+    // Shape.getPathIterator: paths and areas are iterated in place.
     internal static JavaPathIterator ShapePathIterator(
         object shape,
         object? transform)
     {
-        using var path = CreatePath(shape);
-        return new JavaPathIterator(path, transform);
+        var lease = BorrowPath(shape);
+        return new JavaPathIterator(lease.Path, transform, ownsPath: lease.Owned);
     }
 
     internal static void Close(SKPath path) => path.Close();
@@ -9240,8 +9298,39 @@ internal static class PdfCartonFontCompat
 
     internal static SKRect ShapeBounds(object shape)
     {
-        using var path = CreatePath(shape);
+        using var lease = BorrowPath(shape);
+        return lease.Path.Bounds;
+    }
+
+    // createTransformedShape(shape).getBounds2D() without keeping the shape.
+    internal static SKRect TransformedShapeBounds(SKMatrix transform, object shape)
+    {
+        using var path = (SKPath)CreateTransformedShape(transform, shape);
         return path.Bounds;
+    }
+
+    // The shape as a path to read, not keep: an SKPath or an area's path is
+    // lent as is, any other shape is converted into a path the lease owns.
+    internal static PathLease BorrowPath(object shape) =>
+        shape is SKPath path ? new PathLease(path, false)
+        : shape is JavaArea area ? new PathLease(area.Path, false)
+        : new PathLease(CreatePath(shape), true);
+
+    internal readonly struct PathLease : IDisposable
+    {
+        internal PathLease(SKPath path, bool owned)
+        {
+            Path = path;
+            Owned = owned;
+        }
+
+        internal SKPath Path { get; }
+        internal bool Owned { get; }
+
+        public void Dispose()
+        {
+            if (Owned) Path.Dispose();
+        }
     }
 
     internal static SKPath CreatePath(int windingRule, int initialCapacity)
@@ -9288,13 +9377,15 @@ internal static class PdfCartonFontCompat
     }
 
     internal static void AddPath(SKPath path, JavaPathIterator addition) =>
-        path.AddPath(addition.Path);
+        addition.AppendTo(path, connect: false);
 
     internal static void AppendPath(SKPath path, object shape, bool connect)
     {
-        using var addition = CreatePath(shape);
+        using var lease = BorrowPath(shape);
+        // Skia drops a path appended to itself, so that one is copied.
+        using var self = ReferenceEquals(lease.Path, path) ? new SKPath(path) : null;
         path.AddPath(
-            addition,
+            self ?? lease.Path,
             connect ? SKPathAddMode.Extend : SKPathAddMode.Append);
     }
 
@@ -9302,9 +9393,7 @@ internal static class PdfCartonFontCompat
         SKPath path,
         JavaPathIterator addition,
         bool connect) =>
-        path.AddPath(
-            addition.Path,
-            connect ? SKPathAddMode.Extend : SKPathAddMode.Append);
+        addition.AppendTo(path, connect);
 
     internal static void MoveTo(SKPath path, double x, double y) =>
         path.MoveTo((float)x, (float)y);

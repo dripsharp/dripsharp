@@ -9,14 +9,14 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 9329
-   :max-emitted-lines 9331
+   :max-source-lines 9418
+   :max-emitted-lines 9420
    :source-inventory-sha256
    "009138448258754a96c6a95922a4e6ed02248edbc1a70f63c5ee77b94054d957"
    :public-types
    {:count 59
     :sha256
-    "28e53cb3d569dc2fd0a952161c35eca22a3ba2af66838f9b5da6bd555ac17cc1"}}
+    "c7eddf739e47327cf9128b9aca4734ffdd5f0b5385a89d03416748cf33c5deed"}}
   {:id :pdfcube/fontbox-discovery
    :kind :file
    :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Fonts.Discovery.cs"

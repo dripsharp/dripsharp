@@ -5388,3 +5388,235 @@ public sealed class FourComponentJpegTests
 
     private static sbyte[] Signed(byte[] bytes) => (sbyte[])(Array)bytes;
 }
+
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+// java.awt.geom path iterators read their path in place, one segment at a
+// time, as upstream's do; shapes that are already paths are drawn in place.
+public sealed class PathIteratorTests
+{
+    [Fact]
+    public void PathIteratorsReadTheSameSegmentsAsATransformedCopy()
+    {
+        using var path = new SKPath { FillType = SKPathFillType.EvenOdd };
+        path.MoveTo(1, 2);
+        path.LineTo(10.5f, 2.25f);
+        path.QuadTo(12, 4, 9, 9);
+        path.CubicTo(7, 11, 3, 12, 1.125f, 8);
+        path.Close();
+        path.MoveTo(20, 20);
+        path.LineTo(30, 25);
+        var rotation = SKMatrix.CreateRotationDegrees(33, 4, 5);
+        foreach (var transform in new object?[]
+                 {
+                     null, SKMatrix.Identity, SKMatrix.CreateScaleTranslation(1.5f, -2, 7, 300),
+                     SKMatrix.Concat(rotation, SKMatrix.CreateSkew(0.25f, -0.5f)),
+                 })
+        {
+            var expected = CopiedSegments(path, transform);
+            Assert.Equal(expected, Segments(Compat.PdfCartonFontCompat.PathIterator(path, transform)));
+            using var area = new Compat.JavaArea(path);
+            Assert.Equal(expected, Segments(Compat.PdfCartonFontCompat.ShapePathIterator(area, transform)));
+            Assert.Equal(expected, Segments(area.GetPathIterator(transform)));
+            var iterator = Compat.PdfCartonFontCompat.PathIterator(path, transform);
+            Assert.Equal(Compat.JavaPathIterator.WIND_EVEN_ODD, iterator.GetWindingRule());
+            var floats = new float[6];
+            Assert.Equal(Compat.JavaPathIterator.SEG_MOVETO, iterator.CurrentSegment(floats));
+            Assert.Equal(expected[0], Segment(0, floats.Take(2).Select(value => (double)value)));
+        }
+
+        var rectangle = new SKRect(2, 3, 12, 8);
+        using var rectanglePath = new SKPath();
+        rectanglePath.AddRect(rectangle);
+        Assert.Equal(CopiedSegments(rectanglePath, rotation),
+            Segments(Compat.PdfCartonFontCompat.ShapePathIterator(rectangle, rotation)));
+        var ellipse = new Compat.JavaEllipse(0, 0, 40, 20).GetPathIterator(rotation, 0.5);
+        Assert.Equal("4:", Segments(ellipse)[^1]);
+        Assert.True(ellipse.IsDone());
+        ellipse.Dispose();
+    }
+
+    [Fact]
+    public void IsDoneAndTheFirstSegmentsDoNotCopyALargePath()
+    {
+        using var large = Polyline(100_000);
+        using var small = Polyline(10);
+        long Allocated(SKPath path)
+        {
+            Compat.PdfCartonFontCompat.PathIterator(path, null).IsDone();
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var iterator = Compat.PdfCartonFontCompat.PathIterator(path, null);
+            Assert.False(iterator.IsDone());
+            var coordinates = new double[6];
+            for (var segment = 0; segment < 5; segment++, iterator.Next())
+                iterator.CurrentSegment(coordinates);
+            iterator.Dispose();
+            return GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+
+        // The whole-path copy and per-segment arrays took ~11 MB here.
+        Assert.Equal(Allocated(small), Allocated(large));
+        Assert.True(Allocated(large) < 1024, $"{Allocated(large)} bytes");
+        Assert.Equal(100_001, Segments(Compat.PdfCartonFontCompat.PathIterator(large, null)).Count);
+    }
+
+    [Fact]
+    public void DrawingAndAppendingLendPathsInsteadOfCopyingThem()
+    {
+        using var path = Polyline(3);
+        using var area = new Compat.JavaArea(path);
+        using (var lease = Compat.PdfCartonFontCompat.BorrowPath(path))
+            Assert.Same(path, lease.Path);
+        using (var lease = Compat.PdfCartonFontCompat.BorrowPath(area))
+            Assert.Same(area.Path, lease.Path);
+        var rectangle = Compat.PdfCartonFontCompat.BorrowPath(new SKRect(0, 0, 1, 1));
+        Assert.True(rectangle.Owned);
+        rectangle.Dispose();
+
+        // Skia ignores a path appended to itself, so self-appends still copy.
+        Compat.PdfCartonFontCompat.AppendPath(path, path, false);
+        Assert.Equal(8, path.VerbCount);
+        Compat.PdfCartonFontCompat.AppendPath(
+            path, Compat.PdfCartonFontCompat.PathIterator(path, null), false);
+        Assert.Equal(16, path.VerbCount);
+
+        // Appending an iterator appends the segments it has not yet returned.
+        using var target = new SKPath();
+        var iterator = Compat.PdfCartonFontCompat.PathIterator(Polyline(3), SKMatrix.CreateTranslation(5, 0));
+        iterator.Next();
+        iterator.Next();
+        Compat.PdfCartonFontCompat.AppendPath(target, iterator, false);
+        Assert.True(iterator.IsDone());
+        Assert.Equal(new[] { new SKPoint(6, 1), new SKPoint(7, 0), new SKPoint(8, 1) }, target.Points);
+    }
+
+    private static SKPath Polyline(int segments)
+    {
+        var path = new SKPath();
+        path.MoveTo(0, 0);
+        for (var index = 1; index <= segments; index++)
+            path.LineTo(index, index % 2);
+        return path;
+    }
+
+    private static string Segment(int type, IEnumerable<double> coordinates) =>
+        $"{type}:{string.Join(",", coordinates.Select(value => value.ToString("R")))}";
+
+    private static List<string> Segments(Compat.JavaPathIterator iterator)
+    {
+        var result = new List<string>();
+        for (; !iterator.IsDone(); iterator.Next())
+        {
+            var coordinates = new double[6];
+            var type = iterator.CurrentSegment(coordinates);
+            var length = type switch { 0 or 1 => 2, 2 => 4, 3 => 6, _ => 0 };
+            result.Add(Segment(type, coordinates.Take(length)));
+        }
+        return result;
+    }
+
+    // What the iterators returned when they copied and transformed the path.
+    private static List<string> CopiedSegments(SKPath path, object? transform)
+    {
+        using var copy = new SKPath(path);
+        if (transform is SKMatrix matrix) copy.Transform(matrix);
+        var result = new List<string>();
+        using var iterator = copy.CreateRawIterator();
+        var points = new SKPoint[4];
+        for (var verb = iterator.Next(points); verb != SKPathVerb.Done; verb = iterator.Next(points))
+        {
+            var (type, first, count) = verb switch
+            {
+                SKPathVerb.Move => (0, 0, 1),
+                SKPathVerb.Line => (1, 1, 1),
+                SKPathVerb.Quad => (2, 1, 2),
+                SKPathVerb.Cubic => (3, 1, 3),
+                _ => (4, 0, 0),
+            };
+            result.Add(Segment(type, points.Skip(first).Take(count)
+                .SelectMany(point => new double[] { point.X, point.Y })));
+        }
+        return result;
+    }
+}
+#pragma warning restore CS0618
+
+// Undisposed SKPaths are counted as finalizable garbage process-wide, so
+// these tests run alone.
+[CollectionDefinition(nameof(NativePathLifetimeCollection), DisableParallelization = true)]
+public sealed class NativePathLifetimeCollection
+{
+}
+
+[Collection(nameof(NativePathLifetimeCollection))]
+public sealed class GlyphPathLifetimeTests
+{
+    // Every glyph used to leave its transformed SKPath to the finalizer.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RenderingTextDisposesEveryGlyphPath(bool clip)
+    {
+        using var document = TextDocument(3000, clip);
+        var renderer = new PDFRenderer(document);
+        using (var warm = renderer.RenderImage(0, 1, ImageType.Rgb))
+        {
+            // Black text on a red page, or a red page fill clipped to the text.
+            Assert.Equal(clip ? SKColors.White : SKColors.Red, warm.GetPixel(300, 600));
+            Assert.Contains(Enumerable.Range(0, 600).Select(x => warm.GetPixel(x, 7)),
+                color => clip ? color.Red > 160 && color.Green < 160 : color.Red < 160);
+        }
+
+        for (var pass = 0; pass < 3; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        var noCollection = GC.TryStartNoGCRegion(128L << 20);
+        try
+        {
+            using (renderer.RenderImage(0, 1, ImageType.Rgb)) { }
+        }
+        finally
+        {
+            if (noCollection && System.Runtime.GCSettings.LatencyMode ==
+                System.Runtime.GCLatencyMode.NoGCRegion)
+                GC.EndNoGCRegion();
+        }
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        var abandoned = GC.GetGCMemoryInfo(GCKind.FullBlocking).FinalizationPendingCount;
+        Assert.True(abandoned < 1000, $"{abandoned} finalizable objects after 3000 glyphs.");
+    }
+
+    private static PDDocument TextDocument(int glyphs, bool clip)
+    {
+        var document = new PDDocument();
+        var page = new PDPage(new PDRectangle(600, 800));
+        document.AddPage(page);
+        using var fontStream = typeof(PDDocument).Assembly.GetManifestResourceStream(
+            "org.apache.pdfbox.resources.ttf.LiberationSans-Regular.ttf")!;
+        var font = PDType0Font.Load(document, fontStream, false);
+        using var content = new PDPageContentStream(document, page);
+        void FillPage()
+        {
+            content.SetNonStrokingColor(1f, 0f, 0f);
+            content.AddRect(0, 0, 600, 800);
+            content.Fill();
+        }
+        if (!clip) FillPage();
+        content.SetNonStrokingColor(0f);
+        content.BeginText();
+        content.SetFont(font, 9);
+        if (clip)
+            content.SetRenderingMode(DripSharp.PdfCarton.Pdmodel.Graphics.State.RenderingMode.NeitherClip);
+        content.NewLineAtOffset(5, 790);
+        const string line = "The quick brown fox jumps over the lazy dog 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        for (var shown = 0; shown < glyphs; shown += line.Length)
+        {
+            content.ShowText(line.Substring(0, Math.Min(line.Length, glyphs - shown)));
+            content.NewLineAtOffset(0, -10);
+        }
+        content.EndText();
+        if (clip) FillPage();
+        return document;
+    }
+}

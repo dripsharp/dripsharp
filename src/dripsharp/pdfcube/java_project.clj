@@ -806,9 +806,15 @@
      (font-compat-call "CreateTransformedShape"
                        (into [target] arguments)))
 
+   ;; The bounds of a shape transformed just to measure them are taken
+   ;; without leaving the transformed SKPath to the finalizer.
    "executable:java.awt.Shape#getBounds2D()"
    (fn [target _arguments]
-     (font-compat-call "ShapeBounds" [target]))
+     (let [[head arguments] (:nodes target)]
+       (if (= (:text head)
+              "global::DripSharp.Runtime.PdfCartonFontCompat.CreateTransformedShape(")
+         (font-compat-call "TransformedShapeBounds" [arguments])
+         (font-compat-call "ShapeBounds" [target]))))
 
    "executable:java.awt.geom.AffineTransform#getMatrix(double[])"
    (fn [target arguments]
@@ -3851,6 +3857,54 @@
           "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage);")
      (str "global::DripSharp.Runtime.PdfCartonGraphics2D graphics = __dripsharpOwned.Own("
           "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage));")]]
+
+   ;; Glyph and fill shapes. Java leaves temporary Shapes to its collector;
+   ;; their SKPath translations own native memory and would otherwise wait
+   ;; for the finalizer, one per glyph shown. A glyph's transformed path is
+   ;; disposed once drawn; a text clip keeps a copy of it (clipping text
+   ;; modes are rare), disposed once intersected into the clipping path,
+   ;; which copies it again.
+   ["org.apache.pdfbox.rendering.PageDrawer" "drawGlyph"]
+   [["object glyph = global::DripSharp.Runtime.PdfCartonFontCompat.CreateTransformedShape(at, path);"
+     (str "using global::SkiaSharp.SKPath __dripsharpGlyph = (global::SkiaSharp.SKPath)"
+          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateTransformedShape(at, path);\n"
+          "object glyph = __dripsharpGlyph;")]
+    ["global::DripSharp.Runtime.JavaCompat.Add(this.textClippings, glyph);"
+     (str "global::DripSharp.Runtime.JavaCompat.Add(this.textClippings, "
+          "new global::SkiaSharp.SKPath(__dripsharpGlyph));")]]
+   ["org.apache.pdfbox.rendering.PageDrawer" "endTextClip"]
+   [["state.IntersectClippingPath(path);"
+     (str "state.IntersectClippingPath(path);\n"
+          "path.Dispose();\n"
+          "foreach (object __dripsharpGlyph in this.textClippings) {\n"
+          "(__dripsharpGlyph as global::System.IDisposable)?.Dispose();\n"
+          "}")]]
+   ;; A pattern fill clips the path to an Area of its own; the areas and the
+   ;; graphics clip copy they are built from are dropped after the fill.
+   ["org.apache.pdfbox.rendering.PageDrawer" "fillPath"]
+   [[:prepend owned-resources-declaration]
+    [(str "global::DripSharp.Runtime.JavaArea area = "
+          "new global::DripSharp.Runtime.JavaArea(this.linePath);")
+     (str "global::DripSharp.Runtime.JavaArea area = __dripsharpOwned.Own("
+          "new global::DripSharp.Runtime.JavaArea(this.linePath))!;")]
+    ["object clip = this.graphics.GetClip();"
+     (str "object clip = this.graphics.GetClip();\n"
+          "__dripsharpOwned.Own(clip as global::System.IDisposable);")]
+    ["area.Intersect(new global::DripSharp.Runtime.JavaArea(clip));"
+     (str "area.Intersect(__dripsharpOwned.Own("
+          "new global::DripSharp.Runtime.JavaArea(clip))!);")]]
+   ["org.apache.pdfbox.rendering.PageDrawer" "intersectShadingBBox"]
+   [[(str "global::DripSharp.Runtime.JavaArea bboxArea = "
+          "new global::DripSharp.Runtime.JavaArea(bbox.Transform(m));")
+     (str "using global::SkiaSharp.SKPath __dripsharpBBoxPath = bbox.Transform(m);\n"
+          "using global::DripSharp.Runtime.JavaArea bboxArea = "
+          "new global::DripSharp.Runtime.JavaArea(__dripsharpBBoxPath);")]]
+   ;; isRectangular stops after a few segments of most paths; disposing the
+   ;; iterator releases its native segment reader at once.
+   ["org.apache.pdfbox.rendering.PageDrawer" "isRectangular"]
+   [(using-local (str "global::DripSharp.Runtime.JavaPathIterator iter = "
+                      "global::DripSharp.Runtime.PdfCartonFontCompat.PathIterator("
+                      "path, (global::SkiaSharp.SKMatrix)default!);"))]
 
    ;; Rendering. Each ExtGState soft mask renders its group into `image`,
    ;; converts it to `gray` and maybe transforms that again; only the final
