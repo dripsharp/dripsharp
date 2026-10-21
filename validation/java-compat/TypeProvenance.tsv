@@ -20,7 +20,7 @@ JavaBase64Encoder	java.util.Base64$Encoder	pdfcube,pkl,rawhttp,sqltrellis	behavi
 JavaBiPredicate	java.util.function.BiPredicate	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaBiPredicate
 JavaBitSet	java.util.BitSet	pdfcube,pkl,rawhttp,sqltrellis	behavior/bit-set,type-contract/JavaBitSet
 JavaByteArrayOutputStream	java.io.ByteArrayOutputStream	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaByteArrayOutputStream
-JavaByteBuffer	java.nio.ByteBuffer	pdfcube,pkl,rawhttp,sqltrellis	behavior/byte-buffer,behavior/charset-malformed,type-contract/JavaByteBuffer
+JavaByteBuffer	java.nio.ByteBuffer	pdfcube,pkl,rawhttp,sqltrellis	behavior/byte-buffer,behavior/charset-malformed,behavior/file-channel-read,type-contract/JavaByteBuffer
 JavaByteOrder	java.nio.ByteOrder	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaByteOrder
 JavaCancellation	java.util.concurrent.CancellationException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCancellation
 JavaCancellationException	java.util.concurrent.CancellationException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCancellationException
@@ -50,7 +50,7 @@ JavaFile	java.io.File	pdfcube,pkl,rawhttp,sqltrellis	behavior/file-paths,type-co
 JavaFileAttribute	java.nio.file.attribute.FileAttribute	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileAttribute
 JavaFileBoundaryAttribute	java.lang.annotation.Annotation	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileBoundaryAttribute
 JavaFileBridge	java.io.File	pdfcube,pkl,rawhttp,sqltrellis	behavior/file-paths,type-contract/JavaFileBridge
-JavaFileChannel	java.nio.channels.FileChannel	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileChannel
+JavaFileChannel	java.nio.channels.FileChannel	pdfcube,pkl,rawhttp,sqltrellis	behavior/file-channel-read,type-contract/JavaFileChannel
 JavaFileChannelMapMode	java.nio.channels.FileChannel$MapMode	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileChannelMapMode
 JavaFileNotFoundException	java.io.FileNotFoundException	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileNotFoundException
 JavaFileSystem	java.nio.file.FileSystem	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaFileSystem

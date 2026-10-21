@@ -1059,6 +1059,7 @@ internal static class Program
         yield return Observe("compression", CompressionContract());
         yield return Observe("crc32", Crc32Contract());
         yield return Observe("data-output", DataOutputContract());
+        yield return Observe("file-channel-read", FileChannelReadContract());
         yield return Observe("file-paths", FilePathsContract());
         yield return Observe("decimal-format", DecimalFormatContract());
         yield return Observe("message-digest", MessageDigestContract());
@@ -1269,6 +1270,61 @@ internal static class Program
         using var buffer = JavaByteBuffer.wrap([1, 2, 3, 4, 5]);
         var integer = buffer.getInt();
         return $"{integer}|{buffer.Remaining}|{buffer.get()}";
+    }
+
+    private static string FileChannelReadContract()
+    {
+        static string Read(JavaFileChannel channel, JavaByteBuffer buffer)
+        {
+            try { return channel.read(buffer).ToString(CultureInfo.InvariantCulture); }
+            catch (ArgumentException) { return "illegal-argument"; }
+            catch (NotSupportedException) { return "read-only-buffer"; }
+        }
+        static string State(JavaByteBuffer buffer) =>
+            $"{buffer.position()}:{buffer.limit()}:{buffer.capacity()}";
+        static string Bytes(sbyte[] bytes) =>
+            string.Join(",", bytes.Select(value => value.ToString(CultureInfo.InvariantCulture)));
+        var values = new List<string>();
+        string path = Path.Combine(Path.GetTempPath(), "dripsharp-channel-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllBytes(path, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        try
+        {
+            using var channel = JavaFileChannel.open(path, JavaStandardOpenOption.READ);
+            var backing = Enumerable.Repeat((sbyte)-1, 12).ToArray();
+            using var parent = JavaByteBuffer.wrap(backing);
+            parent.position(3);
+            using var view = parent.slice();
+            view.position(2).limit(6);
+            values.Add(Read(channel, view));
+            values.Add(State(view) + "/" + State(parent));
+            values.Add(Bytes(backing));
+            using var readOnlyParent = parent.asReadOnlyBuffer();
+            values.Add(Read(channel, readOnlyParent) + "@" + State(readOnlyParent));
+            view.clear().position(7);
+            using var readOnlyView = view.slice().asReadOnlyBuffer();
+            values.Add(Read(channel, readOnlyView) + "@" + State(readOnlyView));
+            using var emptyReadOnly = JavaByteBuffer.allocate(2).position(2).asReadOnlyBuffer();
+            values.Add(Read(channel, emptyReadOnly) + "@" + State(emptyReadOnly));
+            using var mapped = channel.map(JavaFileChannelMapMode.READ_ONLY, 0, 4);
+            values.Add(Read(channel, mapped) + "@" + State(mapped));
+            values.Add(Bytes(backing));
+            var next = new sbyte[3];
+            using var nextBuffer = JavaByteBuffer.wrap(next);
+            values.Add(Read(channel, nextBuffer) + "@" + State(nextBuffer) + "=" + Bytes(next));
+            var tail = Enumerable.Repeat((sbyte)-1, 9).ToArray();
+            using var tailParent = JavaByteBuffer.wrap(tail);
+            tailParent.position(1).limit(8);
+            using var tailView = tailParent.slice();
+            values.Add(Read(channel, tailView) + "@" + State(tailView) + "=" + Bytes(tail));
+            values.Add(Read(channel, tailView) + "@" + State(tailView));
+            tailView.position(tailView.limit());
+            values.Add(Read(channel, tailView) + "@" + State(tailView));
+            using var afterEof = JavaByteBuffer.allocate(0).asReadOnlyBuffer();
+            values.Add(Read(channel, afterEof) + "@" + State(afterEof));
+            values.Add(Bytes(tail));
+        }
+        finally { File.Delete(path); }
+        return string.Join("|", values);
     }
 
     private static string CharsetMalformedContract()

@@ -17,12 +17,15 @@ import java.math.RoundingMode;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.ReadOnlyBufferException;
+import java.nio.channels.FileChannel;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
@@ -32,6 +35,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.BitSet;
 import java.util.Comparator;
@@ -867,6 +871,7 @@ public final class JavaCompatOracle {
         observe("compression", compressionContract()),
         observe("crc32", crc32Contract()),
         observe("data-output", dataOutputContract()),
+        observe("file-channel-read", fileChannelReadContract()),
         observe("file-paths", filePathsContract()),
         observe("decimal-format", decimalFormatContract()),
         observe("message-digest", messageDigestContract()),
@@ -1059,6 +1064,72 @@ public final class JavaCompatOracle {
     var buffer = ByteBuffer.wrap(new byte[] {1, 2, 3, 4, 5});
     var integer = buffer.getInt();
     return integer + "|" + buffer.remaining() + "|" + buffer.get();
+  }
+
+  private static String fileChannelRead(FileChannel channel, ByteBuffer buffer)
+      throws IOException {
+    try {
+      return Integer.toString(channel.read(buffer));
+    } catch (IllegalArgumentException e) {
+      return "illegal-argument";
+    } catch (ReadOnlyBufferException e) {
+      return "read-only-buffer";
+    }
+  }
+
+  private static String bufferState(ByteBuffer buffer) {
+    return buffer.position() + ":" + buffer.limit() + ":" + buffer.capacity();
+  }
+
+  private static String signedBytes(byte[] bytes) {
+    var values = new ArrayList<String>();
+    for (var value : bytes) values.add(Byte.toString(value));
+    return String.join(",", values);
+  }
+
+  private static String fileChannelReadContract() throws Exception {
+    var values = new ArrayList<String>();
+    var path = Files.createTempFile("dripsharp-channel-", "");
+    Files.write(path, new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+    try (var channel = FileChannel.open(path, StandardOpenOption.READ)) {
+      var backing = new byte[12];
+      Arrays.fill(backing, (byte) -1);
+      var parent = ByteBuffer.wrap(backing);
+      parent.position(3);
+      var view = parent.slice();
+      view.position(2).limit(6);
+      values.add(fileChannelRead(channel, view));
+      values.add(bufferState(view) + "/" + bufferState(parent));
+      values.add(signedBytes(backing));
+      var readOnlyParent = parent.asReadOnlyBuffer();
+      values.add(fileChannelRead(channel, readOnlyParent) + "@" + bufferState(readOnlyParent));
+      view.clear().position(7);
+      var readOnlyView = view.slice().asReadOnlyBuffer();
+      values.add(fileChannelRead(channel, readOnlyView) + "@" + bufferState(readOnlyView));
+      var emptyReadOnly = ByteBuffer.allocate(2).position(2).asReadOnlyBuffer();
+      values.add(fileChannelRead(channel, emptyReadOnly) + "@" + bufferState(emptyReadOnly));
+      var mapped = channel.map(FileChannel.MapMode.READ_ONLY, 0, 4);
+      values.add(fileChannelRead(channel, mapped) + "@" + bufferState(mapped));
+      values.add(signedBytes(backing));
+      var next = new byte[3];
+      var nextBuffer = ByteBuffer.wrap(next);
+      values.add(fileChannelRead(channel, nextBuffer) + "@" + bufferState(nextBuffer) + "=" + signedBytes(next));
+      var tail = new byte[9];
+      Arrays.fill(tail, (byte) -1);
+      var tailParent = ByteBuffer.wrap(tail);
+      tailParent.position(1).limit(8);
+      var tailView = tailParent.slice();
+      values.add(fileChannelRead(channel, tailView) + "@" + bufferState(tailView) + "=" + signedBytes(tail));
+      values.add(fileChannelRead(channel, tailView) + "@" + bufferState(tailView));
+      tailView.position(tailView.limit());
+      values.add(fileChannelRead(channel, tailView) + "@" + bufferState(tailView));
+      var afterEof = ByteBuffer.allocate(0).asReadOnlyBuffer();
+      values.add(fileChannelRead(channel, afterEof) + "@" + bufferState(afterEof));
+      values.add(signedBytes(tail));
+    } finally {
+      Files.delete(path);
+    }
+    return String.join("|", values);
   }
 
   private static String charsetMalformedContract() {

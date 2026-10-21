@@ -337,13 +337,15 @@ sealed class JavaByteBuffer : IDisposable
         return this;
     }
     // FileChannel.read(ByteBuffer): one read of up to remaining() bytes from
-    // the channel's FileStream straight into the backing array.
+    // the channel's FileStream straight into the backing array. Like
+    // IOUtil.read, a read-only destination is an IllegalArgumentException
+    // even when it has nothing remaining.
     internal int ReadFrom(FileStream stream)
     {
         ThrowIfDisposed();
+        if (readOnly) throw new ArgumentException("Read-only buffer");
         var count = upperBound - cursor;
         if (count == 0) return 0;
-        ThrowIfReadOnly();
         var read = stream.Read(JavaCompat.AsUnsignedBytes(bytes!), storageOffset + cursor, count);
         if (read == 0) return -1;
         cursor += read;
