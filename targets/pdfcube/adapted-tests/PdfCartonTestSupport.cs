@@ -985,6 +985,32 @@ public sealed class PdfCartonTestSupportContractTests
     }
 
     [global::Xunit.Fact]
+    public void MutableArtifactCleanupRunsInNonParallelCollection()
+    {
+        global::System.Reflection.CustomAttributeData collection =
+            global::Xunit.Assert.Single(
+                typeof(PdfCartonTestSupportContractTests).GetCustomAttributesData(),
+                data => data.AttributeType == typeof(global::Xunit.CollectionAttribute));
+        global::Xunit.Assert.Equal(
+            MutableArtifactRootsCollection,
+            global::Xunit.Assert.Single(collection.ConstructorArguments).Value);
+
+        global::System.Reflection.CustomAttributeData definition =
+            global::Xunit.Assert.Single(
+                typeof(PdfCartonMutableArtifactRootsCollection).GetCustomAttributesData(),
+                data => data.AttributeType ==
+                        typeof(global::Xunit.CollectionDefinitionAttribute));
+        global::Xunit.Assert.Equal(
+            MutableArtifactRootsCollection,
+            global::Xunit.Assert.Single(definition.ConstructorArguments).Value);
+        global::System.Reflection.CustomAttributeNamedArgument disable =
+            global::Xunit.Assert.Single(
+                definition.NamedArguments,
+                argument => argument.MemberName == "DisableParallelization");
+        global::Xunit.Assert.True(disable.TypedValue.Value is true);
+    }
+
+    [global::Xunit.Fact]
     public void PosixPermissionsUseTranslatedJavaContract()
     {
         var mappings = new[]
