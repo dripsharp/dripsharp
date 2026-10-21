@@ -3307,6 +3307,9 @@ public sealed class PdfCartonAffineTransformOp
 public sealed class JavaColorConvertOp
 {
     private readonly JavaColorSpace? destinationColorSpace;
+    // Whether Java's op holds ICC profiles: every space it was given is an
+    // ICC space, as all but public-override subclasses are in Java.
+    private readonly bool hasProfiles;
 
     public JavaColorConvertOp()
     {
@@ -3319,18 +3322,21 @@ public sealed class JavaColorConvertOp
         ArgumentNullException.ThrowIfNull(sourceColorSpace);
         this.destinationColorSpace = destinationColorSpace ??
             throw new ArgumentNullException(nameof(destinationColorSpace));
+        hasProfiles = !sourceColorSpace.OverridesArrayConversions &&
+            !destinationColorSpace.OverridesArrayConversions;
     }
 
     public JavaColorConvertOp(JavaColorSpace destinationColorSpace)
     {
         this.destinationColorSpace = destinationColorSpace ??
             throw new ArgumentNullException(nameof(destinationColorSpace));
+        hasProfiles = !destinationColorSpace.OverridesArrayConversions;
     }
 
     public SKBitmap Filter(SKBitmap source, SKBitmap? destination)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (destination is not null) return Convert(source, destination);
+        if (destination is not null) return Convert(source, destination, hasProfiles);
 
         var colorSpace = destinationColorSpace ??
             PdfCartonFontCompat.GetColorModel(source).ColorSpace;
@@ -3351,7 +3357,7 @@ public sealed class JavaColorConvertOp
             null);
         try
         {
-            return Convert(source, created);
+            return Convert(source, created, hasProfiles);
         }
         catch
         {
@@ -3360,7 +3366,7 @@ public sealed class JavaColorConvertOp
         }
     }
 
-    private static SKBitmap Convert(SKBitmap source, SKBitmap destination)
+    private static SKBitmap Convert(SKBitmap source, SKBitmap destination, bool hasProfiles)
     {
         if (source.Width != destination.Width ||
             source.Height != destination.Height)
@@ -3379,6 +3385,14 @@ public sealed class JavaColorConvertOp
         var destinationColorSpace = destinationColorModel.ColorSpace;
         var destinationColorCount = destinationColorModel.NumberOfColorComponents;
         var destinationHasAlpha = destinationColorModel.HasAlpha;
+        // Java renders relative colorimetric when the first profile of its
+        // transform, the source's, is an output profile and perceptually
+        // otherwise; a public-override space in an op without profiles goes
+        // through toCIEXYZ and fromCIEXYZ, which are colorimetric.
+        var colorimetric = sourceColorSpace is JavaIccColorSpace icc &&
+                !icc.IsSrgb && icc.Profile.GetProfileClass() == JavaIccProfile.CLASS_OUTPUT ||
+            !hasProfiles && (sourceColorSpace.OverridesArrayConversions ||
+                destinationColorSpace.OverridesArrayConversions);
         // Each pixel is read once into a reused row buffer and converted once
         // through the D50 PCS, as Java's profile-to-profile transform does,
         // without allocating.
@@ -3413,8 +3427,9 @@ public sealed class JavaColorConvertOp
                 {
                     var sourceComponents =
                         new ReadOnlySpan<float>(sourceRow, x * sourceCount, sourceCount);
-                    sourceColorSpace.ConvertToXyz(sourceComponents, xyz);
-                    var convertedCount = destinationColorSpace.ConvertFromXyz(xyz, converted);
+                    sourceColorSpace.ConvertToXyz(sourceComponents, xyz, colorimetric);
+                    var convertedCount =
+                        destinationColorSpace.ConvertFromXyz(xyz, converted, colorimetric);
                     if (convertedCount < destinationColorCount)
                         throw new ArgumentException(
                             "The converted color has fewer components than the destination.");
@@ -5194,7 +5209,7 @@ public class JavaColorSpace
     // The colour's D50-relative XYZ (the ICC PCS), unquantized. Spaces with no
     // profile of their own convert through sRGB; colorimetric makes an ICC
     // profile use its relative colorimetric transform, as Java's toCIEXYZ and
-    // fromCIEXYZ do, rather than its header's rendering intent.
+    // fromCIEXYZ do, rather than its perceptual one.
     internal virtual void ToXyz(ReadOnlySpan<float> components, Span<float> xyz, bool colorimetric = false)
     {
         if (components.Length < NumberOfComponents)
@@ -5240,11 +5255,11 @@ public class JavaColorSpace
         return ConvertFromRgb(rgb, output);
     }
 
-    internal void ConvertToXyz(ReadOnlySpan<float> components, Span<float> xyz)
+    internal void ConvertToXyz(ReadOnlySpan<float> components, Span<float> xyz, bool colorimetric)
     {
         if (!OverridesArrayConversions)
         {
-            ToXyz(components, xyz);
+            ToXyz(components, xyz, colorimetric);
             return;
         }
         var result = ToCieXyz(components.ToArray());
@@ -5253,9 +5268,9 @@ public class JavaColorSpace
         result.AsSpan(0, 3).CopyTo(xyz);
     }
 
-    internal int ConvertFromXyz(ReadOnlySpan<float> xyz, Span<float> output)
+    internal int ConvertFromXyz(ReadOnlySpan<float> xyz, Span<float> output, bool colorimetric)
     {
-        if (!OverridesArrayConversions) return FromXyz(xyz, output);
+        if (!OverridesArrayConversions) return FromXyz(xyz, output, colorimetric);
         var result = FromCieXyz(xyz.ToArray());
         result.AsSpan().CopyTo(output);
         return result.Length;

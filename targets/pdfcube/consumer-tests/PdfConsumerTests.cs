@@ -444,7 +444,7 @@ public sealed class PdfConsumerTests
 
         // Java's toCIEXYZ/fromCIEXYZ use an ICC profile's relative
         // colorimetric LUTs (A2B1/B2A1) whatever its header's rendering
-        // intent; toRGB keeps the header's perceptual A2B0.
+        // intent; toRGB uses the perceptual A2B0.
         var lutSpace = new Compat.JavaIccColorSpace(new Compat.JavaIccProfile(
             IccRenderFixtures.Signed(IccRenderFixtures.LutIntentProfile())));
         Check(lutSpace, "ICC LUT", PcsTolerance,
@@ -461,6 +461,112 @@ public sealed class PdfConsumerTests
         Assert.True(lutRgb[0] <= 0.002f && Math.Abs(lutRgb[1] - 0.57972074f) <= 0.002f &&
                     Math.Abs(lutRgb[2] - 0.6523995f) <= 0.002f,
             $"ICC LUT toRGB: [{string.Join(", ", lutRgb)}], Java [0, 0.57972074, 0.6523995].");
+    }
+
+    // Java's ColorConvertOp renders relative colorimetric when the first
+    // profile of its transform (the source's) is an output profile and
+    // perceptually otherwise; toRGB and fromRGB are perceptual. Neither looks
+    // at the header's rendering intent. PDFBox's PDICCBased relabels every
+    // non-display profile as a display profile, so its images convert
+    // perceptually. The LUT fixtures' perceptual and colorimetric tables
+    // differ; expected values are Java 25's and Apache PDFBox 3.0.8's, which
+    // LittleCMS's 16-bit interpolation leaves within one 8-bit step.
+    [Fact]
+    public void ColorConvertOpChoosesItsRenderingIntentByProfileClassAsJavaDoes()
+    {
+        int[][] samples = [[51, 102, 153], [255, 0, 0], [255, 255, 255], [0, 0, 0], [200, 100, 50], [10, 240, 130]];
+        uint[] perceptual = [0xff0094a6, 0xffff0035, 0xffbeb9cf, 0xff000000, 0xffef0062, 0xff00f289];
+        uint[] colorimetric = [0xff7baacb, 0xffff0001, 0xffffffff, 0xff000000, 0xffe5a87a, 0xff37f8bd];
+        static Compat.JavaIccColorSpace Space(string deviceClass, uint intent) =>
+            new(new Compat.JavaIccProfile(IccRenderFixtures.Signed(
+                IccRenderFixtures.LutIntentProfile(deviceClass, intent))));
+        SKBitmap Image(Compat.JavaColorSpace space, int[][]? pixels = null)
+        {
+            var model = new Compat.JavaColorModel(space, false, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+            var raster = model.CreateCompatibleWritableRaster(samples.Length, 1);
+            for (var x = 0; pixels is not null && x < pixels.Length; x++)
+                raster.SetPixel(x, 0, pixels[x]);
+            return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
+        }
+        static int[] Samples(SKBitmap image)
+        {
+            var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+            return Enumerable.Range(0, image.Width).SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray();
+        }
+        static int[] Channels(IEnumerable<uint> colors) =>
+            colors.SelectMany(color => new[] { (int)(color >> 24), (int)(color >> 16 & 0xff),
+                (int)(color >> 8 & 0xff), (int)(color & 0xff) }).ToArray();
+        static int[] Rgb(SKBitmap image) => Channels(Enumerable.Range(0, image.Width)
+            .Select(x => (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, 0)));
+        static void Near(int[] expected, int[] actual, string label) =>
+            Assert.True(expected.Length == actual.Length &&
+                        expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= 1),
+                $"{label}: expected [{string.Join(",", expected)}], got [{string.Join(",", actual)}].");
+
+        // To TYPE_INT_RGB: output-class sources are colorimetric, display and
+        // input sources perceptual, whatever the header asks for.
+        foreach (var (deviceClass, intent, expected) in new[]
+                 {
+                     ("prtr", 0u, colorimetric), ("prtr", 1u, colorimetric),
+                     ("mntr", 1u, perceptual), ("scnr", 1u, perceptual)
+                 })
+        {
+            using var source = Image(Space(deviceClass, intent), samples);
+            using var rgb = new Compat.JavaColorConvertOp().Filter(
+                source, Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
+            Near(Channels(expected), Rgb(rgb), $"{deviceClass} intent {intent} -> INT_RGB");
+        }
+
+        // From TYPE_INT_RGB (an sRGB display profile first): perceptual B2A0.
+        using var srgb = Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        for (var x = 0; x < samples.Length; x++)
+            Compat.PdfCartonFontCompat.SetRgb(srgb, x, 0,
+                unchecked((int)0xff000000) | samples[x][0] << 16 | samples[x][1] << 8 | samples[x][2]);
+        foreach (var (deviceClass, intent) in new[] { ("prtr", 0u), ("mntr", 1u) })
+        {
+            using var converted = new Compat.JavaColorConvertOp().Filter(srgb, Image(Space(deviceClass, intent)));
+            Near([14, 16, 31, 56, 28, 2, 123, 128, 105, 0, 0, 0, 39, 28, 6, 47, 81, 31], Samples(converted),
+                $"INT_RGB -> {deviceClass} intent {intent}");
+        }
+
+        // ICC to ICC: the source's class picks the intent for both profiles.
+        using (var printer = Image(Space("prtr", 0), samples))
+        using (var toDisplay = new Compat.JavaColorConvertOp().Filter(printer, Image(Space("mntr", 1))))
+            Near([47, 60, 42, 28, 2, 56, 127, 105, 123, 0, 0, 0, 60, 24, 66, 91, 58, 58], Samples(toDisplay),
+                "prtr -> mntr");
+        using (var display = Image(Space("mntr", 1), samples))
+        using (var toPrinter = new Compat.JavaColorConvertOp().Filter(display, Image(Space("prtr", 0))))
+            Near([13, 26, 38, 64, 0, 0, 64, 64, 64, 0, 0, 0, 50, 25, 13, 3, 60, 33], Samples(toPrinter),
+                "mntr -> prtr");
+
+        // toRGB and fromRGB are perceptual for every class and header intent.
+        foreach (var (deviceClass, intent) in new[] { ("prtr", 1u), ("mntr", 1u), ("scnr", 1u) })
+        {
+            var space = Space(deviceClass, intent);
+            var toRgb = space.ToRgb(new[] { 0.2f, 0.4f, 0.6f });
+            var fromRgb = space.FromRgb(new[] { 0.3f, 0.4f, 0.2f });
+            Assert.True(toRgb[0] <= 0.002f && Math.Abs(toRgb[1] - 0.57972074f) <= 0.002f &&
+                        Math.Abs(toRgb[2] - 0.6523995f) <= 0.002f,
+                $"{deviceClass} toRGB: [{string.Join(", ", toRgb)}], Java [0, 0.57972074, 0.6523995].");
+            Assert.True(Math.Abs(fromRgb[0] - 0.043930724f) <= 0.002f &&
+                        Math.Abs(fromRgb[1] - 0.05679408f) <= 0.002f &&
+                        Math.Abs(fromRgb[2] - 0.018783856f) <= 0.002f,
+                $"{deviceClass} fromRGB: [{string.Join(", ", fromRgb)}], Java [0.043930724, 0.05679408, 0.018783856].");
+        }
+
+        // PDICCBased images: perceptual, output profiles included.
+        foreach (var (deviceClass, intent) in new[] { ("prtr", 0u), ("prtr", 1u), ("mntr", 1u), ("scnr", 1u) })
+        {
+            using var document = new PDDocument();
+            var colorSpace = IccRenderFixtures.IccSpace(
+                document, IccRenderFixtures.LutIntentProfile(deviceClass, intent), 3);
+            var raster = Compat.PdfCartonFontCompat.CreateInterleavedRaster(
+                Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE, samples.Length, 1, 3, new Compat.JavaPoint(0, 0));
+            for (var x = 0; x < samples.Length; x++)
+                raster.SetPixel(x, 0, samples[x]);
+            using var image = colorSpace.ToRGBImage(raster);
+            Near(Channels(perceptual), Rgb(image), $"PDICCBased {deviceClass} intent {intent}");
+        }
     }
 
     private static COSArray CieFloats(params float[] values)
@@ -886,9 +992,11 @@ internal static class IccRenderFixtures
     }
 
     // A v2 RGB profile of affine two-point mft2 LUTs whose perceptual
-    // (A2B0/B2A0) and relative colorimetric (A2B1/B2A1) transforms differ;
-    // its header asks for perceptual. Rows map the inputs to encoded outputs.
-    internal static byte[] LutIntentProfile()
+    // (A2B0/B2A0) and relative colorimetric (A2B1/B2A1) transforms differ,
+    // with the given device class and header rendering intent (by default a
+    // display profile asking for perceptual). Rows map the inputs to encoded
+    // outputs.
+    internal static byte[] LutIntentProfile(string deviceClass = "mntr", uint intent = 0)
     {
         var data = new byte[676];
         void U16(int at, int value)
@@ -908,10 +1016,11 @@ internal static class IccRenderFixtures
         }
         U32(0, (uint)data.Length);
         U32(8, 0x02100000);
-        Ascii(12, "mntr");
+        Ascii(12, deviceClass);
         Ascii(16, "RGB ");
         Ascii(20, "XYZ ");
         Ascii(36, "acsp");
+        U32(64, intent);
         U32(68, 0x0000F6D6);
         U32(72, 0x00010000);
         U32(76, 0x0000D32D);

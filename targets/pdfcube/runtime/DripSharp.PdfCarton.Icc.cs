@@ -32,8 +32,11 @@ internal sealed class PdfCartonIccProfileData
     private readonly uint pcsSignature;
     // Each lazy caches its result or its parse failure, so a malformed tag
     // fails every conversion consistently without being parsed again.
-    // Index 0 follows the header's rendering intent (Java's toRGB and
-    // fromRGB); index 1 is relative colorimetric (toCIEXYZ and fromCIEXYZ).
+    // Index 0 is perceptual (Java's toRGB and fromRGB, and ColorConvertOp
+    // unless its first profile is an output profile); index 1 is relative
+    // colorimetric (toCIEXYZ, fromCIEXYZ and that ColorConvertOp case).
+    // Java never selects a transform by the header's rendering intent.
+    private const int Perceptual = 0;
     private const int RelativeColorimetric = 1;
     private readonly Lazy<IccLut?>[] deviceToPcsLuts;
     private readonly Lazy<IccLut?>[] pcsToDeviceLuts;
@@ -96,8 +99,8 @@ internal sealed class PdfCartonIccProfileData
             }
         }
 
-        deviceToPcsLuts = new[] { NewLut(true, RenderingIntent), NewLut(true, RelativeColorimetric) };
-        pcsToDeviceLuts = new[] { NewLut(false, RenderingIntent), NewLut(false, RelativeColorimetric) };
+        deviceToPcsLuts = new[] { NewLut(true, Perceptual), NewLut(true, RelativeColorimetric) };
+        pcsToDeviceLuts = new[] { NewLut(false, Perceptual), NewLut(false, RelativeColorimetric) };
         matrixTransform = new Lazy<MatrixTransform>(
             LoadMatrixTransform,
             LazyThreadSafetyMode.ExecutionAndPublication);
@@ -159,8 +162,8 @@ internal sealed class PdfCartonIccProfileData
         XyzD50ToSrgb(x, y, z, rgb);
     }
 
-    // The colour's D50-relative XYZ, the ICC PCS, through the header's
-    // rendering intent or, when colorimetric, relative colorimetric.
+    // The colour's D50-relative XYZ, the ICC PCS, through the perceptual
+    // or, when colorimetric, the relative colorimetric transform.
     internal void ToXyzD50(
         ReadOnlySpan<float> components, out float x, out float y, out float z, bool colorimetric = false)
     {
