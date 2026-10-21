@@ -1,7 +1,10 @@
 (ns dripsharp.pdfcube-pdfbox-image-differential-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.pdfcube.pdfbox-image-differential
-             :as image-differential])
+             :as image-differential]
+            [dripsharp.maven :as maven]
+            [dripsharp.target-execution :as target-execution])
   (:import [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))
 
@@ -50,6 +53,77 @@
               (catch clojure.lang.ExceptionInfo caught caught))]
         (is (= :pdfcube-pdfbox-image-differential-failed
                (:kind (ex-data error))))))))
+
+(defn- workspace-with-fixtures []
+  (let [root (Files/createTempDirectory "pdfcube-pdfbox-image-root-"
+                                        (make-array FileAttribute 0))
+        resources
+        (.resolve root "research/pdfbox/tools/src/test/resources/input/ImageIOUtil")]
+    (Files/createDirectories resources (make-array FileAttribute 0))
+    (doseq [fixture image-differential/required-fixtures]
+      (Files/writeString (.resolve resources ^String fixture) "%PDF"
+                         (make-array OpenOption 0)))
+    root))
+
+(deftest standalone-package-mode-packs-through-the-pdfcarton-target
+  (let [root (workspace-with-fixtures)
+        selected (atom nil)
+        error
+        (with-redefs [target-execution/package!
+                      (fn [options]
+                        (reset! selected options)
+                        (throw (ex-info "stop" {:kind ::stopped})))]
+          (try
+            (image-differential/verify! {:workspace-root root})
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught)))]
+    (is (= ::stopped (:kind (ex-data error))))
+    (is (= {:target :pdfcube :profile "pdfcube-pdfbox"}
+           (select-keys @selected [:target :profile])))
+    (is (= (str root) (str (:workspace-root @selected))))))
+
+(deftest generated-project-mode-requires-an-existing-generation
+  (let [root (workspace-with-fixtures)
+        error
+        (with-redefs [target-execution/package!
+                      (fn [_] (throw (ex-info "package mode used" {})))]
+          (try
+            (image-differential/verify! {:workspace-root root
+                                         :generated-project? true})
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught)))]
+    (is (= :pdfcube-pdfbox-image-differential-failed (:kind (ex-data error))))
+    (is (= (str/join " " image-differential/generate-command)
+           (:command (ex-data error))))))
+
+(deftest generated-project-mode-rejects-a-non-pinned-pdfbox-checkout
+  (let [root (workspace-with-fixtures)
+        project (.resolve root "target/generated/pdfcarton/src/DripSharp.PdfCarton/DripSharp.PdfCarton.csproj")
+        manifest (.resolve root "target/maven-reactor-inputs-0.tsv")
+        commands (atom [])]
+    (Files/createDirectories (.getParent project) (make-array FileAttribute 0))
+    (Files/writeString project "<Project />" (make-array OpenOption 0))
+    (Files/writeString manifest "" (make-array OpenOption 0))
+    (let [error
+          (with-redefs [maven/read-reactor-manifest (fn [_] [])
+                        maven/project-by-id! (fn [_ _] {})]
+            (try
+              (image-differential/verify!
+               {:workspace-root root
+                :generated-project? true
+                :run-command!
+                (fn [{:keys [command] :as options}]
+                  (swap! commands conj options)
+                  (if (= ["git" "rev-parse" "HEAD"] command)
+                    {:output "0000000000000000000000000000000000000000\n"}
+                    (throw (ex-info "probe or oracle executed" {}))))})
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught)))]
+      (is (= :pdfcube-pdfbox-image-differential-failed (:kind (ex-data error))))
+      (is (= image-differential/pinned-revision (:expected (ex-data error))))
+      (is (= "0000000000000000000000000000000000000000"
+             (:actual (ex-data error))))
+      (is (= [["git" "rev-parse" "HEAD"]] (mapv :command @commands))))))
 
 (deftest required-fixtures-cover-both-managed-codecs
   (is (= #{"JBIG2Image.pdf"
