@@ -724,6 +724,15 @@ internal static class Support
         return probe;
     }
 
+    internal static string NewLifecycleContractArtifactRoot()
+    {
+        string root = MutableArtifactRoot(global::System.IO.Path.Combine(
+            "LifecycleContractArtifacts",
+            global::System.Guid.NewGuid().ToString("N")));
+        global::System.IO.Directory.CreateDirectory(root);
+        return root;
+    }
+
     private static void ResetMutableArtifactRoot(string name)
     {
         string root = MutableArtifactRoot(name);
@@ -876,8 +885,24 @@ internal static class Support
     }
 }
 
+// The mapped mutable roots are shared by every test class, and upstream
+// @BeforeAll setup creates subdirectories in them once per class (sometimes
+// early, when another class calls a static helper). This collection never
+// runs alongside other collections, even if parallelization is enabled.
+[global::Xunit.CollectionDefinition(
+    PdfCartonTestSupportContractTests.MutableArtifactRootsCollection,
+    DisableParallelization = true)]
+public sealed class PdfCartonMutableArtifactRootsCollection
+{
+}
+
+[global::Xunit.Collection(
+    PdfCartonTestSupportContractTests.MutableArtifactRootsCollection)]
 public sealed class PdfCartonTestSupportContractTests
 {
+    internal const string MutableArtifactRootsCollection =
+        "PdfCarton mutable artifact roots";
+
     [global::Xunit.Fact]
     public void MutableArtifactCleanupPreservesGovernedFixturesAndBuildInputs()
     {
@@ -887,16 +912,47 @@ public sealed class PdfCartonTestSupportContractTests
             Support.TestPath("pdfbox", "target/test-input-ext"),
             Support.TestPath("pdfbox", "target/test-output")
         };
-        foreach (string root in mappedMutableRoots)
+        string neighbourArtifact = Support.TestPath(
+            "pdfbox", "target/test-output/lifecycle-neighbour/artifact.txt");
+        global::System.IO.Directory.CreateDirectory(
+            global::System.IO.Path.GetDirectoryName(neighbourArtifact)!);
+        global::System.IO.File.WriteAllText(
+            neighbourArtifact, "artifact owned by another test class");
+        string setAside = Support.NewLifecycleContractArtifactRoot();
+        string[] setAsideRoots = new string[mappedMutableRoots.Length];
+        try
         {
-            if (global::System.IO.Directory.Exists(root))
-                global::System.IO.Directory.Delete(root, recursive: true);
-            global::Xunit.Assert.False(global::System.IO.Directory.Exists(root), root);
+            for (int i = 0; i < mappedMutableRoots.Length; i++)
+            {
+                string root = mappedMutableRoots[i];
+                setAsideRoots[i] = global::System.IO.Path.Combine(
+                    setAside, i.ToString(
+                        global::System.Globalization.CultureInfo.InvariantCulture));
+                if (global::System.IO.Directory.Exists(root))
+                    global::System.IO.Directory.Move(root, setAsideRoots[i]);
+                global::Xunit.Assert.False(global::System.IO.Directory.Exists(root), root);
+            }
+            Support.InitializeTestEnvironment();
+            Support.InitializeTestEnvironment();
+            foreach (string root in mappedMutableRoots)
+                global::Xunit.Assert.True(global::System.IO.Directory.Exists(root), root);
         }
-        Support.InitializeTestEnvironment();
-        Support.InitializeTestEnvironment();
-        foreach (string root in mappedMutableRoots)
-            global::Xunit.Assert.True(global::System.IO.Directory.Exists(root), root);
+        finally
+        {
+            for (int i = 0; i < mappedMutableRoots.Length; i++)
+            {
+                if (setAsideRoots[i] is null ||
+                    !global::System.IO.Directory.Exists(setAsideRoots[i])) continue;
+                if (global::System.IO.Directory.Exists(mappedMutableRoots[i]))
+                    global::System.IO.Directory.Delete(mappedMutableRoots[i], recursive: true);
+                global::System.IO.Directory.Move(setAsideRoots[i], mappedMutableRoots[i]);
+            }
+            global::System.IO.Directory.Delete(setAside, recursive: true);
+        }
+        global::Xunit.Assert.True(
+            global::System.IO.File.Exists(neighbourArtifact), neighbourArtifact);
+        global::System.IO.Directory.Delete(
+            global::System.IO.Path.GetDirectoryName(neighbourArtifact)!, recursive: true);
 
         GeneratedSuiteIntegrityTests.VerifyGovernedFixtures();
         string assembly = typeof(PdfCartonTestSupportContractTests).Assembly.Location;
