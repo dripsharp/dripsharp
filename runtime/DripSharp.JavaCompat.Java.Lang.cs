@@ -593,12 +593,25 @@ internal static partial class JavaCompat
 
     internal static long NumberLongValue(IConvertible value) => value switch
     {
-        float number => float.IsNaN(number) ? 0 : number >= long.MaxValue ? long.MaxValue
-            : number <= long.MinValue ? long.MinValue : (long)number,
-        double number => double.IsNaN(number) ? 0 : number >= long.MaxValue ? long.MaxValue
-            : number <= long.MinValue ? long.MinValue : (long)number,
+        float number => NumberLongValue(number),
+        double number => NumberLongValue(number),
         _ => value.ToInt64(CultureInfo.InvariantCulture)
     };
+
+    // Primitive overloads keep Java's (int)/(long) casts in per-pixel loops
+    // from boxing. Integral ones stop int/long arguments binding to float.
+    internal static long NumberLongValue(float number) =>
+        float.IsNaN(number) ? 0 : number >= long.MaxValue ? long.MaxValue
+            : number <= long.MinValue ? long.MinValue : (long)number;
+    internal static long NumberLongValue(double number) =>
+        double.IsNaN(number) ? 0 : number >= long.MaxValue ? long.MaxValue
+            : number <= long.MinValue ? long.MinValue : (long)number;
+    internal static long NumberLongValue(long number) => number;
+    internal static long NumberLongValue(ulong number) => checked((long)number);
+    internal static int NumberIntValue(float number) => NarrowToInt(number);
+    internal static int NumberIntValue(double number) => NarrowToInt(number);
+    internal static int NumberIntValue(long number) => unchecked((int)number);
+    internal static int NumberIntValue(ulong number) => unchecked((int)checked((long)number));
 
     internal static int NumberIntValue(IConvertible value) => value switch
     {

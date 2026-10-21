@@ -1049,6 +1049,168 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // Java's AxialShadingContext transforms each pixel's coordinates in
+    // place, rat.transform(values, 0, values, 0, 1). An in-place transform
+    // allocates nothing and gives what a separate source array gives, for
+    // every overlap of the two ranges.
+    [Fact]
+    public void InPlacePointTransformsAllocateNothingAndMatchSeparateArrays()
+    {
+        var matrix = new SKMatrix(1.5f, -0.25f, 7.125f, 0.75f, 2.5f, -3.5f, 0, 0, 1);
+        foreach (var points in new[] { 1, 2, 3, 7, 64 })
+        {
+            var length = points * 2 + 9;
+            var buffer = new float[length];
+            for (var index = 0; index < length; index++)
+                buffer[index] = index * 1.375f - 11.5f;
+            foreach (var (source, destination) in new[]
+                     {
+                         (0, 0), (0, 1), (1, 0), (0, 2), (2, 0), (3, 4), (4, 3),
+                         (0, points * 2 - 1), (points * 2 - 1, 0), (9, 0), (0, 9), (5, 5),
+                     })
+            {
+                if (source + points * 2 > length || destination + points * 2 > length) continue;
+                var expected = (float[])buffer.Clone();
+                Compat.PdfCartonFontCompat.TransformPoints(
+                    matrix, (float[])buffer.Clone(), source, expected, destination, points);
+                var actual = (float[])buffer.Clone();
+                Compat.PdfCartonFontCompat.TransformPoints(matrix, actual, source, actual, destination, points);
+                Assert.True(expected.SequenceEqual(actual),
+                    $"{points} points from {source} to {destination}: " +
+                    $"[{string.Join(", ", actual)}] != [{string.Join(", ", expected)}].");
+                var (allocated, jitted) = MeasureInPlaceTransforms(matrix, actual, source, destination, points);
+                Assert.True(allocated == 0,
+                    $"{points} points from {source} to {destination}: 1000 in-place transforms " +
+                    $"allocated {allocated} bytes ({jitted} methods compiled on this thread meanwhile).");
+            }
+        }
+    }
+
+    // Java's (int) and (long) casts of a double or float are translated to
+    // NumberIntValue and NumberLongValue. Shading loops cast per pixel, so a
+    // primitive argument must not be boxed. NaN narrows to 0 and values out
+    // of range, infinities included, saturate; integral arguments keep
+    // their two's-complement truncation and full precision.
+    [Fact]
+    public void PrimitiveNumberNarrowingFollowsJavaCastsWithoutBoxing()
+    {
+        Assert.Equal(0, Compat.JavaCompat.NumberIntValue(double.NaN));
+        Assert.Equal(0, Compat.JavaCompat.NumberIntValue(float.NaN));
+        Assert.Equal(int.MaxValue, Compat.JavaCompat.NumberIntValue(double.PositiveInfinity));
+        Assert.Equal(int.MinValue, Compat.JavaCompat.NumberIntValue(float.NegativeInfinity));
+        Assert.Equal(int.MaxValue, Compat.JavaCompat.NumberIntValue(3e9));
+        Assert.Equal(int.MinValue, Compat.JavaCompat.NumberIntValue(-3e9f));
+        Assert.Equal(int.MaxValue, Compat.JavaCompat.NumberIntValue(2147483647.9));
+        Assert.Equal(-47, Compat.JavaCompat.NumberIntValue(-47.9));
+        Assert.Equal(255, Compat.JavaCompat.NumberIntValue(255.99f));
+        Assert.Equal(0L, Compat.JavaCompat.NumberLongValue(double.NaN));
+        Assert.Equal(0L, Compat.JavaCompat.NumberLongValue(float.NaN));
+        Assert.Equal(long.MaxValue, Compat.JavaCompat.NumberLongValue(double.PositiveInfinity));
+        Assert.Equal(long.MinValue, Compat.JavaCompat.NumberLongValue(float.NegativeInfinity));
+        Assert.Equal(long.MaxValue, Compat.JavaCompat.NumberLongValue(1e19f));
+        Assert.Equal(-3000000000L, Compat.JavaCompat.NumberLongValue(-3e9));
+        Assert.Equal(unchecked((int)5000000000L), Compat.JavaCompat.NumberIntValue(5000000000L));
+        Assert.Equal(16777217, Compat.JavaCompat.NumberIntValue(16777217));
+        Assert.Equal(9007199254740993L, Compat.JavaCompat.NumberLongValue(9007199254740993L));
+        Assert.Equal(-1, Compat.JavaCompat.NumberIntValue((short)-1));
+        Assert.Equal(65L, Compat.JavaCompat.NumberLongValue('A'));
+        Assert.Throws<OverflowException>(() => Compat.JavaCompat.NumberLongValue(ulong.MaxValue));
+        Assert.Equal(12, Compat.JavaCompat.NumberIntValue((IConvertible)12.5));
+        Assert.Equal(-12L, Compat.JavaCompat.NumberLongValue((IConvertible)(-12.5f)));
+        Assert.Equal(int.MaxValue, Compat.JavaCompat.NumberIntValue(1e20m));
+
+        var (sum, allocated, jitted) = MeasurePrimitiveNarrowing();
+        Assert.Equal(1000L * 999 / 2 * 3 + 1000L * int.MaxValue, sum);
+        Assert.True(allocated == 0,
+            $"4000 primitive narrowings allocated {allocated} bytes " +
+            $"({jitted} methods compiled on this thread meanwhile).");
+    }
+
+    // A letter page at 150 DPI filled with an axial shading. Java's
+    // AxialShadingContext allocates nothing per pixel, so a render costs a
+    // few int and byte rasters (about 22 bytes per device pixel). An in-place
+    // point transform that copies its source (32 bytes) or a boxed double
+    // for the (int) cast of each colour key (24 bytes) breaks the bound.
+    [Fact]
+    public void AxialShadingPagesAllocateRastersNotPerPixelObjects()
+    {
+        var pdf = SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << " +
+            "/Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [20 0 592 0] /Function << " +
+            "/FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true] >> >> " +
+            ">> /Contents 4 0 R >>",
+            PdfStream("", "20 20 572 752 re W n /Sh1 sh"),
+        ]);
+        var first = RenderAt150Dpi(pdf, out _);
+        var second = RenderAt150Dpi(pdf, out var allocated);
+        Assert.True(first.SequenceEqual(second));
+        Assert.True(allocated < 32L * 1275 * 1649, $"one 1275x1649 render allocated {allocated} bytes.");
+        // Device pixel x is at u = (x + 0.5) * 72 / 150 in user space, t = (u - 20) / 572.
+        foreach (var (x, y, rgb) in new (int, int, int[])[]
+                 {
+                     (50, 800, [255, 0, 0]), (637, 800, [127, 0, 127]), (1225, 800, [0, 0, 255]),
+                     (20, 800, [255, 255, 255]), (637, 20, [255, 255, 255]),
+                 })
+        {
+            var offset = (y * 1275 + x) * 4;
+            for (var channel = 0; channel < 3; channel++)
+                Assert.True(Math.Abs(second[offset + channel] - rgb[channel]) <= 3,
+                    $"({x},{y}): got [{second[offset]}, {second[offset + 1]}, {second[offset + 2]}].");
+        }
+    }
+
+    private static byte[] RenderAt150Dpi(byte[] pdf, out long allocated)
+    {
+        using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
+        var renderer = new PDFRenderer(document);
+        allocated = GC.GetAllocatedBytesForCurrentThread();
+        using var image = renderer.RenderImageWithDPI(0, 150);
+        allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        Assert.Equal((1275, 1649), (image.Width, image.Height));
+        using var rgba = new SKBitmap(new SKImageInfo(
+            image.Width, image.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        Assert.True(image.CopyTo(rgba, SKColorType.Rgba8888));
+        return rgba.GetPixelSpan().ToArray();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    private static (long Allocated, long Jitted) MeasureInPlaceTransforms(
+        SKMatrix matrix, float[] values, int source, int destination, int points)
+    {
+        var jitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true);
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        for (var call = 0; call < 1000; call++)
+            Compat.PdfCartonFontCompat.TransformPoints(matrix, values, source, values, destination, points);
+        allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        jitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true) - jitted;
+        return (allocated, jitted);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    private static (long Sum, long Allocated, long Jitted) MeasurePrimitiveNarrowing()
+    {
+        var sum = 0L;
+        var jitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true);
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        for (var call = 0; call < 1000; call++)
+        {
+            sum += Compat.JavaCompat.NumberIntValue(call + 0.75);
+            sum += Compat.JavaCompat.NumberIntValue(call + 0.25f);
+            sum += Compat.JavaCompat.NumberLongValue(call * 1.0 + 0.5);
+            sum += Compat.JavaCompat.NumberIntValue(float.PositiveInfinity);
+        }
+        allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        jitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true) - jitted;
+        return (sum, allocated, jitted);
+    }
+
     // An opaque colour under an ExtGState /SMask reaches SoftMask through the
     // colour's paint context. Java fills that context's raster with the ARGB
     // value of its default ARGB model, so the mask scales an alpha of 255.

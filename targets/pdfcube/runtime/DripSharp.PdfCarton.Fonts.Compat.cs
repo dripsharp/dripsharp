@@ -9293,15 +9293,18 @@ internal static class PdfCartonFontCompat
         if (destinationEnd > destination.Length)
             throw new ArgumentOutOfRangeException(nameof(destinationOffset));
 
-        if (pointCount == 0) return;
-        var values = ReferenceEquals(source, destination)
-            ? source.AsSpan(sourceOffset, pointCount * 2).ToArray()
-            : source;
-        var readOffset = ReferenceEquals(source, destination) ? 0 : sourceOffset;
+        // In place like Java's AffineTransform.transform: a destination starting
+        // inside the source is moved there first, then one forward pass.
+        if (ReferenceEquals(source, destination) &&
+            destinationOffset > sourceOffset && destinationOffset < sourceEnd)
+        {
+            Array.Copy(source, sourceOffset, destination, destinationOffset, pointCount * 2);
+            sourceOffset = destinationOffset;
+        }
         for (var point = 0; point < pointCount; point++)
         {
-            var x = values[readOffset + point * 2];
-            var y = values[readOffset + point * 2 + 1];
+            var x = source[sourceOffset + point * 2];
+            var y = source[sourceOffset + point * 2 + 1];
             destination[destinationOffset + point * 2] =
                 matrix.ScaleX * x + matrix.SkewX * y + matrix.TransX;
             destination[destinationOffset + point * 2 + 1] =
