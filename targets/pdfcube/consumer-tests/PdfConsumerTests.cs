@@ -4309,10 +4309,13 @@ public sealed class DecodeFilterBitmapLifetimeTests
         return data.ToArray();
     }
 
+    // Component c of pixel index is (index * (c + 3)) & 255; the alpha
+    // channel (component 3) has the whole-image association.
     // binaryAlpha: lossless, with alpha 0 where index % 3 == 0, else 255.
     // codestream: a bare J2K codestream instead of a JP2 file.
     internal static byte[] Jpx(
-        int width, int height, bool alpha, bool binaryAlpha = false, bool codestream = false)
+        int width, int height, bool alpha, bool binaryAlpha = false, bool codestream = false,
+        bool lossless = false)
     {
         var count = alpha ? 4 : 3;
         var components = new int[count][];
@@ -4331,10 +4334,7 @@ public sealed class DecodeFilterBitmapLifetimeTests
         {
             var channels = new CoreJ2K.j2k.fileformat.metadata.ChannelDefinitionData();
             for (var color = 0; color < 3; color++) channels.AddColorChannel(color, color + 1);
-            // CoreJ2K maps component c to the channel associated with c + 1,
-            // so the usual whole-image association (0) fails to decode
-            // (dripsharp-62).
-            channels.AddChannel(3, CoreJ2K.j2k.fileformat.metadata.ChannelType.Opacity, 4);
+            channels.AddOpacityChannel(3);
             metadata = new CoreJ2K.j2k.fileformat.metadata.J2KMetadata
             {
                 ChannelDefinitions = channels
@@ -4342,10 +4342,10 @@ public sealed class DecodeFilterBitmapLifetimeTests
         }
         // Binary alpha is encoded losslessly so that it stays 0 or 255.
         CoreJ2K.j2k.util.ParameterList? parameters = null;
-        if (binaryAlpha || codestream)
+        if (binaryAlpha || codestream || lossless)
         {
             parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
-            if (binaryAlpha) parameters["lossless"] = "on";
+            if (binaryAlpha || lossless) parameters["lossless"] = "on";
             if (codestream) parameters["file_format"] = "off";
         }
         return CoreJ2K.J2kImage.ToBytes(source, metadata, parameters);
@@ -4533,11 +4533,13 @@ public sealed class ImageCodecAdapterTests
     public void JpxDecodeReusesOneComponentBuffer()
     {
         var data = DecodeFilterBitmapLifetimeTests.Jpx(256, 256, alpha: true);
+        // The decoder reads this cdef box (whole-image alpha) once rewritten.
+        var rewritten = Compat.JpxChannelDefinitions.Normalize(data);
         const long buffer = 256L * 256 * sizeof(int);
         const long raster = 256L * 256 * 4;
         var decoder = Allocated(() =>
         {
-            using var stream = new MemoryStream(data, writable: false);
+            using var stream = new MemoryStream(rewritten, writable: false);
             using var image = CoreJ2K.J2kImage.FromStream(stream, out _);
         });
         var adapter = Allocated(() =>
@@ -4633,6 +4635,196 @@ public sealed class ImageCodecAdapterTests
         for (var index = 0; index < 40 * 24; index++)
             Assert.Equal(index % 3 == 0 ? 0 : 255,
                 Compat.PdfCartonFontCompat.GetRgb(smask, index % 40, index / 40) & 0xff);
+    }
+
+    // An opacity channel with the whole-image association (0), which is how
+    // OpenJPEG and Kakadu write alpha, decodes (dripsharp-62). The
+    // SMaskInData soft mask is the alpha component and the opaque image is
+    // the colour drawn over black, as JPXFilter draws it in Java. Java PDFBox
+    // 3.0.8 with jai-imageio-jpeg2000 1.4.0 decodes this lossless fixture to
+    // exactly these samples.
+    [Fact]
+    public void JpxWholeImageOpacityBecomesTheSoftMask()
+    {
+        const int width = 40, height = 24;
+        var data = DecodeFilterBitmapLifetimeTests.Jpx(width, height, alpha: true, lossless: true);
+        var stream = new COSStream();
+        using (var output = stream.CreateRawOutputStream())
+            output.Write(data);
+        stream.SetItem(COSName.Filter, COSName.JpxDecode);
+        stream.SetInt(COSName.SmaskInData, 1);
+        using var encoded = stream.CreateRawInputStream();
+        using var decoded = new MemoryStream();
+        var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
+        using var smask = result.GetJPXSMask();
+        Assert.NotNull(smask);
+        var alpha = Compat.PdfCartonFontCompat.GetRaster(smask)
+            .GetSamples(0, 0, width, height, 0, null);
+        var colour = decoded.ToArray();
+        Assert.Equal(width * height * 3, colour.Length);
+        for (var index = 0; index < width * height; index++)
+        {
+            var opacity = index * 6 & 255;
+            Assert.Equal(opacity, alpha[index]);
+            for (var component = 0; component < 3; component++)
+                Assert.Equal(
+                    OverBlack(index * (component + 3) & 255, opacity),
+                    colour[index * 3 + component]);
+        }
+    }
+
+    // CoreJ2K looks decoded component c up as the channel associated with
+    // c + 1; the adapter rewrites cdef boxes so that components follow
+    // ISO/IEC 15444-1 I.5.3.6: colour channels by association, then the
+    // other channels in channel order, unlisted channels unspecified, and a
+    // channel described several times (opacity of each colour) once.
+    // jai-imageio-jpeg2000 1.4.0 orders the whole-image opacity, reversed
+    // colour and colour-1 opacity layouts the same way; it fails to build an
+    // image for the other layouts.
+    [Fact]
+    public void JpxComponentsFollowTheChannelDefinitions()
+    {
+        const CoreJ2K.j2k.fileformat.metadata.ChannelType colour =
+            CoreJ2K.j2k.fileformat.metadata.ChannelType.Color;
+        const CoreJ2K.j2k.fileformat.metadata.ChannelType opacity =
+            CoreJ2K.j2k.fileformat.metadata.ChannelType.Opacity;
+        foreach (var (name, components, channels, expected) in new (string, int, (int, CoreJ2K.j2k.fileformat.metadata.ChannelType, int)[], int[])[]
+                 {
+                     ("whole-image opacity", 4,
+                         [(0, colour, 1), (1, colour, 2), (2, colour, 3), (3, opacity, 0)], [0, 1, 2, 3]),
+                     ("opacity stored first", 4,
+                         [(0, opacity, 0), (1, colour, 1), (2, colour, 2), (3, colour, 3)], [1, 2, 3, 0]),
+                     ("colour stored in reverse", 4,
+                         [(0, colour, 3), (1, colour, 2), (2, colour, 1), (3, opacity, 0)], [2, 1, 0, 3]),
+                     ("opacity of colour 1 listed before it", 4,
+                         [(3, opacity, 1), (0, colour, 1), (1, colour, 2), (2, colour, 3)], [0, 1, 2, 3]),
+                     ("premultiplied opacity", 4,
+                         [(0, colour, 1), (1, colour, 2), (2, colour, 3),
+                          (3, CoreJ2K.j2k.fileformat.metadata.ChannelType.PremultipliedOpacity, 0)], [0, 1, 2, 3]),
+                     ("unspecified channel", 4,
+                         [(0, colour, 1), (1, colour, 2), (2, colour, 3),
+                          (3, CoreJ2K.j2k.fileformat.metadata.ChannelType.Unspecified, 0xFFFF)], [0, 1, 2, 3]),
+                     ("unlisted channel", 4,
+                         [(0, colour, 1), (1, colour, 2), (2, colour, 3)], [0, 1, 2, 3]),
+                     ("opacity of each colour", 4,
+                         [(0, colour, 1), (1, colour, 2), (2, colour, 3),
+                          (3, opacity, 1), (3, opacity, 2), (3, opacity, 3)], [0, 1, 2, 3]),
+                 })
+        {
+            var (data, samples) = JpxWithChannels(components, channels);
+            AssertDecodesInOrder(name, data, samples, expected);
+        }
+
+        // Files the decoder already reads as the standard does are not copied.
+        foreach (var data in new[]
+                 {
+                     JpxWithChannels(4, [(0, colour, 1), (1, colour, 2), (2, colour, 3), (3, opacity, 4)]).Data,
+                     DecodeFilterBitmapLifetimeTests.Jpx(8, 4, alpha: false),
+                     DecodeFilterBitmapLifetimeTests.Jpx(8, 4, alpha: false, codestream: true),
+                 })
+            Assert.Same(data, Compat.JpxChannelDefinitions.Normalize(data));
+    }
+
+    // Box layouts the encoder does not write: an extended-length jp2h box is
+    // rewritten like a plain one, its 64-bit length growing when a channel is
+    // unlisted (the decoder itself rejects extended lengths); palettes,
+    // truncated boxes and lengths past their parent leave the file to the
+    // decoder.
+    [Fact]
+    public void JpxChannelDefinitionRewriteHandlesBoxLayouts()
+    {
+        const CoreJ2K.j2k.fileformat.metadata.ChannelType colour =
+            CoreJ2K.j2k.fileformat.metadata.ChannelType.Color;
+        var (wholeImage, _) = JpxWithChannels(
+            4, [(0, colour, 1), (1, colour, 2), (2, colour, 3),
+                (3, CoreJ2K.j2k.fileformat.metadata.ChannelType.Opacity, 0)]);
+        var (unlisted, _) = JpxWithChannels(4, [(0, colour, 1), (1, colour, 2), (2, colour, 3)]);
+        foreach (var data in new[] { wholeImage, unlisted })
+        {
+            var rewritten = Compat.JpxChannelDefinitions.Normalize(data);
+            Assert.NotSame(data, rewritten);
+            Assert.Equal(
+                ExtendedHeaderBox(rewritten),
+                Compat.JpxChannelDefinitions.Normalize(ExtendedHeaderBox(data)));
+        }
+        Assert.Equal(unlisted.Length + 6, Compat.JpxChannelDefinitions.Normalize(unlisted).Length);
+
+        var cdef = BoxOffset(wholeImage, "cdef");
+        var palette = (byte[])wholeImage.Clone();
+        "pclr"u8.CopyTo(palette.AsSpan(BoxOffset(palette, "colr") + 4));
+        var pastParent = (byte[])wholeImage.Clone();
+        WriteInt(pastParent, cdef, 0x7fffffff);
+        var extendedTruncated = ExtendedHeaderBox(wholeImage)[..(BoxOffset(wholeImage, "jp2h") + 12)];
+        foreach (var data in new[]
+                 {
+                     palette, pastParent, extendedTruncated,
+                     wholeImage[..(cdef + 4)], wholeImage[..(cdef + 12)], wholeImage[..(cdef + 20)],
+                 })
+            Assert.Same(data, Compat.JpxChannelDefinitions.Normalize(data));
+    }
+
+    private static void AssertDecodesInOrder(string name, byte[] data, int[][] samples, int[] expected)
+    {
+        using var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+        for (var component = 0; component < expected.Length; component++)
+            Assert.True(
+                samples[expected[component]].SequenceEqual(
+                    raster.GetSamples(0, 0, image.Width, image.Height, component, null)),
+                $"{name}: band {component} is not channel {expected[component]}.");
+    }
+
+    // The file with its jp2h box header in the 16-byte extended-length form.
+    private static byte[] ExtendedHeaderBox(byte[] data)
+    {
+        var header = BoxOffset(data, "jp2h");
+        var length = ReadInt(data, header);
+        var result = new byte[data.Length + 8];
+        data.AsSpan(0, header).CopyTo(result);
+        WriteInt(result, header, 1);
+        "jp2h"u8.CopyTo(result.AsSpan(header + 4));
+        WriteInt(result, header + 12, length + 8);
+        data.AsSpan(header + 8).CopyTo(result.AsSpan(header + 16));
+        return result;
+    }
+
+    private static int BoxOffset(byte[] data, string type) =>
+        data.AsSpan().IndexOf(System.Text.Encoding.ASCII.GetBytes(type)) - 4;
+
+    private static int ReadInt(byte[] data, int offset) =>
+        (data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3];
+
+    // Java's SrcOver of a non-premultiplied sample onto opaque black.
+    private static int OverBlack(int sample, int alpha) => (sample * alpha + 127) / 255;
+
+    // A lossless 8x4 JPX whose component c of pixel index is
+    // (index * (c + 3)) & 255, with the given cdef channels.
+    private static (byte[] Data, int[][] Samples) JpxWithChannels(
+        int count, (int Channel, CoreJ2K.j2k.fileformat.metadata.ChannelType Type, int Association)[] channels)
+    {
+        const int width = 8, height = 4;
+        var samples = new int[count][];
+        var levelShifted = new int[count][];
+        for (var component = 0; component < count; component++)
+        {
+            samples[component] = new int[width * height];
+            levelShifted[component] = new int[width * height];
+            for (var index = 0; index < width * height; index++)
+            {
+                samples[component][index] = index * (component + 3) & 255;
+                levelShifted[component][index] = samples[component][index] - 128;
+            }
+        }
+        var definitions = new CoreJ2K.j2k.fileformat.metadata.ChannelDefinitionData();
+        foreach (var (channel, type, association) in channels)
+            definitions.AddChannel(channel, type, association);
+        var parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
+        parameters["lossless"] = "on";
+        var data = CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(width, height, count, 8, new bool[count], levelShifted),
+            new CoreJ2K.j2k.fileformat.metadata.J2KMetadata { ChannelDefinitions = definitions },
+            parameters);
+        return (data, samples);
     }
 
     // The public reader returns images whose native pixels are rendered, so

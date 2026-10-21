@@ -228,7 +228,8 @@ internal static class PdfCartonImageCodecs
 
     private static SKBitmap DecodeJpx(byte[] encoded)
     {
-        using var stream = new MemoryStream(encoded, writable: false);
+        using var stream = new MemoryStream(
+            JpxChannelDefinitions.Normalize(encoded), writable: false);
         using var image = J2kImage.FromStream(stream, out var metadata);
         var hasAlpha = metadata.ChannelDefinitions?.HasAlphaChannel == true;
         var colorComponents = image.NumberOfComponents - (hasAlpha ? 1 : 0);
@@ -287,6 +288,204 @@ internal static class PdfCartonImageCodecs
         formatName.Equals("JPEG 2000", StringComparison.OrdinalIgnoreCase) ||
         formatName.Equals("JP2", StringComparison.OrdinalIgnoreCase) ||
         formatName.Equals("JPX", StringComparison.OrdinalIgnoreCase);
+}
+
+// The pinned CoreJ2K maps decoded component c to the cdef channel whose
+// association is c + 1, or to channel c + 1 when no channel has it
+// (ColorSpace.GetChannelDefinition). That is right for colour channels, whose
+// association is their colour number, but an opacity, premultiplied-opacity
+// or unspecified channel (association 0, a colour number or 65535) is either
+// never found, so its component indexes past the codestream's, or shadows the
+// colour channel it is associated with. ISO/IEC 15444-1 I.5.3.6 orders the
+// colour channels by association; the other channels follow in channel
+// order. The snapshot is not patched: Normalize rewrites a cdef box that the
+// decoder would misread so that each channel, listed or not, carries its
+// decoded position + 1 as its association, which the decoder maps as the
+// standard does. Channel types are kept; an unlisted channel is unspecified,
+// and a channel described more than once with one non-colour type (for
+// example as the opacity of each colour) decodes once. The decoder keeps only
+// the last description of a channel anyway.
+// Files this does not recognise, files with a palette (whose cdef channels
+// follow the palette, which the decoder applies after this mapping) and cdef
+// boxes the decoder already reads correctly are returned unchanged.
+internal static class JpxChannelDefinitions
+{
+    private const uint SignatureBox = 0x6A502020; // "jP  "
+    private const uint HeaderBox = 0x6A703268; // "jp2h"
+    private const uint ImageHeaderBox = 0x69686472; // "ihdr"
+    private const uint PaletteBox = 0x70636C72; // "pclr"
+    private const uint ChannelDefinitionBox = 0x63646566; // "cdef"
+    private const uint CodestreamBox = 0x6A703263; // "jp2c"
+    private const int ColourType = 0;
+    private const int UnspecifiedType = 0xFFFF;
+
+    internal static byte[] Normalize(byte[] encoded)
+    {
+        var end = encoded.Length;
+        if (!TryReadBox(encoded, 0, end, out var type, out _, out var position) ||
+            type != SignatureBox)
+            return encoded;
+
+        int header, headerContent, headerEnd;
+        while (true)
+        {
+            if (!TryReadBox(encoded, position, end, out type, out var content, out var next) ||
+                type == CodestreamBox)
+                return encoded;
+            if (type == HeaderBox)
+            {
+                (header, headerContent, headerEnd) = (position, content, next);
+                break;
+            }
+            position = next;
+        }
+
+        var components = 0;
+        int definition = -1, definitionContent = 0, definitionEnd = 0;
+        for (position = headerContent; position < headerEnd;)
+        {
+            if (!TryReadBox(encoded, position, headerEnd, out type, out var content, out var next))
+                return encoded;
+            if (type == PaletteBox) return encoded;
+            if (type == ImageHeaderBox)
+            {
+                if (next - content < 14) return encoded;
+                components = ReadUInt16(encoded, content + 8);
+            }
+            else if (type == ChannelDefinitionBox)
+            {
+                if (definition >= 0) return encoded;
+                (definition, definitionContent, definitionEnd) = (position, content, next);
+            }
+            position = next;
+        }
+        if (components == 0 || definition < 0 || definitionEnd - definitionContent < 2)
+            return encoded;
+
+        var count = ReadUInt16(encoded, definitionContent);
+        if (definitionEnd - definitionContent < 2 + 6 * count) return encoded;
+        var listed = new bool[components];
+        var types = new int[components];
+        var associations = new int[components];
+        for (var index = 0; index < count; index++)
+        {
+            var entry = definitionContent + 2 + 6 * index;
+            var channel = ReadUInt16(encoded, entry);
+            if (channel >= components) return encoded;
+            var channelType = ReadUInt16(encoded, entry + 2);
+            if (listed[channel])
+            {
+                if (channelType == ColourType || types[channel] != channelType)
+                    return encoded;
+                continue;
+            }
+            listed[channel] = true;
+            types[channel] = channelType;
+            associations[channel] = ReadUInt16(encoded, entry + 4);
+        }
+
+        bool IsColour(int channel) =>
+            listed[channel] && types[channel] == ColourType &&
+            associations[channel] is > 0 and < 0xFFFF;
+        var order = Enumerable.Range(0, components)
+            .OrderBy(channel => IsColour(channel) ? 0 : 1)
+            .ThenBy(channel => IsColour(channel) ? associations[channel] : 0)
+            .ThenBy(channel => channel)
+            .ToArray();
+        var decoded = new int[components];
+        var unchanged = count == components;
+        for (var index = 0; index < components; index++)
+        {
+            decoded[order[index]] = index + 1;
+            unchanged &= associations[order[index]] == index + 1;
+        }
+        if (unchanged) return encoded;
+
+        var replacement = new byte[2 + 6 * components];
+        WriteUInt16(replacement, 0, components);
+        for (var channel = 0; channel < components; channel++)
+        {
+            WriteUInt16(replacement, 2 + 6 * channel, channel);
+            WriteUInt16(replacement, 4 + 6 * channel,
+                listed[channel] ? types[channel] : UnspecifiedType);
+            WriteUInt16(replacement, 6 + 6 * channel, decoded[channel]);
+        }
+
+        var growth = replacement.Length - (definitionEnd - definitionContent);
+        var result = new byte[encoded.Length + growth];
+        Buffer.BlockCopy(encoded, 0, result, 0, definitionContent);
+        Buffer.BlockCopy(replacement, 0, result, definitionContent, replacement.Length);
+        Buffer.BlockCopy(
+            encoded,
+            definitionEnd,
+            result,
+            definitionEnd + growth,
+            encoded.Length - definitionEnd);
+        Grow(result, header, growth);
+        Grow(result, definition, growth);
+        return result;
+    }
+
+    // A box from start: its type, content start and end. Lengths 0 (to the
+    // end) and 1 (64-bit) are read as ISO/IEC 15444-1 I.4 defines them.
+    private static bool TryReadBox(
+        byte[] data, int start, int end, out uint type, out int content, out int boxEnd)
+    {
+        type = 0;
+        content = 0;
+        boxEnd = 0;
+        if (start < 0 || end - start < 8) return false;
+        long length = ReadUInt32(data, start);
+        type = ReadUInt32(data, start + 4);
+        content = start + 8;
+        if (length == 1)
+        {
+            if (end - start < 16) return false;
+            var high = ReadUInt32(data, start + 8);
+            if (high != 0) return false;
+            length = ReadUInt32(data, start + 12);
+            content = start + 16;
+        }
+        else if (length == 0)
+        {
+            length = end - start;
+        }
+        if (length < content - start || length > end - start) return false;
+        boxEnd = start + (int)length;
+        return true;
+    }
+
+    // Adds growth to the length of the box at start, which precedes the
+    // change; a box running to the end (length 0) needs no change.
+    private static void Grow(byte[] data, int start, int growth)
+    {
+        var length = ReadUInt32(data, start);
+        if (length == 1)
+            WriteUInt32(data, start + 12, ReadUInt32(data, start + 12) + (uint)growth);
+        else if (length != 0)
+            WriteUInt32(data, start, length + (uint)growth);
+    }
+
+    private static int ReadUInt16(byte[] data, int offset) =>
+        (data[offset] << 8) | data[offset + 1];
+
+    private static uint ReadUInt32(byte[] data, int offset) =>
+        ((uint)data[offset] << 24) | ((uint)data[offset + 1] << 16) |
+        ((uint)data[offset + 2] << 8) | data[offset + 3];
+
+    private static void WriteUInt16(byte[] data, int offset, int value)
+    {
+        data[offset] = (byte)(value >> 8);
+        data[offset + 1] = (byte)value;
+    }
+
+    private static void WriteUInt32(byte[] data, int offset, uint value)
+    {
+        data[offset] = (byte)(value >> 24);
+        data[offset + 1] = (byte)(value >> 16);
+        data[offset + 2] = (byte)(value >> 8);
+        data[offset + 3] = (byte)value;
+    }
 }
 
 // The stored component samples of a JPEG, without colour conversion: what
