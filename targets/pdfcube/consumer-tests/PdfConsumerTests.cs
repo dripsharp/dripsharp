@@ -2066,6 +2066,215 @@ public sealed class RasterConversionConsumerTests
         Assert.True(allocated < 1024, $"100 GetData calls allocated {allocated} bytes.");
     }
 
+    // DataBufferByte.getData() on a byte image's raster is the image's
+    // storage, as in Java: writes through the array reach later draws and
+    // GetRgb, and drawing into the image, even through a graphics created
+    // before getData, reaches the array.
+    [Fact]
+    public void ByteDataBufferWritesReachTheImagePixels()
+    {
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR,
+                     Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY
+                 })
+        {
+            var bgr = type == Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR;
+            var bands = bgr ? 3 : 1;
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            using var early = new Compat.PdfCartonGraphics2D(image);
+            var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
+            Assert.Same(data,
+                ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData());
+            Assert.Equal(Width * Height * bands, data.Length);
+
+            // Java's 3BYTE_BGR stores blue, green, red; BYTE_GRAY one gray byte.
+            void Write(int x, int y, byte red, byte green, byte blue)
+            {
+                var index = (y * Width + x) * bands;
+                if (!bgr)
+                {
+                    data[index] = unchecked((sbyte)red);
+                    return;
+                }
+                data[index] = unchecked((sbyte)blue);
+                data[index + 1] = unchecked((sbyte)green);
+                data[index + 2] = unchecked((sbyte)red);
+            }
+            SKColor Shown(byte red, byte green, byte blue) =>
+                bgr ? new SKColor(red, green, blue) : new SKColor(red, red, red);
+            SKColor Drawn(int x, int y)
+            {
+                using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+                    Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+                using (var graphics = new Compat.PdfCartonGraphics2D(target))
+                    graphics.DrawImage(image, 0, 0, null);
+                return target.GetPixel(x, y);
+            }
+
+            Write(7, 5, 200, 100, 50);
+            Assert.Equal(Shown(200, 100, 50), Drawn(7, 5));
+            if (bgr) Assert.Equal(unchecked((int)0xffc86432), Compat.PdfCartonFontCompat.GetRgb(image, 7, 5));
+            // A second write after that draw reaches the next draw as well, and
+            // pixels nobody wrote keep the image's black.
+            Write(7, 5, 0x11, 0x22, 0x33);
+            Write(Width - 1, Height - 1, 90, 90, 90);
+            Assert.Equal(Shown(0x11, 0x22, 0x33), Drawn(7, 5));
+            Assert.Equal(Shown(90, 90, 90), Drawn(Width - 1, Height - 1));
+            Assert.Equal(SKColors.Black, Drawn(8, 5));
+
+            // Drawing into the image is copied into the array and keeps the
+            // array's writes outside the drawn area.
+            early.SetColor(new SKColor(60, 60, 60));
+            early.FillRect(0, 0, 4, 4);
+            Assert.Equal(60, data[(2 * Width + 3) * bands] & 0xff);
+            Assert.Equal(Shown(60, 60, 60), Drawn(3, 2));
+            Assert.Equal(Shown(0x11, 0x22, 0x33), Drawn(7, 5));
+        }
+    }
+
+    // An array write that restores what the array held before a SetRgb, a
+    // fill or a custom composite changed the pixel still reaches the next draw.
+    [Fact]
+    public void ByteDataBufferWritesCanRestorePreviouslyPublishedValues()
+    {
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR,
+                     Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY
+                 })
+        {
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            using var graphics = new Compat.PdfCartonGraphics2D(image);
+            var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
+            var bands = type == Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR ? 3 : 1;
+            SKColor Drawn(int x, int y)
+            {
+                using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+                    Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+                using (var drawing = new Compat.PdfCartonGraphics2D(target))
+                    drawing.DrawImage(image, 0, 0, null);
+                return target.GetPixel(x, y);
+            }
+            void Restore(int x, int y) => Array.Clear(data, (y * Width + x) * bands, bands);
+
+            Compat.PdfCartonFontCompat.SetRgb(image, 3, 3, unchecked((int)0xffffffff));
+            Restore(3, 3);
+            graphics.SetColor(SKColors.White);
+            graphics.FillRect(10, 10, 2, 2);
+            Restore(10, 10);
+            graphics.SetComposite(BlendComposite.GetInstance(BlendMode.Screen, 1));
+            graphics.FillRect(20, 10, 2, 2);
+            Restore(20, 10);
+            foreach (var (x, y) in new[] { (3, 3), (10, 10), (20, 10) })
+            {
+                Assert.Equal(SKColors.Black, Drawn(x, y));
+                Assert.Equal(unchecked((int)0xff000000), Compat.PdfCartonFontCompat.GetRgb(image, x, y));
+            }
+            Assert.Equal(SKColors.White, Drawn(11, 11));
+            Assert.Equal(SKColors.White, Drawn(21, 11));
+        }
+    }
+
+    // A custom composite into an image whose byte data was exposed blends
+    // with the samples written through the array and writes its result back
+    // into the array, as Java composes into the image's raster.
+    [Fact]
+    public void ByteDataBufferCustomCompositesUpdateSharedStorage()
+    {
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR,
+                     Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY
+                 })
+        {
+            var bgr = type == Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR;
+            var bands = bgr ? 3 : 1;
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            using var graphics = new Compat.PdfCartonGraphics2D(image);
+            var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
+            // Backdrop (80, 120, 160), or gray 100, written through the array.
+            for (var index = 0; index < data.Length; index += bands)
+            {
+                if (bgr)
+                {
+                    data[index] = unchecked((sbyte)160);
+                    data[index + 1] = 120;
+                    data[index + 2] = 80;
+                }
+                else
+                    data[index] = 100;
+            }
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+            graphics.SetComposite(BlendComposite.GetInstance(BlendMode.Multiply, 1));
+            graphics.SetColor(bgr ? new SKColor(128, 192, 224) : new SKColor(128, 128, 128));
+            graphics.FillRect(4, 4, 16, 8);
+
+            var expected = bgr ? new[] { 40, 90, 141 } : new[] { 50, 50, 50 };
+            var index10x6 = (6 * Width + 10) * bands;
+            var stored = bgr
+                ? new[] { data[index10x6 + 2] & 0xff, data[index10x6 + 1] & 0xff, data[index10x6] & 0xff }
+                : new[] { data[index10x6] & 0xff, data[index10x6] & 0xff, data[index10x6] & 0xff };
+            var rgb = Compat.PdfCartonFontCompat.GetRgb(image, 10, 6);
+            var drawn = Drawn(image, 10, 6);
+            var observed = new[]
+            {
+                ("array", stored),
+                ("GetRgb", new[] { rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff }),
+                ("DrawImage", new int[] { drawn.Red, drawn.Green, drawn.Blue })
+            };
+            foreach (var (name, actual) in observed)
+                for (var band = 0; band < 3; band++)
+                    Assert.True(Math.Abs(actual[band] - expected[band]) <= 2,
+                        $"type {type} {name}: blended {string.Join(",", actual)}, expected about {string.Join(",", expected)}.");
+            Assert.Equal(bgr ? new SKColor(80, 120, 160) : new SKColor(100, 100, 100), Drawn(image, 30, 18));
+            Assert.Equal(bgr ? 160 : 100, data[(18 * Width + 30) * bands] & 0xff);
+        }
+
+        static SKColor Drawn(SKBitmap image, int x, int y)
+        {
+            using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+                Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using (var drawing = new Compat.PdfCartonGraphics2D(target))
+                drawing.DrawImage(image, 0, 0, null);
+            return target.GetPixel(x, y);
+        }
+    }
+
+    // Publishing an exposed byte array renders the written pixel; once its
+    // samples stop changing, publishing renders nothing and allocates nothing.
+    [Fact]
+    public void ByteDataBufferPublishRendersOnlyChangedSamples()
+    {
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+            1000, 1000, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
+        var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
+        Compat.PdfCartonFontCompat.EnsureNativePixels(image);
+        data[(500 * 1000 + 500) * 3 + 2] = 120;
+        var (allocated, elapsed) = MeasureByteDataPublishes(image, data);
+        Assert.Equal(new SKColor(120, 0, 0), image.GetPixel(500, 500));
+        Assert.True(allocated < 1024, $"100 publishes allocated {allocated} bytes.");
+        // Each publish compares 3 MB of samples; rendering every pixel each
+        // time took seconds.
+        Assert.True(elapsed < TimeSpan.FromSeconds(5), $"100 publishes took {elapsed}.");
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    private static (long Allocated, TimeSpan Elapsed) MeasureByteDataPublishes(SKBitmap image, sbyte[] data)
+    {
+        Compat.PdfCartonFontCompat.EnsureNativePixels(image);
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        for (var publish = 0; publish < 100; publish++)
+            Compat.PdfCartonFontCompat.EnsureNativePixels(image);
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+        GC.KeepAlive(data);
+        return (GC.GetAllocatedBytesForCurrentThread() - allocated, elapsed);
+    }
+
     // A new BufferedImage's transparency is its type's, as in Java:
     // TYPE_INT_ARGB and TYPE_4BYTE_ABGR are TRANSLUCENT whatever the pixels
     // hold (a fresh one is all transparent), the other types OPAQUE. The

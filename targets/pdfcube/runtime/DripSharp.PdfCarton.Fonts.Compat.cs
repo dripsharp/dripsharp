@@ -2129,6 +2129,9 @@ internal sealed class PdfCartonBitmapView
     private sealed class PendingWrites
     {
         internal int Dirty;
+        // Set when a raster's exposed sample array is the bitmap's storage
+        // (PdfCartonFontCompat.ExposeSamples): renders the array's writes.
+        internal volatile Action? Refresh;
     }
 
     private static readonly ConditionalWeakTable<SKBitmap, PendingWrites> PendingByBitmap = new();
@@ -2247,14 +2250,19 @@ internal sealed class PdfCartonBitmapView
 
     // Bumps Skia's pixel generation once if a view wrote since the last call.
     // Writes into an int-backed bitmap's exposed pixel array are not tracked,
-    // so such a bitmap is published on every call.
+    // so such a bitmap is published on every call. Writes into an exposed
+    // byte sample array are rendered into the native pixels first.
     internal static void Publish(SKBitmap bitmap)
     {
-        var written = PendingByBitmap.TryGetValue(bitmap, out var pending) &&
-                      Interlocked.Exchange(ref pending.Dirty, 0) != 0;
+        var tracked = PendingByBitmap.TryGetValue(bitmap, out var pending);
+        if (tracked) pending!.Refresh?.Invoke();
+        var written = tracked && Interlocked.Exchange(ref pending!.Dirty, 0) != 0;
         if (written || bitmap is PdfCartonNativeBitmap { IntPixelsExposed: true })
             bitmap.NotifyPixelsChanged();
     }
+
+    internal static void SetRefresh(SKBitmap bitmap, Action refresh) =>
+        PendingByBitmap.GetValue(bitmap, CreatePendingWrites).Refresh = refresh;
 
     private int Offset(int x, int y)
     {
@@ -3138,9 +3146,16 @@ public sealed class JavaRaster
         }
     }
 
+    // DataBufferByte.getData(). A bitmap view's samples move into a managed
+    // array once; for an image's retained raster that array becomes the
+    // image's storage, as in Java (PdfCartonFontCompat.ExposeSamples).
     internal sbyte[] GetByteData()
     {
-        if (storage is null) MaterializeStorage(PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+        if (storage is null)
+        {
+            MaterializeStorage(PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+            if (storage is sbyte[] samples) PdfCartonFontCompat.ExposeSamples(bitmap!, this, samples);
+        }
         return storage as sbyte[]
             ?? throw new InvalidOperationException("Raster is not byte-backed.");
     }
@@ -5635,9 +5650,12 @@ public class PdfCartonGraphics2D : IDisposable
     private readonly SKBitmap? bitmap;
     private readonly SKCanvas? canvas;
     private readonly bool ownsCanvas;
-    // The bitmap is a CreateImage image: native drawing is reported to its
-    // retained raster (BeginDrawing) and custom composites go through it.
-    private readonly bool tracksNativeDrawing;
+    // The bitmap's retained raster is its storage (a CreateImage image, or
+    // one whose byte samples getData exposed, possibly after this instance was
+    // created): native drawing is reported to it (BeginDrawing) and custom
+    // composites go through it.
+    private bool TracksNativeDrawing =>
+        bitmap is not null && PdfCartonFontCompat.TracksNativeDrawing(bitmap);
     private readonly SKRectI initialDeviceClip;
     private int restoreCount;
     private bool disposed;
@@ -5692,7 +5710,6 @@ public class PdfCartonGraphics2D : IDisposable
         this.bitmap = bitmap;
         this.canvas = canvas;
         this.ownsCanvas = ownsCanvas;
-        tracksNativeDrawing = bitmap is not null && PdfCartonFontCompat.TracksNativeDrawing(bitmap);
         initialDeviceClip = canvas.DeviceClipBounds;
         restoreCount = canvas.Save();
         transform = canvas.TotalMatrix;
@@ -6568,7 +6585,7 @@ public class PdfCartonGraphics2D : IDisposable
         var sourceColorModel = PdfCartonFontCompat.GetColorModel(source);
         var destinationColorModel = PdfCartonFontCompat.GetColorModel(destination);
         var sourceRaster = PdfCartonFontCompat.GetRaster(source);
-        if (tracksNativeDrawing)
+        if (TracksNativeDrawing)
         {
             // As in Java, compose into the image's own raster, in its colour
             // model, and render only the composed pixels. The output starts
@@ -6710,11 +6727,11 @@ public class PdfCartonGraphics2D : IDisposable
     // Brackets native drawing into device bounds of the bitmap (disposed
     // after the draw); null unless the bitmap is a CreateImage image.
     private IDisposable? BeginDrawing(SKRectI bounds) =>
-        tracksNativeDrawing ? PdfCartonFontCompat.BeginNativeDrawing(bitmap!, bounds) : null;
+        TracksNativeDrawing ? PdfCartonFontCompat.BeginNativeDrawing(bitmap!, bounds) : null;
 
     // The same for a user-space rectangle under the current transform.
     private IDisposable? BeginDrawing(SKRect userBounds) =>
-        tracksNativeDrawing ? BeginDrawing(DrawingBounds(userBounds, stroked: false)) : null;
+        TracksNativeDrawing ? BeginDrawing(DrawingBounds(userBounds, stroked: false)) : null;
 
     private SKCanvas RequireCanvas() =>
         !disposed
@@ -7349,13 +7366,18 @@ internal static class PdfCartonFontCompat
         // Set by CreateDeferredImage: the native pixels have not been rendered
         // from Raster yet. Read and cleared under a lock on this instance.
         internal bool NativePending { get; set; }
-        // Set by CreateDeferredImage: Raster is managed storage the native
-        // pixels are rendered from, not a view of them, so native drawing
-        // must be copied back into it (BeginNativeDrawing).
+        // Set by CreateDeferredImage and ExposeSamples: Raster is managed
+        // storage the native pixels are rendered from, not a view of them, so
+        // native drawing must be copied back into it (BeginNativeDrawing).
         internal bool DetachedRaster { get; set; }
         // A detached raster's view of the native pixels it renders to,
         // created on first use under a lock on this instance.
         internal PdfCartonBitmapView? NativeView;
+        // Set by ExposeSamples: Raster's exposed sample array, and a copy of
+        // the samples the native pixels show (MarkRendered keeps it current).
+        // Used under a lock on this instance.
+        internal sbyte[]? ExposedSamples;
+        internal sbyte[]? RenderedSamples;
         // Without ColorModel or Transparency (a decoded image, whose decoder
         // colour model is unknown), the transparency classified from the
         // pixels on first use; 0 until then. Written under a lock on this
@@ -8315,6 +8337,7 @@ internal static class PdfCartonFontCompat
             if (!RendersAsStored(bitmap, metadata.ColorModel!, metadata.Raster!))
                 RenderRaster(bitmap, metadata.ColorModel!, metadata.Raster!);
             metadata.NativePending = false;
+            metadata.ExposedSamples?.CopyTo(metadata.RenderedSamples!, 0);
         }
     }
 
@@ -8466,11 +8489,78 @@ internal static class PdfCartonFontCompat
         return bitmap;
     }
 
-    // True when bitmap is a CreateImage image, whose retained raster is its
-    // Java storage: drawing surfaces bracket native drawing into it with
-    // BeginNativeDrawing and compose custom composites into the raster.
+    // True when bitmap is a CreateImage image, or one whose samples getData
+    // exposed, whose retained raster is its Java storage: drawing surfaces
+    // bracket native drawing into it with BeginNativeDrawing and compose
+    // custom composites into the raster.
     internal static bool TracksNativeDrawing(SKBitmap bitmap) =>
         ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) && metadata.DetachedRaster;
+
+    // DataBufferByte.getData() moved the samples of raster, bitmap's retained
+    // view, into samples. In Java that array is the image's storage, so from
+    // now on it is, as a CreateImage raster is (DetachedRaster): native
+    // drawing is copied into it, and every Publish renders the samples
+    // written through the array since the last one (RenderChangedSamples).
+    internal static void ExposeSamples(SKBitmap bitmap, JavaRaster raster, sbyte[] samples)
+    {
+        if (!ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) ||
+            !ReferenceEquals(metadata.Raster, raster) || metadata.ColorModel is null)
+            return;
+        lock (metadata)
+        {
+            metadata.ExposedSamples = samples;
+            metadata.RenderedSamples = (sbyte[])samples.Clone();
+            metadata.DetachedRaster = true;
+        }
+        PdfCartonBitmapView.SetRefresh(bitmap, () => RenderChangedSamples(bitmap, raster));
+    }
+
+    // Records that native pixel (x, y) shows its exposed samples, after a
+    // compat write rendered them. Called under a lock on metadata.
+    private static void MarkRendered(ImageMetadata metadata, int x, int y)
+    {
+        if (metadata.RenderedSamples is not { } rendered) return;
+        var bands = metadata.Raster!.NumberOfBands;
+        var start = (y * metadata.Raster.Width + x) * bands;
+        Array.Copy(metadata.ExposedSamples!, start, rendered, start, bands);
+    }
+
+    // Renders, and only renders, the pixels whose samples differ from those
+    // the native pixels show, so native drawing the samples never saw
+    // survives. Equal rows cost one vectorized comparison, and the writes go
+    // through a cached native view: no per-pixel native call.
+    private static void RenderChangedSamples(SKBitmap bitmap, JavaRaster raster)
+    {
+        if (bitmap.Handle == IntPtr.Zero ||
+            !ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) ||
+            !ReferenceEquals(metadata.Raster, raster))
+            return;
+        lock (metadata)
+        {
+            if (metadata.ExposedSamples is not { } samples || metadata.RenderedSamples is not { } published)
+                return;
+            var colorModel = metadata.ColorModel!;
+            var bands = raster.NumberOfBands;
+            var rowLength = raster.Width * bands;
+            PdfCartonBitmapView? view = null;
+            int[]? pixelSamples = null;
+            object? pixel = null;
+            for (var y = 0; y < raster.Height; y++)
+            {
+                var row = samples.AsSpan(y * rowLength, rowLength);
+                var shown = published.AsSpan(y * rowLength, rowLength);
+                if (row.SequenceEqual(shown)) continue;
+                view ??= NativeView(bitmap, metadata);
+                for (int x = 0, start = 0; x < raster.Width; x++, start += bands)
+                {
+                    var sample = row.Slice(start, bands);
+                    if (sample.SequenceEqual(shown.Slice(start, bands))) continue;
+                    sample.CopyTo(shown.Slice(start, bands));
+                    view.Set(x, y, colorModel.RenderedColorAt(raster, x, y, ref pixelSamples, ref pixel));
+                }
+            }
+        }
+    }
 
     // Starts a native (Skia) draw into bounds of a CreateImage image. In Java
     // the raster is the image's only storage, so disposing the result copies
@@ -8526,6 +8616,7 @@ internal static class PdfCartonFontCompat
                         if ((uint)drawn == before[index++]) continue;
                         element = colorModel.GetDataElements(ToArgb(drawn), ref components, element);
                         raster.SetDataElements(x, y, element);
+                        MarkRendered(metadata, x, y);
                     }
                 }
             }
@@ -8571,7 +8662,10 @@ internal static class PdfCartonFontCompat
             object? pixel = null;
             for (var line = y; line < y + region.Height; line++)
                 for (var column = x; column < x + width; column++)
+                {
                     view.Set(column, line, colorModel.RenderedColorAt(raster, column, line, ref samples, ref pixel));
+                    MarkRendered(metadata, column, line);
+                }
         }
     }
 
@@ -8733,6 +8827,7 @@ internal static class PdfCartonFontCompat
                 if (metadata.NativePending) return;
                 NativeView(bitmap, metadata).Set(
                     x, y, colorModel.RenderedColorAt(raster, x, y, ref RgbScratch.Samples, ref element));
+                MarkRendered(metadata, x, y);
             }
             return;
         }
