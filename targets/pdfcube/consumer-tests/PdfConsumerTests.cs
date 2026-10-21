@@ -2211,7 +2211,11 @@ public sealed class RasterConversionConsumerTests
             graphics.SetColor(bgr ? new SKColor(128, 192, 224) : new SKColor(128, 128, 128));
             graphics.FillRect(4, 4, 16, 8);
 
-            var expected = bgr ? new[] { 40, 90, 141 } : new[] { 50, 50, 50 };
+            // Java's samples: BlendComposite converts the gray source into
+            // the TYPE_BYTE_GRAY image's linear CS_GRAY, so Multiply stores
+            // 22 there. (Java's getRGB reads that sample as linear gray,
+            // 0xff535353; PdfCarton's TYPE_BYTE_GRAY getRGB does not.)
+            var expected = bgr ? new[] { 40, 90, 141 } : new[] { 22, 22, 22 };
             var index10x6 = (6 * Width + 10) * bands;
             var stored = bgr
                 ? new[] { data[index10x6 + 2] & 0xff, data[index10x6 + 1] & 0xff, data[index10x6] & 0xff }
@@ -2579,18 +2583,22 @@ public sealed class RasterConversionConsumerTests
             // image on each one took hours.
             Assert.True(elapsed < TimeSpan.FromSeconds(20), $"{name}: 10^6 SetRgb calls took {elapsed}.");
 
-            // The raster (getRGB) holds each written pixel, and the native
-            // pixels hold what the raster renders to.
+            // The raster (getRGB) holds each written pixel, through Java's
+            // linear gray for the gray + alpha image, and the native pixels
+            // hold what the raster renders to.
             var mismatches = 0;
             var hasAlpha = Compat.PdfCartonFontCompat.GetColorModel(image).HasAlpha;
             for (var y = 0; y < Size; y += 7)
                 for (var x = 0; x < Size; x += 3)
                 {
                     var written = Argb(x, y);
+                    var rgb = ReferenceEquals(image, gray)
+                        ? JavaLinearGrayRoundTrip(written & 255) * 0x010101
+                        : written & 0xffffff;
                     var argb = Compat.PdfCartonFontCompat.GetRgb(image, x, y);
                     var native = Compat.PdfCartonPixels.Read(image, x, y);
                     if ((uint)argb >> 24 != (hasAlpha ? (uint)written >> 24 : 255u) ||
-                        (argb & 0xffffff) != (written & 0xffffff) || (uint)native != (uint)argb)
+                        (argb & 0xffffff) != rgb || (uint)native != (uint)argb)
                         mismatches++;
                 }
             Assert.Equal(0, mismatches);
@@ -2662,8 +2670,9 @@ public sealed class RasterConversionConsumerTests
             graphics.FillRect(0, 0, 2, 2);
         }
         raster.SetPixel(3, 2, [32, 255]);
-        Assert.Equal(unchecked((int)0xff404040), Compat.PdfCartonFontCompat.GetRgb(image, 3, 3));
-        Assert.Equal(unchecked((int)0xff202020), Compat.PdfCartonFontCompat.GetRgb(image, 3, 2));
+        // Linear gray samples 64 and 32 (Java's getRGB of them).
+        Assert.Equal(unchecked((int)0xff898989), Compat.PdfCartonFontCompat.GetRgb(image, 3, 3));
+        Assert.Equal(unchecked((int)0xff636363), Compat.PdfCartonFontCompat.GetRgb(image, 3, 2));
         Assert.Equal(unchecked((int)0xffffffff), Compat.PdfCartonFontCompat.GetRgb(image, 1, 1));
         Assert.Equal(0, Compat.PdfCartonFontCompat.GetRgb(image, 2, 0) >>> 24);
 
@@ -2725,23 +2734,28 @@ public sealed class RasterConversionConsumerTests
     // Every render matches the RGB one, whose backdrop removal for a DeviceRGB
     // group is the DataBufferInt path (NonIsolatedBlendGroupRemovesItsBackdrop
     // checks it against Java PDFBox), and the gray values computed by hand,
-    // within the one rounding step an 8-bit conversion may take.
+    // within the one rounding step an 8-bit conversion may take. A DeviceGray
+    // group blends in Java's linear gray (CS_GRAY), so its Multiply values are
+    // Java PDFBox 3.0.8's on the RGB page. (Java's GRAY page reads its
+    // TYPE_BYTE_GRAY backdrop as linear gray too, so it differs there.)
     [Fact]
     public void FormBlendGroupsRenderOnGrayAndBgrPages()
     {
         foreach (var blend in new[] { true, false })
             foreach (var groupSpace in new[] { "DeviceGray", "DeviceRGB" })
             {
+                var linear = groupSpace == "DeviceGray";
                 var expected = new (int X, int Y, int Gray)[]
                 {
                     (5, 5, 204), // backdrop outside the group's content: 0.8
                     (52, 52, 204),
                     (95, 5, 204),
-                    // Multiply: 0.8 * 0.5; Normal: 0.5.
-                    (30, 70, blend ? 102 : 128),
-                    // Multiply at alpha 0.5: 0.8 * (0.5 + 0.5 * 0.25); Normal: 0.25.
-                    (70, 30, blend ? 128 : 64),
-                    (56, 44, blend ? 128 : 64),
+                    // Multiply: 0.8 * 0.5 (101 in linear gray); Normal: 0.5.
+                    (30, 70, blend ? linear ? 101 : 102 : 128),
+                    // Multiply at alpha 0.5: 0.8 * (0.5 + 0.5 * 0.25), 153 in
+                    // linear gray; Normal: 0.25.
+                    (70, 30, blend ? linear ? 153 : 128 : 64),
+                    (56, 44, blend ? linear ? 153 : 128 : 64),
                 };
                 var name = $"{groupSpace} group{(blend ? "" : ", blend mode unused")}";
                 using var document = Loader.LoadPDF((sbyte[])(Array)FormBlendGroupFixture(groupSpace, blend));
@@ -2770,6 +2784,108 @@ public sealed class RasterConversionConsumerTests
                     }
                 }
             }
+    }
+
+    // An isolated transparency group whose /CS is DeviceGray is drawn into
+    // create2ByteGrayAlphaImage's image, a linear gray (CS_GRAY) colour model:
+    // Java2D converts each coloured fill to gray through
+    // ComponentColorModel.getDataElements and back through getRGB. The
+    // native pixels used to keep the fill's colour. The expected colours are
+    // Java PDFBox 3.0.8's rendering of the same page; the DeviceRGB group
+    // keeps its colours. Opaque pixels are exact; the half-transparent fill
+    // allows Skia's 8-bit blend rounding.
+    [Fact]
+    public void IsolatedGrayGroupRendersColouredContentAsJavaPdfBox()
+    {
+        foreach (var (groupSpace, red, green, blue, translucent) in new[]
+                 {
+                     ("DeviceGray", 0xff7f7f7fu, 0xffdcdcdcu, 0xff4b4b4bu, 0xff9b8168u),
+                     ("DeviceRGB", 0xffff0000u, 0xff00ff00u, 0xff0000ffu, 0xff807f99u),
+                 })
+        {
+            var expected = new (int X, int Y, uint Argb, int Tolerance)[]
+            {
+                (5, 5, 0xffcc9966, 0), // backdrop outside the group's content
+                (50, 50, 0xffcc9966, 0),
+                (25, 75, red, 0),
+                (75, 75, green, 0),
+                (25, 25, blue, 0),
+                (75, 25, translucent, 2),
+            };
+            using var document = Loader.LoadPDF((sbyte[])(Array)IsolatedGroupFixture(groupSpace));
+            foreach (var type in new[] { ImageType.Rgb, ImageType.Argb, ImageType.Bgr })
+            {
+                using var image = new PDFRenderer(document).RenderImage(0, 1, type);
+                foreach (var (x, y, argb, tolerance) in expected)
+                {
+                    var actual = (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, y);
+                    for (var shift = 0; shift < 32; shift += 8)
+                        Assert.True(
+                            Math.Abs((int)((actual >> shift) & 255) - (int)((argb >> shift) & 255)) <= tolerance,
+                            $"{groupSpace} group: pixel ({x},{y}) is {actual:x8}, Java PDFBox renders {argb:x8}.");
+                }
+            }
+        }
+
+        // The gray samples setRGB stores for colours: Java 25's for red
+        // 0-255 step 51, green 0-255 step 51, blue 0-255 step 85.
+        const string JavaSamples =
+            "0,2,7,18,6,8,13,24,24,26,32,43,58,60,66,76,110,112,118,129,182,184,190,201,2,3,9,20,8,10,15,26,26,28," +
+            "33,44,60,62,67,78,112,114,119,130,184,186,192,203,7,9,15,26,13,15,21,32,31,33,39,50,65,67,73,84,117,119," +
+            "125,136,190,191,197,208,17,19,25,36,23,25,31,42,42,43,49,60,75,77,83,94,127,129,135,146,200,201,207,218," +
+            "33,34,40,51,39,40,46,57,57,59,64,75,91,93,98,109,143,145,150,161,215,217,223,234,54,56,62,73,60,62,68,79," +
+            "78,80,86,97,112,114,120,131,164,166,172,183,237,238,244,255";
+        using var gray = GrayAlphaImage(1, 1);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(gray);
+        var samples = new List<int>();
+        for (var r = 0; r < 256; r += 51)
+            for (var g = 0; g < 256; g += 51)
+                for (var b = 0; b < 256; b += 85)
+                {
+                    Compat.PdfCartonFontCompat.SetRgb(gray, 0, 0, unchecked((int)0xff000000) | r << 16 | g << 8 | b);
+                    samples.Add(raster.GetPixel(0, 0, (int[]?)null)[0]);
+                }
+        Assert.Equal(JavaSamples, string.Join(",", samples));
+    }
+
+    // A Multiply fill in a plain form whose resources alone hold the blend
+    // mode reaches a GRAY page through BlendComposite, which converts the
+    // 0.5 gray source into the page model's linear CS_GRAY. Java PDFBox
+    // 3.0.8 stores sample 55 there and Java2D draws the image as 0x373737
+    // (only its getRGB reads the sample as linear gray, 0xff808080).
+    [Fact]
+    public void FormMultiplyOnGrayPageStoresJavaSamples()
+    {
+        var fixture = PdfFixture(new SortedDictionary<int, string>
+        {
+            [3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << " +
+                "/XObject << /F 6 0 R >> >> /Contents 4 0 R >>",
+            [4] = FixtureStream("", "/F Do"),
+            [5] = "<< /Type /ExtGState /BM /Multiply >>",
+            [6] = FixtureStream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] " +
+                "/Resources << /ExtGState << /MUL 5 0 R >> >>", "/MUL gs 0.5 g 10 10 40 40 re f"),
+        });
+        using var document = Loader.LoadPDF((sbyte[])(Array)fixture);
+        using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+        Assert.Equal(255, raster.GetPixel(5, 5, (int[]?)null)[0]);
+        Assert.Equal(55, raster.GetPixel(30, 70, (int[]?)null)[0]);
+        Assert.Equal(new SKColor(55, 55, 55), Compat.PdfCartonPixels.Read(image, 30, 70));
+    }
+
+    // getRGB after setRGB of an opaque gray on Java's CS_GRAY image: the
+    // ComponentColorModel conversions (sRGB to 16-bit linear, the gray
+    // weights, then linear to sRGB) in Java's float arithmetic. It equals
+    // Java 25's result for all 256 grays.
+    private static int JavaLinearGrayRoundTrip(int value)
+    {
+        var srgb = value / 255f;
+        var linear = srgb <= 0.04045f ? srgb / 12.92f : (float)Math.Pow((srgb + 0.055f) / 1.055f, 2.4);
+        var linear16 = (int)Math.Floor(linear * 65535f + 0.5f);
+        var gray = (0.2125f * linear16 + 0.7154f * linear16 + 0.0721f * linear16) / 65535f;
+        var sample = (int)(gray * 255f + 0.5f) / 255f;
+        var output = sample <= 0.0031308f ? sample * 12.92f : 1.055f * (float)Math.Pow(sample, 1f / 2.4f) - 0.055f;
+        return (int)Math.Floor(output * 255f + 0.5f);
     }
 
     // PageDrawer.create2ByteGrayAlphaImage: Java's gray + alpha image over
@@ -2814,6 +2930,21 @@ public sealed class RasterConversionConsumerTests
                     ? "/MUL gs 0.5 g 10 10 40 40 re f /HM gs 0.25 g 55 55 35 35 re f"
                     : "0.5 g 10 10 40 40 re f 0.25 g 55 55 35 35 re f"),
             [7] = "<< /Type /ExtGState /BM /Multiply /ca 0.5 >>",
+        });
+
+    // A coloured backdrop under an isolated group in groupSpace holding red,
+    // green and blue fills and a half-transparent (0.2, 0.4, 0.8) one.
+    private static byte[] IsolatedGroupFixture(string groupSpace) =>
+        PdfFixture(new SortedDictionary<int, string>
+        {
+            [3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << " +
+                "/XObject << /G 6 0 R >> >> /Contents 4 0 R >>",
+            [4] = FixtureStream("", "0.8 0.6 0.4 rg 0 0 100 100 re f /G Do"),
+            [6] = FixtureStream("/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Group << /S /Transparency " +
+                $"/CS /{groupSpace} /I true >> /Resources << /ExtGState << /H 7 0 R >> >>",
+                "1 0 0 rg 10 10 30 30 re f 0 1 0 rg 60 10 30 30 re f 0 0 1 rg 10 60 30 30 re f " +
+                "/H gs 0.2 0.4 0.8 rg 60 60 30 30 re f"),
+            [7] = "<< /Type /ExtGState /ca 0.5 >>",
         });
 
     private static string FixtureStream(string entries, string data) =>

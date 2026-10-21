@@ -3374,8 +3374,8 @@ public sealed class JavaColorConvertOp
         var width = source.Width;
         var sourceCount = sourceColorModel.NumberOfComponents;
         var sourceAlphaIndex = sourceColorModel.NumberOfColorComponents;
-        var sourceColorSpace = sourceColorModel.ColorSpace;
-        var destinationColorSpace = destinationColorModel.ColorSpace;
+        var sourceColorSpace = sourceColorModel.ConversionSpace;
+        var destinationColorSpace = destinationColorModel.ConversionSpace;
         var destinationColorCount = destinationColorModel.NumberOfColorComponents;
         var destinationHasAlpha = destinationColorModel.HasAlpha;
         // Each pixel is read once into a reused row buffer and converted once
@@ -4056,9 +4056,9 @@ public sealed class JavaAlphaComposite : JavaComposite
                     var resultAlpha =
                         sourceAlpha + destinationAlpha * (1f - sourceAlpha);
 
-                    var sourceRgb = sourceColorModel.ColorSpace.ToRgb(sourceComponents);
+                    var sourceRgb = sourceColorModel.ConversionSpace.ToRgb(sourceComponents);
                     var destinationRgb =
-                        destinationColorModel.ColorSpace.ToRgb(destinationComponents);
+                        destinationColorModel.ConversionSpace.ToRgb(destinationComponents);
                     var resultRgb = new float[3];
                     for (var component = 0; component < resultRgb.Length; component++)
                     {
@@ -4069,7 +4069,7 @@ public sealed class JavaAlphaComposite : JavaComposite
                                (1f - sourceAlpha)) / resultAlpha;
                     }
 
-                    var result = destinationColorModel.ColorSpace.FromRgb(resultRgb);
+                    var result = destinationColorModel.ConversionSpace.FromRgb(resultRgb);
                     Array.Copy(
                         result,
                         destinationComponents,
@@ -4246,6 +4246,13 @@ public class JavaColorModel
         explicitColorSpace?.NumberOfComponents ??
         (imageType == PdfCartonFontCompat.TYPE_BYTE_GRAY ? 1 : 3);
     public JavaColorSpace ColorSpace { get; }
+    // The space this model converts colours through: ColorSpace, except
+    // that a TYPE_BYTE_GRAY model, whose ColorSpace is the shared linear
+    // CS_GRAY, keeps converting as sRGB-encoded gray, as Java2D draws it.
+    internal JavaColorSpace ConversionSpace =>
+        IsImageTypeModel && imageType == PdfCartonFontCompat.TYPE_BYTE_GRAY
+            ? PdfCartonFontCompat.EncodedGrayColorSpace
+            : ColorSpace;
     internal int ImageType => imageType;
     // The model GetRaster/GetColorModel derive from a bitmap's image type.
     internal bool IsImageTypeModel =>
@@ -4366,7 +4373,7 @@ public class JavaColorModel
             WriteNormalizedComponents(pixel, pixelComponents);
         }
         Span<float> rgb = stackalloc float[3];
-        ColorSpace.ConvertToRgb(pixelComponents, rgb);
+        ConversionSpace.ConvertToRgb(pixelComponents, rgb);
         return new SKColor(
             PdfCartonFontCompat.ComponentByte(rgb[0]),
             PdfCartonFontCompat.ComponentByte(rgb[1]),
@@ -4385,7 +4392,7 @@ public class JavaColorModel
         var pixelComponents = components.Slice(0, count);
         WriteNormalizedComponents(pixel, pixelComponents);
         Span<float> rgb = stackalloc float[3];
-        ColorSpace.ConvertToRgb(pixelComponents, rgb);
+        ConversionSpace.ConvertToRgb(pixelComponents, rgb);
         static uint Channel(float value) =>
             (uint)(int)JavaCompat.Round(JavaCompat.Clamp(value, 0f, 1f) * 255f);
         var alpha = HasAlpha ? Channel(pixelComponents[NumberOfColorComponents]) : 255u;
@@ -4406,7 +4413,7 @@ public class JavaColorModel
             components = new float[MaximumPixelComponents];
         var colorCount = NumberOfColorComponents;
         Span<float> converted = stackalloc float[MaximumPixelComponents];
-        if (ColorSpace.ConvertFromRgb(rgb, converted) < colorCount)
+        if (ConversionSpace.ConvertFromRgb(rgb, converted) < colorCount)
             throw new ArgumentException("The color space returned fewer components than the color model has.");
         converted.Slice(0, colorCount).CopyTo(components);
         if (HasAlpha)
@@ -4722,7 +4729,7 @@ public class JavaColorModel
         var count = NumberOfComponents;
         WriteNormalizedComponents(pixel, components.Slice(0, count));
         Span<float> rgb = stackalloc float[3];
-        ColorSpace.ConvertToRgb(components.Slice(0, count), rgb);
+        ConversionSpace.ConvertToRgb(components.Slice(0, count), rgb);
         return (int)JavaCompat.Round(JavaCompat.Clamp(rgb[component], 0f, 1f) * 255f);
     }
 
@@ -4735,7 +4742,7 @@ public class JavaColorModel
         var pixelComponents = components.Slice(0, count);
         WriteNormalizedComponents(pixel, pixelComponents);
         Span<float> rgb = stackalloc float[3];
-        ColorSpace.ConvertToRgb(pixelComponents, rgb);
+        ConversionSpace.ConvertToRgb(pixelComponents, rgb);
         return new SKColor(
             PdfCartonFontCompat.ComponentByte(rgb[0]),
             PdfCartonFontCompat.ComponentByte(rgb[1]),
@@ -4752,7 +4759,7 @@ public class JavaColorModel
     internal RasterRowConverter? CreateRowConverter(JavaRaster raster)
     {
         if (!raster.HasSampleStorage || explicitMasks is not null ||
-            ColorSpace.OverridesArrayConversions)
+            ConversionSpace.OverridesArrayConversions)
             return null;
         var count = NumberOfComponents;
         var bands = raster.NumberOfBands;
@@ -4762,7 +4769,7 @@ public class JavaColorModel
             // alpha) bands: decoded from its own layout, or copied as samples
             // from another (GetNormalizedRow).
             if (explicitColorSpace is not null || Palette is not null || !IsIntImageType ||
-                SeparableColorCount(ColorSpace) != 3 || bands < count)
+                SeparableColorCount(ConversionSpace) != 3 || bands < count)
                 return null;
             var colors = new SKColor[256];
             var packed = new int[1];
@@ -4811,7 +4818,7 @@ public class JavaColorModel
             return new RasterRowConverter(this, colors, Element);
         }
 
-        var colorCount = SeparableColorCount(ColorSpace);
+        var colorCount = SeparableColorCount(ConversionSpace);
         if (Palette is not null || bands != count ||
             colorCount == 0 || colorCount != NumberOfColorComponents)
             return null;
@@ -5048,6 +5055,22 @@ public class JavaColorSpace
         return (narrowed & 0xffff) / 32768f;
     }
 
+    // CS_GRAY is Java's linear gray. These are ComponentColorModel's
+    // conversions for it: sRGB8ToLinearRGB16 (Math.round to 16 bits) and
+    // linearRGB8TosRGB8, in Java's float arithmetic.
+    private static float Linear16(float srgb)
+    {
+        var linear = srgb <= 0.04045f
+            ? srgb / 12.92f
+            : (float)Math.Pow((srgb + 0.055f) / 1.055f, 2.4);
+        return (float)Math.Floor(linear * 65535f + 0.5f);
+    }
+
+    private static float SrgbFromLinear(float linear) =>
+        linear <= 0.0031308f
+            ? linear * 12.92f
+            : 1.055f * (float)Math.Pow(linear, 1f / 2.4f) - 0.055f;
+
     // JavaColorModel.SeparableColorCount relies on the gray and RGB cases
     // converting each component on its own.
     internal virtual void ToRgb(ReadOnlySpan<float> components, Span<float> rgb)
@@ -5064,6 +5087,11 @@ public class JavaColorSpace
             return;
         }
         static float Clamp(float value) => JavaCompat.Clamp(value, 0f, 1f);
+        if (Kind == CS_GRAY)
+        {
+            rgb[0] = rgb[1] = rgb[2] = SrgbFromLinear(Clamp(components[0]));
+            return;
+        }
         switch (Type)
         {
             case TYPE_GRAY:
@@ -5100,6 +5128,13 @@ public class JavaColorSpace
         var red = JavaCompat.Clamp(rgb[0], 0f, 1f);
         var green = JavaCompat.Clamp(rgb[1], 0f, 1f);
         var blue = JavaCompat.Clamp(rgb[2], 0f, 1f);
+        if (Kind == CS_GRAY)
+        {
+            // ComponentColorModel.getDataElements for linear gray.
+            output[0] = (0.2125f * Linear16(red) + 0.7154f * Linear16(green) +
+                         0.0721f * Linear16(blue)) / 65535f;
+            return 1;
+        }
         if (Type == TYPE_GRAY)
         {
             output[0] = red * 0.2126f + green * 0.7152f + blue * 0.0722f;
@@ -8375,7 +8410,7 @@ internal static class PdfCartonFontCompat
         var count = colorModel.NumberOfComponents;
         var alphaIndex = colorModel.NumberOfColorComponents;
         var hasAlpha = colorModel.HasAlpha;
-        var colorSpace = colorModel.ColorSpace;
+        var colorSpace = colorModel.ConversionSpace;
         var components = new float[checked(width * count)];
         int[]? samples = null;
         object? pixel = null;
@@ -8565,7 +8600,8 @@ internal static class PdfCartonFontCompat
     // Starts a native (Skia) draw into bounds of a CreateImage image. In Java
     // the raster is the image's only storage, so disposing the result copies
     // every pixel the draw changed into the retained raster, converted into
-    // its colour model as SetRgb converts a colour. Pixels the draw left
+    // its colour model as SetRgb converts a colour, and renders those pixels
+    // back from the raster as SetRgb renders them. Pixels the draw left
     // alone keep their samples, including raster writes not yet rendered.
     // Null for other images. The native pixels are rendered first, so a
     // later deferred render cannot overwrite the drawing.
@@ -8607,6 +8643,8 @@ internal static class PdfCartonFontCompat
                 var view = NativeView(bitmap, metadata);
                 float[]? components = null;
                 object? element = null;
+                int[]? samples = null;
+                object? pixel = null;
                 var index = 0;
                 for (var y = bounds.Top; y < bounds.Bottom; y++)
                 {
@@ -8616,6 +8654,10 @@ internal static class PdfCartonFontCompat
                         if ((uint)drawn == before[index++]) continue;
                         element = colorModel.GetDataElements(ToArgb(drawn), ref components, element);
                         raster.SetDataElements(x, y, element);
+                        // The native pixel shows the stored sample, as Java
+                        // draws the image from its raster: a colour drawn
+                        // into a gray image is gray.
+                        view.Set(x, y, colorModel.RenderedColorAt(raster, x, y, ref samples, ref pixel));
                         MarkRendered(metadata, x, y);
                     }
                 }
@@ -8974,6 +9016,9 @@ internal static class PdfCartonFontCompat
             GetIccProfile(JavaColorSpace.CS_sRGB)));
     private static readonly JavaColorSpace GrayColorSpace =
         new(JavaColorSpace.CS_GRAY);
+    // A gray space whose component is the sRGB value itself.
+    internal static readonly JavaColorSpace EncodedGrayColorSpace =
+        new(0, JavaColorSpace.TYPE_GRAY, 1);
     private static readonly JavaColorSpace CieXyzColorSpace =
         new(JavaColorSpace.CS_CIEXYZ);
 
