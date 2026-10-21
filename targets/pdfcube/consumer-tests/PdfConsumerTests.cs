@@ -2027,10 +2027,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void ImageFactoriesTreatAnArgbImageAsTranslucent()
     {
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(20, 10, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        for (var y = 0; y < 10; y++)
-            for (var x = 0; x < 20; x++)
-                Compat.PdfCartonFontCompat.SetRgb(image, x, y, (x + y) % 3 == 0 ? 0x00000000 : unchecked((int)0xff3366cc));
+        using var image = BinaryAlphaArgbImage();
         using var document = new PDDocument();
         var xobject = LosslessFactory.CreateFromImage(document, image);
         var mask = xobject.GetSoftMask();
@@ -2045,6 +2042,104 @@ public sealed class RasterConversionConsumerTests
         Assert.NotNull(jpegMask);
         Assert.Equal(8, jpegMask.GetBitsPerComponent());
         Assert.Equal(COSName.DctDecode, jpegMask.GetCOSObject().GetFilters());
+    }
+
+    // 20x10 TYPE_INT_ARGB: transparent black where (x + y) % 3 == 0, else
+    // opaque 0xff3366cc.
+    private static SKBitmap BinaryAlphaArgbImage()
+    {
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(20, 10, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        for (var y = 0; y < 10; y++)
+            for (var x = 0; x < 20; x++)
+                Compat.PdfCartonFontCompat.SetRgb(image, x, y, (x + y) % 3 == 0 ? 0x00000000 : unchecked((int)0xff3366cc));
+        return image;
+    }
+
+    // Java PDFBox 3.0.8 mask.getImage() gray samples, row by row, for the
+    // JPEGFactory soft mask of BinaryAlphaArgbImage, both as created and
+    // after a save and reload. JPEG loss puts them up to 22 from the 0/255
+    // alpha.
+    private static readonly byte[] JavaJpegSoftMaskSamples =
+    [
+        0x01, 0xfe, 0xf5, 0x00, 0xff, 0xfa, 0x00, 0xff, 0xff, 0x00, 0xff, 0xff, 0x00, 0xfe, 0xfd, 0x00, 0xff, 0xf5, 0x01, 0xfd,
+        0xf7, 0xff, 0x03, 0xff, 0xf5, 0x02, 0xff, 0xff, 0x00, 0xff, 0xfa, 0x00, 0xff, 0xf3, 0x0c, 0xff, 0xf9, 0x03, 0xff, 0xf4,
+        0xf9, 0x00, 0xf6, 0xff, 0x00, 0xf8, 0xff, 0x00, 0xff, 0xf1, 0x00, 0xff, 0xf9, 0x01, 0xf9, 0xf4, 0x01, 0xff, 0xff, 0x00,
+        0x02, 0xff, 0xff, 0x00, 0xfa, 0xff, 0x09, 0xfc, 0xf7, 0x09, 0xff, 0xff, 0x00, 0xfc, 0xff, 0x07, 0xff, 0xf6, 0x00, 0xff,
+        0xff, 0xf7, 0x00, 0xff, 0xff, 0x00, 0xf6, 0xff, 0x07, 0xff, 0xfc, 0x00, 0xff, 0xff, 0x09, 0xf7, 0xff, 0x00, 0xff, 0xeb,
+        0xff, 0x04, 0xf7, 0xff, 0x00, 0xff, 0xf5, 0x03, 0xf4, 0xf9, 0x01, 0xf9, 0xff, 0x00, 0xf1, 0xff, 0x00, 0xfb, 0xff, 0x00,
+        0x00, 0xff, 0xf4, 0x02, 0xff, 0xec, 0x16, 0xfc, 0xff, 0x0c, 0xf3, 0xff, 0x00, 0xfa, 0xff, 0x00, 0xff, 0xff, 0x00, 0xff,
+        0xff, 0xef, 0x05, 0xff, 0xfd, 0x01, 0xfc, 0xff, 0x00, 0xfd, 0xfe, 0x00, 0xff, 0xff, 0x00, 0xff, 0xfd, 0x03, 0xfe, 0xff,
+        0xff, 0x00, 0xfb, 0xff, 0x00, 0xff, 0xff, 0x00, 0xf4, 0xff, 0x00, 0xfe, 0xff, 0x00, 0xfb, 0xff, 0x0b, 0xf0, 0xfd, 0x07,
+        0x00, 0xfe, 0xff, 0x06, 0xf9, 0xff, 0x00, 0xff, 0xff, 0x00, 0xff, 0xf9, 0x03, 0xf6, 0xff, 0x00, 0xeb, 0xff, 0x00, 0xfe,
+    ];
+
+    // The JPEGFactory soft mask is a 1-component DeviceGray DCT image, so it
+    // decodes to one sample per pixel. A build that decoded it to three
+    // bands read each sample three times along the row (01 01 01 fe fe fe
+    // f5 f5 f5 ...). The same holds for the mask loaded from a saved file.
+    [Fact]
+    public void JpegFactorySoftMaskDecodesOneSamplePerPixel()
+    {
+        using var image = BinaryAlphaArgbImage();
+        byte[] pdf;
+        using (var document = new PDDocument())
+        {
+            var jpeg = JPEGFactory.CreateFromImage(document, image);
+            AssertJavaSoftMask(jpeg.GetSoftMask());
+            var page = new PDPage(new PDRectangle(20, 10));
+            document.AddPage(page);
+            using (var content = new PDPageContentStream(document, page))
+                content.DrawImage(jpeg, 0, 0, 20, 10);
+            using var output = new MemoryStream();
+            document.Save(output);
+            pdf = output.ToArray();
+        }
+
+        using var loaded = Loader.LoadPDF((sbyte[])(Array)pdf);
+        var resources = loaded.GetPage(0).GetResources();
+        var reloaded = (PDImageXObject)resources.GetXObject(resources.GetXObjectNames().Single());
+        Assert.Equal(COSName.DctDecode, reloaded.GetCOSObject().GetFilters());
+        AssertJavaSoftMask(reloaded.GetSoftMask());
+    }
+
+    private static void AssertJavaSoftMask(PDImageXObject mask)
+    {
+        const int width = 20;
+        const int height = 10;
+        Assert.NotNull(mask);
+        Assert.IsType<PDDeviceGray>(mask.GetColorSpace());
+        Assert.Equal(8, mask.GetBitsPerComponent());
+        Assert.Equal(COSName.DctDecode, mask.GetCOSObject().GetFilters());
+        using (var stream = mask.CreateInputStream())
+        using (var decoded = new MemoryStream())
+        {
+            stream.CopyTo(decoded);
+            Assert.Equal(width * height, decoded.Length);
+        }
+
+        Assert.Equal(1, mask.GetRawRaster().NumberOfBands);
+        using var alpha = mask.GetImage();
+        Assert.Equal((width, height), (alpha.Width, alpha.Height));
+        var actual = new byte[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var argb = unchecked((uint)Compat.PdfCartonFontCompat.GetRgb(alpha, x, y));
+                var gray = (byte)argb;
+                Assert.Equal(0xff000000u | (uint)gray << 16 | (uint)gray << 8 | gray, argb);
+                actual[y * width + x] = gray;
+            }
+        }
+
+        for (var index = 0; index < actual.Length; index++)
+        {
+            var opaque = ((index % width) + (index / width)) % 3 != 0;
+            Assert.True(Math.Abs(actual[index] - (opaque ? 255 : 0)) <= 32,
+                $"sample {index}: {Convert.ToHexString(actual)}");
+            Assert.True(Math.Abs(actual[index] - JavaJpegSoftMaskSamples[index]) <= 2,
+                $"sample {index}: {Convert.ToHexString(actual)}");
+        }
     }
 
     // A non-isolated group with blend modes, painted with Multiply over a
