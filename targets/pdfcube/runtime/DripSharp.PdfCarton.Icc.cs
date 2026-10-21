@@ -32,8 +32,11 @@ internal sealed class PdfCartonIccProfileData
     private readonly uint pcsSignature;
     // Each lazy caches its result or its parse failure, so a malformed tag
     // fails every conversion consistently without being parsed again.
-    private readonly Lazy<IccLut?> deviceToPcsLut;
-    private readonly Lazy<IccLut?> pcsToDeviceLut;
+    // Index 0 follows the header's rendering intent (Java's toRGB and
+    // fromRGB); index 1 is relative colorimetric (toCIEXYZ and fromCIEXYZ).
+    private const int RelativeColorimetric = 1;
+    private readonly Lazy<IccLut?>[] deviceToPcsLuts;
+    private readonly Lazy<IccLut?>[] pcsToDeviceLuts;
     private readonly Lazy<MatrixTransform> matrixTransform;
     private readonly Lazy<InverseMatrixTransform?> inverseMatrixTransform;
 
@@ -93,12 +96,8 @@ internal sealed class PdfCartonIccProfileData
             }
         }
 
-        deviceToPcsLut = new Lazy<IccLut?>(
-            () => LoadLut(true),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-        pcsToDeviceLut = new Lazy<IccLut?>(
-            () => LoadLut(false),
-            LazyThreadSafetyMode.ExecutionAndPublication);
+        deviceToPcsLuts = new[] { NewLut(true, RenderingIntent), NewLut(true, RelativeColorimetric) };
+        pcsToDeviceLuts = new[] { NewLut(false, RenderingIntent), NewLut(false, RelativeColorimetric) };
         matrixTransform = new Lazy<MatrixTransform>(
             LoadMatrixTransform,
             LazyThreadSafetyMode.ExecutionAndPublication);
@@ -156,6 +155,15 @@ internal sealed class PdfCartonIccProfileData
 
     internal void ToRgb(ReadOnlySpan<float> components, Span<float> rgb)
     {
+        ToXyzD50(components, out var x, out var y, out var z);
+        XyzD50ToSrgb(x, y, z, rgb);
+    }
+
+    // The colour's D50-relative XYZ, the ICC PCS, through the header's
+    // rendering intent or, when colorimetric, relative colorimetric.
+    internal void ToXyzD50(
+        ReadOnlySpan<float> components, out float x, out float y, out float z, bool colorimetric = false)
+    {
         if (components.Length < NumberOfComponents)
             throw new ArgumentException(
                 "The component array is shorter than the ICC color space.",
@@ -165,10 +173,7 @@ internal sealed class PdfCartonIccProfileData
         for (var index = 0; index < source.Length; index++)
             source[index] = JavaCompat.Clamp(components[index], 0f, 1f);
 
-        float x;
-        float y;
-        float z;
-        var lut = deviceToPcsLut.Value;
+        var lut = deviceToPcsLuts[colorimetric ? 1 : 0].Value;
         if (lut is not null)
         {
             Span<float> encoded = stackalloc float[lut.OutputChannels];
@@ -180,7 +185,6 @@ internal sealed class PdfCartonIccProfileData
             matrixTransform.Value.DeviceToXyz(source, out x, out y, out z);
         }
         if (pcsSignature == PcsLab) LabToXyz(ref x, ref y, ref z);
-        XyzD50ToSrgb(x, y, z, rgb);
     }
 
     internal float[] FromRgb(float[] rgb)
@@ -197,16 +201,33 @@ internal sealed class PdfCartonIccProfileData
     {
         if (rgb.Length < 3)
             throw new ArgumentException("RGB input must have three components.", nameof(rgb));
+        SrgbToXyzD50(rgb, out var x, out var y, out var z);
+        return FromXyzD50(x, y, z, rgb, output, false);
+    }
+
+    // Writes the device components of a D50-relative XYZ colour, as FromRgb;
+    // colorimetric as ToXyzD50.
+    internal int FromXyzD50(float x, float y, float z, Span<float> output, bool colorimetric = false)
+    {
+        Span<float> rgb = stackalloc float[3];
+        XyzD50ToSrgb(x, y, z, rgb);
+        return FromXyzD50(x, y, z, rgb, output, colorimetric);
+    }
+
+    // rgb is the same colour in sRGB, for profiles without a PCS-to-device
+    // transform.
+    private int FromXyzD50(
+        float x, float y, float z, ReadOnlySpan<float> rgb, Span<float> output, bool colorimetric)
+    {
         if (output.Length < MaximumComponents)
             throw new ArgumentException("The output buffer is too small.", nameof(output));
-        SrgbToXyzD50(rgb, out var x, out var y, out var z);
         var pcsX = x;
         var pcsY = y;
         var pcsZ = z;
         if (pcsSignature == PcsLab) XyzToLab(ref pcsX, ref pcsY, ref pcsZ);
         Span<float> encoded = stackalloc float[3];
         EncodePcs(pcsX, pcsY, pcsZ, encoded);
-        var lut = pcsToDeviceLut.Value;
+        var lut = pcsToDeviceLuts[colorimetric ? 1 : 0].Value;
         if (lut is not null)
         {
             lut.Transform(encoded, output);
@@ -224,17 +245,22 @@ internal sealed class PdfCartonIccProfileData
         }
         if (NumberOfComponents == 1)
         {
-            output[0] = JavaCompat.Clamp(rgb[0] * 0.2126f + rgb[1] * 0.7152f +
-                                         rgb[2] * 0.0722f, 0f, 1f);
+            // LittleCMS's PCS-to-gray: Y through the inverse gray TRC.
+            output[0] = tags.ContainsKey(0x6b545243) // kTRC
+                ? matrixTransform.Value.GrayFromY(y)
+                : JavaCompat.Clamp(rgb[0] * 0.2126f + rgb[1] * 0.7152f + rgb[2] * 0.0722f, 0f, 1f);
             return 1;
         }
         return NaiveFromRgb(rgb, NumberOfComponents, output);
     }
 
-    private uint? SelectTag(bool deviceToPcs)
+    private Lazy<IccLut?> NewLut(bool deviceToPcs, int intent) =>
+        new(() => LoadLut(deviceToPcs, intent), LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private uint? SelectTag(bool deviceToPcs, int intent)
     {
         var prefix = deviceToPcs ? (uint)0x41324230 : 0x42324130; // A2B0/B2A0
-        var intentIndex = RenderingIntent switch
+        var intentIndex = intent switch
         {
             0 => 0,
             1 => 1,
@@ -247,9 +273,9 @@ internal sealed class PdfCartonIccProfileData
         return tags.ContainsKey(prefix) ? prefix : null;
     }
 
-    private IccLut? LoadLut(bool deviceToPcs)
+    private IccLut? LoadLut(bool deviceToPcs, int intent)
     {
-        var selected = SelectTag(deviceToPcs);
+        var selected = SelectTag(deviceToPcs, intent);
         if (!selected.HasValue) return null;
         var signature = selected.Value;
         var tag = tags[signature];
@@ -583,6 +609,8 @@ internal sealed class PdfCartonIccProfileData
                     green[0], green[1], green[2],
                     blue[0], blue[1], blue[2]
                 });
+
+        internal float GrayFromY(float y) => first!.Invert(y);
 
         internal void DeviceToXyz(
             ReadOnlySpan<float> source,

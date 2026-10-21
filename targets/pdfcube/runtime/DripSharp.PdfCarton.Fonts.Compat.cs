@@ -3379,14 +3379,15 @@ public sealed class JavaColorConvertOp
         var destinationColorCount = destinationColorModel.NumberOfColorComponents;
         var destinationHasAlpha = destinationColorModel.HasAlpha;
         // Each pixel is read once into a reused row buffer and converted once
-        // (ToRgb, then FromRgb into the destination space) without allocating.
+        // through the D50 PCS, as Java's profile-to-profile transform does,
+        // without allocating.
         var sourceRow = new float[checked(width * sourceCount)];
         int[]? sourceSamples = null;
         object? sourcePixel = null;
         object? destinationPixel = null;
         var destinationComponents =
             new float[destinationColorModel.NumberOfComponents];
-        Span<float> rgb = stackalloc float[3];
+        Span<float> xyz = stackalloc float[3];
         Span<float> converted = stackalloc float[JavaColorSpace.MaximumComponents];
         // When the destination raster is the bitmap's own live pixel view under
         // its image-type model, the converted components go straight to the
@@ -3411,8 +3412,8 @@ public sealed class JavaColorConvertOp
                 {
                     var sourceComponents =
                         new ReadOnlySpan<float>(sourceRow, x * sourceCount, sourceCount);
-                    sourceColorSpace.ConvertToRgb(sourceComponents, rgb);
-                    var convertedCount = destinationColorSpace.ConvertFromRgb(rgb, converted);
+                    sourceColorSpace.ConvertToXyz(sourceComponents, xyz);
+                    var convertedCount = destinationColorSpace.ConvertFromXyz(xyz, converted);
                     if (convertedCount < destinationColorCount)
                         throw new ArgumentException(
                             "The converted color has fewer components than the destination.");
@@ -3841,6 +3842,7 @@ public sealed class JavaIccProfile
         profile.ToRgb(components, rgb);
     internal int FromRgb(ReadOnlySpan<float> rgb, Span<float> components) =>
         profile.FromRgb(rgb, components);
+    internal PdfCartonIccProfileData Data => profile;
 }
 
 public static class PdfCartonTransparency
@@ -5042,10 +5044,9 @@ public class JavaColorSpace
             if (arrayOverrides < 0)
             {
                 var type = GetType();
-                var overrides =
-                    type.GetMethod(nameof(ToRgb), new[] { typeof(float[]) })!.DeclaringType !=
-                        typeof(JavaColorSpace) ||
-                    type.GetMethod(nameof(FromRgb), new[] { typeof(float[]) })!.DeclaringType !=
+                var overrides = false;
+                foreach (var name in new[] { nameof(ToRgb), nameof(FromRgb), nameof(ToCieXyz), nameof(FromCieXyz) })
+                    overrides |= type.GetMethod(name, new[] { typeof(float[]) })!.DeclaringType !=
                         typeof(JavaColorSpace);
                 arrayOverrides = overrides ? 1 : 0;
             }
@@ -5053,20 +5054,29 @@ public class JavaColorSpace
         }
     }
 
-    // CS_CIEXYZ holds D50-relative XYZ (the ICC PCS), as Java's does. Java's
-    // ICC_ColorSpace.toRGB stores each component as
-    // (short)(value * 65535 / (1 + 32767/32768f) + 0.5f) and reads it back as
-    // an unsigned 16-bit PCS sample (1.0 = 32768), so negative values and
-    // values of 2 or more wrap around rather than clamp; this keeps that.
-    private static float CieXyzSample(float value)
+    // CS_CIEXYZ holds D50-relative XYZ (the ICC PCS), as Java's does, with
+    // components from 0 to 1 + 32767/32768.
+    private const float AlmostTwo = 1f + 32767f / 32768f;
+
+    // Java's ICC_ColorSpace hands LittleCMS each component as the 16-bit
+    // sample (short)((value - min) * 65535 / (max - min) + 0.5f), read back
+    // unsigned, so values outside the range wrap around rather than clamp.
+    private static float Sample16(float value, float min, float max)
     {
-        var scaled = value * 32768f + 0.5f;
+        var scaled = (value - min) * (65535f / (max - min)) + 0.5f;
         var narrowed = float.IsNaN(scaled) ? 0
             : scaled >= int.MaxValue ? int.MaxValue
             : scaled <= int.MinValue ? int.MinValue
             : (int)scaled;
-        return (narrowed & 0xffff) / 32768f;
+        return (narrowed & 0xffff) / 65535f * (max - min) + min;
     }
+
+    // A LittleCMS 16-bit result read back as Java does (saturated).
+    private static float Result16(float value, float min, float max) =>
+        (float)Math.Floor(JavaCompat.Clamp((value - min) / (max - min), 0f, 1f) * 65535f + 0.5f) /
+        65535f * (max - min) + min;
+
+    private static float CieXyzSample(float value) => Sample16(value, 0f, AlmostTwo);
 
     // CS_GRAY is Java's linear gray. These are ComponentColorModel's
     // conversions for it: sRGB8ToLinearRGB16 (Math.round to 16 bits) and
@@ -5180,22 +5190,91 @@ public class JavaColorSpace
         return 4;
     }
 
+    // The colour's D50-relative XYZ (the ICC PCS), unquantized. Spaces with no
+    // profile of their own convert through sRGB; colorimetric makes an ICC
+    // profile use its relative colorimetric transform, as Java's toCIEXYZ and
+    // fromCIEXYZ do, rather than its header's rendering intent.
+    internal virtual void ToXyz(ReadOnlySpan<float> components, Span<float> xyz, bool colorimetric = false)
+    {
+        if (components.Length < NumberOfComponents)
+            throw new ArgumentException("The component array is too short.", nameof(components));
+        if (Kind == CS_CIEXYZ)
+        {
+            components.Slice(0, 3).CopyTo(xyz);
+            return;
+        }
+        if (Kind == CS_GRAY)
+        {
+            // LittleCMS's gray-to-PCS: the linear gray times the D50 white.
+            var gray = JavaCompat.Clamp(components[0], 0f, 1f);
+            xyz[0] = gray * 0.9642f;
+            xyz[1] = gray;
+            xyz[2] = gray * 0.8249f;
+            return;
+        }
+        Span<float> rgb = stackalloc float[3];
+        ConvertToRgb(components, rgb);
+        PdfCartonIccProfileData.SrgbToXyzD50(rgb, out xyz[0], out xyz[1], out xyz[2]);
+    }
+
+    // Writes the components of a D50-relative XYZ colour into output (at
+    // least MaximumComponents long) and returns how many were written.
+    internal virtual int FromXyz(ReadOnlySpan<float> xyz, Span<float> output, bool colorimetric = false)
+    {
+        if (xyz.Length < 3)
+            throw new ArgumentException("XYZ input must have three components.", nameof(xyz));
+        if (Kind == CS_CIEXYZ)
+        {
+            xyz.Slice(0, 3).CopyTo(output);
+            return 3;
+        }
+        if (Kind == CS_GRAY)
+        {
+            // LittleCMS's PCS-to-gray keeps Y.
+            output[0] = JavaCompat.Clamp(xyz[1], 0f, 1f);
+            return 1;
+        }
+        Span<float> rgb = stackalloc float[3];
+        PdfCartonIccProfileData.XyzD50ToSrgb(xyz[0], xyz[1], xyz[2], rgb);
+        return ConvertFromRgb(rgb, output);
+    }
+
+    internal void ConvertToXyz(ReadOnlySpan<float> components, Span<float> xyz)
+    {
+        if (!OverridesArrayConversions)
+        {
+            ToXyz(components, xyz);
+            return;
+        }
+        var result = ToCieXyz(components.ToArray());
+        if (result.Length < 3)
+            throw new ArgumentException("The color space returned fewer than three XYZ components.");
+        result.AsSpan(0, 3).CopyTo(xyz);
+    }
+
+    internal int ConvertFromXyz(ReadOnlySpan<float> xyz, Span<float> output)
+    {
+        if (!OverridesArrayConversions) return FromXyz(xyz, output);
+        var result = FromCieXyz(xyz.ToArray());
+        result.AsSpan().CopyTo(output);
+        return result.Length;
+    }
+
+    // Java's toCIEXYZ and fromCIEXYZ pass the colour and the XYZ result
+    // through LittleCMS's 16-bit samples; this keeps that quantization.
     public virtual float[] ToCieXyz(float[] components)
     {
-        var rgb = ToRgb(components);
-        static float Linear(float component) =>
-            component <= 0.04045f
-                ? component / 12.92f
-                : JavaCompat.Pow((component + 0.055f) / 1.055f, 2.4f);
-        var red = Linear(rgb[0]);
-        var green = Linear(rgb[1]);
-        var blue = Linear(rgb[2]);
-        return new[]
-        {
-            red * 0.4124564f + green * 0.3575761f + blue * 0.1804375f,
-            red * 0.2126729f + green * 0.7151522f + blue * 0.0721750f,
-            red * 0.0193339f + green * 0.1191920f + blue * 0.9503041f
-        };
+        ArgumentNullException.ThrowIfNull(components);
+        if (components.Length < NumberOfComponents)
+            throw new ArgumentException("The component array is too short.", nameof(components));
+        Span<float> samples = stackalloc float[NumberOfComponents];
+        for (var index = 0; index < samples.Length; index++)
+            samples[index] = Sample16(components[index], GetMinValue(index), GetMaxValue(index));
+        var xyz = new float[3];
+        ToXyz(samples, xyz, colorimetric: true);
+        for (var index = 0; index < 3; index++)
+            xyz[index] = Result16(xyz[index], 0f, AlmostTwo);
+        return xyz;
     }
 
     public virtual float[] FromCieXyz(float[] xyz)
@@ -5203,14 +5282,14 @@ public class JavaColorSpace
         ArgumentNullException.ThrowIfNull(xyz);
         if (xyz.Length < 3)
             throw new ArgumentException("XYZ input must have three components.", nameof(xyz));
-        var red = xyz[0] * 3.2404542f - xyz[1] * 1.5371385f - xyz[2] * 0.4985314f;
-        var green = -xyz[0] * 0.9692660f + xyz[1] * 1.8760108f + xyz[2] * 0.0415560f;
-        var blue = xyz[0] * 0.0556434f - xyz[1] * 0.2040259f + xyz[2] * 1.0572252f;
-        static float Gamma(float component) =>
-            JavaCompat.Clamp(component <= 0.0031308f
-                ? 12.92f * component
-                : 1.055f * JavaCompat.Pow(component, 1f / 2.4f) - 0.055f, 0f, 1f);
-        return FromRgb(new[] { Gamma(red), Gamma(green), Gamma(blue) });
+        Span<float> samples = stackalloc float[3];
+        for (var index = 0; index < 3; index++)
+            samples[index] = CieXyzSample(xyz[index]);
+        Span<float> output = stackalloc float[MaximumComponents];
+        var result = new float[FromXyz(samples, output, colorimetric: true)];
+        for (var index = 0; index < result.Length; index++)
+            result[index] = Result16(output[index], GetMinValue(index), GetMaxValue(index));
+        return result;
     }
 
     public virtual float GetMinValue(int component)
@@ -5222,7 +5301,7 @@ public class JavaColorSpace
     public virtual float GetMaxValue(int component)
     {
         ValidateComponent(component);
-        return 1f;
+        return Kind == CS_CIEXYZ ? AlmostTwo : 1f;
     }
 
     private void ValidateComponent(int component)
@@ -5264,6 +5343,17 @@ public sealed class JavaIccColorSpace : JavaColorSpace
 
     internal override int FromRgb(ReadOnlySpan<float> rgb, Span<float> output) =>
         IsSrgb ? base.FromRgb(rgb, output) : Profile.FromRgb(rgb, output);
+
+    internal override void ToXyz(ReadOnlySpan<float> components, Span<float> xyz, bool colorimetric = false)
+    {
+        if (IsSrgb) base.ToXyz(components, xyz);
+        else Profile.Data.ToXyzD50(components, out xyz[0], out xyz[1], out xyz[2], colorimetric);
+    }
+
+    internal override int FromXyz(ReadOnlySpan<float> xyz, Span<float> output, bool colorimetric = false) =>
+        IsSrgb
+            ? base.FromXyz(xyz, output)
+            : Profile.Data.FromXyzD50(xyz[0], xyz[1], xyz[2], output, colorimetric);
 
     public override float GetMinValue(int component)
     {

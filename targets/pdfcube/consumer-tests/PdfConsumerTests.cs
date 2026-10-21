@@ -241,6 +241,21 @@ public sealed class PdfConsumerTests
             .Filter(source, null);
         Assert.All(IccRenderFixtures.Colors(toRgb),
             color => Assert.Equal(new SKColor(255, 0, 0), color));
+
+        // ColorConvertOp converts through CIE XYZ, so it honours overrides of
+        // only FromCieXyz (destination) or only ToCieXyz (source).
+        using var fromXyz = new DripSharp.Runtime.JavaColorConvertOp(new ConstantFromCieXyzSpace())
+            .Filter(source, null);
+        Assert.All(IccRenderFixtures.Colors(fromXyz),
+            color => Assert.Equal(new SKColor(64, 128, 191), color));
+        using var redXyz = new DripSharp.Runtime.JavaColorConvertOp(new RedToCieXyzSpace())
+            .Filter(source, null);
+        Assert.Equal([new SKColor(10, 20, 30), new SKColor(200, 100, 50)], IccRenderFixtures.Colors(redXyz));
+        using var fromRedXyz = new DripSharp.Runtime.JavaColorConvertOp(
+                Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB))
+            .Filter(redXyz, null);
+        Assert.All(IccRenderFixtures.Colors(fromRedXyz),
+            color => Assert.Equal(new SKColor(255, 0, 0), color));
     }
 
     // Converting into a caller-supplied unpremultiplied ARGB bitmap writes
@@ -314,6 +329,138 @@ public sealed class PdfConsumerTests
         ];
         foreach (var (input, expected) in fromRgb)
             AssertCie(expected, xyz.FromRgb(input), $"fromRGB [{string.Join(", ", input)}]");
+    }
+
+    // Java 25's toCIEXYZ/fromCIEXYZ: D50-relative XYZ (the ICC PCS), with
+    // the colour and the result passed through LittleCMS's 16-bit samples.
+    // CS_GRAY and CS_CIEXYZ match Java to the sample (1/32768). LittleCMS
+    // evaluates sRGB and ICC tone curves from 16-bit tables and Java's sRGB
+    // profile has its own rounded colourants, so those spaces stay within
+    // PcsTolerance (under a tenth of an 8-bit level).
+    private const float PcsSample = 1f / 32768f;
+    private const float PcsTolerance = 0.0004f;
+
+    [Fact]
+    public void ColorSpacesConvertToAndFromTheD50PcsAsJavaDoes()
+    {
+        static void Check(Compat.JavaColorSpace space, string name, float tolerance,
+            (float[] In, float[] Out)[] to, (float[] In, float[] Out)[] from)
+        {
+            foreach (var (input, expected) in to)
+            {
+                var actual = space.ToCieXyz(input);
+                Assert.True(expected.Length == actual.Length &&
+                            expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= tolerance),
+                    $"{name} toCIEXYZ [{string.Join(", ", input)}]: expected [{string.Join(", ", expected)}], " +
+                    $"got [{string.Join(", ", actual)}].");
+            }
+            foreach (var (input, expected) in from)
+            {
+                var actual = space.FromCieXyz(input);
+                Assert.True(expected.Length == actual.Length &&
+                            expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= tolerance),
+                    $"{name} fromCIEXYZ [{string.Join(", ", input)}]: expected [{string.Join(", ", expected)}], " +
+                    $"got [{string.Join(", ", actual)}].");
+            }
+        }
+        float[][] pcs = [[0.9642f, 1f, 0.8249f], [0.3f, 0.4f, 0.2f], [0.5f, 0.2f, 0.1f], [0f, 0f, 0f], [0.05f, 0.6f, 0.9f]];
+
+        Check(Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB), "sRGB", PcsTolerance,
+            [
+                ([1f, 1f, 1f], [0.9642029f, 1f, 0.82489014f]),
+                ([1f, 0f, 0f], [0.43585205f, 0.22238159f, 0.013916016f]),
+                ([0f, 1f, 0f], [0.38531494f, 0.717041f, 0.09713745f]),
+                ([0f, 0f, 1f], [0.14300537f, 0.060577393f, 0.71383667f]),
+                ([0.5f, 0.5f, 0.5f], [0.20639038f, 0.2140503f, 0.1765747f]),
+                ([0.2f, 0.4f, 0.8f], [0.15200806f, 0.13922119f, 0.44439697f]),
+                ([0f, 0f, 0f], [0f, 0f, 0f]),
+                ([0.03f, 0.01f, 0.02f], [0.0015258789f, 0.001159668f, 0.0012207031f])
+            ],
+            pcs.Zip(new float[][]
+            {
+                [1f, 0.99998474f, 1f], [0.47896543f, 0.7216907f, 0.496849f], [1f, 0f, 0.39700922f],
+                [0f, 0f, 0f], [0f, 1f, 1f]
+            }).ToArray());
+
+        var gray = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY);
+        Check(gray, "CS_GRAY", PcsSample,
+            [
+                ([0f], [0f, 0f, 0f]),
+                ([0.5f], [0.4821167f, 0.5f, 0.41244507f]),
+                ([1f], [0.9642029f, 1f, 0.82489014f]),
+                ([0.2f], [0.19284058f, 0.2000122f, 0.16497803f]),
+                ([0.01f], [0.009643555f, 0.010009766f, 0.008239746f])
+            ],
+            pcs.Zip(new float[][] { [1f], [0.4f], [0.20001526f], [0f], [0.6f] }).ToArray());
+
+        // CS_CIEXYZ is the identity up to the 16-bit samples, from 0 to
+        // 1 + 32767/32768.
+        var cie = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_CIEXYZ);
+        (float[], float[])[] identity =
+        [
+            ([0.2f, 0.3f, 0.1f], [0.2000122f, 0.2999878f, 0.1000061f]),
+            ([1.5f, 0.7f, 1.99f], [1.5f, 0.7000122f, 1.9899902f]),
+            ([0.9642f, 1f, 0.8249f], [0.9642029f, 1f, 0.82489014f])
+        ];
+        Check(cie, "CS_CIEXYZ", PcsSample, identity, identity);
+        for (var component = 0; component < 3; component++)
+        {
+            Assert.Equal(0f, cie.GetMinValue(component));
+            Assert.Equal(1.9999695f, cie.GetMaxValue(component));
+        }
+        Assert.Equal(1f, gray.GetMaxValue(0));
+
+        // ICC-based spaces convert through their own profiles: the gamma 1.8
+        // matrix/TRC RGB profile and the gamma 2.2 gray profile.
+        Check(new Compat.JavaIccColorSpace(new Compat.JavaIccProfile(
+                IccRenderFixtures.Signed(IccRenderFixtures.RgbGammaProfile()))), "ICC RGB", PcsTolerance,
+            [
+                ([1f, 1f, 1f], [0.96429443f, 1f, 0.82510376f]),
+                ([0f, 0f, 0f], [0f, 0f, 0f]),
+                ([1f, 0f, 0f], [0.4360962f, 0.22250366f, 0.013916016f]),
+                ([0.5f, 0.25f, 0.75f], [0.24212646f, 0.1590271f, 0.4373474f]),
+                ([0.1f, 0.9f, 0.3f], [0.3418274f, 0.6034851f, 0.16223145f])
+            ],
+            [
+                ([0.9642f, 1f, 0.8249f], [0.9998932f, 1f, 0.99983215f]),
+                ([0.3f, 0.4f, 0.2f], [0.4036164f, 0.6648966f, 0.421561f]),
+                ([0.2f, 0.1f, 0.4f], [0.48209354f, 0.07437247f, 0.72013426f]),
+                ([0.05f, 0.6f, 0.9f], [0f, 1f, 1f])
+            ]);
+        Check(new Compat.JavaIccColorSpace(new Compat.JavaIccProfile(
+                IccRenderFixtures.Signed(IccRenderFixtures.GrayProfile()))), "ICC gray", PcsTolerance,
+            [
+                ([0f], [0f, 0f, 0f]),
+                ([0.25f], [0.045715332f, 0.047424316f, 0.039123535f]),
+                ([0.5f], [0.20996094f, 0.21777344f, 0.17962646f]),
+                ([1f], [0.9642029f, 1f, 0.82489014f])
+            ],
+            [
+                ([0.9642f, 1f, 0.8249f], [1f]),
+                ([0.3f, 0.4f, 0.2f], [0.6592508f]),
+                ([0.2f, 0.1f, 0.4f], [0.3510033f]),
+                ([0.05f, 0.6f, 0.9f], [0.7927367f])
+            ]);
+
+        // Java's toCIEXYZ/fromCIEXYZ use an ICC profile's relative
+        // colorimetric LUTs (A2B1/B2A1) whatever its header's rendering
+        // intent; toRGB keeps the header's perceptual A2B0.
+        var lutSpace = new Compat.JavaIccColorSpace(new Compat.JavaIccProfile(
+            IccRenderFixtures.Signed(IccRenderFixtures.LutIntentProfile())));
+        Check(lutSpace, "ICC LUT", PcsTolerance,
+            [
+                ([0.2f, 0.4f, 0.6f], [0.32699585f, 0.3675537f, 0.47000122f]),
+                ([1f, 0f, 0f], [0.43600464f, 0.22198486f, 0.014007568f]),
+                ([1f, 1f, 1f], [0.96398926f, 0.99957275f, 0.8249817f])
+            ],
+            [
+                ([0.3f, 0.4f, 0.2f], [0.2f, 0.10000763f, 0.14999619f]),
+                ([0.5f, 0.2f, 0.1f], [0.10000763f, 0.050003815f, 0.2500038f])
+            ]);
+        var lutRgb = lutSpace.ToRgb(new[] { 0.2f, 0.4f, 0.6f });
+        Assert.True(lutRgb[0] <= 0.002f && Math.Abs(lutRgb[1] - 0.57972074f) <= 0.002f &&
+                    Math.Abs(lutRgb[2] - 0.6523995f) <= 0.002f,
+            $"ICC LUT toRGB: [{string.Join(", ", lutRgb)}], Java [0, 0.57972074, 0.6523995].");
     }
 
     private static COSArray CieFloats(params float[] values)
@@ -490,6 +637,25 @@ public sealed class PdfConsumerTests
         }
 
         public override float[] ToRgb(float[] components) => [1f, 0f, 0f];
+    }
+
+    private sealed class ConstantFromCieXyzSpace : DripSharp.Runtime.JavaColorSpace
+    {
+        public ConstantFromCieXyzSpace() : base(0, TYPE_RGB, 3)
+        {
+        }
+
+        public override float[] FromCieXyz(float[] xyz) => [0.25f, 0.5f, 0.75f];
+    }
+
+    // Every colour is sRGB red in D50 XYZ; its toRGB is the identity.
+    private sealed class RedToCieXyzSpace : DripSharp.Runtime.JavaColorSpace
+    {
+        public RedToCieXyzSpace() : base(0, TYPE_RGB, 3)
+        {
+        }
+
+        public override float[] ToCieXyz(float[] components) => [0.4360747f, 0.2225045f, 0.0139322f];
     }
 }
 
@@ -716,6 +882,78 @@ internal static class IccRenderFixtures
         U32(304, 1);
         data[308] = 1;
         data[309] = 0xCD; // gamma 1.8
+        return data;
+    }
+
+    // A v2 RGB profile of affine two-point mft2 LUTs whose perceptual
+    // (A2B0/B2A0) and relative colorimetric (A2B1/B2A1) transforms differ;
+    // its header asks for perceptual. Rows map the inputs to encoded outputs.
+    internal static byte[] LutIntentProfile()
+    {
+        var data = new byte[676];
+        void U16(int at, int value)
+        {
+            data[at] = (byte)(value >> 8);
+            data[at + 1] = (byte)value;
+        }
+        void U32(int at, uint value)
+        {
+            U16(at, (int)(value >> 16));
+            U16(at + 2, (int)value);
+        }
+        void Ascii(int at, string text)
+        {
+            for (var index = 0; index < text.Length; index++)
+                data[at + index] = (byte)text[index];
+        }
+        U32(0, (uint)data.Length);
+        U32(8, 0x02100000);
+        Ascii(12, "mntr");
+        Ascii(16, "RGB ");
+        Ascii(20, "XYZ ");
+        Ascii(36, "acsp");
+        U32(68, 0x0000F6D6);
+        U32(72, 0x00010000);
+        U32(76, 0x0000D32D);
+        U32(128, 4);
+        double[][][] luts =
+        [
+            [[0.25, 0, 0], [0, 0.25, 0], [0, 0, 0.25]],
+            [[0.218, 0.1925, 0.0715], [0.111, 0.3585, 0.0303], [0.007, 0.0485, 0.357]],
+            [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            [[0, 1, 0], [0, 0, 1], [1, 0, 0]]
+        ];
+        uint[] signatures = [0x41324230, 0x41324231, 0x42324130, 0x42324131];
+        for (var tag = 0; tag < luts.Length; tag++)
+        {
+            var at = 180 + tag * 124;
+            U32(132 + tag * 12, signatures[tag]);
+            U32(136 + tag * 12, (uint)at);
+            U32(140 + tag * 12, 124);
+            Ascii(at, "mft2");
+            data[at + 8] = 3;
+            data[at + 9] = 3;
+            data[at + 10] = 2;
+            for (var index = 0; index < 3; index++)
+                U32(at + 12 + index * 16, 0x00010000);
+            U16(at + 48, 2);
+            U16(at + 50, 2);
+            var cursor = at + 52;
+            for (var index = 0; index < 3; index++, cursor += 4)
+                U16(cursor + 2, 65535);
+            for (var corner = 0; corner < 8; corner++)
+            {
+                double[] input = [corner >> 2 & 1, corner >> 1 & 1, corner & 1];
+                foreach (var row in luts[tag])
+                {
+                    var value = Math.Clamp(row[0] * input[0] + row[1] * input[1] + row[2] * input[2], 0, 1);
+                    U16(cursor, (int)Math.Floor(value * 65535 + 0.5));
+                    cursor += 2;
+                }
+            }
+            for (var index = 0; index < 3; index++, cursor += 4)
+                U16(cursor + 2, 65535);
+        }
         return data;
     }
 
@@ -2880,20 +3118,17 @@ public sealed class RasterConversionConsumerTests
         Assert.Equal(JavaSetRgbGraySamples,
             string.Join(",", Enumerable.Range(0, 144).Select(x => freshRaster.GetPixel(x, 0, (int[]?)null)[0])));
 
-        // ColorConvertOp converts through the models' colour spaces, linear
-        // CS_GRAY for TYPE_BYTE_GRAY. Java 25's results (through its CMM),
-        // within one step; its D50 PCS moves pure red and blue further.
-        using var rgbIn = Compat.PdfCartonFontCompat.CreateBitmap(6, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
-        var colors = new[] { 0x00ff00, 0x808080, 0xcc6633, 0xffffff, 0x000000, 0x3366cc };
+        // ColorConvertOp converts through the models' colour spaces (linear
+        // CS_GRAY for TYPE_BYTE_GRAY) and the D50 PCS: Java 25's results.
+        using var rgbIn = Compat.PdfCartonFontCompat.CreateBitmap(8, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var colors = new[] { 0xff0000, 0x00ff00, 0x0000ff, 0x808080, 0xcc6633, 0xffffff, 0x000000, 0x3366cc };
         for (var x = 0; x < colors.Length; x++)
             Compat.PdfCartonFontCompat.SetRgb(rgbIn, x, 0, unchecked((int)0xff000000) | colors[x]);
         using var grayOut = new Compat.JavaColorConvertOp().Filter(
-            rgbIn, Compat.PdfCartonFontCompat.CreateBitmap(6, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY));
+            rgbIn, Compat.PdfCartonFontCompat.CreateBitmap(8, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY));
         var grayOutRaster = Compat.PdfCartonFontCompat.GetRaster(grayOut);
-        var javaGray = new[] { 183, 55, 59, 255, 0, 36 };
-        for (var x = 0; x < colors.Length; x++)
-            Assert.True(Math.Abs(grayOutRaster.GetPixel(x, 0, (int[]?)null)[0] - javaGray[x]) <= 1,
-                $"ColorConvertOp of {colors[x]:x6}: {grayOutRaster.GetPixel(x, 0, (int[]?)null)[0]}, Java {javaGray[x]}.");
+        var javaGray = new[] { 57, 183, 15, 55, 59, 255, 0, 36 };
+        Assert.Equal(javaGray, colors.Select((_, x) => grayOutRaster.GetPixel(x, 0, (int[]?)null)[0]));
         using var grayIn = Compat.PdfCartonFontCompat.CreateBitmap(5, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
         var grayInRaster = Compat.PdfCartonFontCompat.GetRaster(grayIn);
         var graySamples = new[] { 0, 22, 64, 128, 200 };
