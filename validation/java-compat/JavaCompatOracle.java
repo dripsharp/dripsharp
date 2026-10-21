@@ -1087,6 +1087,16 @@ public final class JavaCompatOracle {
     return String.join(",", values);
   }
 
+  // Releases a mapping before its file is deleted (Windows refuses to delete
+  // a mapped file), as PDFBox IOUtils.unmap does on JDK 9+.
+  private static void unmap(ByteBuffer buffer) throws Exception {
+    var unsafeClass = Class.forName("sun.misc.Unsafe");
+    var field = unsafeClass.getDeclaredField("theUnsafe");
+    field.setAccessible(true);
+    unsafeClass.getMethod("invokeCleaner", ByteBuffer.class)
+        .invoke(field.get(null), buffer);
+  }
+
   private static String fileChannelReadContract() throws Exception {
     var values = new ArrayList<String>();
     var path = Files.createTempFile("dripsharp-channel-", "");
@@ -1109,7 +1119,11 @@ public final class JavaCompatOracle {
       var emptyReadOnly = ByteBuffer.allocate(2).position(2).asReadOnlyBuffer();
       values.add(fileChannelRead(channel, emptyReadOnly) + "@" + bufferState(emptyReadOnly));
       var mapped = channel.map(FileChannel.MapMode.READ_ONLY, 0, 4);
-      values.add(fileChannelRead(channel, mapped) + "@" + bufferState(mapped));
+      try {
+        values.add(fileChannelRead(channel, mapped) + "@" + bufferState(mapped));
+      } finally {
+        unmap(mapped);
+      }
       values.add(signedBytes(backing));
       var next = new byte[3];
       var nextBuffer = ByteBuffer.wrap(next);
