@@ -1766,11 +1766,11 @@ public sealed class RasterConversionConsumerTests
             ("RGBA source as BGR, padded rows", SKColorType.Rgba8888, SKAlphaType.Opaque, 12,
                 Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR, [2, 1, 0]),
             ("BGRA unpremultiplied", SKColorType.Bgra8888, SKAlphaType.Unpremul, 0,
-                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [0, 1, 2, 3]),
+                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [3, 2, 1, 0]),
             ("RGBA unpremultiplied, padded rows", SKColorType.Rgba8888, SKAlphaType.Unpremul, 8,
-                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [0, 1, 2, 3]),
+                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [3, 2, 1, 0]),
             ("BGRA premultiplied", SKColorType.Bgra8888, SKAlphaType.Premul, 0,
-                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [0, 1, 2, 3]),
+                Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, [3, 2, 1, 0]),
             ("gray, padded rows", SKColorType.Gray8, SKAlphaType.Opaque, 5,
                 Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY, [0]),
         };
@@ -2418,6 +2418,74 @@ public sealed class RasterConversionConsumerTests
             Assert.Equal(SKColors.White, Drawn(11, 11));
             Assert.Equal(SKColors.White, Drawn(21, 11));
         }
+    }
+
+    // Java's TYPE_4BYTE_ABGR raster stores alpha, blue, green, red per pixel
+    // (band offsets 3, 2, 1, 0) while its pixels and samples stay in band
+    // order red, green, blue, alpha; writes through the array use that layout.
+    [Fact]
+    public void FourByteAbgrDataBufferHoldsAlphaBlueGreenRed()
+    {
+        var type = Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR;
+        static byte[] Bytes(sbyte[] data, int index) =>
+            data.Skip(index).Take(4).Select(value => unchecked((byte)value)).ToArray();
+
+        // A copy of the image's data (DeepCopy of a live view) has the layout too.
+        using (var source = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type))
+        {
+            Compat.PdfCartonFontCompat.SetRgb(source, 1, 0, unchecked((int)0x80112233));
+            var copy = Compat.PdfCartonFontCompat.GetImageData(source);
+            Assert.Equal(new byte[] { 0x80, 0x33, 0x22, 0x11 },
+                Bytes(((Compat.JavaDataBufferByte)copy.GetDataBuffer()).GetData(), 4));
+            Assert.Equal(new[] { 0x11, 0x22, 0x33, 0x80 }, copy.GetPixel(1, 0, (int[]?)null));
+        }
+
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+        Compat.PdfCartonFontCompat.SetRgb(image, 0, 0, unchecked((int)0x80112233));
+        var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+        var data = ((Compat.JavaDataBufferByte)raster.GetDataBuffer()).GetData();
+        Assert.Equal(Width * Height * 4, data.Length);
+        Assert.Equal(new byte[] { 0x80, 0x33, 0x22, 0x11 }, Bytes(data, 0));
+        Assert.Equal(new[] { 0x11, 0x22, 0x33, 0x80 }, raster.GetPixel(0, 0, (int[]?)null));
+        Assert.Equal(unchecked((int)0x80112233), Compat.PdfCartonFontCompat.GetRgb(image, 0, 0));
+
+        // SetRgb after getData writes A, B, G, R into the exposed array.
+        Compat.PdfCartonFontCompat.SetRgb(image, 2, 0, unchecked((int)0xff445566));
+        Assert.Equal(new byte[] { 0xff, 0x66, 0x55, 0x44 }, Bytes(data, 8));
+
+        void Write(int x, int y, byte alpha, byte red, byte green, byte blue)
+        {
+            var index = (y * Width + x) * 4;
+            data[index] = unchecked((sbyte)alpha);
+            data[index + 1] = unchecked((sbyte)blue);
+            data[index + 2] = unchecked((sbyte)green);
+            data[index + 3] = unchecked((sbyte)red);
+        }
+        SKColor Drawn(int x, int y)
+        {
+            using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+                Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using (var graphics = new Compat.PdfCartonGraphics2D(target))
+                graphics.DrawImage(image, 0, 0, null);
+            return target.GetPixel(x, y);
+        }
+
+        Write(7, 5, 0xff, 200, 100, 50);
+        Write(8, 5, 0x40, 0x10, 0x20, 0x30);
+        Assert.Equal(new SKColor(200, 100, 50, 0xff), Drawn(7, 5));
+        Assert.Equal(unchecked((int)0xffc86432), Compat.PdfCartonFontCompat.GetRgb(image, 7, 5));
+        Assert.Equal(0x40102030, Compat.PdfCartonFontCompat.GetRgb(image, 8, 5));
+        Assert.Equal(new[] { 0x10, 0x20, 0x30, 0x40 }, raster.GetPixel(8, 5, (int[]?)null));
+        Assert.Equal(new SKColor(0, 0, 0, 0), Drawn(9, 5));
+
+        // Drawing into the image reaches the array in the same layout.
+        using (var graphics = new Compat.PdfCartonGraphics2D(image))
+        {
+            graphics.SetColor(new SKColor(10, 20, 30));
+            graphics.FillRect(0, 2, 2, 2);
+        }
+        Assert.Equal(new byte[] { 0xff, 30, 20, 10 }, Bytes(data, (3 * Width + 1) * 4));
+        Assert.Equal(new SKColor(10, 20, 30), Drawn(1, 3));
     }
 
     // A custom composite into an image whose byte data was exposed blends

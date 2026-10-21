@@ -2329,8 +2329,9 @@ public sealed class JavaRaster
         };
         pixelStride = numberOfBands;
         scanlineStride = checked(width * pixelStride);
-        bandOffsets = imageType == PdfCartonFontCompat.TYPE_3BYTE_BGR
-            ? [2, 1, 0]
+        // Java's PixelInterleavedSampleModel layouts: B,G,R and A,B,G,R bytes.
+        bandOffsets = imageType == PdfCartonFontCompat.TYPE_3BYTE_BGR ? [2, 1, 0]
+            : imageType == PdfCartonFontCompat.TYPE_4BYTE_ABGR && numberOfBands == 4 ? [3, 2, 1, 0]
             : Enumerable.Range(0, numberOfBands).ToArray();
     }
 
