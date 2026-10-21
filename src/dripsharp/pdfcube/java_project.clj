@@ -3885,26 +3885,33 @@
       ;; A stray ET may come before any BT, with no list yet.
       [:append (str "if (this.textClippings != null) {\n" dispose-clips
                     "\nthis.textClippings.Clear();\n}")]])
-   ;; A pattern fill clips the path to an Area of its own; the areas and the
-   ;; graphics clip copy they are built from are dropped after the fill.
+   ;; A pattern fill clips the path to an Area of its own. The area reads
+   ;; linePath in place (unchanged until the fill is done) and writes the
+   ;; intersection into the graphics clip copy, so at most that one path is
+   ;; made, and dropped after the fill. A shading's bounding box only adds
+   ;; its own four-sided path, which its Area reads in place.
    ["org.apache.pdfbox.rendering.PageDrawer" "fillPath"]
    [[:prepend owned-resources-declaration]
     [(str "global::DripSharp.Runtime.JavaArea area = "
           "new global::DripSharp.Runtime.JavaArea(this.linePath);")
      (str "global::DripSharp.Runtime.JavaArea area = __dripsharpOwned.Own("
-          "new global::DripSharp.Runtime.JavaArea(this.linePath))!;")]
+          "global::DripSharp.Runtime.JavaArea.Lend(this.linePath))!;")]
     ["object clip = this.graphics.GetClip();"
      (str "object clip = this.graphics.GetClip();\n"
           "__dripsharpOwned.Own(clip as global::System.IDisposable);")]
     ["area.Intersect(new global::DripSharp.Runtime.JavaArea(clip));"
-     (str "area.Intersect(__dripsharpOwned.Own("
-          "new global::DripSharp.Runtime.JavaArea(clip))!);")]]
+     (str "if (clip is global::SkiaSharp.SKPath __dripsharpClipPath) {\n"
+          "area.IntersectTemporary(__dripsharpClipPath);\n"
+          "} else {\n"
+          "area.Intersect(__dripsharpOwned.Own("
+          "new global::DripSharp.Runtime.JavaArea(clip))!);\n"
+          "}")]]
    ["org.apache.pdfbox.rendering.PageDrawer" "intersectShadingBBox"]
    [[(str "global::DripSharp.Runtime.JavaArea bboxArea = "
           "new global::DripSharp.Runtime.JavaArea(bbox.Transform(m));")
      (str "using global::SkiaSharp.SKPath __dripsharpBBoxPath = bbox.Transform(m);\n"
           "using global::DripSharp.Runtime.JavaArea bboxArea = "
-          "new global::DripSharp.Runtime.JavaArea(__dripsharpBBoxPath);")]]
+          "global::DripSharp.Runtime.JavaArea.Lend(__dripsharpBBoxPath);")]]
    ;; Subclasses may change the path they get through SKPath itself, which
    ;; the GeneralPath cursor does not see; it is read from the path after.
    ["org.apache.pdfbox.rendering.PageDrawer" "getLinePath"]

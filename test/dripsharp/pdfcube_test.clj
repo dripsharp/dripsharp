@@ -682,7 +682,19 @@
             rendered (render drawer)]
         (is (< (.indexOf rendered "__dripsharpSoftMaskImage;")
                (.indexOf rendered "__dripsharpReplaceSoftMaskImage(")
-               (.indexOf rendered "private int other;")))))))
+               (.indexOf rendered "private int other;")))))
+    (testing "a pattern fill's area reads linePath in place and fills the clip copy"
+      (let [area "global::DripSharp.Runtime.JavaArea"
+            rendered (render (declaration
+                              :method "org.apache.pdfbox.rendering.PageDrawer"
+                              {:source-name "fillPath" :parameter-count 1}
+                              [(str area " area = new " area "(this.linePath);")
+                               "object clip = this.graphics.GetClip();"
+                               (str "area.Intersect(new " area "(clip));")]))]
+        (is (str/includes? rendered (str "__dripsharpOwned.Own(" area ".Lend(this.linePath))")))
+        (is (str/includes? rendered "area.IntersectTemporary(__dripsharpClipPath);"))
+        (is (not (str/includes? rendered (str "new " area "(this.linePath)"))))
+        (is (= 1 (count (re-seq #"new global::DripSharp\.Runtime\.JavaArea\(" rendered))))))))
 
 (deftest pdfbox-text-normalization-preserves-upstream-arabic-mark-order
   (let [declaration

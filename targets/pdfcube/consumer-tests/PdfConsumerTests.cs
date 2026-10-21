@@ -7141,6 +7141,96 @@ public sealed class PathIteratorTests
     private static (double X, double Y)? Point(Compat.JavaPoint2D? point) =>
         point is null ? null : (point.X, point.Y);
 
+    // A pattern fill clips its path to an Area of its own (PDFBOX-2901). The
+    // area reads the path in place and writes the intersection into the
+    // graphics' getClip copy, so that is the fill's one temporary path,
+    // disposed after the fill. Java's chain made four: the path's Area copy,
+    // the getClip copy, its Area copy and the intersection's result.
+    [Fact]
+    public void PatternFillOfLargePathUsesAtMostOneTemporaryPath()
+    {
+        // A lent area reads its path in place; an intersection with a
+        // temporary is written into that temporary, which the area takes.
+        using (var source = Polyline(4))
+        using (var lent = Compat.JavaArea.Lend(source))
+        {
+            Assert.Same(source, lent.Path);
+            var temporary = new SKPath();
+            temporary.AddRect(new SKRect(0, 0, 2, 2));
+            lent.IntersectTemporary(temporary);
+            Assert.Same(temporary, lent.Path);
+            Assert.Equal(5, source.VerbCount);
+        }
+
+        // 2,500 3x3 squares at a 4-unit pitch, 12,500 segments. (Skia's
+        // path intersection takes a minute or fails at 100,000 segments.)
+        var squares = new System.Text.StringBuilder();
+        for (var y = 0; y < 200; y += 4)
+            for (var x = 0; x < 200; x += 4)
+                squares.Append($"{x} {y} m {x + 3} {y} l {x + 3} {y + 3} l {x} {y + 3} l h\n");
+        using var document = PatternPage(200, $"20 20 160 160 re W n /Pattern cs /P1 scn\n{squares}f");
+        using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+            200, 200, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        bitmap.Erase(SKColors.Blue);
+        using (var graphics = new RecordingGraphics(bitmap))
+        {
+            new PDFRenderer(document).RenderPageToGraphics(0, graphics);
+            Assert.Equal(["area in a clip copy"], graphics.Fills);
+            // Not formatted on failure: a disposed SKPath crashes formatting.
+            Assert.Equal(0, graphics.Clips.Count(clip => clip.Handle != IntPtr.Zero));
+        }
+
+        // renderPageToGraphics clears the page first (clearRect). Device row
+        // y shows PDF y 199 - y to 200 - y; squares cover x..x+3 of each 4.
+        var cleared = new SKColor(0, 0, 0, 0);
+        foreach (var (x, y, inside) in new[]
+                 {
+                     (21, 177, true), (101, 101, true), (177, 21, true), (161, 117, true),
+                     (1, 101, false), (101, 197, false), (185, 101, false), (101, 1, false),
+                 })
+        {
+            Assert.Equal(inside ? SKColors.Red : cleared, bitmap.GetPixel(x, y));
+            Assert.Equal(cleared, bitmap.GetPixel(x + 2, y));
+        }
+    }
+
+    // A square page whose content may fill with /P1, a solid red tiling pattern.
+    private static PDDocument PatternPage(int size, string content) =>
+        Loader.LoadPDF((sbyte[])(Array)RasterConversionConsumerTests.SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {size} {size}] " +
+            "/Resources << /Pattern << /P1 5 0 R >> >> /Contents 4 0 R >>",
+            RasterConversionConsumerTests.PdfStream("", content),
+            RasterConversionConsumerTests.PdfStream(
+                "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 " +
+                "/Resources << >>", "1 0 0 rg 0 0 10 10 re f"),
+        ]));
+
+    // Records the clip copies the graphics hands out and what each fill's
+    // shape is.
+    private sealed class RecordingGraphics(SKBitmap bitmap) : Compat.PdfCartonGraphics2D(bitmap)
+    {
+        internal List<SKPath> Clips { get; } = [];
+        internal List<string> Fills { get; } = [];
+
+        public override object? GetClip()
+        {
+            var clip = base.GetClip();
+            if (clip is SKPath path) Clips.Add(path);
+            return clip;
+        }
+
+        public override void Fill(object shape)
+        {
+            Fills.Add(shape is not Compat.JavaArea area ? shape.GetType().Name
+                : Clips.Any(clip => ReferenceEquals(clip, area.Path)) ? "area in a clip copy"
+                : "area in a path of its own");
+            base.Fill(shape);
+        }
+    }
+
     private static SKPath Polyline(int segments)
     {
         var path = new SKPath();

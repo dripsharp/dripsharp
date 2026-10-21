@@ -7235,13 +7235,21 @@ public sealed class JavaEllipse
 }
 
 // Owns its path: Dispose releases it at once instead of at finalization.
+// A Lend area reads a borrowed path in place until its first change.
 public sealed class JavaArea : IDisposable
 {
-    private readonly SKPath path;
+    private SKPath path;
+    private bool ownsPath = true;
 
     public JavaArea() => path = new SKPath();
 
     public JavaArea(object shape) => path = PdfCartonFontCompat.CreatePath(shape);
+
+    private JavaArea(SKPath path, bool ownsPath) => (this.path, this.ownsPath) = (path, ownsPath);
+
+    // new Area(path) for a path left unchanged while the area is in use.
+    internal static JavaArea Lend(SKPath path) =>
+        new(path ?? throw new ArgumentNullException(nameof(path)), ownsPath: false);
 
     public bool IsEmpty => path.IsEmpty;
     public SKRect Bounds => path.Bounds;
@@ -7250,16 +7258,40 @@ public sealed class JavaArea : IDisposable
     public void Intersect(JavaArea other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        using var result = new SKPath();
-        if (!path.Op(other.path, SKPathOp.Intersect, result))
-            throw new InvalidOperationException("Unable to intersect paths.");
-        path.Reset();
-        path.AddPath(result);
+        IntersectInto(other.path, ownsPath ? path : new SKPath());
     }
 
-    public void Reset() => path.Reset();
+    // intersect(new Area(shape)) for a path made for this call alone
+    // (Graphics2D.getClip's copy): it receives the intersection and becomes
+    // this area's path. Its maker may still dispose it (that is idempotent).
+    internal void IntersectTemporary(SKPath shape) =>
+        IntersectInto(shape ?? throw new ArgumentNullException(nameof(shape)), shape);
 
-    public void Dispose() => path.Dispose();
+    // Skia's Op may write over an operand. Its result is read with the
+    // nonzero rule, as when it was copied into a reset path.
+    private void IntersectInto(SKPath other, SKPath result)
+    {
+        if (!path.Op(other, SKPathOp.Intersect, result))
+        {
+            if (result != path && result != other) result.Dispose();
+            throw new InvalidOperationException("Unable to intersect paths.");
+        }
+        result.FillType = SKPathFillType.Winding;
+        if (result == path) return;
+        if (ownsPath) path.Dispose();
+        (path, ownsPath) = (result, true);
+    }
+
+    public void Reset()
+    {
+        if (ownsPath) path.Reset();
+        else (path, ownsPath) = (new SKPath(), true);
+    }
+
+    public void Dispose()
+    {
+        if (ownsPath) path.Dispose();
+    }
 
     public JavaPathIterator GetPathIterator(object? transform) =>
         new(path, transform);
