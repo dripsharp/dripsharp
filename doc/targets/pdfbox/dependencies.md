@@ -302,6 +302,7 @@ The source snapshots live under `vendor/pdfcube/jbig2` and
 | Vendored file | Upstream change |
 | --- | --- |
 | `vendor/pdfcube/jpx/j2k/wavelet/synthesis/InvWTFull.cs` | The `InvWTFull.cs` hunk of CoreJ2K commit `2dbc63c` (released in `v2.4.0`): the pooled reconstruction buffers are cleared after `ArrayPool.Rent`, so code-block areas a decode never writes are zero rather than an earlier decode's samples. The file matches upstream blob `860b614c43eada5ffd2e63e6b4dac4175934ab23`. |
+| `vendor/pdfcube/jpx/Color/PalettizedColorSpaceMapper.cs` | The `PalettizedColorSpaceMapper.cs` hunk of CoreJ2K commit `fffc184` (released in `v2.4.1`): the component-count check applies only when the file has a palette box, so JP2 files with two, or five or more, components and no palette (for example grey plus alpha) decode instead of failing. The file matches upstream blob `990216637a595ffb25fd718756ccbda335e60bbc`. |
 
 Generation copies their C# source into the internal codec
 area of `DripSharp.PdfCarton`, adds only compiler-warning and nullable wrappers, and

@@ -5500,6 +5500,187 @@ public sealed class ImageCodecAdapterTests
         }
     }
 
+    // A grey + alpha JP2 decodes to a CS_GRAY image with alpha, as
+    // jai-imageio-jpeg2000 1.4.0 reads it in Java (dripsharp-77; CoreJ2K
+    // v2.3.3 rejected two components without a palette). With SMaskInData
+    // JPXFilter returns the alpha component as the soft mask and the grey
+    // drawn over black as three components; CS_GRAY is linear, so the grey
+    // is converted to sRGB before it is drawn. Without SMaskInData it returns
+    // the grey and alpha samples interleaved, with a one-component colour
+    // space. Java PDFBox 3.0.8 decodes this fixture to exactly these bytes.
+    [Fact]
+    public void JpxGrayWithAlphaDecodesWithItsSoftMask()
+    {
+        const int width = 8, height = 4;
+        var (data, gray, alpha) = GrayWithAlphaJpx();
+        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+        {
+            var model = Compat.PdfCartonFontCompat.GetColorModel(image);
+            Assert.Same(
+                Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY),
+                model.ColorSpace);
+            Assert.Equal(Compat.PdfCartonTransparency.TRANSLUCENT, Compat.PdfCartonFontCompat.GetTransparency(image));
+            var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+            Assert.Equal(2, raster.NumberOfBands);
+            Assert.Equal(gray, raster.GetSamples(0, 0, width, height, 0, null));
+            Assert.Equal(alpha, raster.GetSamples(0, 0, width, height, 1, null));
+        }
+
+        byte[] overBlack =
+        [
+            0, 1, 4, 8, 12, 16, 21, 27, 32, 38, 45, 51, 58, 66, 73, 81,
+            89, 97, 106, 114, 123, 132, 141, 150, 160, 169, 179, 189, 199, 210, 220, 231
+        ];
+        var (colour, smask, colourSpace) = DecodeJpxFilter(data, smaskInData: true);
+        using (smask)
+        {
+            Assert.NotNull(smask);
+            Assert.Equal(alpha, Compat.PdfCartonFontCompat.GetRaster(smask!)
+                .GetSamples(0, 0, width, height, 0, null));
+        }
+        Assert.Equal(3, colourSpace.GetNumberOfComponents());
+        Assert.Equal(overBlack.SelectMany(value => new[] { value, value, value }).ToArray(), colour);
+
+        var (interleaved, noMask, graySpace) = DecodeJpxFilter(data, smaskInData: false);
+        Assert.Null(noMask);
+        Assert.Equal(1, graySpace.GetNumberOfComponents());
+        Assert.Equal(
+            gray.Zip(alpha, (g, a) => new[] { (byte)g, (byte)a }).SelectMany(pair => pair).ToArray(),
+            interleaved);
+    }
+
+    // Five components without a palette, which CoreJ2K v2.3.3 also rejected,
+    // decode too: CMYK with a whole-image opacity channel keeps all five
+    // bands, and JPXFilter's SMaskInData soft mask is the fifth component.
+    // jai-imageio-jpeg2000 1.4.0 builds no colour model for this file (a
+    // NullPointerException in J2KReadState.readBufferedImage), so Java
+    // PDFBox 3.0.8 fails to read it, as it does for the channel layouts
+    // jai-imageio cannot build in JpxComponentsFollowTheChannelDefinitions.
+    [Fact]
+    public void JpxCmykWithAlphaKeepsAllFiveComponents()
+    {
+        const CoreJ2K.j2k.fileformat.metadata.ChannelType colour =
+            CoreJ2K.j2k.fileformat.metadata.ChannelType.Color;
+        var (data, samples) = JpxWithChannels(
+            5, [(0, colour, 1), (1, colour, 2), (2, colour, 3), (3, colour, 4),
+                (4, CoreJ2K.j2k.fileformat.metadata.ChannelType.Opacity, 0)]);
+        var enumCs = BoxOffset(data, "colr") + 11;
+        WriteInt(data, enumCs, 12);
+        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+        {
+            var model = Compat.PdfCartonFontCompat.GetColorModel(image);
+            Assert.Equal(Compat.JavaColorSpace.TYPE_CMYK, model.ColorSpace.Type);
+            Assert.Equal(Compat.PdfCartonTransparency.TRANSLUCENT, Compat.PdfCartonFontCompat.GetTransparency(image));
+            var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+            Assert.Equal(5, raster.NumberOfBands);
+            for (var component = 0; component < 5; component++)
+                Assert.Equal(samples[component], raster.GetSamples(0, 0, 8, 4, component, null));
+        }
+        var (colour3, smask, colourSpace) = DecodeJpxFilter(data, smaskInData: true);
+        using (smask)
+        {
+            Assert.NotNull(smask);
+            Assert.Equal(samples[4], Compat.PdfCartonFontCompat.GetRaster(smask!)
+                .GetSamples(0, 0, 8, 4, 0, null));
+        }
+        Assert.Equal(3, colourSpace.GetNumberOfComponents());
+        Assert.Equal(8 * 4 * 3, colour3.Length);
+    }
+
+    // The palette stage still expands a palettized JP2 (one index component
+    // and an RGB palette) after the grey + alpha fix.
+    [Fact]
+    public void JpxPaletteStillExpandsToItsColours()
+    {
+        const int width = 8, height = 4;
+        var (data, palette) = PaletteJpx();
+        using var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+        Assert.Equal(3, raster.NumberOfBands);
+        for (var component = 0; component < 3; component++)
+            Assert.Equal(
+                Enumerable.Range(0, width * height).Select(index => palette[index & 3][component]).ToArray(),
+                raster.GetSamples(0, 0, width, height, component, null));
+    }
+
+    private static (byte[] Decoded, SKBitmap? SoftMask, PDJPXColorSpace ColourSpace) DecodeJpxFilter(
+        byte[] data, bool smaskInData)
+    {
+        var stream = new COSStream();
+        using (var output = stream.CreateRawOutputStream())
+            output.Write(data);
+        stream.SetItem(COSName.Filter, COSName.JpxDecode);
+        if (smaskInData) stream.SetInt(COSName.SmaskInData, 1);
+        using var encoded = stream.CreateRawInputStream();
+        using var decoded = new MemoryStream();
+        var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
+        return (decoded.ToArray(), result.GetJPXSMask(), result.GetJPXColorSpace());
+    }
+
+    // A lossless 8x4 grey + alpha JP2 as OpenJPEG writes one: colr
+    // enumerated greyscale (17), cdef colour channel 0 and whole-image
+    // opacity channel 1. Grey of pixel index is index * 7 & 255, alpha
+    // index * 8 & 255.
+    private static (byte[] Data, int[] Gray, int[] Alpha) GrayWithAlphaJpx()
+    {
+        const int width = 8, height = 4;
+        var gray = new int[width * height];
+        var alpha = new int[width * height];
+        for (var index = 0; index < gray.Length; index++)
+        {
+            gray[index] = index * 7 & 255;
+            alpha[index] = index * 8 & 255;
+        }
+        var channels = new CoreJ2K.j2k.fileformat.metadata.ChannelDefinitionData();
+        channels.AddColorChannel(0, 1);
+        channels.AddOpacityChannel(1);
+        var parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
+        parameters["lossless"] = "on";
+        var data = CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(
+                width, height, 2, 8, new bool[2],
+                [gray.Select(v => v - 128).ToArray(), alpha.Select(v => v - 128).ToArray()]),
+            new CoreJ2K.j2k.fileformat.metadata.J2KMetadata { ChannelDefinitions = channels },
+            parameters);
+        // The encoder writes sRGB (16) for two components; EnumCS follows
+        // METH, PREC and APPROX.
+        var enumCs = BoxOffset(data, "colr") + 11;
+        Assert.Equal(16, ReadInt(data, enumCs));
+        WriteInt(data, enumCs, 17);
+        return (data, gray, alpha);
+    }
+
+    // A lossless 8x4 JP2 whose single component indexes a 4-entry RGB
+    // palette: index of pixel i is i & 3.
+    private static (byte[] Data, int[][] Palette) PaletteJpx()
+    {
+        const int width = 8, height = 4;
+        int[][] palette = [[0, 0, 0], [255, 0, 0], [12, 200, 34], [90, 91, 250]];
+        var indexes = new int[width * height];
+        for (var index = 0; index < indexes.Length; index++)
+            indexes[index] = (index & 3) - 128;
+        var mapping = new CoreJ2K.j2k.fileformat.metadata.ComponentMappingData();
+        for (byte column = 0; column < 3; column++)
+            mapping.AddMapping(0, 1, column);
+        var parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
+        parameters["lossless"] = "on";
+        var data = CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(width, height, 1, 8, new bool[1], [indexes]),
+            new CoreJ2K.j2k.fileformat.metadata.J2KMetadata
+            {
+                Palette = new CoreJ2K.j2k.fileformat.metadata.PaletteData
+                {
+                    NumEntries = palette.Length,
+                    NumColumns = 3,
+                    BitDepths = [7, 7, 7],
+                    Entries = palette
+                },
+                ComponentMapping = mapping
+            },
+            parameters);
+        return (data, palette);
+    }
+
     // CoreJ2K looks decoded component c up as the channel associated with
     // c + 1; the adapter rewrites cdef boxes so that components follow
     // ISO/IEC 15444-1 I.5.3.6: colour channels by association, then the
