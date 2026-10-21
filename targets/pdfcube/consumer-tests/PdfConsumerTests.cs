@@ -4551,6 +4551,32 @@ public sealed class ImageCodecAdapterTests
             $"JPX adapter allocated {adapter - decoder} bytes beyond the decoder.");
     }
 
+    // Page 0 of PDFBOX-3947-670064.pdf draws tiled CMYK JPX images whose
+    // decode leaves some code-block areas unwritten. The JPEG 2000 decoder
+    // rents its reconstruction buffers from ArrayPool, so unless it clears
+    // them those areas showed a previous decode's samples and every render
+    // differed. Two renders from fresh documents must match exactly.
+    [Fact]
+    public void TiledCmykJpxPageRendersIdenticallyEachTime()
+    {
+        var pdf = Path.Combine(
+            AppContext.BaseDirectory, "Fixtures", "modules", "pdfbox", "target", "pdfs",
+            "PDFBOX-3947-670064.pdf");
+        byte[] Render(ImageType type)
+        {
+            using var document = Loader.LoadPDF(new FileInfo(pdf));
+            using var image = new PDFRenderer(document).RenderImage(0, 0.6f, type);
+            Assert.Equal((367, 475), (image.Width, image.Height));
+            return image.GetPixelSpan().ToArray();
+        }
+
+        foreach (var (name, type) in new[] { ("RGB", ImageType.Rgb), ("ARGB", ImageType.Argb) })
+        {
+            var first = Render(type);
+            Assert.True(first.AsSpan().SequenceEqual(Render(type)), $"{name} renders differ.");
+        }
+    }
+
     // Gray and RGB JPX images use the shared standard colour spaces, as the
     // Java JPEG 2000 reader's ColorSpace.getInstance does.
     [Fact]

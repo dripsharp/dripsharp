@@ -296,9 +296,15 @@ does not reference either codec as a package dependency:
 | JBIG2 | `nicholsab/JBig2Decoder.NETStandard` tag `1.5.2`, commit `29a79f7f138bbcd01c077cef3120e555b8fda3d3` | The preserved `LICENSE` records the original IDRsolutions BSD-3-Clause terms and the C# port's MIT terms and copyrights. |
 | JPEG 2000/JPX | `cinderblocks/CoreJ2K` tag `v2.3.3`, commit `4405df86bcd3c41bca9e0c12f3094209834bbba7` | BSD-3-Clause `LICENSE` plus the required preserved `COPYRIGHT-JJ2000-5.1` notice. |
 
-The exact source snapshots live under `vendor/pdfcube/jbig2` and
-`vendor/pdfcube/jpx`. Generation copies their C# source into the internal codec
+The source snapshots live under `vendor/pdfcube/jbig2` and
+`vendor/pdfcube/jpx`. They are exact apart from these backported upstream fixes:
+
+| Vendored file | Upstream change |
+| --- | --- |
+| `vendor/pdfcube/jpx/j2k/wavelet/synthesis/InvWTFull.cs` | The `InvWTFull.cs` hunk of CoreJ2K commit `2dbc63c` (released in `v2.4.0`): the pooled reconstruction buffers are cleared after `ArrayPool.Rent`, so code-block areas a decode never writes are zero rather than an earlier decode's samples. The file matches upstream blob `860b614c43eada5ffd2e63e6b4dac4175934ab23`. |
+
+Generation copies their C# source into the internal codec
 area of `DripSharp.PdfCarton`, adds only compiler-warning and nullable wrappers, and
 packs the license and copyright files under `THIRD-PARTY/`. Advancing either
-pin requires re-running the image differential corpus and updating the recorded
-identity and legal-file digests.
+pin or backporting another upstream change requires re-running the image
+differential corpus and updating the recorded identity and legal-file digests.
