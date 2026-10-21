@@ -1542,7 +1542,7 @@
 
    "executable:java.awt.geom.Path2D#reset()"
    (fn [target _arguments]
-     (call-node target "Reset" []))
+     (font-compat-call "ResetPath" [target]))
 
    "executable:java.awt.geom.Path2D#setWindingRule(int)"
    (fn [target arguments]
@@ -1590,11 +1590,11 @@
 
    "executable:java.awt.geom.Path2D#clone()"
    (fn [target _arguments]
-     (sequence-node [(raw "new global::SkiaSharp.SKPath(") target (raw ")")]))
+     (font-compat-call "ClonePath" [target]))
 
    "executable:java.awt.geom.Path2D$Float#clone()"
    (fn [target _arguments]
-     (sequence-node [(raw "new global::SkiaSharp.SKPath(") target (raw ")")]))
+     (font-compat-call "ClonePath" [target]))
 
    "executable:java.awt.geom.Path2D#getCurrentPoint()"
    (fn [target _arguments]
@@ -2399,9 +2399,11 @@
    (fn [arguments]
      (font-compat-call "Rectangle" arguments))
 
+   ;; GeneralPaths keep their current point outside the native path; see
+   ;; PdfCartonGeneralPath in the FontBox compat runtime.
    "executable:java.awt.geom.GeneralPath#<init>()"
    (fn [_arguments]
-     (raw "new global::SkiaSharp.SKPath()"))
+     (font-compat-call "CreatePath" []))
 
    "executable:java.awt.geom.GeneralPath#<init>(int,int)"
    (fn [arguments]
@@ -3903,6 +3905,11 @@
      (str "using global::SkiaSharp.SKPath __dripsharpBBoxPath = bbox.Transform(m);\n"
           "using global::DripSharp.Runtime.JavaArea bboxArea = "
           "new global::DripSharp.Runtime.JavaArea(__dripsharpBBoxPath);")]]
+   ;; Subclasses may change the path they get through SKPath itself, which
+   ;; the GeneralPath cursor does not see; it is read from the path after.
+   ["org.apache.pdfbox.rendering.PageDrawer" "getLinePath"]
+   [["return this.linePath;"
+     "return global::DripSharp.Runtime.PdfCartonFontCompat.LendPath(this.linePath);"]]
    ;; isRectangular stops after a few segments of most paths; disposing the
    ;; iterator releases its native segment reader at once.
    ["org.apache.pdfbox.rendering.PageDrawer" "isRectangular"]

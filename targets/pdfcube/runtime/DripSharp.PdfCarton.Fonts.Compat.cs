@@ -7275,6 +7275,31 @@ public sealed class JavaArea : IDisposable
     public override int GetHashCode() => Bounds.GetHashCode();
 }
 
+// A java.awt.geom.GeneralPath made by translated code. SkiaSharp m150 keeps
+// an SKPath's mutations in a builder that any read of the path flushes, and
+// the next mutation then copies the whole path into a new builder. PageDrawer
+// and Type1CharString ask for the current point before every segment, so the
+// compat helpers keep Path2D.getCurrentPoint() here instead of reading the
+// path, which keeps building an n-segment path O(n). Only this assembly's
+// helpers keep it; after a change they do not follow (transform, append) it
+// is Unknown and read from the path once. A path handed to callers, who can
+// change it through SKPath itself, is Lent and always read.
+internal sealed class PdfCartonGeneralPath : SKPath
+{
+    internal PdfCartonGeneralPath() { }
+
+    internal PdfCartonGeneralPath(SKPath source) : base(source) { }
+
+    internal PathCursor Cursor;
+    internal bool Lent;
+    // The current point, and the start of the current subpath, to which
+    // closePath returns it.
+    internal SKPoint Current;
+    internal SKPoint SubpathStart;
+}
+
+internal enum PathCursor : byte { Empty, Open, Closed, Unknown }
+
 // Native-bitmap lifetime. Java leaves BufferedImages to the garbage collector,
 // but SKBitmap pixels are native memory the GC cannot see. Two parts:
 // - Backstop: every compat-allocated bitmap is a PdfCartonNativeBitmap, which
@@ -9618,8 +9643,81 @@ internal static class PdfCartonFontCompat
         return destination;
     }
 
-    internal static JavaPoint2D? CurrentPoint(SKPath path) =>
-        path.IsEmpty ? null : new JavaPoint2D(path.LastPoint.X, path.LastPoint.Y);
+    // Path2D.getCurrentPoint: null for an empty path, else the last point,
+    // or after a close the start of the closed subpath.
+    internal static JavaPoint2D? CurrentPoint(SKPath path)
+    {
+        var general = path as PdfCartonGeneralPath;
+        if (general is null || general.Lent || general.Cursor == PathCursor.Unknown)
+        {
+            var cursor = ReadCursor(path, out var current, out var start);
+            if (general is null || general.Lent)
+                return cursor == PathCursor.Empty ? null : new JavaPoint2D(current.X, current.Y);
+            Track(general, cursor, current, start);
+        }
+        return general.Cursor == PathCursor.Empty
+            ? null
+            : new JavaPoint2D(general.Current.X, general.Current.Y);
+    }
+
+    // The cursor read from the path itself, one pass over its verbs.
+    private static PathCursor ReadCursor(SKPath path, out SKPoint current, out SKPoint start)
+    {
+        current = start = default;
+        if (path.IsEmpty) return PathCursor.Empty;
+        var last = SKPathVerb.Done;
+        Span<SKPoint> points = stackalloc SKPoint[4];
+        using (var iterator = path.CreateRawIterator())
+        {
+            for (var verb = iterator.Next(points); verb != SKPathVerb.Done; verb = iterator.Next(points))
+            {
+                if (verb == SKPathVerb.Move) start = points[0];
+                last = verb;
+            }
+        }
+        if (last == SKPathVerb.Close)
+        {
+            current = start;
+            return PathCursor.Closed;
+        }
+        current = path.LastPoint;
+        return PathCursor.Open;
+    }
+
+    private static void Track(PdfCartonGeneralPath path, PathCursor cursor, SKPoint current, SKPoint start)
+    {
+        path.Cursor = cursor;
+        path.Current = current;
+        path.SubpathStart = start;
+    }
+
+    // After a line, quad or cubic segment ending at (x, y). Skia starts a
+    // segment after a close at the closed subpath's start, as Path2D does;
+    // a segment on an empty path (Path2D throws) is read back from the path.
+    private static void TrackSegment(SKPath path, float x, float y)
+    {
+        if (path is not PdfCartonGeneralPath general || general.Cursor == PathCursor.Unknown) return;
+        if (general.Cursor == PathCursor.Empty)
+        {
+            general.Cursor = PathCursor.Unknown;
+            return;
+        }
+        general.Cursor = PathCursor.Open;
+        general.Current = new SKPoint(x, y);
+    }
+
+    private static void ForgetCursor(SKPath path)
+    {
+        if (path is PdfCartonGeneralPath general) general.Cursor = PathCursor.Unknown;
+    }
+
+    // A path handed to code outside the compat helpers (PageDrawer.getLinePath),
+    // which may change it natively: its current point is read from then on.
+    internal static SKPath LendPath(SKPath path)
+    {
+        if (path is PdfCartonGeneralPath general) general.Lent = true;
+        return path;
+    }
 
     internal static JavaPathIterator PathIterator(SKPath path, object? transform) =>
         new(path, transform);
@@ -9633,7 +9731,31 @@ internal static class PdfCartonFontCompat
         return new JavaPathIterator(lease.Path, transform, ownsPath: lease.Owned);
     }
 
-    internal static void Close(SKPath path) => path.Close();
+    internal static void Close(SKPath path)
+    {
+        path.Close();
+        if (path is PdfCartonGeneralPath { Cursor: PathCursor.Open or PathCursor.Closed } general)
+        {
+            general.Cursor = PathCursor.Closed;
+            general.Current = general.SubpathStart;
+        }
+    }
+
+    // Path2D.reset.
+    internal static void ResetPath(SKPath path)
+    {
+        path.Reset();
+        if (path is PdfCartonGeneralPath general) general.Cursor = PathCursor.Empty;
+    }
+
+    // Path2D.clone: a GeneralPath that keeps its source's cursor.
+    internal static SKPath ClonePath(SKPath path)
+    {
+        var clone = new PdfCartonGeneralPath(path) { Cursor = PathCursor.Unknown };
+        if (path is PdfCartonGeneralPath { Lent: false } general)
+            Track(clone, general.Cursor, general.Current, general.SubpathStart);
+        return clone;
+    }
 
     internal static void SetWindingRule(SKPath path, int windingRule) =>
         path.FillType = windingRule == JavaPathIterator.WIND_EVEN_ODD
@@ -9644,6 +9766,7 @@ internal static class PdfCartonFontCompat
     {
         ArgumentNullException.ThrowIfNull(path);
         path.Transform(transform);
+        ForgetCursor(path);
     }
 
     internal static object CreateTransformedShape(
@@ -9692,10 +9815,13 @@ internal static class PdfCartonFontCompat
         }
     }
 
+    // new GeneralPath().
+    internal static SKPath CreatePath() => new PdfCartonGeneralPath();
+
     internal static SKPath CreatePath(int windingRule, int initialCapacity)
     {
         if (initialCapacity < 0) throw new ArgumentException("Initial capacity cannot be negative.");
-        var path = new SKPath();
+        var path = new PdfCartonGeneralPath();
         SetWindingRule(path, windingRule);
         return path;
     }
@@ -9735,8 +9861,11 @@ internal static class PdfCartonFontCompat
             (int)Math.Ceiling(bounds.Bottom));
     }
 
-    internal static void AddPath(SKPath path, JavaPathIterator addition) =>
+    internal static void AddPath(SKPath path, JavaPathIterator addition)
+    {
         addition.AppendTo(path, connect: false);
+        ForgetCursor(path);
+    }
 
     internal static void AppendPath(SKPath path, object shape, bool connect)
     {
@@ -9746,22 +9875,37 @@ internal static class PdfCartonFontCompat
         path.AddPath(
             self ?? lease.Path,
             connect ? SKPathAddMode.Extend : SKPathAddMode.Append);
+        ForgetCursor(path);
     }
 
     internal static void AppendPath(
         SKPath path,
         JavaPathIterator addition,
-        bool connect) =>
+        bool connect)
+    {
         addition.AppendTo(path, connect);
+        ForgetCursor(path);
+    }
 
-    internal static void MoveTo(SKPath path, double x, double y) =>
-        path.MoveTo((float)x, (float)y);
+    internal static void MoveTo(SKPath path, double x, double y)
+    {
+        var point = new SKPoint((float)x, (float)y);
+        path.MoveTo(point);
+        if (path is PdfCartonGeneralPath general)
+            Track(general, PathCursor.Open, point, point);
+    }
 
-    internal static void LineTo(SKPath path, double x, double y) =>
+    internal static void LineTo(SKPath path, double x, double y)
+    {
         path.LineTo((float)x, (float)y);
+        TrackSegment(path, (float)x, (float)y);
+    }
 
-    internal static void QuadTo(SKPath path, double x1, double y1, double x2, double y2) =>
+    internal static void QuadTo(SKPath path, double x1, double y1, double x2, double y2)
+    {
         path.QuadTo((float)x1, (float)y1, (float)x2, (float)y2);
+        TrackSegment(path, (float)x2, (float)y2);
+    }
 
     internal static void CurveTo(
         SKPath path,
@@ -9770,8 +9914,11 @@ internal static class PdfCartonFontCompat
         double x2,
         double y2,
         double x3,
-        double y3) =>
+        double y3)
+    {
         path.CubicTo((float)x1, (float)y1, (float)x2, (float)y2, (float)x3, (float)y3);
+        TrackSegment(path, (float)x3, (float)y3);
+    }
 }
 
 #pragma warning restore CS0618

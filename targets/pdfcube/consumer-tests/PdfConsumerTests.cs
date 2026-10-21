@@ -1714,7 +1714,7 @@ public sealed class RasterConversionConsumerTests
     private static byte[] SoftMaskedShadingPdf(string kind) =>
         SoftMaskedPdf(kind, "10 10 180 180 re W n /Sh1 sh");
 
-    private static string PdfStream(string entries, string data) =>
+    internal static string PdfStream(string entries, string data) =>
         $"<< {entries} /Length {data.Length} >>\nstream\n{data}\nendstream";
 
     // Objects in extra are numbered from 8; resources go into the page's.
@@ -1738,7 +1738,7 @@ public sealed class RasterConversionConsumerTests
         ]);
 
     // A PDF whose objects are numbered from 1 in order.
-    private static byte[] SequentialPdf(string[] objects)
+    internal static byte[] SequentialPdf(string[] objects)
     {
         var text = new System.Text.StringBuilder("%PDF-1.7\n");
         var offsets = new List<int>();
@@ -6993,6 +6993,153 @@ public sealed class PathIteratorTests
         Assert.Equal(new[] { "0:0,0", "1:1,1", "1:2,0", "1:3,1", "4:", "0:0,0", "1:1,1", "1:2,0", "1:3,1", "4:" },
             Segments(Compat.PdfCartonFontCompat.PathIterator(source, null)));
     }
+
+    // GeneralPaths keep Path2D.getCurrentPoint() beside the native path and
+    // a plain SKPath is read for it; both follow Path2D, whose current point
+    // after a close is the start of the closed subpath.
+    [Fact]
+    public void GeneralPathsTrackTheCurrentPointAsPath2DDoes()
+    {
+        using var general = Compat.PdfCartonFontCompat.CreatePath();
+        using var plain = new SKPath();
+        using var corner = Polyline(2);
+        void Step(Action<SKPath> change, (double X, double Y)? expected)
+        {
+            change(general);
+            change(plain);
+            Assert.Equal(expected, Point(Compat.PdfCartonFontCompat.CurrentPoint(general)));
+            Assert.Equal(expected, Point(Compat.PdfCartonFontCompat.CurrentPoint(plain)));
+            Assert.Equal(CopiedSegments(plain, null), CopiedSegments(general, null));
+            Assert.Equal(plain.FillType, general.FillType);
+        }
+
+        Step(_ => { }, null);
+        Step(Compat.PdfCartonFontCompat.Close, null);
+        Step(path => Compat.PdfCartonFontCompat.MoveTo(path, 1, 2), (1, 2));
+        Step(path => Compat.PdfCartonFontCompat.LineTo(path, 10.5, 2.25), (10.5, 2.25));
+        Step(path => Compat.PdfCartonFontCompat.QuadTo(path, 12, 4, 9, 9), (9, 9));
+        Step(path => Compat.PdfCartonFontCompat.CurveTo(path, 7, 11, 3, 12, 1.1, 8), ((float)1.1, 8));
+        Step(Compat.PdfCartonFontCompat.Close, (1, 2));
+        Step(Compat.PdfCartonFontCompat.Close, (1, 2));
+        Step(path => Compat.PdfCartonFontCompat.LineTo(path, 5, 6), (5, 6));
+        Step(Compat.PdfCartonFontCompat.Close, (1, 2));
+        Step(path => Compat.PdfCartonFontCompat.MoveTo(path, 20, 20), (20, 20));
+        Step(path => Compat.PdfCartonFontCompat.MoveTo(path, 21, 22), (21, 22));
+        Step(path => Compat.PdfCartonFontCompat.LineTo(path, 30, 25), (30, 25));
+        Step(path => Compat.PdfCartonFontCompat.SetWindingRule(path, Compat.JavaPathIterator.WIND_EVEN_ODD), (30, 25));
+        Step(path => Compat.PdfCartonFontCompat.TransformPath(path, SKMatrix.CreateScaleTranslation(2, 2, 1, 1)), (61, 51));
+        Step(path => Compat.PdfCartonFontCompat.LineTo(path, 70, 50), (70, 50));
+        Step(path => Compat.PdfCartonFontCompat.AppendPath(path, new SKRect(2, 3, 12, 8), false), (2, 3));
+        Step(path => Compat.PdfCartonFontCompat.AppendPath(
+            path, Compat.PdfCartonFontCompat.PathIterator(corner, SKMatrix.CreateTranslation(40, 40)), true), (42, 40));
+        Step(path => Compat.PdfCartonFontCompat.AppendPath(path, corner, false), (2, 0));
+        Step(path => Compat.PdfCartonFontCompat.AddPath(path, Compat.PdfCartonFontCompat.PathIterator(corner, null)), (2, 0));
+        Step(Compat.PdfCartonFontCompat.ResetPath, null);
+        // Path2D throws for a segment before any move; Skia starts it at the origin.
+        Step(path => Compat.PdfCartonFontCompat.LineTo(path, 3, 4), (3, 4));
+        Step(Compat.PdfCartonFontCompat.Close, (0, 0));
+        Step(path => Compat.PdfCartonFontCompat.CurveTo(path, 1, 1, 2, 2, 3, 3), (3, 3));
+
+        // A clone keeps the cursor and is followed on its own.
+        using var clone = Compat.PdfCartonFontCompat.ClonePath(general);
+        Compat.PdfCartonFontCompat.Close(clone);
+        Assert.Equal((0, 0), Point(Compat.PdfCartonFontCompat.CurrentPoint(clone)));
+        Assert.Equal((3, 3), Point(Compat.PdfCartonFontCompat.CurrentPoint(general)));
+        using var created = Compat.PdfCartonFontCompat.CreatePath(Compat.JavaPathIterator.WIND_EVEN_ODD, 4);
+        Assert.Null(Compat.PdfCartonFontCompat.CurrentPoint(created));
+        Assert.Equal(SKPathFillType.EvenOdd, created.FillType);
+    }
+
+    // PageDrawer asks for the current point before each l and c. Reading
+    // the SKPath made SkiaSharp m150 copy the whole path on the next append,
+    // so this 100,000-segment page took ~29 s; the fill itself takes ~30 ms.
+    [Fact]
+    public void LongPathsBuildInLinearTime()
+    {
+        const int segments = 100_000;
+        var content = new System.Text.StringBuilder("0 g 50 100 m\n");
+        for (var index = 1; index <= segments; index++)
+        {
+            var x = (50 + 500.0 * index / segments).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            var y = index % 2 == 0 ? "100" : "110";
+            content.Append(index % 10 == 0 ? $"{x} {y} {x} {y} {x} {y} c\n" : $"{x} {y} l\n");
+        }
+        content.Append("550 700 l 50 700 l h f");
+        var pdf = RasterConversionConsumerTests.SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R >>",
+            RasterConversionConsumerTests.PdfStream("", content.ToString()),
+        ]);
+        using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using var image = new PDFRenderer(document).RenderImage(0);
+        watch.Stop();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"rendering took {watch.Elapsed}.");
+        Assert.Equal((600, 800), (image.Width, image.Height));
+        // Device y is 800 - user y: inside, above, below and left of the shape.
+        Assert.Equal(SKColors.Black, image.GetPixel(300, 400));
+        Assert.Equal(SKColors.White, image.GetPixel(300, 50));
+        Assert.Equal(SKColors.White, image.GetPixel(300, 750));
+        Assert.Equal(SKColors.White, image.GetPixel(20, 400));
+    }
+
+    // A PageDrawer subclass may change getLinePath() through SKPath itself;
+    // getCurrentPoint() then reads the path instead of the helpers' cursor.
+    [Fact]
+    public void PageDrawerCurrentPointFollowsNativeLinePathChanges()
+    {
+        var pdf = RasterConversionConsumerTests.SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+            RasterConversionConsumerTests.PdfStream("", "10 10 m 20 20 l 30 30 l 40 40 l S"),
+        ]);
+        using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
+        var renderer = new LinePathRenderer(document);
+        using (renderer.RenderImage(0)) { }
+        // The l after the reset finds no current point and moves instead.
+        Assert.Equal(new (double X, double Y)?[] { (40, 50), (6, 7), null, (70, 80) }, renderer.Points);
+    }
+
+    private sealed class LinePathRenderer(PDDocument document) : PDFRenderer(document)
+    {
+        internal List<(double X, double Y)?> Points { get; } = [];
+
+        protected internal override PageDrawer CreatePageDrawer(PageDrawerParameters parameters) =>
+            new Drawer(parameters, Points);
+
+        private sealed class Drawer(PageDrawerParameters parameters, List<(double X, double Y)?> points)
+            : PageDrawer(parameters)
+        {
+            public override void MoveTo(float x, float y)
+            {
+                base.MoveTo(x, y);
+                GetLinePath().MoveTo(x + 30, y + 40);
+                points.Add(Point(GetCurrentPoint()));
+            }
+
+            public override void LineTo(float x, float y)
+            {
+                base.LineTo(x, y);
+                if (points.Count == 1)
+                {
+                    GetLinePath().MoveTo(5, 6);
+                    GetLinePath().Transform(SKMatrix.CreateTranslation(1, 1));
+                }
+                else
+                {
+                    GetLinePath().Reset();
+                }
+                points.Add(Point(GetCurrentPoint()));
+            }
+        }
+    }
+
+    private static (double X, double Y)? Point(Compat.JavaPoint2D? point) =>
+        point is null ? null : (point.X, point.Y);
 
     private static SKPath Polyline(int segments)
     {
