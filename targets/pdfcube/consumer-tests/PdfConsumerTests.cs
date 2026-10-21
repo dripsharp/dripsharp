@@ -7733,6 +7733,104 @@ public sealed class PathIteratorTests
         }
     }
 
+    // An intersection of areas keeps their holes, as java.awt.geom.Area does.
+    // Each clip after the page box is intersected with it, and a pattern fill
+    // is intersected with the clip. Device row y shows PDF y 99 - y to 100 - y.
+    [Fact]
+    public void IntersectedAreasKeepTheirHoles()
+    {
+        var red = new SKColor(255, 0, 0);
+        // An even-odd clip with a hole, then a fill of the whole page.
+        using (var document = PatternPage(100, "q 10 10 80 30 re 30 15 40 20 re W* n 1 0 0 rg 0 0 100 100 re f Q"))
+        using (var image = new PDFRenderer(document).RenderImage(0, 1))
+        {
+            Assert.Equal(red, image.GetPixel(20, 75));
+            Assert.Equal(SKColors.White, image.GetPixel(50, 75));
+            Assert.Equal(SKColors.White, image.GetPixel(50, 40));
+        }
+
+        // Pattern fills of a rectangle with a hole, even-odd and then nonzero
+        // (both rectangles run counterclockwise, so nonzero fills the hole).
+        foreach (var (fill, holeFilled) in new[] { ("f*", false), ("f", true) })
+        {
+            using var document = PatternPage(
+                100, $"10 55 80 40 re 30 65 40 20 re /Pattern cs /P1 scn {fill}");
+            using var image = new PDFRenderer(document).RenderImage(0, 1);
+            Assert.Equal(red, image.GetPixel(20, 25));
+            Assert.Equal(holeFilled ? red : SKColors.White, image.GetPixel(50, 25));
+            Assert.Equal(SKColors.White, image.GetPixel(50, 50));
+        }
+
+        // Two clips, each with a hole: only what lies outside both holes is
+        // painted, and the holes of a pattern fill stay open inside them.
+        using (var document = PatternPage(
+                   100, "10 10 80 80 re 20 20 20 60 re W* n 10 10 80 80 re 60 20 20 60 re W* n " +
+                        "/Pattern cs /P1 scn 0 0 100 100 re 45 45 10 10 re f*"))
+        using (var image = new PDFRenderer(document).RenderImage(0, 1))
+        {
+            Assert.Equal(red, image.GetPixel(50, 20));
+            Assert.Equal(SKColors.White, image.GetPixel(30, 50));
+            Assert.Equal(SKColors.White, image.GetPixel(70, 50));
+            Assert.Equal(SKColors.White, image.GetPixel(50, 50));
+            Assert.Equal(SKColors.White, image.GetPixel(5, 50));
+        }
+    }
+
+    // The table frames on page 3 of eu-001.pdf are even-odd clips (outer
+    // rectangle minus cell) intersected with the page clip, filled #ffcc9a.
+    // The frame around device rows 138..156 (PDF y 684.98..704.48) has its
+    // cell's hole at PDF y 689.9..699.62, x 103.02..314.94; the clip set for
+    // it must leave the hole out.
+    //
+    // Pixels are what PdfCarton renders now, not yet what Java PDFBox 3.0.8
+    // renders. Java leaves row 142 (x 103..314) white and paints row 182,
+    // the top edge of the 'Ethyl benzene' cell, all #ffcc9a. PdfCarton
+    // antialiases its clips and fills the cells' aliased rectangles by pixel
+    // centre, so the cell fill covers row 142 and the hole shows as a
+    // #ffd9b3 seam on row 182 (dripsharp-91 tracks clipping by pixel
+    // centres). Without the hole that row would be #ffcc9a.
+    [Fact]
+    public void IntersectedFrameClipsKeepTheirHoles()
+    {
+        var pdf = Path.Combine(AppContext.BaseDirectory, "Fixtures", "input", "eu-001.pdf");
+        using var document = Loader.LoadPDF(new FileInfo(pdf));
+
+        using (var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+                   595, 842, Compat.PdfCartonFontCompat.TYPE_INT_RGB))
+        using (var graphics = new ClipRecordingGraphics(bitmap))
+        {
+            new PDFRenderer(document).RenderPageToGraphics(2, graphics);
+            Assert.Contains((true, false), graphics.Clips);
+        }
+
+        using var image = new PDFRenderer(document).RenderImage(2, 1, ImageType.Rgb);
+        foreach (var (row, first, count, color) in new[]
+                 {
+                     (142, 103, 212, new SKColor(0xff, 0xcc, 0x9a)),
+                     (182, 104, 210, new SKColor(0xff, 0xd9, 0xb3)),
+                 })
+        {
+            var wrong = Enumerable.Range(first, count).Where(x => image.GetPixel(x, row) != color).ToArray();
+            Assert.True(wrong.Length == 0,
+                $"Row {row} differs from {color} at {wrong.Length} pixels from x {wrong.FirstOrDefault()} " +
+                $"({image.GetPixel(wrong.FirstOrDefault(), row)}).");
+        }
+    }
+
+    // Records, for each area clip set, whether it covers PDF (200, 702) on
+    // eu-001.pdf page 3's frame and (200, 695) in that frame's hole.
+    private sealed class ClipRecordingGraphics(SKBitmap bitmap) : Compat.PdfCartonGraphics2D(bitmap)
+    {
+        internal List<(bool Frame, bool Hole)> Clips { get; } = [];
+
+        public override void SetClip(object? clip)
+        {
+            if (clip is Compat.JavaArea area)
+                Clips.Add((area.Path.Contains(200, 702), area.Path.Contains(200, 695)));
+            base.SetClip(clip);
+        }
+    }
+
     // A square page whose content may fill with /P1, a solid red tiling pattern.
     private static PDDocument PatternPage(int size, string content) =>
         Loader.LoadPDF((sbyte[])(Array)RasterConversionConsumerTests.SequentialPdf(
