@@ -911,7 +911,8 @@ public sealed class RasterConversionConsumerTests
         {
             (new(Compat.PdfCartonFontCompat.TYPE_INT_ARGB), new[] { unchecked((int)0x80402010) }, [128, 64, 32, 16]),
             (new(Compat.PdfCartonFontCompat.TYPE_INT_RGB), new[] { 0x402010 }, [255, 64, 32, 16]),
-            (new(Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY), new sbyte[] { 77 }, [255, 77, 77, 77]),
+            // TYPE_BYTE_GRAY's colour model is Java's linear CS_GRAY.
+            (new(Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY), new sbyte[] { 77 }, [255, 149, 149, 149]),
             (new(srgb, true, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE), new sbyte[] { 10, 20, 30, 40 },
                 [40, 10, 20, 30]),
             (new(8, 3, [1, 2, 3], [4, 5, 6], [7, 8, 9]), new sbyte[] { 2 }, [255, 3, 6, 9]),
@@ -1451,7 +1452,12 @@ public sealed class RasterConversionConsumerTests
                 if (image.ColorType == SKColorType.Gray8)
                 {
                     Assert.True(red == green && green == blue, $"{name}: gray model rendered color.");
-                    expected = [red];
+                    // Java2D draws a TYPE_BYTE_GRAY sample as sRGB-encoded
+                    // gray, though its colour model reads it as linear gray.
+                    expected = Compat.PdfCartonFontCompat.GetImageType(image) ==
+                        Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY && model.IsImageTypeModel
+                            ? [raster.GetPixel(x, y, (int[]?)null)[0]]
+                            : [red];
                     actual = [pixels[y * image.RowBytes + x]];
                 }
                 else
@@ -2213,9 +2219,10 @@ public sealed class RasterConversionConsumerTests
 
             // Java's samples: BlendComposite converts the gray source into
             // the TYPE_BYTE_GRAY image's linear CS_GRAY, so Multiply stores
-            // 22 there. (Java's getRGB reads that sample as linear gray,
-            // 0xff535353; PdfCarton's TYPE_BYTE_GRAY getRGB does not.)
+            // 22 there, which Java2D draws as 0x161616 and getRGB reads as
+            // linear gray, 0xff535353.
             var expected = bgr ? new[] { 40, 90, 141 } : new[] { 22, 22, 22 };
+            var expectedRgb = bgr ? expected : new[] { 83, 83, 83 };
             var index10x6 = (6 * Width + 10) * bands;
             var stored = bgr
                 ? new[] { data[index10x6 + 2] & 0xff, data[index10x6 + 1] & 0xff, data[index10x6] & 0xff }
@@ -2224,14 +2231,14 @@ public sealed class RasterConversionConsumerTests
             var drawn = Drawn(image, 10, 6);
             var observed = new[]
             {
-                ("array", stored),
-                ("GetRgb", new[] { rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff }),
-                ("DrawImage", new int[] { drawn.Red, drawn.Green, drawn.Blue })
+                ("array", stored, expected),
+                ("GetRgb", new[] { rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff }, expectedRgb),
+                ("DrawImage", new int[] { drawn.Red, drawn.Green, drawn.Blue }, expected)
             };
-            foreach (var (name, actual) in observed)
+            foreach (var (name, actual, wanted) in observed)
                 for (var band = 0; band < 3; band++)
-                    Assert.True(Math.Abs(actual[band] - expected[band]) <= 2,
-                        $"type {type} {name}: blended {string.Join(",", actual)}, expected about {string.Join(",", expected)}.");
+                    Assert.True(Math.Abs(actual[band] - wanted[band]) <= 2,
+                        $"type {type} {name}: blended {string.Join(",", actual)}, expected about {string.Join(",", wanted)}.");
             Assert.Equal(bgr ? new SKColor(80, 120, 160) : new SKColor(100, 100, 100), Drawn(image, 30, 18));
             Assert.Equal(bgr ? 160 : 100, data[(18 * Width + 30) * bands] & 0xff);
         }
@@ -2584,21 +2591,27 @@ public sealed class RasterConversionConsumerTests
             Assert.True(elapsed < TimeSpan.FromSeconds(20), $"{name}: 10^6 SetRgb calls took {elapsed}.");
 
             // The raster (getRGB) holds each written pixel, through Java's
-            // linear gray for the gray + alpha image, and the native pixels
-            // hold what the raster renders to.
+            // linear gray for the gray images, and the native pixels hold what
+            // the raster renders to: for TYPE_BYTE_GRAY, as Java2D draws it,
+            // the sample as sRGB-encoded gray.
             var mismatches = 0;
             var hasAlpha = Compat.PdfCartonFontCompat.GetColorModel(image).HasAlpha;
+            var byteGray = Compat.PdfCartonFontCompat.GetImageType(image) == Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY;
+            var raster = Compat.PdfCartonFontCompat.GetRaster(image);
             for (var y = 0; y < Size; y += 7)
                 for (var x = 0; x < Size; x += 3)
                 {
                     var written = Argb(x, y);
-                    var rgb = ReferenceEquals(image, gray)
+                    var rgb = ReferenceEquals(image, gray) || byteGray
                         ? JavaLinearGrayRoundTrip(written & 255) * 0x010101
                         : written & 0xffffff;
                     var argb = Compat.PdfCartonFontCompat.GetRgb(image, x, y);
                     var native = Compat.PdfCartonPixels.Read(image, x, y);
+                    var rendered = byteGray
+                        ? 0xff000000u | (uint)raster.GetPixel(x, y, (int[]?)null)[0] * 0x010101u
+                        : (uint)argb;
                     if ((uint)argb >> 24 != (hasAlpha ? (uint)written >> 24 : 255u) ||
-                        (argb & 0xffffff) != rgb || (uint)native != (uint)argb)
+                        (argb & 0xffffff) != rgb || (uint)native != rendered)
                         mismatches++;
                 }
             Assert.Equal(0, mismatches);
@@ -2731,13 +2744,15 @@ public sealed class RasterConversionConsumerTests
     // CreateImage image: Multiply into it used to throw, and with the blend
     // mode unused its backdrop removal re-rendered the image per pixel over a
     // raster that missed the drawn content, leaving the content black.
-    // Every render matches the RGB one, whose backdrop removal for a DeviceRGB
-    // group is the DataBufferInt path (NonIsolatedBlendGroupRemovesItsBackdrop
-    // checks it against Java PDFBox), and the gray values computed by hand,
-    // within the one rounding step an 8-bit conversion may take. A DeviceGray
-    // group blends in Java's linear gray (CS_GRAY), so its Multiply values are
-    // Java PDFBox 3.0.8's on the RGB page. (Java's GRAY page reads its
-    // TYPE_BYTE_GRAY backdrop as linear gray too, so it differs there.)
+    // The BGR render matches the RGB one, whose backdrop removal for a
+    // DeviceRGB group is the DataBufferInt path
+    // (NonIsolatedBlendGroupRemovesItsBackdrop checks it against Java
+    // PDFBox), and the gray values computed by hand, within the one rounding
+    // step an 8-bit conversion may take. A DeviceGray group blends in Java's
+    // linear gray (CS_GRAY), so its Multiply values are Java PDFBox 3.0.8's on
+    // the RGB page. The GRAY page holds Java PDFBox 3.0.8's samples, which
+    // getRGB reads as linear gray; removeBackdrop reads its TYPE_BYTE_GRAY
+    // backdrop through getRGB too, so the half-transparent Multiply differs.
     [Fact]
     public void FormBlendGroupsRenderOnGrayAndBgrPages()
     {
@@ -2745,17 +2760,17 @@ public sealed class RasterConversionConsumerTests
             foreach (var groupSpace in new[] { "DeviceGray", "DeviceRGB" })
             {
                 var linear = groupSpace == "DeviceGray";
-                var expected = new (int X, int Y, int Gray)[]
+                var expected = new (int X, int Y, int Gray, int GraySample)[]
                 {
-                    (5, 5, 204), // backdrop outside the group's content: 0.8
-                    (52, 52, 204),
-                    (95, 5, 204),
+                    (5, 5, 204, 204), // backdrop outside the group's content: 0.8
+                    (52, 52, 204, 204),
+                    (95, 5, 204, 204),
                     // Multiply: 0.8 * 0.5 (101 in linear gray); Normal: 0.5.
-                    (30, 70, blend ? linear ? 101 : 102 : 128),
+                    (30, 70, blend ? linear ? 101 : 102 : 128, blend ? linear ? 101 : 102 : 128),
                     // Multiply at alpha 0.5: 0.8 * (0.5 + 0.5 * 0.25), 153 in
                     // linear gray; Normal: 0.25.
-                    (70, 30, blend ? linear ? 153 : 128 : 64),
-                    (56, 44, blend ? linear ? 153 : 128 : 64),
+                    (70, 30, blend ? linear ? 153 : 128 : 64, blend ? linear ? 140 : 115 : 64),
+                    (56, 44, blend ? linear ? 153 : 128 : 64, blend ? linear ? 140 : 115 : 64),
                 };
                 var name = $"{groupSpace} group{(blend ? "" : ", blend mode unused")}";
                 using var document = Loader.LoadPDF((sbyte[])(Array)FormBlendGroupFixture(groupSpace, blend));
@@ -2768,10 +2783,19 @@ public sealed class RasterConversionConsumerTests
                     // Well under a second; the per-pixel re-render took hours.
                     Assert.True(elapsed < TimeSpan.FromSeconds(30),
                         $"{name}, {typeName}: rendering 1000x1000 pixels took {elapsed}.");
-                    foreach (var (x, y, gray) in expected)
+                    foreach (var (x, y, gray, graySample) in expected)
                     {
                         // Pixel centres of the 1000x1000 render.
                         var actual = Compat.PdfCartonFontCompat.GetRgb(image, x * 10 + 5, y * 10 + 5);
+                        if (typeName == "GRAY")
+                        {
+                            var sample = Compat.PdfCartonFontCompat.GetRaster(image)
+                                .GetPixel(x * 10 + 5, y * 10 + 5, (int[]?)null)[0];
+                            var javaRgb = JavaByteGrayRgb(sample);
+                            Assert.True(Math.Abs(sample - graySample) <= 1 && actual == unchecked((int)0xff000000) + javaRgb * 0x010101,
+                                $"{name}, GRAY: pixel ({x},{y}) is {sample}/{actual:x8}, Java PDFBox renders {graySample}.");
+                            continue;
+                        }
                         var rgb = Compat.PdfCartonFontCompat.GetRgb(reference, x * 10 + 5, y * 10 + 5);
                         for (var shift = 0; shift < 24; shift += 8)
                         {
@@ -2827,14 +2851,6 @@ public sealed class RasterConversionConsumerTests
             }
         }
 
-        // The gray samples setRGB stores for colours: Java 25's for red
-        // 0-255 step 51, green 0-255 step 51, blue 0-255 step 85.
-        const string JavaSamples =
-            "0,2,7,18,6,8,13,24,24,26,32,43,58,60,66,76,110,112,118,129,182,184,190,201,2,3,9,20,8,10,15,26,26,28," +
-            "33,44,60,62,67,78,112,114,119,130,184,186,192,203,7,9,15,26,13,15,21,32,31,33,39,50,65,67,73,84,117,119," +
-            "125,136,190,191,197,208,17,19,25,36,23,25,31,42,42,43,49,60,75,77,83,94,127,129,135,146,200,201,207,218," +
-            "33,34,40,51,39,40,46,57,57,59,64,75,91,93,98,109,143,145,150,161,215,217,223,234,54,56,62,73,60,62,68,79," +
-            "78,80,86,97,112,114,120,131,164,166,172,183,237,238,244,255";
         using var gray = GrayAlphaImage(1, 1);
         var raster = Compat.PdfCartonFontCompat.GetRaster(gray);
         var samples = new List<int>();
@@ -2845,8 +2861,77 @@ public sealed class RasterConversionConsumerTests
                     Compat.PdfCartonFontCompat.SetRgb(gray, 0, 0, unchecked((int)0xff000000) | r << 16 | g << 8 | b);
                     samples.Add(raster.GetPixel(0, 0, (int[]?)null)[0]);
                 }
-        Assert.Equal(JavaSamples, string.Join(",", samples));
+        Assert.Equal(JavaSetRgbGraySamples, string.Join(",", samples));
+
+        // The same before anything takes the bitmap's raster: setRGB stores
+        // the sample natively and getRGB reads it as linear gray.
+        using var fresh = Compat.PdfCartonFontCompat.CreateBitmap(144, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var column = 0;
+        for (var r = 0; r < 256; r += 51)
+            for (var g = 0; g < 256; g += 51)
+                for (var b = 0; b < 256; b += 85)
+                    Compat.PdfCartonFontCompat.SetRgb(fresh, column++, 0, unchecked((int)0xff000000) | r << 16 | g << 8 | b);
+        var native = Enumerable.Range(0, 144).Select(x => (int)Compat.PdfCartonPixels.Read(fresh, x, 0).Red).ToArray();
+        Assert.Equal(JavaSetRgbGraySamples, string.Join(",", native));
+        for (var x = 0; x < 144; x++)
+            Assert.Equal(unchecked((int)0xff000000) + JavaByteGrayRgb(native[x]) * 0x010101,
+                Compat.PdfCartonFontCompat.GetRgb(fresh, x, 0));
+        var freshRaster = Compat.PdfCartonFontCompat.GetRaster(fresh);
+        Assert.Equal(JavaSetRgbGraySamples,
+            string.Join(",", Enumerable.Range(0, 144).Select(x => freshRaster.GetPixel(x, 0, (int[]?)null)[0])));
+
+        // ColorConvertOp converts through the models' colour spaces, linear
+        // CS_GRAY for TYPE_BYTE_GRAY. Java 25's results (through its CMM),
+        // within one step; its D50 PCS moves pure red and blue further.
+        using var rgbIn = Compat.PdfCartonFontCompat.CreateBitmap(6, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var colors = new[] { 0x00ff00, 0x808080, 0xcc6633, 0xffffff, 0x000000, 0x3366cc };
+        for (var x = 0; x < colors.Length; x++)
+            Compat.PdfCartonFontCompat.SetRgb(rgbIn, x, 0, unchecked((int)0xff000000) | colors[x]);
+        using var grayOut = new Compat.JavaColorConvertOp().Filter(
+            rgbIn, Compat.PdfCartonFontCompat.CreateBitmap(6, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY));
+        var grayOutRaster = Compat.PdfCartonFontCompat.GetRaster(grayOut);
+        var javaGray = new[] { 183, 55, 59, 255, 0, 36 };
+        for (var x = 0; x < colors.Length; x++)
+            Assert.True(Math.Abs(grayOutRaster.GetPixel(x, 0, (int[]?)null)[0] - javaGray[x]) <= 1,
+                $"ColorConvertOp of {colors[x]:x6}: {grayOutRaster.GetPixel(x, 0, (int[]?)null)[0]}, Java {javaGray[x]}.");
+        using var grayIn = Compat.PdfCartonFontCompat.CreateBitmap(5, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var grayInRaster = Compat.PdfCartonFontCompat.GetRaster(grayIn);
+        var graySamples = new[] { 0, 22, 64, 128, 200 };
+        for (var x = 0; x < graySamples.Length; x++)
+            grayInRaster.SetPixel(x, 0, new[] { graySamples[x] });
+        using var rgbOut = new Compat.JavaColorConvertOp().Filter(
+            grayIn, Compat.PdfCartonFontCompat.CreateBitmap(5, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
+        var javaRgb = new[] { 0xff000000u, 0xff535353u, 0xff898989u, 0xffbcbcbcu, 0xffe5e5e5u };
+        for (var x = 0; x < graySamples.Length; x++)
+            Assert.Equal(javaRgb[x], (uint)Compat.PdfCartonFontCompat.GetRgb(rgbOut, x, 0));
     }
+
+    // The gray samples setRGB stores in a linear CS_GRAY image (the gray +
+    // alpha image and TYPE_BYTE_GRAY): Java 25's for red 0-255 step 51,
+    // green 0-255 step 51, blue 0-255 step 85.
+    private const string JavaSetRgbGraySamples =
+        "0,2,7,18,6,8,13,24,24,26,32,43,58,60,66,76,110,112,118,129,182,184,190,201,2,3,9,20,8,10,15,26,26,28," +
+        "33,44,60,62,67,78,112,114,119,130,184,186,192,203,7,9,15,26,13,15,21,32,31,33,39,50,65,67,73,84,117,119," +
+        "125,136,190,191,197,208,17,19,25,36,23,25,31,42,42,43,49,60,75,77,83,94,127,129,135,146,200,201,207,218," +
+        "33,34,40,51,39,40,46,57,57,59,64,75,91,93,98,109,143,145,150,161,215,217,223,234,54,56,62,73,60,62,68,79," +
+        "78,80,86,97,112,114,120,131,164,166,172,183,237,238,244,255";
+
+    // Java 25's TYPE_BYTE_GRAY getRGB of every sample (its red, green and
+    // blue): the linear CS_GRAY colour model.
+    private const string JavaByteGrayGetRgb =
+        "0,13,22,28,34,38,42,46,50,53,56,59,61,64,66,69,71,73,75,77,79,81,83,85,86,88,90,92,93,95,96,98,99," +
+        "101,102,104,105,106,108,109,110,112,113,114,115,117,118,119,120,121,122,124,125,126,127,128,129,130," +
+        "131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,148,149,150,151,152,153,154," +
+        "155,155,156,157,158,159,159,160,161,162,163,163,164,165,166,167,167,168,169,170,170,171,172,173,173," +
+        "174,175,175,176,177,178,178,179,180,180,181,182,182,183,184,185,185,186,187,187,188,189,189,190,190," +
+        "191,192,192,193,194,194,195,196,196,197,197,198,199,199,200,200,201,202,202,203,203,204,205,205,206," +
+        "206,207,208,208,209,209,210,210,211,212,212,213,213,214,214,215,215,216,216,217,218,218,219,219,220," +
+        "220,221,221,222,222,223,223,224,224,225,226,226,227,227,228,228,229,229,230,230,231,231,232,232,233," +
+        "233,234,234,235,235,236,236,237,237,238,238,238,239,239,240,240,241,241,242,242,243,243,244,244,245," +
+        "245,246,246,246,247,247,248,248,249,249,250,250,251,251,251,252,252,253,253,254,254,255,255";
+
+    private static int JavaByteGrayRgb(int sample) =>
+        int.Parse(JavaByteGrayGetRgb.Split(',')[sample], System.Globalization.CultureInfo.InvariantCulture);
 
     // A Multiply fill in a plain form whose resources alone hold the blend
     // mode reaches a GRAY page through BlendComposite, which converts the
@@ -2871,6 +2956,147 @@ public sealed class RasterConversionConsumerTests
         Assert.Equal(255, raster.GetPixel(5, 5, (int[]?)null)[0]);
         Assert.Equal(55, raster.GetPixel(30, 70, (int[]?)null)[0]);
         Assert.Equal(new SKColor(55, 55, 55), Compat.PdfCartonPixels.Read(image, 30, 70));
+    }
+
+    // ImageType.GRAY renders as Java PDFBox 3.0.8 renders them: Java2D
+    // draws colours into TYPE_BYTE_GRAY with its (77 R + 150 G + 29 B) / 256
+    // luma, a page with a top-level blend mode is drawn on ARGB and then onto
+    // the gray image, and getRGB reads a sample through the linear CS_GRAY
+    // colour model (sample 128 reads 0xffbcbcbc). Expected samples and getRGB
+    // values are Java's for the same pages, within one 8-bit step.
+    [Fact]
+    public void GrayPageRendersAsJavaPdfBox()
+    {
+        var mismatches = new List<string>();
+        void Check(SKBitmap image, int x, int y, int sample, uint argb, string label)
+        {
+            var actualSample = Compat.PdfCartonFontCompat.GetRaster(image).GetPixel(x, y, (int[]?)null)[0];
+            var actual = (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, y);
+            var close = Math.Abs(actualSample - sample) <= 1;
+            for (var shift = 0; shift < 32; shift += 8)
+                close &= Math.Abs((int)((actual >> shift) & 255) - (int)((argb >> shift) & 255)) <= 1;
+            if (!close)
+                mismatches.Add($"{label}: Java {sample}/0x{argb:x8}, got {actualSample}/0x{actual:x8}");
+        }
+
+        // A gray fill, an RGB fill and a Multiply fill over gray. The
+        // Multiply makes the page draw on ARGB first; without it the
+        // fills draw on the gray image directly.
+        foreach (var blend in new[] { true, false })
+        {
+            using var document = new PDDocument();
+            var page = new PDPage(new PDRectangle(30, 10));
+            document.AddPage(page);
+            using (var content = new PDPageContentStream(document, page))
+            {
+                content.SetNonStrokingColor(0.5f);
+                content.AddRect(0, 0, 10, 10);
+                content.Fill();
+                content.SetNonStrokingColor(0.8f, 0.4f, 0.2f);
+                content.AddRect(10, 0, 10, 10);
+                content.Fill();
+                var state = new Pdmodel.Graphics.State.PDExtendedGraphicsState();
+                if (blend)
+                {
+                    content.SetNonStrokingColor(0.5f);
+                    content.AddRect(20, 0, 10, 10);
+                    content.Fill();
+                    state.SetBlendMode(BlendMode.Multiply);
+                }
+                else
+                {
+                    state.SetNonStrokingAlphaConstant(0.5f);
+                }
+                content.SetGraphicsStateParameters(state);
+                content.SetNonStrokingColor(blend ? 0.8f : 0.2f, 0.4f, blend ? 0.2f : 0.8f);
+                content.AddRect(20, 0, 10, 10);
+                content.Fill();
+            }
+            using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
+            var name = blend ? "Multiply page" : "page without blend modes";
+            Check(image, 5, 5, 128, 0xffbcbcbc, $"{name}, 0.5 gray");
+            Check(image, 15, 5, 127, 0xffbbbbbb, $"{name}, RGB (0.8, 0.4, 0.2)");
+            Check(image, 25, 5, blend ? 64 : 176, blend ? 0xff898989 : 0xffd8d8d8,
+                blend ? $"{name}, Multiply (0.8, 0.4, 0.2) over 0.5" : $"{name}, (0.2, 0.4, 0.8) at alpha 0.5");
+        }
+
+        // BlendModeFillsRenderAsJavaPdfBox's page: every blend mode at alpha
+        // 0.7 over an RGB and a gray backdrop.
+        (BlendMode Mode, int RgbSample, uint RgbArgb, int GraySample, uint GrayArgb)[] modes =
+        [
+            (BlendMode.Multiply, 83, 0xff9b9b9b, 83, 0xff9b9b9b),
+            (BlendMode.Screen, 186, 0xffdedede, 172, 0xffd6d6d6),
+            (BlendMode.Overlay, 139, 0xffc3c3c3, 127, 0xffbbbbbb),
+            (BlendMode.Darken, 104, 0xffababab, 111, 0xffb0b0b0),
+            (BlendMode.Lighten, 166, 0xffd3d3d3, 144, 0xffc6c6c6),
+            (BlendMode.ColorDodge, 220, 0xffefefef, 192, 0xffe1e1e1),
+            (BlendMode.ColorBurn, 59, 0xff848484, 58, 0xff838383),
+            (BlendMode.HardLight, 138, 0xffc2c2c2, 127, 0xffbbbbbb),
+            (BlendMode.SoftLight, 141, 0xffc4c4c4, 126, 0xffbbbbbb),
+            (BlendMode.Difference, 104, 0xffababab, 71, 0xff909090),
+            (BlendMode.Exclusion, 145, 0xffc7c7c7, 128, 0xffbcbcbc),
+            (BlendMode.Hue, 138, 0xffc2c2c2, 128, 0xffbcbcbc),
+            (BlendMode.Saturation, 139, 0xffc3c3c3, 128, 0xffbcbcbc),
+            (BlendMode.Color, 138, 0xffc2c2c2, 128, 0xffbcbcbc),
+            (BlendMode.Luminosity, 131, 0xffbebebe, 127, 0xffbbbbbb)
+        ];
+        using (var document = new PDDocument())
+        {
+            var page = new PDPage(new PDRectangle(modes.Length * 10, 20));
+            document.AddPage(page);
+            using (var content = new PDPageContentStream(document, page))
+            {
+                content.SetNonStrokingColor(0.3f, 0.6f, 0.9f);
+                content.AddRect(0, 10, modes.Length * 10, 10);
+                content.Fill();
+                content.SetNonStrokingColor(0.5f);
+                content.AddRect(0, 0, modes.Length * 10, 10);
+                content.Fill();
+                for (var index = 0; index < modes.Length; index++)
+                {
+                    var state = new Pdmodel.Graphics.State.PDExtendedGraphicsState();
+                    state.SetBlendMode(modes[index].Mode);
+                    state.SetNonStrokingAlphaConstant(0.7f);
+                    content.SaveGraphicsState();
+                    content.SetGraphicsStateParameters(state);
+                    content.SetNonStrokingColor(0.8f, 0.4f, 0.2f);
+                    content.AddRect(index * 10, 0, 10, 20);
+                    content.Fill();
+                    content.RestoreGraphicsState();
+                }
+            }
+            using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
+            for (var index = 0; index < modes.Length; index++)
+            {
+                var (mode, rgbSample, rgbArgb, graySample, grayArgb) = modes[index];
+                Check(image, index * 10 + 5, 5, rgbSample, rgbArgb, $"{mode} on RGB");
+                Check(image, index * 10 + 5, 15, graySample, grayArgb, $"{mode} on gray");
+            }
+        }
+        Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
+
+        // TYPE_BYTE_GRAY's colour model: Java 25's getRGB of every sample,
+        // and the samples setRGB stores (those of the gray + alpha image).
+        using var gray = Compat.PdfCartonFontCompat.CreateBitmap(1, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(gray);
+        var reads = new List<int>();
+        for (var sample = 0; sample < 256; sample++)
+        {
+            raster.SetPixel(0, 0, new[] { sample });
+            var argb = Compat.PdfCartonFontCompat.GetRgb(gray, 0, 0);
+            Assert.Equal(argb & 255, argb >> 8 & 255);
+            reads.Add(argb & 255);
+        }
+        Assert.Equal(JavaByteGrayGetRgb, string.Join(",", reads));
+        var samples = new List<int>();
+        for (var r = 0; r < 256; r += 51)
+            for (var g = 0; g < 256; g += 51)
+                for (var b = 0; b < 256; b += 85)
+                {
+                    Compat.PdfCartonFontCompat.SetRgb(gray, 0, 0, unchecked((int)0xff000000) | r << 16 | g << 8 | b);
+                    samples.Add(raster.GetPixel(0, 0, (int[]?)null)[0]);
+                }
+        Assert.Equal(JavaSetRgbGraySamples, string.Join(",", samples));
     }
 
     // getRGB after setRGB of an opaque gray on Java's CS_GRAY image: the
