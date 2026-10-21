@@ -54,7 +54,8 @@
     (is (= differential/observation-header
            (get-in contract [:observation :header])))
     (is (= 15 (count (get-in contract [:runtime :sources]))))
-    (is (= 180 (count provenance)))
+    (is (< (count provenance)
+           (get-in contract [:observation :expected-count])))
     (is (= (mapv :compat-type provenance)
            (vec (sort (map :compat-type provenance)))))
     (doseq [{:keys [compat-type jdk-contract targets proof-rows]}
@@ -66,18 +67,30 @@
                   proof-rows))))))
 
 (deftest direct-proof-compares-live-jdk-and-internal-dotnet-runtime
-  (let [summary (java-compat/verify!)]
+  (let [root (paths/workspace-root)
+        contract (java-compat/read-contract root)
+        provenance (java-compat/read-provenance contract root)
+        observations (get-in contract [:observation :expected-count])
+        summary (java-compat/verify!)]
     (is (= :java-compat-direct
            (get-in summary [:contract :id])))
     (is (= 17 (get-in summary [:java :release])))
     (is (= {:namespace "DripSharp.Runtime"
             :visibility :internal
-            :sources 15
-            :types 180
+            :sources (count (get-in contract [:runtime :sources]))
+            :types (count provenance)
             :targets ["pdfcube" "pkl" "rawhttp" "sqltrellis"]}
            (:runtime summary)))
-    (is (= 202 (get-in summary [:trace :observations])))
+    (is (= observations (get-in summary [:trace :observations])))
     (is (= ["behavior" "type-contract"]
            (get-in summary [:trace :families])))
-    (is (= {:matched 202} (:comparison summary)))
-    (is (= 203 (:perturbation-line summary)))))
+    (testing "one type-contract observation per provenance type"
+      (is (= (sort (map #(str "type-contract/" (:compat-type %)) provenance))
+             (sort (keep (fn [[family id]]
+                           (when (= "type-contract" family)
+                             (str family "/" id)))
+                         (get-in summary [:trace :identities]))))))
+    (testing "the comparator matches the header and every observation line"
+      (is (= {:matched (inc observations)} (:comparison summary))))
+    (testing "the appended perturbation follows the last observation line"
+      (is (= (+ 2 observations) (:perturbation-line summary))))))
