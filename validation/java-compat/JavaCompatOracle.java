@@ -40,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.StringTokenizer;
@@ -859,6 +860,7 @@ public final class JavaCompatOracle {
         observe("atomic-primitives", atomicPrimitives()),
         observe("base64", base64Contract()),
         observe("bit-set", bitSetContract()),
+        observe("boxed-wrappers", boxedWrappersContract()),
         observe("byte-buffer", byteBufferContract()),
         observe("charset-malformed", charsetMalformedContract()),
         observe("collections", collectionsContract()),
@@ -1149,6 +1151,39 @@ public final class JavaCompatOracle {
         .orElse("missing");
     var empty = Optional.<String>empty().orElse("fallback");
     return present + "|" + empty;
+  }
+
+  private static String boxedWrappersContract() {
+    float floatNaNPayload = Float.intBitsToFloat(0x7fc00001);
+    double doubleNaNPayload = Double.longBitsToDouble(0x7ff8000000000001L);
+    Object[] values = {
+      'A', '\uffff', true, false,
+      (byte) -1, (byte) -128, (short) -1, (short) -32768,
+      0.0f, -0.0f, Float.NaN, floatNaNPayload,
+      Float.intBitsToFloat(0xffc00000),
+      Float.POSITIVE_INFINITY, Float.MIN_VALUE, 1.5f,
+      0.0d, -0.0d, Double.NaN, doubleNaNPayload,
+      Double.NEGATIVE_INFINITY, Double.MIN_VALUE, Math.PI
+    };
+    var hashes = new StringJoiner(",");
+    for (Object value : values) {
+      hashes.add(Integer.toString(value.hashCode()));
+    }
+    int combined = Objects.hash('A', true, -0.0d, 1.5f);
+    var equality =
+        String.join(
+            ",",
+            Boolean.toString(Objects.equals(0.0d, -0.0d)),
+            Boolean.toString(Objects.equals(Double.NaN, doubleNaNPayload)),
+            Boolean.toString(Objects.equals(0.0f, -0.0f)),
+            Boolean.toString(Objects.equals(Float.NaN, floatNaNPayload)),
+            Boolean.toString(Objects.equals(1.5d, 1.5f)));
+    var keys = new LinkedHashMap<Object, String>();
+    for (Object key :
+        new Object[] {0.0d, -0.0d, Double.NaN, doubleNaNPayload, 0.0f, -0.0f}) {
+      keys.put(key, "x");
+    }
+    return hashes + "|" + combined + "|" + equality + "|" + keys.size();
   }
 
   private static String regexContract() {

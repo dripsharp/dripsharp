@@ -31,7 +31,7 @@ JavaCipherInputStream	javax.crypto.CipherInputStream	pdfcube,pkl,rawhttp,sqltrel
 JavaCloneable	java.lang.Cloneable	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCloneable
 JavaCodingErrorAction	java.nio.charset.CodingErrorAction	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCodingErrorAction
 JavaCollector	java.util.stream.Collector	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCollector
-JavaCompat	java.lang.System	pdfcube,pkl,rawhttp,sqltrellis	behavior/collections,behavior/regex,behavior/signed-byte-or,behavior/string-identity,behavior/uri,type-contract/JavaCompat
+JavaCompat	java.lang.System	pdfcube,pkl,rawhttp,sqltrellis	behavior/boxed-wrappers,behavior/collections,behavior/regex,behavior/signed-byte-or,behavior/string-identity,behavior/uri,type-contract/JavaCompat
 JavaCrc32	java.util.zip.CRC32	pdfcube,pkl,rawhttp,sqltrellis	behavior/crc32,type-contract/JavaCrc32
 JavaDataInputStream	java.io.DataInputStream	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaDataInputStream
 JavaDataOutputStream	java.io.DataOutputStream	pdfcube,pkl,rawhttp,sqltrellis	behavior/data-output,type-contract/JavaDataOutputStream
@@ -78,7 +78,7 @@ JavaKeyManagerFactory	javax.net.ssl.KeyManagerFactory	pdfcube,pkl,rawhttp,sqltre
 JavaKeyStore	java.security.KeyStore	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaKeyStore
 JavaLabeledControlFlowException	java.lang.Throwable	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaLabeledControlFlowException
 JavaLineNumberReader	java.io.LineNumberReader	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaLineNumberReader
-JavaLinkedHashMap	java.util.LinkedHashMap	pdfcube,pkl,rawhttp,sqltrellis	behavior/collections,type-contract/JavaLinkedHashMap
+JavaLinkedHashMap	java.util.LinkedHashMap	pdfcube,pkl,rawhttp,sqltrellis	behavior/boxed-wrappers,behavior/collections,type-contract/JavaLinkedHashMap
 JavaLinkedList	java.util.LinkedList	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaLinkedList
 JavaListContract	java.util.List	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaListContract
 JavaListIterator	java.util.ListIterator	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaListIterator

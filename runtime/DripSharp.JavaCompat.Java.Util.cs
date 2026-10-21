@@ -3974,6 +3974,14 @@ internal static partial class JavaCompat
         if (ReferenceEquals(left, right)) return true;
         if (left is null || right is null) return false;
         if (left is string leftText) return right is string rightText && string.Equals(leftText, rightText);
+        // Java Float/Double.equals compare canonical bits: NaN equals NaN and
+        // 0.0 differs from -0.0, consistent with their hashCode.
+        if (left is double leftDouble)
+            return right is double rightDouble &&
+                   DoubleToLongBits(leftDouble) == DoubleToLongBits(rightDouble);
+        if (left is float leftFloat)
+            return right is float rightFloat &&
+                   FloatToIntBits(leftFloat) == FloatToIntBits(rightFloat);
         if (left is Uri leftUri)
             return right is Uri rightUri && UriEquals(leftUri, rightUri);
         if (left is IEnumerable leftValues)
@@ -4250,6 +4258,18 @@ internal static partial class JavaCompat
         if (value is JavaReadOnlyAdapter adapter) value = adapter.MutableSource;
         if (value is null) return 0;
         if (value is string text) return StringHashCode(text);
+        // Boxed Java wrappers: .NET GetHashCode differs from Character,
+        // Boolean, Float and Double.hashCode (and, on .NET Framework, from
+        // Byte and Short.hashCode). int and long already match.
+        switch (value)
+        {
+            case char character: return character;
+            case bool flag: return flag ? 1231 : 1237;
+            case double number: return DoubleHashCode(number);
+            case float number: return FloatToIntBits(number);
+            case sbyte number: return number;
+            case short number: return number;
+        }
         if (value is Uri uri)
         {
             var schemeHash = StringComparer.OrdinalIgnoreCase.GetHashCode(UriScheme(uri) ?? "");

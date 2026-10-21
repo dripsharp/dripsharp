@@ -1470,11 +1470,11 @@ internal static partial class JavaCompat
         for (var bit = 1UL << 63; (value & bit) == 0; bit >>= 1) count++;
         return count;
     }
+    internal static long DoubleToLongBits(double value) =>
+        double.IsNaN(value) ? 0x7ff8000000000000L : BitConverter.DoubleToInt64Bits(value);
     internal static int DoubleHashCode(double value)
     {
-        var bits = double.IsNaN(value)
-            ? 0x7ff8000000000000L
-            : BitConverter.DoubleToInt64Bits(value);
+        var bits = DoubleToLongBits(value);
         return unchecked((int)(bits ^ (long)((ulong)bits >> 32)));
     }
     internal static int Signum(long value) => Math.Sign(value);

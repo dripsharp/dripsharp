@@ -1052,6 +1052,7 @@ internal static class Program
         yield return Observe("atomic-primitives", AtomicPrimitives());
         yield return Observe("base64", Base64Contract());
         yield return Observe("bit-set", BitSetContract());
+        yield return Observe("boxed-wrappers", BoxedWrappersContract());
         yield return Observe("byte-buffer", ByteBufferContract());
         yield return Observe("charset-malformed", CharsetMalformedContract());
         yield return Observe("collections", CollectionsContract());
@@ -1283,6 +1284,37 @@ internal static class Program
         {
             return "rejected";
         }
+    }
+
+    private static string BoxedWrappersContract()
+    {
+        var floatNaNPayload = BitConverter.Int32BitsToSingle(0x7fc00001);
+        var doubleNaNPayload = BitConverter.Int64BitsToDouble(0x7ff8000000000001L);
+        var values = new object[]
+        {
+            'A', '\uffff', true, false,
+            (sbyte)-1, (sbyte)-128, (short)-1, (short)-32768,
+            0.0f, -0.0f, float.NaN, floatNaNPayload,
+            BitConverter.Int32BitsToSingle(unchecked((int)0xffc00000)),
+            float.PositiveInfinity, float.Epsilon, 1.5f,
+            0.0d, -0.0d, double.NaN, doubleNaNPayload,
+            double.NegativeInfinity, double.Epsilon, Math.PI,
+        };
+        var hashes = string.Join(",", values.Select(value =>
+            JavaCompat.HashCode(value).ToString(CultureInfo.InvariantCulture)));
+        var combined = JavaCompat.Hash('A', true, -0.0d, 1.5f);
+        var equality = string.Join(",",
+            Lower(JavaCompat.Equals(0.0d, -0.0d)),
+            Lower(JavaCompat.Equals(double.NaN, doubleNaNPayload)),
+            Lower(JavaCompat.Equals(0.0f, -0.0f)),
+            Lower(JavaCompat.Equals(float.NaN, floatNaNPayload)),
+            Lower(JavaCompat.Equals(1.5d, 1.5f)));
+        var keys = new JavaLinkedHashMap<object, string>();
+        foreach (var key in new object[]
+                 { 0.0d, -0.0d, double.NaN, doubleNaNPayload, 0.0f, -0.0f })
+            keys[key] = "x";
+        return $"{hashes}|{combined.ToString(CultureInfo.InvariantCulture)}|" +
+               $"{equality}|{keys.Count.ToString(CultureInfo.InvariantCulture)}";
     }
 
     private static string CollectionsContract()
