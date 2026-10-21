@@ -5378,6 +5378,161 @@ public sealed class ImageCodecAdapterTests
         }
     }
 
+    // The JPX images of PDFBOX-3947-670064.pdf give each tile six tile-parts
+    // but announce five in every SOT marker's TNsot (the index of the last
+    // tile-part where the count belongs). jai-imageio-jpeg2000 reads every
+    // tile-part present, so Java PDFBox decodes them cleanly; CoreJ2K v2.3.3
+    // dropped each tile's last tile-part (dripsharp-79). This lossless image
+    // has two tiles of one packet per tile-part, the last of which completes
+    // the finest detail. With every TNsot one short it must still decode to
+    // exactly the encoded samples.
+    // With packed tile-part packet headers (PPT) the extra tile-part's packet
+    // headers are in its own header; the decoder sizes their bookkeeping from
+    // the first TNsot of the tile, so JpxTilePartCounts corrects it first,
+    // also when that first TNsot is 0 (not given) and when a main header
+    // marker without a segment (FF30) precedes the first SOT.
+    [Theory]
+    [InlineData(false, "")]
+    [InlineData(true, "")]
+    [InlineData(false, "first unspecified")]
+    [InlineData(true, "first unspecified")]
+    [InlineData(true, "reserved marker")]
+    public void JpxTilePartsBeyondAnUndercountingTNsotAreDecoded(bool packedHeaders, string variant)
+    {
+        const int width = 40, height = 16;
+        var samples = new int[width * height];
+        for (var index = 0; index < samples.Length; index++)
+            samples[index] = (index * 37 ^ index / width * 11) & 255;
+        var parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
+        parameters["lossless"] = "on";
+        parameters["tiles"] = "32 16";
+        parameters["Wlev"] = "2";
+        parameters["tile_parts"] = "1";
+        parameters["file_format"] = "off";
+        if (packedHeaders) parameters["pph_tile"] = "on";
+        var data = CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(
+                width, height, 1, 8, new bool[1], [samples.Select(v => v - 128).ToArray()]),
+            null, parameters);
+        int[] Decoded(byte[] jpx)
+        {
+            using var image = Compat.PdfCartonImageCodecs.Decode("JPX", jpx);
+            Assert.Equal((width, height), (image.Width, image.Height));
+            return Compat.PdfCartonFontCompat.GetRaster(image).GetSamples(0, 0, width, height, 0, null);
+        }
+        Assert.Equal(samples, Decoded(data));
+
+        // SOT: FF90, Lsot 10, Isot (2), Psot (4), TPsot, TNsot.
+        var sots = new List<int>();
+        for (var offset = 0; offset + 12 <= data.Length; offset++)
+        {
+            if (data[offset] == 0xFF && data[offset + 1] == 0x90 && data[offset + 2] == 0 && data[offset + 3] == 10)
+                sots.Add(offset);
+        }
+        int tileParts = data[sots[0] + 11];
+        Assert.True(tileParts > 1, "The test needs tiles with several tile-parts.");
+        Assert.Equal(2 * tileParts, sots.Count);
+        Assert.All(sots, sot => Assert.Equal(tileParts, data[sot + 11]));
+        var undercounting = (byte[])data.Clone();
+        foreach (var sot in sots)
+        {
+            undercounting[sot + 11] = (byte)(
+                variant == "first unspecified" && data[sot + 10] == 0 ? 0 : tileParts - 1);
+        }
+        if (variant == "reserved marker")
+        {
+            Assert.Equal(samples, Decoded(
+                [.. undercounting.AsSpan(0, sots[0]), 0xFF, 0x30, .. undercounting.AsSpan(sots[0])]));
+            return;
+        }
+        Assert.Equal(samples, Decoded(undercounting));
+        if (packedHeaders || variant != "") return;
+
+        // The decoder itself reads the tile-parts past the announced count
+        // (the CoreJ2K 0383d9f backport), without the adapter's correction.
+        using (var stream = new MemoryStream(undercounting, writable: false))
+        using (var image = CoreJ2K.J2kImage.FromStream(stream, out _))
+        {
+            var decoded = new int[width * height];
+            image.CopyComponentTo(0, decoded);
+            Assert.Equal(samples, decoded);
+        }
+
+        // The last tile-part of each tile carries samples: the codestream
+        // with them cut out no longer decodes losslessly. (Cut out of the PPT
+        // codestream, they leave one the pinned decoder never finishes:
+        // dripsharp-88.)
+        var finest = sots.Where(sot => data[sot + 10] == tileParts - 1).ToArray();
+        Assert.Equal(2, finest.Length);
+        var withoutLast = undercounting.Where((_, offset) =>
+            !finest.Any(sot => offset >= sot && offset < sot + ReadInt(data, sot + 6))).ToArray();
+        Assert.NotEqual(samples, Decoded(withoutLast));
+    }
+
+    // A tile-part may hold no packet (ISO/IEC 15444-1 A.4.2). Two empty
+    // tile-parts after the first of each tile must both be passed over in
+    // every progression order (the CoreJ2K 0383d9f backport; v2.3.3 moved on
+    // by one tile-part only and read the next SOT as packet data).
+    [Theory]
+    [InlineData("layer")]
+    [InlineData("res")]
+    [InlineData("res-pos")]
+    [InlineData("pos-comp")]
+    [InlineData("comp-pos")]
+    public void JpxEmptyTilePartsArePassedOver(string progression)
+    {
+        const int width = 40, height = 16;
+        var samples = new int[width * height];
+        for (var index = 0; index < samples.Length; index++)
+            samples[index] = (index * 37 ^ index / width * 11) & 255;
+        var parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
+        parameters["lossless"] = "on";
+        parameters["tiles"] = "32 16";
+        parameters["Wlev"] = "2";
+        parameters["tile_parts"] = "1";
+        parameters["file_format"] = "off";
+        parameters["Aptype"] = progression;
+        var data = CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(
+                width, height, 1, 8, new bool[1], [samples.Select(v => v - 128).ToArray()]),
+            null, parameters);
+
+        // SOT: FF90, Lsot 10, Isot (2), Psot (4), TPsot, TNsot; then SOD.
+        var output = new List<byte>();
+        var sots = 0;
+        for (var offset = 0; offset < data.Length;)
+        {
+            if (offset + 12 > data.Length || data[offset] != 0xFF || data[offset + 1] != 0x90 ||
+                data[offset + 2] != 0 || data[offset + 3] != 10)
+            {
+                output.Add(data[offset++]);
+                continue;
+            }
+            sots++;
+            var length = ReadInt(data, offset + 6);
+            var tilePart = data.AsSpan(offset, length).ToArray();
+            int index = tilePart[10], count = tilePart[11];
+            Assert.True(count + 2 < 255);
+            tilePart[10] = (byte)(index == 0 ? 0 : index + 2);
+            tilePart[11] = (byte)(count + 2);
+            output.AddRange(tilePart);
+            if (index == 0)
+            {
+                foreach (var empty in new[] { 1, 2 })
+                {
+                    output.AddRange(new byte[] { 0xFF, 0x90, 0, 10, tilePart[4], tilePart[5], 0, 0, 0, 14 });
+                    output.AddRange(new byte[] { (byte)empty, (byte)(count + 2), 0xFF, 0x93 });
+                }
+            }
+            offset += length;
+        }
+        Assert.True(sots > 2, "The test needs tiles with several tile-parts.");
+
+        using var image = Compat.PdfCartonImageCodecs.Decode("JPX", output.ToArray());
+        Assert.Equal((width, height), (image.Width, image.Height));
+        Assert.Equal(samples, Compat.PdfCartonFontCompat.GetRaster(image).GetSamples(0, 0, width, height, 0, null));
+    }
+
     // Gray and RGB JPX images use the shared standard colour spaces, as the
     // Java JPEG 2000 reader's ColorSpace.getInstance does.
     [Fact]

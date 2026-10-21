@@ -7,6 +7,7 @@
 
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -229,7 +230,8 @@ internal static class PdfCartonImageCodecs
     private static SKBitmap DecodeJpx(byte[] encoded)
     {
         using var stream = new MemoryStream(
-            JpxChannelDefinitions.Normalize(encoded), writable: false);
+            JpxTilePartCounts.Normalize(JpxChannelDefinitions.Normalize(encoded)),
+            writable: false);
         using var image = J2kImage.FromStream(stream, out var metadata);
         var hasAlpha = metadata.ChannelDefinitions?.HasAlphaChannel == true;
         var colorComponents = image.NumberOfComponents - (hasAlpha ? 1 : 0);
@@ -428,7 +430,7 @@ internal static class JpxChannelDefinitions
 
     // A box from start: its type, content start and end. Lengths 0 (to the
     // end) and 1 (64-bit) are read as ISO/IEC 15444-1 I.4 defines them.
-    private static bool TryReadBox(
+    internal static bool TryReadBox(
         byte[] data, int start, int end, out uint type, out int content, out int boxEnd)
     {
         type = 0;
@@ -466,10 +468,10 @@ internal static class JpxChannelDefinitions
             WriteUInt32(data, start, length + (uint)growth);
     }
 
-    private static int ReadUInt16(byte[] data, int offset) =>
+    internal static int ReadUInt16(byte[] data, int offset) =>
         (data[offset] << 8) | data[offset + 1];
 
-    private static uint ReadUInt32(byte[] data, int offset) =>
+    internal static uint ReadUInt32(byte[] data, int offset) =>
         ((uint)data[offset] << 24) | ((uint)data[offset + 1] << 16) |
         ((uint)data[offset + 2] << 8) | data[offset + 3];
 
@@ -485,6 +487,121 @@ internal static class JpxChannelDefinitions
         data[offset + 1] = (byte)(value >> 16);
         data[offset + 2] = (byte)(value >> 8);
         data[offset + 3] = (byte)value;
+    }
+}
+
+// Some encoders write the index of a tile's last tile-part in the SOT
+// marker's TNsot, where ISO/IEC 15444-1 A.4.2 puts the number of tile-parts,
+// so each tile has one tile-part more than it announces.
+// jai-imageio-jpeg2000 reads every tile-part present. The vendored decoder
+// does too (the CoreJ2K 0383d9f backport), but its header decoder sizes the
+// packed packet header (PPT) bookkeeping of a tile from the first TNsot it
+// reads and cannot take in the PPT markers of a tile-part past that count.
+// Like JpxChannelDefinitions, this leaves the snapshot unpatched: in a tile
+// with a tile-part whose TPsot reaches its non-zero TNsot, Normalize raises
+// every TNsot, including 0 (count not given, from which the decoder also
+// sizes the tile), to one past the tile's highest TPsot, so the decoder sizes
+// the tile from its real count. Codestreams it does not recognise, or whose
+// counts are consistent, are returned unchanged and without a copy.
+internal static class JpxTilePartCounts
+{
+    private const int StartOfCodestream = 0xFF4F;
+    private const int StartOfTilePart = 0xFF90;
+    private const uint CodestreamBox = 0x6A703263; // "jp2c"
+
+    internal static byte[] Normalize(byte[] encoded)
+    {
+        if (!TryFindCodestream(encoded, out var start, out var end) ||
+            !TryFindFirstTilePart(encoded, start, end, out var first) ||
+            !Undercounts(encoded, first, end, null, null))
+            return encoded;
+
+        var counts = new Dictionary<int, int>();
+        var undercounting = new HashSet<int>();
+        Undercounts(encoded, first, end, counts, undercounting);
+        var result = (byte[])encoded.Clone();
+        for (var sot = first; IsTilePart(result, sot, end);)
+        {
+            var tile = JpxChannelDefinitions.ReadUInt16(result, sot + 4);
+            if (undercounting.Contains(tile) && result[sot + 11] < counts[tile])
+                result[sot + 11] = (byte)counts[tile];
+            if (!TryNext(result, sot, end, out sot)) break;
+        }
+        return result;
+    }
+
+    // Whether a tile-part's TPsot reaches its non-zero TNsot. Optionally
+    // records each tile's highest TPsot + 1, and the tiles where one does
+    // and that count stays within 255.
+    private static bool Undercounts(
+        byte[] data, int sot, int end, Dictionary<int, int>? counts, HashSet<int>? undercounting)
+    {
+        var found = false;
+        while (IsTilePart(data, sot, end))
+        {
+            var tile = JpxChannelDefinitions.ReadUInt16(data, sot + 4);
+            var tilePart = data[sot + 10];
+            var announced = data[sot + 11];
+            var under = announced != 0 && tilePart >= announced && tilePart < 255;
+            found |= under;
+            if (counts != null)
+            {
+                counts.TryGetValue(tile, out var count);
+                counts[tile] = Math.Max(count, tilePart + 1);
+            }
+            if (under) undercounting?.Add(tile);
+            if (!TryNext(data, sot, end, out sot)) break;
+        }
+        if (counts != null && undercounting != null)
+            undercounting.RemoveWhere(tile => counts[tile] > 255);
+        return found;
+    }
+
+    private static bool IsTilePart(byte[] data, int sot, int end) =>
+        sot >= 0 && end - sot >= 12 &&
+        JpxChannelDefinitions.ReadUInt16(data, sot) == StartOfTilePart &&
+        JpxChannelDefinitions.ReadUInt16(data, sot + 2) == 10;
+
+    // The next tile-part after the one at sot; Psot 0 runs to the end.
+    private static bool TryNext(byte[] data, int sot, int end, out int next)
+    {
+        var length = JpxChannelDefinitions.ReadUInt32(data, sot + 6);
+        next = length == 0 || length > (uint)(end - sot) ? end : sot + (int)length;
+        return next < end;
+    }
+
+    // The codestream of a raw J2K stream or the first jp2c box of a JP2 file.
+    private static bool TryFindCodestream(byte[] data, out int start, out int end)
+    {
+        (start, end) = (0, data.Length);
+        if (data.Length >= 2 && JpxChannelDefinitions.ReadUInt16(data, 0) == StartOfCodestream)
+            return true;
+        for (var position = 0;
+             JpxChannelDefinitions.TryReadBox(data, position, data.Length, out var type, out var content, out var next);
+             position = next)
+        {
+            if (type != CodestreamBox) continue;
+            (start, end) = (content, next);
+            return end - start >= 2 &&
+                   JpxChannelDefinitions.ReadUInt16(data, start) == StartOfCodestream;
+        }
+        return false;
+    }
+
+    // The first SOT after the main header's marker segments. Markers FF30 to
+    // FF3F have no segment (ISO/IEC 15444-1 A.1), as the decoder reads them.
+    private static bool TryFindFirstTilePart(byte[] data, int start, int end, out int sot)
+    {
+        for (sot = start + 2; end - sot >= 4;)
+        {
+            var marker = JpxChannelDefinitions.ReadUInt16(data, sot);
+            if (marker == StartOfTilePart) return true;
+            if (marker >> 8 != 0xFF) return false;
+            sot += marker is >= 0xFF30 and <= 0xFF3F
+                ? 2
+                : 2 + JpxChannelDefinitions.ReadUInt16(data, sot + 2);
+        }
+        return false;
     }
 }
 

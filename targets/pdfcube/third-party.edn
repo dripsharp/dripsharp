@@ -28,8 +28,8 @@
    :charset "ISO-8859-1"
    :capability nil
    :source-files 296
-   :max-source-lines 99223
-   :max-emitted-lines 99815
+   :max-source-lines 99275
+   :max-emitted-lines 99867
    :source-inventory-sha256
    "fd4e1d470b862ca711049110229c761a291b236a62004148c10ccb33a29bd883"
    :public-types
