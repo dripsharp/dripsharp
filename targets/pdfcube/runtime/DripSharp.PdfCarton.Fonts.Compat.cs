@@ -3307,9 +3307,10 @@ public sealed class PdfCartonAffineTransformOp
 public sealed class JavaColorConvertOp
 {
     private readonly JavaColorSpace? destinationColorSpace;
-    // Whether Java's op holds ICC profiles: every space it was given is an
-    // ICC space, as all but public-override subclasses are in Java.
+    // Java's op holds ICC profiles when it was given only ICC spaces (all
+    // but public-override subclasses) and a list of spaces otherwise.
     private readonly bool hasProfiles;
+    private readonly bool hasCustomSpaces;
 
     public JavaColorConvertOp()
     {
@@ -3322,21 +3323,23 @@ public sealed class JavaColorConvertOp
         ArgumentNullException.ThrowIfNull(sourceColorSpace);
         this.destinationColorSpace = destinationColorSpace ??
             throw new ArgumentNullException(nameof(destinationColorSpace));
-        hasProfiles = !sourceColorSpace.OverridesArrayConversions &&
-            !destinationColorSpace.OverridesArrayConversions;
+        hasCustomSpaces = sourceColorSpace.OverridesArrayConversions ||
+            destinationColorSpace.OverridesArrayConversions;
+        hasProfiles = !hasCustomSpaces;
     }
 
     public JavaColorConvertOp(JavaColorSpace destinationColorSpace)
     {
         this.destinationColorSpace = destinationColorSpace ??
             throw new ArgumentNullException(nameof(destinationColorSpace));
-        hasProfiles = !destinationColorSpace.OverridesArrayConversions;
+        hasCustomSpaces = destinationColorSpace.OverridesArrayConversions;
+        hasProfiles = !hasCustomSpaces;
     }
 
     public SKBitmap Filter(SKBitmap source, SKBitmap? destination)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (destination is not null) return Convert(source, destination, hasProfiles);
+        if (destination is not null) return Convert(source, destination);
 
         var colorSpace = destinationColorSpace ??
             PdfCartonFontCompat.GetColorModel(source).ColorSpace;
@@ -3357,7 +3360,7 @@ public sealed class JavaColorConvertOp
             null);
         try
         {
-            return Convert(source, created, hasProfiles);
+            return Convert(source, created);
         }
         catch
         {
@@ -3366,7 +3369,7 @@ public sealed class JavaColorConvertOp
         }
     }
 
-    private static SKBitmap Convert(SKBitmap source, SKBitmap destination, bool hasProfiles)
+    private SKBitmap Convert(SKBitmap source, SKBitmap destination)
     {
         if (source.Width != destination.Width ||
             source.Height != destination.Height)
@@ -3387,9 +3390,10 @@ public sealed class JavaColorConvertOp
         var destinationHasAlpha = destinationColorModel.HasAlpha;
         // Java renders relative colorimetric when the first profile of its
         // transform, the source's, is an output profile and perceptually
-        // otherwise; a public-override space in an op without profiles goes
-        // through toCIEXYZ and fromCIEXYZ, which are colorimetric.
-        var colorimetric = sourceColorSpace is JavaIccColorSpace icc &&
+        // otherwise; an op given a public-override space, or one without
+        // profiles converting such a space, goes through toCIEXYZ and
+        // fromCIEXYZ, which are colorimetric.
+        var colorimetric = hasCustomSpaces || sourceColorSpace is JavaIccColorSpace icc &&
                 !icc.IsSrgb && icc.Profile.GetProfileClass() == JavaIccProfile.CLASS_OUTPUT ||
             !hasProfiles && (sourceColorSpace.OverridesArrayConversions ||
                 destinationColorSpace.OverridesArrayConversions);

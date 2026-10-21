@@ -48,7 +48,7 @@
     "pdfcube-pdfbox"
     {:source "consumer-tests/PdfConsumerTests.cs"
      :destination "PdfConsumerTests.cs"
-     :sha256 "7912b0acafa3a5775545212ea2e679656356e92b7da9d923405d6fa06f93cb74"}
+     :sha256 "828a222c52017c6418fd2a0257816b7425bb8943ced0ec711755b79cf14aeaad"}
     "pdfcube-preflight"
     {:source "consumer-tests/PreflightConsumerTests.cs"
      :destination "PreflightConsumerTests.cs"

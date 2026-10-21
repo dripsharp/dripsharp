@@ -554,6 +554,20 @@ public sealed class PdfConsumerTests
                 $"{deviceClass} fromRGB: [{string.Join(", ", fromRgb)}], Java [0.043930724, 0.05679408, 0.018783856].");
         }
 
+        // An op given a public-override space converts through toCIEXYZ and
+        // fromCIEXYZ: colorimetric, display sources included.
+        foreach (var op in new[]
+                 {
+                     new Compat.JavaColorConvertOp(new IdentityCieXyzSpace()),
+                     new Compat.JavaColorConvertOp(new IdentityCieXyzSpace(), new IdentityCieXyzSpace())
+                 })
+        {
+            using var source = Image(Space("mntr", 1), samples);
+            using var rgb = op.Filter(
+                source, Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
+            Near(Channels(colorimetric), Rgb(rgb), "custom-space op, mntr intent 1 -> INT_RGB");
+        }
+
         // PDICCBased images: perceptual, output profiles included.
         foreach (var (deviceClass, intent) in new[] { ("prtr", 0u), ("prtr", 1u), ("mntr", 1u), ("scnr", 1u) })
         {
@@ -752,6 +766,18 @@ public sealed class PdfConsumerTests
         }
 
         public override float[] FromCieXyz(float[] xyz) => [0.25f, 0.5f, 0.75f];
+    }
+
+    // A public-override space whose CIE XYZ conversions are the identity.
+    private sealed class IdentityCieXyzSpace : DripSharp.Runtime.JavaColorSpace
+    {
+        public IdentityCieXyzSpace() : base(0, TYPE_RGB, 3)
+        {
+        }
+
+        public override float[] ToCieXyz(float[] components) => (float[])components.Clone();
+
+        public override float[] FromCieXyz(float[] xyz) => (float[])xyz.Clone();
     }
 
     // Every colour is sRGB red in D50 XYZ; its toRGB is the identity.
