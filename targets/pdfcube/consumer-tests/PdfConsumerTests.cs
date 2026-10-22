@@ -8829,13 +8829,10 @@ public sealed class PathIteratorTests
     // cell's hole at PDF y 689.9..699.62, x 103.02..314.94; the clip set for
     // it must leave the hole out.
     //
-    // Pixels are what PdfCarton renders now, not yet what Java PDFBox 3.0.8
-    // renders. Java leaves row 142 (x 103..314) white and paints row 182,
-    // the top edge of the 'Ethyl benzene' cell, all #ffcc9a. PdfCarton's
-    // aliased cell fills now leave row 142 to the frame as Java's do, but it
-    // antialiases its clips, so the hole shows as a #ffe5cc seam on row 142
-    // and a #ffd9b3 seam on row 182 (dripsharp-91 tracks clipping by pixel
-    // centres). Without the hole those rows would be #ffcc9a.
+    // As Java PDFBox 3.0.8 renders it, row 142 (x 103..314) stays white and
+    // row 182, the top edge of the 'Ethyl benzene' cell, is all #ffcc9a:
+    // the frame clips keep whole pixels. Without the hole row 142 would be
+    // #ffcc9a; with antialiased clips both rows showed partly painted seams.
     [Fact]
     public void IntersectedFrameClipsKeepTheirHoles()
     {
@@ -8853,8 +8850,8 @@ public sealed class PathIteratorTests
         using var image = new PDFRenderer(document).RenderImage(2, 1, ImageType.Rgb);
         foreach (var (row, first, count, color) in new[]
                  {
-                     (142, 103, 211, new SKColor(0xff, 0xe5, 0xcc)),
-                     (182, 104, 210, new SKColor(0xff, 0xd9, 0xb3)),
+                     (142, 103, 212, SKColors.White),
+                     (182, 103, 212, new SKColor(0xff, 0xcc, 0x9a)),
                  })
         {
             var wrong = Enumerable.Range(first, count).Where(x => image.GetPixel(x, row) != color).ToArray();
@@ -8862,6 +8859,150 @@ public sealed class PathIteratorTests
                 $"Row {row} differs from {color} at {wrong.Length} pixels from x {wrong.FirstOrDefault()} " +
                 $"({image.GetPixel(wrong.FirstOrDefault(), row)}).");
         }
+    }
+
+    // Java 2D clips whole pixels, never antialiased. The page clips to a
+    // rectangle whose device edges are fractional (x 10.25..19.75, y
+    // 4.2..9.5) and to a triangle, filling red and blue through them; the
+    // expected rows are Java PDFBox 3.0.8's render at scale 1 ('.' white,
+    // 'r' red, 'b' blue). Antialiased clips painted part of a pixel at
+    // every such edge. Java renders the same pixels when the fills multiply,
+    // which PdfCarton composes through an offscreen layer.
+    [Theory]
+    [InlineData("")]
+    [InlineData("/G1 gs ")]
+    public void ClipsKeepWholePixelsAsInJavaPdfBox(string state)
+    {
+        using var document = Loader.LoadPDF((sbyte[])(Array)RasterConversionConsumerTests.SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 24] " +
+            "/Resources << /ExtGState << /G1 << /BM /Multiply >> >> >> /Contents 4 0 R >>",
+            RasterConversionConsumerTests.PdfStream("",
+                $"q {state}10.25 14.5 9.5 5.3 re W n 1 0 0 rg 0 0 40 24 re f Q " +
+                $"q {state}22.3 1.6 m 38.1 6.9 l 25.7 20.2 l h W n 0 0 1 rg 0 0 40 24 re f Q"),
+        ]));
+        string[] java =
+        [
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "..........rrrrrrrrrr....................",
+            "..........rrrrrrrrrr.....b..............",
+            "..........rrrrrrrrrr.....bb.............",
+            "..........rrrrrrrrrr.....bbb............",
+            "..........rrrrrrrrrr.....bbbb...........",
+            "........................bbbbbb..........",
+            "........................bbbbbbb.........",
+            "........................bbbbbbbb........",
+            "........................bbbbbbbbb.......",
+            "........................bbbbbbbbbb......",
+            "........................bbbbbbbbbbb.....",
+            ".......................bbbbbbbbbbbbb....",
+            ".......................bbbbbbbbbbbbbb...",
+            ".......................bbbbbbbbbbbbbb...",
+            ".......................bbbbbbbbbbb......",
+            ".......................bbbbbbbb.........",
+            ".......................bbbbb............",
+            "......................bbb...............",
+            "........................................",
+            "........................................",
+        ];
+        using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
+        var rows = Enumerable.Range(0, image.Height).Select(y => new string(
+            Enumerable.Range(0, image.Width).Select(x => image.GetPixel(x, y) switch
+            {
+                { Red: 255, Green: 255, Blue: 255 } => '.',
+                { Red: 255, Green: 0, Blue: 0 } => 'r',
+                { Red: 0, Green: 0, Blue: 255 } => 'b',
+                _ => '?',
+            }).ToArray())).ToArray();
+        Assert.Equal(java, rows);
+    }
+
+    // Java 2D keeps a Rectangle2D clip that its transform keeps axis-aligned
+    // as a rectangle of the pixels whose centres it holds, [lo, hi), where a
+    // path clip moves its points to floor(v + 1/4) + 1/4 first. Expected
+    // pixels are Java 25's (BufferedImage, antialiasing on).
+    [Fact]
+    public void RectangleClipsKeepThePixelCentresTheyHold()
+    {
+        static string[] Mask(Action<Compat.PdfCartonGraphics2D> clip)
+        {
+            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+                10, 6, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using (var graphics = new Compat.PdfCartonGraphics2D(bitmap))
+            {
+                graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                    Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
+                clip(graphics);
+                graphics.SetTransform(SKMatrix.Identity);
+                graphics.SetColor(SKColors.Red);
+                graphics.FillRect(0, 0, 10, 6);
+            }
+            return Enumerable.Range(0, 6).Select(y => new string(Enumerable.Range(0, 10)
+                .Select(x => bitmap.GetPixel(x, y).Alpha switch { 0 => '.', 255 => '#', _ => '?' })
+                .ToArray())).ToArray();
+        }
+        var flip = new SKMatrix(1.5f, 0, 0.1f, 0, -1.5f, 6.1f, 0, 0, 1);
+        static SKPath RectanglePath(float left, float top, float right, float bottom)
+        {
+            var path = new SKPath();
+            path.AddRect(new SKRect(left, top, right, bottom));
+            return path;
+        }
+
+        // Pixel centres x 2.5 and y 1.5 lie on the left and top edges, inside.
+        Assert.Equal(
+            ["..........", "..###.....", "..###.....", "..........", "..........", ".........."],
+            Mask(graphics => graphics.SetClip(new SKRect(2.5f, 1.5f, 5.5f, 3.49f))));
+        // Device x 1.6..7.6 and y 1.6..5.35, then clipped to x < 7.1; a
+        // rectangle and its clip stay a rectangle, which GetClip returns.
+        Assert.Equal(
+            ["..........", "..........", "..#####...", "..#####...", "..#####...", ".........."],
+            Mask(graphics =>
+            {
+                graphics.SetTransform(flip);
+                graphics.SetClip(new SKRect(1, 0.5f, 5, 3));
+                Assert.IsType<SKRect>(graphics.GetClip());
+                graphics.SetTransform(SKMatrix.Identity);
+                graphics.Clip(new SKRect(0.5f, 0, 7.1f, 6));
+            }));
+        // The same rectangle as a path keeps x 1.25..7.25 and y 1.25..5.25.
+        Assert.Equal(
+            ["..........", ".######...", ".######...", ".######...", ".######...", ".........."],
+            Mask(graphics =>
+            {
+                graphics.SetTransform(flip);
+                using var path = RectanglePath(1, 0.5f, 5, 3);
+                graphics.SetClip(path);
+            }));
+        // Cut by a rectangle, that path clip becomes the rectangle of the
+        // pixels it touches, x 1..8 and y 1..6.
+        Assert.Equal(
+            ["..........", ".#######..", ".#######..", ".#######..", ".#######..", ".#######.."],
+            Mask(graphics =>
+            {
+                graphics.SetTransform(flip);
+                using var path = RectanglePath(1, 0.5f, 5, 3);
+                graphics.SetClip(path);
+                graphics.SetTransform(SKMatrix.Identity);
+                graphics.Clip(new SKRect(0.5f, 0, 7.1f, 6));
+            }));
+        // Java has no inverse fills; an inverse SKPath clip keeps what lies
+        // outside its outline, also after a rectangle holding the outline
+        // cuts it.
+        Assert.Equal(
+            ["..........", ".########.", ".##....##.", ".##....##.", ".########.", ".........."],
+            Mask(graphics =>
+            {
+                using var path = RectanglePath(3, 2, 7, 4);
+                path.FillType = SKPathFillType.InverseWinding;
+                graphics.SetClip(path);
+                graphics.Clip(new SKRect(1, 1, 9, 5));
+            }));
     }
 
     // Skia's path intersection fails (returns false) on a 10,000-segment

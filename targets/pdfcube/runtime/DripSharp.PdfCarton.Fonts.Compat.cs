@@ -5922,6 +5922,12 @@ public class PdfCartonGraphics2D : IDisposable
     private SKMatrix transform = SKMatrix.CreateIdentity();
     // Keep clips in device coordinates so later transforms do not move them.
     private SKPath? clipPath;
+    // The clip's device rectangle while Java 2D would keep it as a rectangle
+    // (PdfCartonAliasedFill.ClipRectangle), else null.
+    private (double Left, double Top, double Right, double Bottom)? clipRectangle;
+    // The device pixels the clip keeps; canvases clip to it without
+    // antialiasing.
+    private SKPath? clipRegion;
 
     protected PdfCartonGraphics2D()
     {
@@ -5984,6 +5990,8 @@ public class PdfCartonGraphics2D : IDisposable
         copy.renderingHints = new PdfCartonRenderingHints(renderingHints);
         copy.transform = transform;
         copy.clipPath = clipPath is null ? null : new SKPath(clipPath);
+        copy.clipRectangle = clipRectangle;
+        copy.clipRegion = clipRegion is null ? null : new SKPath(clipRegion);
         return copy;
     }
 
@@ -6235,28 +6243,30 @@ public class PdfCartonGraphics2D : IDisposable
             RequireCanvas().DrawRect(rectangle, clearPaint);
     }
 
-    public virtual void ClipRect(int x, int y, int width, int height)
-    {
-        using var rectangle = PdfCartonFontCompat.CreatePath(
-            new SKRectI(x, y, x + width, y + height));
-        IntersectClip(rectangle);
-    }
+    public virtual void ClipRect(int x, int y, int width, int height) =>
+        IntersectClip(new SKRectI(x, y, x + width, y + height));
 
     public virtual void SetClip(int x, int y, int width, int height) =>
         SetClip(new SKRectI(x, y, x + width, y + height));
 
     public virtual void SetClip(object? clip)
     {
+        ClearClip();
+        if (clip is not null)
+        {
+            IntersectClip(clip);
+            return;
+        }
         ResetCanvasState();
-        clipPath?.Dispose();
-        clipPath = clip is null ? null : PdfCartonFontCompat.CreatePath(clip);
-        clipPath?.Transform(transform);
-        ApplyUserClip(RequireCanvas());
     }
 
+    // As in Java 2D, a rectangular clip comes back as a Rectangle2D while the
+    // transform keeps it axis-aligned, and any other clip as a path.
     public virtual object? GetClip()
     {
         if (clipPath is null || !transform.TryInvert(out var inverse)) return null;
+        if (clipRectangle is not null && PdfCartonAliasedFill.IsAxisAligned(inverse))
+            return inverse.MapRect(clipPath.Bounds);
         var result = new SKPath(clipPath);
         result.Transform(inverse);
         return result;
@@ -6264,15 +6274,23 @@ public class PdfCartonGraphics2D : IDisposable
 
     public virtual SKRectI GetClipBounds()
     {
-        using var userClip = (SKPath?)GetClip();
-        return userClip is null ? CanvasClipBounds() : PdfCartonFontCompat.PathBounds(userClip);
+        var userClip = GetClip();
+        if (userClip is SKRect rectangle)
+        {
+            return new SKRectI(
+                (int)Math.Floor(rectangle.Left),
+                (int)Math.Floor(rectangle.Top),
+                (int)Math.Ceiling(rectangle.Right),
+                (int)Math.Ceiling(rectangle.Bottom));
+        }
+        using var path = userClip as SKPath;
+        return path is null ? CanvasClipBounds() : PdfCartonFontCompat.PathBounds(path);
     }
 
     public virtual void Clip(object shape)
     {
         ArgumentNullException.ThrowIfNull(shape);
-        using var path = PdfCartonFontCompat.BorrowPath(shape);
-        IntersectClip(path.Path);
+        IntersectClip(shape);
     }
 
     public virtual void CopyArea(
@@ -6572,8 +6590,7 @@ public class PdfCartonGraphics2D : IDisposable
         if (disposed)
             return;
         disposed = true;
-        clipPath?.Dispose();
-        clipPath = null;
+        ClearClip();
         if (canvas is null)
             return;
         canvas.RestoreToCount(restoreCount);
@@ -6986,42 +7003,124 @@ public class PdfCartonGraphics2D : IDisposable
             initialDeviceClip.Top,
             initialDeviceClip.Right,
             initialDeviceClip.Bottom));
-        if (clipPath is not null)
-            layer.ClipPath(clipPath, SKClipOperation.Intersect, IsAntialiasEnabled());
+        if (clipRegion is not null)
+            layer.ClipPath(clipRegion, SKClipOperation.Intersect, antialias: false);
         if (!deviceSpace) layer.Concat(transform);
     }
 
+    // Java 2D never antialiases a clip, so canvases clip to whole pixels.
     private void ApplyUserClip(SKCanvas target)
     {
-        if (clipPath is not null)
+        if (clipRegion is not null)
         {
             var matrix = target.TotalMatrix;
             target.ResetMatrix();
-            target.ClipPath(clipPath, SKClipOperation.Intersect, IsAntialiasEnabled());
+            target.ClipPath(clipRegion, SKClipOperation.Intersect, antialias: false);
             target.SetMatrix(matrix);
         }
     }
 
-    private void IntersectClip(SKPath addition)
+    private void ClearClip()
     {
-        using var deviceAddition = new SKPath(addition);
-        deviceAddition.Transform(transform);
+        clipPath?.Dispose();
+        clipPath = null;
+        clipRectangle = null;
+        clipRegion?.Dispose();
+        clipRegion = null;
+    }
+
+    // Intersects the clip with a user-space shape, following black-box
+    // probes of Java 25's Graphics2D.clip on BufferedImages:
+    // - Without a clip, the shape becomes the clip as setClip would set it.
+    // - A rectangular clip intersected with a Rectangle2D the transform keeps
+    //   axis-aligned stays a rectangle.
+    // - Such a Rectangle2D that holds the whole clip leaves it as it is.
+    // - Otherwise the device shapes are intersected. A rectangular result
+    //   becomes the rectangle of the device pixels it touches, [floor(lo),
+    //   ceil(hi)) on each axis; any other result is rasterised once (see
+    //   PdfCartonAliasedFill.ClipRegion).
+    private void IntersectClip(object shape)
+    {
+        var rectangle = PdfCartonAliasedFill.TryDeviceRectangle(
+            shape, transform, out var left, out var top, out var right, out var bottom);
         if (clipPath is null)
         {
-            clipPath = new SKPath(deviceAddition);
+            if (rectangle)
+            {
+                SetClipRectangle(left, top, right, bottom);
+                return;
+            }
+            var devicePath = PdfCartonFontCompat.CreatePath(shape);
+            devicePath.Transform(transform);
+            SetClipShape(devicePath, PdfCartonAliasedFill.ClipRegion(shape, transform, RegionBounds()));
+            return;
         }
-        else
+        if (rectangle && clipRectangle is { } current)
         {
-            using var intersection = new SKPath();
-            if (!clipPath.Op(deviceAddition, SKPathOp.Intersect, intersection))
-                throw new InvalidOperationException("Unable to intersect graphics clips.");
-            clipPath.Dispose();
-            clipPath = new SKPath(intersection);
+            SetClipRectangle(
+                Math.Max(left, current.Left), Math.Max(top, current.Top),
+                Math.Min(right, current.Right), Math.Min(bottom, current.Bottom));
+            return;
         }
-        RequireCanvas().ClipPath(
-            addition,
-            SKClipOperation.Intersect,
-            IsAntialiasEnabled());
+        // Java has no inverse fills, but an SKPath clip may: its bounds are
+        // those of what it leaves out.
+        var clipBounds = clipPath.Bounds;
+        if (rectangle && !IsInverse(clipPath) && left <= clipBounds.Left && top <= clipBounds.Top &&
+            right >= clipBounds.Right && bottom >= clipBounds.Bottom)
+        {
+            return;
+        }
+        using var lease = PdfCartonFontCompat.BorrowPath(shape);
+        using var deviceAddition = new SKPath(lease.Path);
+        deviceAddition.Transform(transform);
+        var intersection = new SKPath();
+        if (!clipPath.Op(deviceAddition, SKPathOp.Intersect, intersection))
+        {
+            intersection.Dispose();
+            throw new InvalidOperationException("Unable to intersect graphics clips.");
+        }
+        if (!IsInverse(intersection) && intersection.IsRect)
+        {
+            var touched = intersection.GetRect();
+            intersection.Dispose();
+            SetClipRectangle(
+                Math.Floor(touched.Left), Math.Floor(touched.Top),
+                Math.Ceiling(touched.Right), Math.Ceiling(touched.Bottom));
+            return;
+        }
+        SetClipShape(intersection, PdfCartonAliasedFill.ClipRegion(intersection, SKMatrix.Identity, RegionBounds()));
+
+        static bool IsInverse(SKPath path) =>
+            path.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd;
+    }
+
+    // Makes the device rectangle the clip; an empty one keeps nothing.
+    private void SetClipRectangle(double left, double top, double right, double bottom)
+    {
+        if (!(left < right && top < bottom)) left = top = right = bottom = 0;
+        var devicePath = new SKPath();
+        devicePath.AddRect(new SKRect((float)left, (float)top, (float)right, (float)bottom));
+        SetClipShape(devicePath, PdfCartonAliasedFill.ClipRectangle(left, top, right, bottom, RegionBounds()));
+        clipRectangle = (left, top, right, bottom);
+    }
+
+    // Makes the device path, whose pixels are region, the clip; both are
+    // the graphics' own from now on.
+    private void SetClipShape(SKPath devicePath, SKPath region)
+    {
+        ClearClip();
+        clipPath = devicePath;
+        clipRegion = region;
+        ResetCanvasState();
+        ApplyUserClip(RequireCanvas());
+    }
+
+    // The device area a clip region has to describe.
+    private SKRect RegionBounds()
+    {
+        var area = initialDeviceClip;
+        if (bitmap is not null) area = SKRectI.Intersect(area, new SKRectI(0, 0, bitmap.Width, bitmap.Height));
+        return new SKRect(area.Left, area.Top, area.Right, area.Bottom);
     }
 
     private bool IsAntialiasEnabled() =>
@@ -7514,6 +7613,69 @@ internal static class PdfCartonAliasedFill
         return (double)width * width * largest <= 1 + 1e-7;
     }
 
+    // Whether the transform maps axis-aligned rectangles to axis-aligned
+    // rectangles: it scales and translates, possibly swapping the axes.
+    internal static bool IsAxisAligned(SKMatrix transform) =>
+        transform.Persp0 == 0 && transform.Persp1 == 0 &&
+        ((transform.SkewX == 0 && transform.SkewY == 0) || (transform.ScaleX == 0 && transform.ScaleY == 0));
+
+    // Java 2D clips (Graphics2D.setClip, clip and clipRect) are never
+    // antialiased. Black-box probes of Java 25 (setClip or clip on
+    // BufferedImages, then a whole-image fill, while shapes, transforms and
+    // rendering hints varied) show two rules:
+    // - A Rectangle2D that the transform keeps axis-aligned keeps the device
+    //   pixels whose centre lies in [lo, hi) on each axis; one with no area
+    //   keeps none. Intersected with another such rectangle it stays one.
+    // - Any other shape keeps exactly the pixels its aliased translucent fill
+    //   covers (the centre rule above, with points moved to floor(v + 1/4) +
+    //   1/4), which matched Java on 700 random polygons and curves under
+    //   random transforms, antialiasing on or off.
+    // Graphics2D.clip's intersections are described at
+    // PdfCartonGraphics2D.IntersectClip.
+
+    // The device rectangle of a Rectangle2D (SKRect) or Rectangle (SKRectI)
+    // that the transform keeps axis-aligned, or an empty one when it has no
+    // area. False for any other shape or transform.
+    internal static bool TryDeviceRectangle(
+        object shape, SKMatrix transform, out double left, out double top, out double right, out double bottom)
+    {
+        left = top = right = bottom = 0;
+        if (shape is not (SKRect or SKRectI)) return false;
+        var rectangle = shape is SKRect r ? r : (SKRect)(SKRectI)shape;
+        if (!(rectangle.Width > 0 && rectangle.Height > 0)) return true;
+        if (!IsAxisAligned(transform)) return false;
+        var (x0, y0) = Map(transform, rectangle.Left, rectangle.Top);
+        var (x1, y1) = Map(transform, rectangle.Right, rectangle.Bottom);
+        left = Math.Min(x0, x1);
+        top = Math.Min(y0, y1);
+        right = Math.Max(x0, x1);
+        bottom = Math.Max(y0, y1);
+        return true;
+    }
+
+    // The pixels a rectangular clip keeps (see TryDeviceRectangle), within bounds.
+    internal static SKPath ClipRectangle(double left, double top, double right, double bottom, SKRect bounds)
+    {
+        var result = new SKPath();
+        var x0 = Math.Max(bounds.Left, Math.Ceiling(left - 0.5));
+        var y0 = Math.Max(bounds.Top, Math.Ceiling(top - 0.5));
+        var x1 = Math.Min(bounds.Right, Math.Ceiling(right - 0.5));
+        var y1 = Math.Min(bounds.Bottom, Math.Ceiling(bottom - 0.5));
+        if (x0 < x1 && y0 < y1) result.AddRect(new SKRect((float)x0, (float)y0, (float)x1, (float)y1));
+        return result;
+    }
+
+    // The pixels a clip to any other shape keeps, within bounds, as a path
+    // whose aliased Skia coverage is exactly those pixels.
+    internal static SKPath ClipRegion(object shape, SKMatrix transform, SKRect bounds)
+    {
+        using var devicePath = DevicePath(
+            shape, transform, copiesOpaqueColor: false, thinStroke: false, bounds, out var rectilinear);
+        // Rectilinear points lie at a quarter past a pixel boundary, never on
+        // a pixel centre, so Skia's own sampling agrees with Java's.
+        return rectilinear ? new SKPath(devicePath) : Spans(devicePath, bounds);
+    }
+
     // The shape in device space, placed for Draw. Rectilinear device paths
     // (horizontal and vertical lines only) are drawn directly. Any other
     // shape comes back as lines, its curves flattened as Java 2D flattens
@@ -7524,9 +7686,7 @@ internal static class PdfCartonAliasedFill
         out bool rectilinear)
     {
         rectilinear = true;
-        var axisAligned = transform.Persp0 == 0 && transform.Persp1 == 0 &&
-            ((transform.SkewX == 0 && transform.SkewY == 0) || (transform.ScaleX == 0 && transform.ScaleY == 0));
-        if (axisAligned && shape is SKRect or SKRectI)
+        if (IsAxisAligned(transform) && shape is SKRect or SKRectI)
         {
             var rectangle = shape is SKRect r ? r : (SKRect)(SKRectI)shape;
             var result = new SKPath();
