@@ -1981,33 +1981,53 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
-    // Aliased fillArc against Java 2D's masks (OpenJDK 25, 56x56
-    // TYPE_INT_ARGB, antialiasing off, red), given as "row:start,end,..."
-    // spans. Java chooses boundary pixels by rules PdfCarton does not follow
-    // yet, and they differ between an opaque and a translucent colour, so a
-    // pixel may differ from Java only within a pixel of the boundary of one of
-    // Java's two masks, and at most the given number of them. A pie mirrored
-    // about the horizontal axis, as arcs were drawn before, misses hundreds.
+    // Aliased fillArc covers exactly the pixels Java 2D does: Java fills the
+    // Arc2D.PIE path like any other shape (its masks equal those of
+    // fill(new Path2D.Double(arc))), so PdfCartonAliasedFill's rules apply.
+    // Masks are Java 2D's (OpenJDK 25, black-box probe, 56x56 TYPE_INT_ARGB,
+    // antialiasing off, red at alpha 255 and 128), given as
+    // "row:start,end,..." spans. Before the aliased rules, 26 to 90 boundary
+    // pixels of the first and last fixtures differed; a pie mirrored about
+    // the horizontal axis, as arcs were drawn before that, misses hundreds.
     [Theory]
-    [InlineData(3, 4, 50, 37, 30, 120, 44, 26,
-        "5:21,36 6:17,40 7:15,42 8:13,44 9:11,46 10:10,47 11:9,48 12:8,49 13:7,50 14:9,48 15:11,46 " +
-        "16:13,44 17:16,41 18:18,39 19:20,37 20:23,34 21:25,32 22:27,30",
-        "4:27,30 5:22,35 6:16,40 7:14,42 8:12,43 9:10,44 10:9,46 11:8,47 12:7,48 13:7,49 14:9,46 " +
-        "15:12,44 16:14,42 17:17,39 18:19,37 19:22,35 20:24,32 21:26,30")]
-    [InlineData(1, 1, 52, 52, 10, 359, 90, 75,
-        "1:27,28 2:21,34 3:18,37 4:16,39 5:14,41 6:12,43 7:11,44 8:10,45 9:9,46 10:8,47 11:7,48 " +
-        "12:6,49 13:6,49 14:5,50 15:5,50 16:4,51 17:4,51 18:3,52 19:3,52 20:3,52 21:2,53 22:2,53 " +
-        "23:2,50 24:2,45,46,53 25:2,39,40,53 26:2,33,34,53 27:1,54 28:2,53 29:2,53 30:2,53 31:2,53 " +
-        "32:2,53 33:2,53 34:3,52 35:3,52 36:3,52 37:4,51 38:4,51 39:5,50 40:5,50 41:6,49 42:6,49 " +
-        "43:7,48 44:8,47 45:9,46 46:10,45 47:11,44 48:12,43 49:14,41 50:16,39 51:18,37 52:21,34 53:27,28",
-        "1:22,32 2:19,35 3:16,37 4:14,39 5:12,41 6:11,43 7:10,43 8:9,44 9:8,45 10:7,46 11:6,47 " +
-        "12:5,48 13:5,49 14:4,49 15:4,50 16:4,50 17:3,50 18:3,51 19:2,51 20:2,52 21:2,52 22:2,51 " +
-        "23:1,46,51,52 24:1,41,44,52 25:1,36,38,52 26:1,31,32,52 27:1,52 28:1,52 29:1,52 30:1,52 " +
-        "31:1,52 32:2,52 33:2,52 34:3,51 35:3,51 36:3,50 37:4,50 38:4,50 39:4,49 40:5,49 41:6,48 " +
-        "42:7,48 43:8,46 44:9,45 45:10,44 46:10,43 47:11,42 48:13,41 49:15,39 50:18,36 51:20,33")]
+    [InlineData(3, 4, 50, 37, 30, 120,
+        "5:21,36 6:17,40 7:15,42 8:13,44 9:11,46 10:10,47 11:9,48 12:8,49 13:7,50 14:9,48 " +
+        "15:11,46 16:13,44 17:16,41 18:18,39 19:20,37 20:23,34 21:25,32 22:27,30",
+        "4:27,30 5:22,35 6:16,40 7:14,42 8:12,43 9:10,44 10:9,46 11:8,47 12:7,48 13:7,49 " +
+        "14:9,46 15:12,44 16:14,42 17:17,39 18:19,37 19:22,35 20:24,32 21:26,30")]
+    [InlineData(2, 5, 41, 44, -45, 250,
+        "6:17,29 7:14,32 8:13,33 9:11,35 10:10,36 11:9,37 12:8,38 13:7,39 14:6,40 15:6,40 " +
+        "16:5,41 17:5,41 18:4,42 19:4,42 20:4,42 21:3,43 22:3,43 23:3,43 24:3,43 25:3,43 " +
+        "26:3,43 27:2,43 28:3,21,24,43 29:3,19,25,43 30:3,17,26,43 31:3,15,27,43 " +
+        "32:3,13,28,43 33:3,11,29,43 34:4,9,30,42 35:4,7,30,42 36:4,5,31,42 37:32,41 " +
+        "38:33,41 39:34,40 40:35,40 41:36,39 42:37,38",
+        "5:18,26 6:15,29 7:13,31 8:11,33 9:10,34 10:9,35 11:8,36 12:7,37 13:6,38 14:5,39 " +
+        "15:5,39 16:5,40 17:4,40 18:4,41 19:3,41 20:3,42 21:3,42 22:3,42 23:3,42 24:3,42 " +
+        "25:2,43 26:2,43 27:2,43 28:2,20,23,43 29:3,18,24,43 30:3,16,25,42 31:3,14,26,42 " +
+        "32:3,12,27,42 33:4,10,28,42 34:4,8,29,42 35:4,6,30,41 36:31,41 37:32,40 38:33,40 " +
+        "39:34,39 40:35,38 41:36,38")]
+    [InlineData(6, 1, 38, 50, 100, -70,
+        "1:25,26 2:22,31 3:22,33 4:23,34 5:23,36 6:23,37 7:23,38 8:23,39 9:23,39 10:23,40 " +
+        "11:23,41 12:24,41 13:24,42 14:24,41 15:24,40 16:24,39 17:24,37 18:24,36 19:25,35 " +
+        "20:25,33 21:25,32 22:25,31 23:25,29 24:25,28 25:25,27",
+        "1:21,28 2:21,31 3:22,33 4:22,34 5:22,35 6:22,37 7:22,38 8:22,38 9:23,39 10:23,40 " +
+        "11:23,40 12:23,41 13:23,41 14:23,40 15:24,38 16:24,37 17:24,36 18:24,35 19:24,34 " +
+        "20:24,32 21:24,31 22:25,30 23:25,29 24:25,27 25:25,26")]
+    [InlineData(1, 1, 52, 52, 10, 359,
+        "1:27,28 2:21,34 3:18,37 4:16,39 5:14,41 6:12,43 7:11,44 8:10,45 9:9,46 10:8,47 " +
+        "11:7,48 12:6,49 13:6,49 14:5,50 15:5,50 16:4,51 17:4,51 18:3,52 19:3,52 20:3,52 " +
+        "21:2,53 22:2,53 23:2,50 24:2,45,46,53 25:2,39,40,53 26:2,33,34,53 27:1,54 28:2,53 " +
+        "29:2,53 30:2,53 31:2,53 32:2,53 33:2,53 34:3,52 35:3,52 36:3,52 37:4,51 38:4,51 " +
+        "39:5,50 40:5,50 41:6,49 42:6,49 43:7,48 44:8,47 45:9,46 46:10,45 47:11,44 48:12,43 " +
+        "49:14,41 50:16,39 51:18,37 52:21,34 53:27,28",
+        "1:22,32 2:19,35 3:16,37 4:14,39 5:12,41 6:11,43 7:10,43 8:9,44 9:8,45 10:7,46 " +
+        "11:6,47 12:5,48 13:5,49 14:4,49 15:4,50 16:4,50 17:3,50 18:3,51 19:2,51 20:2,52 " +
+        "21:2,52 22:2,51 23:1,46,51,52 24:1,41,44,52 25:1,36,38,52 26:1,31,32,52 27:1,52 " +
+        "28:1,52 29:1,52 30:1,52 31:1,52 32:2,52 33:2,52 34:3,51 35:3,51 36:3,50 37:4,50 " +
+        "38:4,50 39:4,49 40:5,49 41:6,48 42:7,48 43:8,46 44:9,45 45:10,44 46:10,43 47:11,42 " +
+        "48:13,41 49:15,39 50:18,36 51:20,33")]
     public void AliasedArcsFillLikeJava2D(
-        int x, int y, int width, int height, int start, int extent,
-        int maxOpaqueDiffering, int maxTranslucentDiffering, string opaqueSpans, string translucentSpans)
+        int x, int y, int width, int height, int start, int extent, string opaqueSpans, string translucentSpans)
     {
         const int size = 56;
         static bool[,] Mask(string spans)
@@ -2024,20 +2044,7 @@ public sealed class RasterConversionConsumerTests
             return mask;
         }
 
-        static bool NearBoundary(bool[,] mask, int row, int column)
-        {
-            for (var nearRow = Math.Max(0, row - 1); nearRow <= Math.Min(size - 1, row + 1); nearRow++)
-                for (var nearColumn = Math.Max(0, column - 1); nearColumn <= Math.Min(size - 1, column + 1); nearColumn++)
-                    if (mask[nearRow, nearColumn] != mask[row, column]) return true;
-            return false;
-        }
-
-        var opaque = Mask(opaqueSpans);
-        var translucent = Mask(translucentSpans);
-        foreach (var (alpha, expected, maxDiffering) in new[]
-                 {
-                     (255, opaque, maxOpaqueDiffering), (128, translucent, maxTranslucentDiffering),
-                 })
+        foreach (var (alpha, expected) in new[] { (255, Mask(opaqueSpans)), (128, Mask(translucentSpans)) })
         {
             using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
                 size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
@@ -2052,13 +2059,9 @@ public sealed class RasterConversionConsumerTests
             var differing = new List<string>();
             for (var row = 0; row < size; row++)
                 for (var column = 0; column < size; column++)
-                {
-                    if ((bitmap.GetPixel(column, row).Alpha != 0) == expected[row, column]) continue;
-                    differing.Add($"({column},{row})");
-                    Assert.True(NearBoundary(opaque, row, column) || NearBoundary(translucent, row, column),
-                        $"Alpha {alpha}: ({column},{row}) differs away from Java's boundaries.");
-                }
-            Assert.True(differing.Count <= maxDiffering,
+                    if ((bitmap.GetPixel(column, row).Alpha != 0) != expected[row, column])
+                        differing.Add($"({column},{row})");
+            Assert.True(differing.Count == 0,
                 $"Alpha {alpha}: {differing.Count} pixels differ: {string.Join(" ", differing)}");
         }
     }
