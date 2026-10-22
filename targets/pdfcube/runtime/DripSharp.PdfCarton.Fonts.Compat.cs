@@ -6752,6 +6752,13 @@ public class PdfCartonGraphics2D : IDisposable
         result.Shader = shader;
         result.IsStroke = stroked;
         result.IsAntialias = IsAntialiasEnabled();
+        // Java 2D draws an aliased BasicStroke at most one device pixel wide
+        // (PdfCartonAliasedFill.IsThin) exactly as a zero-width one, dashes
+        // included (black-box probes of Java 25 on random paths, transforms,
+        // caps and joins); Skia would let it drop out between pixel centres.
+        if (stroked && bitmap is not null && !result.IsAntialias &&
+            PdfCartonAliasedFill.IsThin(basicStroke.Width, transform))
+            result.StrokeWidth = 0;
         return result;
     }
 
@@ -7192,11 +7199,15 @@ public class PdfCartonGraphics2D : IDisposable
         return outline;
     }
 
+    // A BufferedImage's Java 2D graphics draws aliased unless KEY_ANTIALIASING
+    // is VALUE_ANTIALIAS_ON (black-box probes of Java 25: fills and strokes
+    // with no hint match VALUE_ANTIALIAS_OFF pixel for pixel). A canvas given
+    // directly (an SVG or PDF document canvas, say) has no Java counterpart
+    // and keeps its exact, antialiased geometry unless told otherwise.
     private bool IsAntialiasEnabled() =>
-        !ReferenceEquals(
-            renderingHints.GetValueOrDefault(
-                PdfCartonRenderingHints.KEY_ANTIALIASING),
-            PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+        renderingHints.GetValueOrDefault(PdfCartonRenderingHints.KEY_ANTIALIASING) is var hint &&
+        (ReferenceEquals(hint, PdfCartonRenderingHints.VALUE_ANTIALIAS_ON) ||
+         (bitmap is null && !ReferenceEquals(hint, PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF)));
 
     private void ApplyFallbackComposite(SKPaint drawingPaint)
     {

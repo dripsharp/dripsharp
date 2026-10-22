@@ -2263,6 +2263,94 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // Without a KEY_ANTIALIASING hint Java 2D draws aliased. On a fresh
+    // TYPE_INT_ARGB image, Java (OpenJDK 25) fills the path (0,0)-(6.3,0)-
+    // (6.3,2)-(0,2) in opaque red over columns 0..6 of rows 0..1 exactly;
+    // fills and strokes with no hint match VALUE_ANTIALIAS_OFF pixel for pixel.
+    [Fact]
+    public void GraphicsWithoutAntialiasingHintDrawAliasedLikeJava2D()
+    {
+#pragma warning disable CS0618
+        using var path = new SKPath();
+        path.MoveTo(0, 0);
+        path.LineTo(6.3f, 0);
+        path.LineTo(6.3f, 2);
+        path.LineTo(0, 2);
+        path.Close();
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(16, 16, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using (var graphics = new Compat.PdfCartonGraphics2D(image))
+        {
+            graphics.SetColor(new SKColor(255, 0, 0));
+            graphics.Fill(path);
+        }
+        for (var y = 0; y < 16; y++)
+            for (var x = 0; x < 16; x++)
+                Assert.Equal(x <= 6 && y <= 1 ? (uint)0xffff0000 : 0u, (uint)image.GetPixel(x, y));
+
+        // An aliased stroke at most a device pixel wide draws as a zero-width
+        // one: Java covers row 8, columns 2..28, for BasicStroke(0.5f) from
+        // (2, 8.1) to (28, 8.1), where a 0.5 px band holds no pixel centre.
+        using var line = new SKPath();
+        line.MoveTo(2, 8.1f);
+        line.LineTo(28, 8.1f);
+        var thin = ArgbMask(32, null, graphics =>
+        {
+            graphics.SetStroke(new Compat.JavaBasicStroke(0.5f));
+            graphics.Draw(line);
+        });
+        for (var y = 0; y < 32; y++)
+            for (var x = 0; x < 32; x++)
+                Assert.Equal(y == 8 && x is >= 2 and <= 28 ? (uint)0xffff0000 : 0u, thin[y * 32 + x]);
+
+        using var curve = new SKPath();
+        curve.MoveTo(3.2f, 1.7f);
+        curve.QuadTo(29.4f, 4.1f, 17.3f, 26.6f);
+        curve.LineTo(1.9f, 21.25f);
+        curve.Close();
+#pragma warning restore CS0618
+        foreach (var width in new[] { 0f, 0.6f, 1f, 2.35f })
+        {
+            Action<Compat.PdfCartonGraphics2D> draw = graphics =>
+            {
+                graphics.SetTransform(new SKMatrix(1.1f, -0.25f, 0.4f, 0.3f, 0.95f, 0.15f, 0, 0, 1));
+                graphics.SetStroke(new Compat.JavaBasicStroke(width));
+                graphics.Draw(curve);
+                graphics.Fill(new SKRect(20.3f, 2.6f, 27.45f, 9.1f));
+            };
+            Assert.Equal(ArgbMask(32, null, draw), ArgbMask(32, Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF, draw));
+            Assert.NotEqual(ArgbMask(32, null, draw), ArgbMask(32, Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON, draw));
+        }
+
+        // Java draws an opaque 7x5 image under translate(20, 20), rotate(0.5),
+        // scale(3, 3) at (-3, -2) as 316 fully opaque pixels and no partial
+        // ones, whatever the hints.
+        using var tile = Compat.PdfCartonFontCompat.CreateBitmap(7, 5, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        tile.Erase(SKColors.Red);
+        Action<Compat.PdfCartonGraphics2D> drawImage = graphics =>
+        {
+            graphics.Transform(SKMatrix.CreateTranslation(20, 20)
+                .PreConcat(SKMatrix.CreateRotation(0.5f)).PreConcat(SKMatrix.CreateScale(3, 3)));
+            graphics.DrawImage(tile, -3, -2, null);
+        };
+        var drawn = ArgbMask(40, null, drawImage);
+        Assert.Equal(316, drawn.Count(pixel => pixel >> 24 == 255));
+        Assert.Equal(316, drawn.Count(pixel => pixel != 0));
+        Assert.Equal(drawn, ArgbMask(40, Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF, drawImage));
+    }
+
+    private static uint[] ArgbMask(int size, object? antialiasing, Action<Compat.PdfCartonGraphics2D> draw)
+    {
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using (var graphics = new Compat.PdfCartonGraphics2D(image))
+        {
+            if (antialiasing is not null)
+                graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING, antialiasing);
+            graphics.SetColor(new SKColor(255, 0, 0));
+            draw(graphics);
+        }
+        return image.Pixels.Select(pixel => (uint)pixel).ToArray();
+    }
+
     // Java has no conics; an aliased fill follows a Skia conic as the four
     // quadratics SKPath.ConvertConicToQuads gives, chained and snapped like
     // any other quadratics, at any scale and for both sampling rules.
