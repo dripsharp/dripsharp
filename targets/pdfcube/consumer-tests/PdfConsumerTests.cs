@@ -5600,7 +5600,7 @@ public sealed class ImageCodecAdapterTests
     [InlineData(false, "first unspecified")]
     [InlineData(true, "first unspecified")]
     [InlineData(true, "reserved marker")]
-    public void JpxTilePartsBeyondAnUndercountingTNsotAreDecoded(bool packedHeaders, string variant)
+    public async Task JpxTilePartsBeyondAnUndercountingTNsotAreDecoded(bool packedHeaders, string variant)
     {
         const int width = 40, height = 16;
         var samples = new int[width * height];
@@ -5649,27 +5649,82 @@ public sealed class ImageCodecAdapterTests
             return;
         }
         Assert.Equal(samples, Decoded(undercounting));
-        if (packedHeaders || variant != "") return;
+        if (variant != "") return;
 
         // The decoder itself reads the tile-parts past the announced count
         // (the CoreJ2K 0383d9f backport), without the adapter's correction.
-        using (var stream = new MemoryStream(undercounting, writable: false))
-        using (var image = CoreJ2K.J2kImage.FromStream(stream, out _))
+        if (!packedHeaders)
         {
+            using var stream = new MemoryStream(undercounting, writable: false);
+            using var image = CoreJ2K.J2kImage.FromStream(stream, out _);
             var decoded = new int[width * height];
             image.CopyComponentTo(0, decoded);
             Assert.Equal(samples, decoded);
         }
 
         // The last tile-part of each tile carries samples: the codestream
-        // with them cut out no longer decodes losslessly. (Cut out of the PPT
-        // codestream, they leave one the pinned decoder never finishes:
-        // dripsharp-88.)
+        // with them cut out no longer decodes losslessly. Cut out of the PPT
+        // codestream, they leave packet headers for fewer packets than the
+        // tiles have, and reading on past them found only 1 bits: the pinned
+        // decoder read a code-block length indicator without end
+        // (dripsharp-88). With the CoreJ2K acd31f0 backport it gives up on
+        // the packet header, as upstream does, and the decode fails.
         var finest = sots.Where(sot => data[sot + 10] == tileParts - 1).ToArray();
         Assert.Equal(2, finest.Length);
         var withoutLast = undercounting.Where((_, offset) =>
             !finest.Any(sot => offset >= sot && offset < sot + ReadInt(data, sot + 6))).ToArray();
-        Assert.NotEqual(samples, Decoded(withoutLast));
+        var cut = Task.Run(() =>
+        {
+            if (packedHeaders)
+                Assert.Throws<IOException>(() => Decoded(withoutLast));
+            else
+                Assert.NotEqual(samples, Decoded(withoutLast));
+        }, TestContext.Current.CancellationToken);
+        // A decode that never finishes fails here with a TimeoutException.
+        await cut.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+    }
+
+    // A code-block's zero bit-planes are coded in a tag tree (ISO/IEC
+    // 15444-1 B.10.5), one 0 bit for each plane past the first. A
+    // coefficient has at most a few dozen bit-planes, so a header that goes
+    // on with 0 bits is not a packet header: with the CoreJ2K acd31f0
+    // backport the reader gives up on the tile after 70 (dripsharp-88)
+    // rather than taking a plane count no code-block can have.
+    [Fact]
+    public async Task JpxPacketHeaderWithTooManyZeroBitPlanesFails()
+    {
+        const int size = 16;
+        var samples = new int[size * size];
+        for (var index = 0; index < samples.Length; index++)
+            samples[index] = (index * 37 ^ index / size * 11) & 255;
+        var parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
+        parameters["lossless"] = "on";
+        parameters["Wlev"] = "0";
+        parameters["file_format"] = "off";
+        var data = CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(
+                size, size, 1, 8, new bool[1], [samples.Select(v => v - 128).ToArray()]),
+            null, parameters);
+        int[] Decoded(byte[] jpx)
+        {
+            using var image = Compat.PdfCartonImageCodecs.Decode("JPX", jpx);
+            return Compat.PdfCartonFontCompat.GetRaster(image).GetSamples(0, 0, size, size, 0, null);
+        }
+        Assert.Equal(samples, Decoded(data));
+
+        // One tile-part of one packet: its header follows SOD (FF93).
+        var sod = data.AsSpan().IndexOf(new byte[] { 0xFF, 0x93 });
+        Assert.True(sod > 0 && data.Length - (sod + 2) > 12, "The test needs a longer packet.");
+        var damaged = (byte[])data.Clone();
+        // Bits: the packet is not empty, the code-block is included, then
+        // over a hundred 0 bits of its zero bit-plane tag tree. The pinned
+        // decoder took them as planes and decoded the image.
+        damaged[sod + 2] = 0xC0;
+        damaged.AsSpan(sod + 3, 12).Clear();
+        var decode = Task.Run(
+            () => Assert.Throws<IOException>(() => Decoded(damaged)),
+            TestContext.Current.CancellationToken);
+        await decode.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
     }
 
     // A tile-part may hold no packet (ISO/IEC 15444-1 A.4.2). Two empty
