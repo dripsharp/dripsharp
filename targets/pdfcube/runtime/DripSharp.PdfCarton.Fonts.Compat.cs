@@ -6344,6 +6344,7 @@ public class PdfCartonGraphics2D : IDisposable
     public virtual void FillOval(int x, int y, int width, int height)
         => DrawShape(new JavaEllipse(x, y, width, height), fill: true);
 
+    // Java draws drawArc as an Arc2D.OPEN shape and fillArc as Arc2D.PIE.
     public virtual void DrawArc(
         int x,
         int y,
@@ -6352,11 +6353,7 @@ public class PdfCartonGraphics2D : IDisposable
         int startAngle,
         int arcAngle)
     {
-        using var path = new SKPath();
-        path.AddArc(
-            new SKRect(x, y, x + width, y + height),
-            startAngle,
-            arcAngle);
+        using var path = ArcPath(x, y, width, height, startAngle, arcAngle, pie: false);
         DrawShape(path, fill: false);
     }
 
@@ -6368,15 +6365,62 @@ public class PdfCartonGraphics2D : IDisposable
         int startAngle,
         int arcAngle)
     {
-        using var path = new SKPath();
-        path.MoveTo(x + width / 2f, y + height / 2f);
-        path.ArcTo(
-            new SKRect(x, y, x + width, y + height),
-            startAngle,
-            arcAngle,
-            false);
-        path.Close();
+        using var path = ArcPath(x, y, width, height, startAngle, arcAngle, pie: true);
         DrawShape(path, fill: true);
+    }
+
+    // As java.awt.geom.Arc2D documents, angles are degrees counter-clockwise
+    // on screen, scaled to the frame so that 45 degrees lies on the line to
+    // its upper-right corner, and an extent is limited to one turn. Java
+    // splits the arc into ceil(|extent| / 90) equal cubic Bezier segments with
+    // the usual control distance 4/3 tan(segment / 4); a pie closes through
+    // the centre. A frame with a negative size has no path.
+    private static SKPath ArcPath(
+        double x,
+        double y,
+        double width,
+        double height,
+        double startAngle,
+        double arcAngle,
+        bool pie)
+    {
+        var path = new SKPath();
+        if (width < 0 || height < 0) return path;
+        var radiusX = width / 2;
+        var radiusY = height / 2;
+        var centerX = x + radiusX;
+        var centerY = y + radiusY;
+        var extent = Math.Max(-360, Math.Min(360, arcAngle));
+        var segments = (int)Math.Ceiling(Math.Abs(extent) / 90);
+        var start = startAngle * Math.PI / 180;
+        var step = segments == 0 ? 0 : extent * Math.PI / 180 / segments;
+        var control = 4.0 / 3 * Math.Tan(step / 4);
+        var cos = Math.Cos(start);
+        var sin = Math.Sin(start);
+        path.MoveTo((float)(centerX + radiusX * cos), (float)(centerY - radiusY * sin));
+        for (var segment = 1; segment <= segments; segment++)
+        {
+            var angle = start + segment * step;
+            var nextCos = Math.Cos(angle);
+            var nextSin = Math.Sin(angle);
+            path.CubicTo(
+                (float)(centerX + radiusX * (cos - control * sin)),
+                (float)(centerY - radiusY * (sin + control * cos)),
+                (float)(centerX + radiusX * (nextCos + control * nextSin)),
+                (float)(centerY - radiusY * (nextSin - control * nextCos)),
+                (float)(centerX + radiusX * nextCos),
+                (float)(centerY - radiusY * nextSin));
+            cos = nextCos;
+            sin = nextSin;
+        }
+
+        if (pie)
+        {
+            path.LineTo((float)centerX, (float)centerY);
+            path.Close();
+        }
+
+        return path;
     }
 
     public virtual void DrawRoundRect(

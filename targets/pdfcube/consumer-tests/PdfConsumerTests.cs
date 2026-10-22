@@ -1880,6 +1880,153 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // Graphics.fillArc and drawArc draw Arc2D.PIE and Arc2D.OPEN shapes, whose
+    // angles run counter-clockwise on screen, as ceil(|extent| / 90) equal
+    // cubic segments with the extent limited to one turn. The expected paths
+    // are what Java 2D's (OpenJDK 25) Arc2D path iterator returns for the
+    // same frame and angles; Skia's SVG canvas shows the path PdfCarton draws.
+    [Theory]
+    [InlineData(3, 4, 50, 37, 30, 120, true,
+        "M49.6506 13.25 C45.1848 7.5261 36.9316 4 28 4 C19.0684 4 10.8152 7.5261 6.3494 13.25 L28 22.5 Z")]
+    [InlineData(3, 4, 50, 37, 30, 120, false,
+        "M49.6506 13.25 C45.1848 7.5261 36.9316 4 28 4 C19.0684 4 10.8152 7.5261 6.3494 13.25")]
+    [InlineData(2, 5, 41, 44, -45, 250, true,
+        "M36.9957 42.5563 C44.3504 34.6635 45.0317 22.1106 38.5805 13.3548 C32.1294 4.599 20.5906 2.4155 " +
+        "11.738 8.2754 C2.8854 14.1353 -0.475 26.1812 3.9207 36.2976 L22.5 27 Z")]
+    [InlineData(6, 1, 38, 50, 100, -70, true,
+        "M21.7007 1.3798 C29.5669 -0.4452 37.4607 4.3981 41.4545 13.5 L25 26 Z")]
+    [InlineData(6, 1, 38, 50, 100, -70, false,
+        "M21.7007 1.3798 C29.5669 -0.4452 37.4607 4.3981 41.4545 13.5")]
+    [InlineData(1, 1, 52, 52, 10, 359, true,
+        "M52.605 22.4851 C50.1192 8.3875 36.7053 -1.0487 22.5969 1.3755 C8.4886 3.7998 -1.0061 17.1724 " +
+        "1.3566 31.2912 C3.7193 45.41 17.0503 54.963 31.1793 52.6619 C45.3083 50.3609 54.9193 37.0716 " +
+        "52.6799 22.9327 L27 27 Z")]
+    [InlineData(5, 5, 40, 30, 20, 720, true,
+        "M43.7939 14.8697 C40.016 7.085 28.5392 3.0712 18.1596 5.9046 C7.78 8.738 2.4283 17.3456 6.2061 25.1303 " +
+        "C9.984 32.915 21.4608 36.9288 31.8404 34.0954 C42.22 31.262 47.5717 22.6544 43.7939 14.8697 L25 20 Z")]
+    [InlineData(5, 5, 40, 30, 20, -400, false,
+        "M43.7939 14.8697 C47.5717 22.6544 42.22 31.262 31.8404 34.0954 C21.4608 36.9288 9.984 32.915 6.2061 25.1303 " +
+        "C2.4283 17.3456 7.78 8.738 18.1596 5.9046 C28.5392 3.0712 40.016 7.085 43.7939 14.8697")]
+    [InlineData(5, 5, 40, 30, 0, 91, true,
+        "M45 20 C45 15.9764 42.8447 12.1214 39.0182 9.3012 C35.1917 6.481 30.015 4.9321 24.651 5.0023 L25 20 Z")]
+    [InlineData(45, 5, -40, 30, 0, 120, true, "")]
+    public void ArcsTakeJava2DAngleDirectionAndSegments(
+        int x, int y, int width, int height, int start, int extent, bool fill, string expected)
+    {
+        using var stream = new MemoryStream();
+        using (var canvas = SKSvgCanvas.Create(new SKRect(0, 0, 64, 64), stream))
+        using (var graphics = new Compat.PdfCartonGraphics2D(canvas))
+        {
+            if (fill)
+                graphics.FillArc(x, y, width, height, start, extent);
+            else
+                graphics.DrawArc(x, y, width, height, start, extent);
+        }
+
+        var svg = System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        var paths = System.Text.RegularExpressions.Regex.Matches(svg, " d=\"([^\"]*)\"");
+        Assert.True(paths.Count <= 1, svg);
+        static List<string> Tokens(string data) => System.Text.RegularExpressions.Regex
+            .Matches(data, "[A-Za-z]|-?[0-9.]+(?:[eE][-+]?[0-9]+)?").Select(match => match.Value).ToList();
+        var actual = Tokens(paths.Count == 0 ? "" : paths[0].Groups[1].Value);
+        // Skia's SVG writer spells a close as a line back to the start, then Z.
+        if (actual.Count >= 7 && actual[^1] == "Z" && actual[^4] == "L" &&
+            actual[^3] == actual[1] && actual[^2] == actual[2])
+            actual.RemoveRange(actual.Count - 4, 3);
+        var wanted = Tokens(expected);
+        Assert.True(wanted.Count == actual.Count, $"Expected {expected}, drew {string.Join(" ", actual)}.");
+        for (var index = 0; index < wanted.Count; index++)
+        {
+            var same = char.IsLetter(wanted[index][0])
+                ? wanted[index] == actual[index]
+                : Math.Abs(double.Parse(wanted[index], System.Globalization.CultureInfo.InvariantCulture) -
+                           double.Parse(actual[index], System.Globalization.CultureInfo.InvariantCulture)) <= 1e-3;
+            Assert.True(same, $"Expected {expected}, drew {string.Join(" ", actual)}.");
+        }
+    }
+
+    // Aliased fillArc against Java 2D's masks (OpenJDK 25, 56x56
+    // TYPE_INT_ARGB, antialiasing off, red), given as "row:start,end,..."
+    // spans. Java chooses boundary pixels by rules PdfCarton does not follow
+    // yet, and they differ between an opaque and a translucent colour, so a
+    // pixel may differ from Java only within a pixel of the boundary of one of
+    // Java's two masks, and at most the given number of them. A pie mirrored
+    // about the horizontal axis, as arcs were drawn before, misses hundreds.
+    [Theory]
+    [InlineData(3, 4, 50, 37, 30, 120, 44, 26,
+        "5:21,36 6:17,40 7:15,42 8:13,44 9:11,46 10:10,47 11:9,48 12:8,49 13:7,50 14:9,48 15:11,46 " +
+        "16:13,44 17:16,41 18:18,39 19:20,37 20:23,34 21:25,32 22:27,30",
+        "4:27,30 5:22,35 6:16,40 7:14,42 8:12,43 9:10,44 10:9,46 11:8,47 12:7,48 13:7,49 14:9,46 " +
+        "15:12,44 16:14,42 17:17,39 18:19,37 19:22,35 20:24,32 21:26,30")]
+    [InlineData(1, 1, 52, 52, 10, 359, 90, 75,
+        "1:27,28 2:21,34 3:18,37 4:16,39 5:14,41 6:12,43 7:11,44 8:10,45 9:9,46 10:8,47 11:7,48 " +
+        "12:6,49 13:6,49 14:5,50 15:5,50 16:4,51 17:4,51 18:3,52 19:3,52 20:3,52 21:2,53 22:2,53 " +
+        "23:2,50 24:2,45,46,53 25:2,39,40,53 26:2,33,34,53 27:1,54 28:2,53 29:2,53 30:2,53 31:2,53 " +
+        "32:2,53 33:2,53 34:3,52 35:3,52 36:3,52 37:4,51 38:4,51 39:5,50 40:5,50 41:6,49 42:6,49 " +
+        "43:7,48 44:8,47 45:9,46 46:10,45 47:11,44 48:12,43 49:14,41 50:16,39 51:18,37 52:21,34 53:27,28",
+        "1:22,32 2:19,35 3:16,37 4:14,39 5:12,41 6:11,43 7:10,43 8:9,44 9:8,45 10:7,46 11:6,47 " +
+        "12:5,48 13:5,49 14:4,49 15:4,50 16:4,50 17:3,50 18:3,51 19:2,51 20:2,52 21:2,52 22:2,51 " +
+        "23:1,46,51,52 24:1,41,44,52 25:1,36,38,52 26:1,31,32,52 27:1,52 28:1,52 29:1,52 30:1,52 " +
+        "31:1,52 32:2,52 33:2,52 34:3,51 35:3,51 36:3,50 37:4,50 38:4,50 39:4,49 40:5,49 41:6,48 " +
+        "42:7,48 43:8,46 44:9,45 45:10,44 46:10,43 47:11,42 48:13,41 49:15,39 50:18,36 51:20,33")]
+    public void AliasedArcsFillLikeJava2D(
+        int x, int y, int width, int height, int start, int extent,
+        int maxOpaqueDiffering, int maxTranslucentDiffering, string opaqueSpans, string translucentSpans)
+    {
+        const int size = 56;
+        static bool[,] Mask(string spans)
+        {
+            var mask = new bool[size, size];
+            foreach (var row in spans.Split(' '))
+            {
+                var parts = row.Split(':');
+                var bounds = parts[1].Split(',').Select(int.Parse).ToArray();
+                for (var span = 0; span < bounds.Length; span += 2)
+                    for (var column = bounds[span]; column < bounds[span + 1]; column++)
+                        mask[int.Parse(parts[0]), column] = true;
+            }
+            return mask;
+        }
+
+        static bool NearBoundary(bool[,] mask, int row, int column)
+        {
+            for (var nearRow = Math.Max(0, row - 1); nearRow <= Math.Min(size - 1, row + 1); nearRow++)
+                for (var nearColumn = Math.Max(0, column - 1); nearColumn <= Math.Min(size - 1, column + 1); nearColumn++)
+                    if (mask[nearRow, nearColumn] != mask[row, column]) return true;
+            return false;
+        }
+
+        var opaque = Mask(opaqueSpans);
+        var translucent = Mask(translucentSpans);
+        foreach (var (alpha, expected, maxDiffering) in new[]
+                 {
+                     (255, opaque, maxOpaqueDiffering), (128, translucent, maxTranslucentDiffering),
+                 })
+        {
+            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+                size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using (var graphics = new Compat.PdfCartonGraphics2D(bitmap))
+            {
+                graphics.SetRenderingHint(
+                    Compat.PdfCartonRenderingHints.KEY_ANTIALIASING, Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+                graphics.SetColor(new SKColor(255, 0, 0, (byte)alpha));
+                graphics.FillArc(x, y, width, height, start, extent);
+            }
+
+            var differing = new List<string>();
+            for (var row = 0; row < size; row++)
+                for (var column = 0; column < size; column++)
+                {
+                    if ((bitmap.GetPixel(column, row).Alpha != 0) == expected[row, column]) continue;
+                    differing.Add($"({column},{row})");
+                    Assert.True(NearBoundary(opaque, row, column) || NearBoundary(translucent, row, column),
+                        $"Alpha {alpha}: ({column},{row}) differs away from Java's boundaries.");
+                }
+            Assert.True(differing.Count <= maxDiffering,
+                $"Alpha {alpha}: {differing.Count} pixels differ: {string.Join(" ", differing)}");
+        }
+    }
+
     // JavaTexturePaint fills through a Skia image shader, so it also draws
     // on a canvas without a bitmap. As in java.awt.TexturePaintContext, a
     // device pixel maps its corner to texture position u and takes texel
