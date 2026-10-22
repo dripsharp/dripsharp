@@ -7701,13 +7701,7 @@ public sealed class PathIteratorTests
             Assert.Equal(5, source.VerbCount);
         }
 
-        // 2,500 3x3 squares at a 4-unit pitch, 12,500 segments. (Skia's
-        // path intersection takes a minute or fails at 100,000 segments.)
-        var squares = new System.Text.StringBuilder();
-        for (var y = 0; y < 200; y += 4)
-            for (var x = 0; x < 200; x += 4)
-                squares.Append($"{x} {y} m {x + 3} {y} l {x + 3} {y + 3} l {x} {y + 3} l h\n");
-        using var document = PatternPage(200, $"20 20 160 160 re W n /Pattern cs /P1 scn\n{squares}f");
+        using var document = PatternPage(200, $"20 20 160 160 re W n /Pattern cs /P1 scn\n{LargeSquaresPath()}f");
         using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
             200, 200, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         bitmap.Erase(SKColors.Blue);
@@ -7731,6 +7725,65 @@ public sealed class PathIteratorTests
             Assert.Equal(inside ? SKColors.Red : cleared, bitmap.GetPixel(x, y));
             Assert.Equal(cleared, bitmap.GetPixel(x + 2, y));
         }
+    }
+
+    // A shading pattern's /BBox adds one intersection (intersectShadingBBox),
+    // written over the area's path, which is still the getClip copy: that copy
+    // stays the fill's one copy of the large path. The bounding box is a path
+    // of its own, as PDRectangle.transform makes it in Java, but it has four
+    // points whatever the size of the filled path, and is disposed once
+    // intersected.
+    [Fact]
+    public void ShadingPatternFillWithBBoxUnderAClipCopiesTheLargePathOnce()
+    {
+        using (var box = (SKPath)new PDRectangle(40, 40, 120, 120)
+                   .Transform(new DripSharp.PdfCarton.Util.Matrix(2, 0, 0, -2, 0, 400)))
+        {
+            Assert.Equal(4, box.PointCount);
+            Assert.Equal(5, box.VerbCount);
+        }
+
+        using var document = PatternPage(
+            200, $"20 20 160 160 re W n /Pattern cs /P1 scn\n{LargeSquaresPath()}f",
+            "<< /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /BBox [40 40 160 160] " +
+            "/Coords [0 0 200 0] /Extend [true true] " +
+            "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [1 0 0] /N 1 >> >> >>");
+        using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+            200, 200, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        bitmap.Erase(SKColors.Blue);
+        using (var graphics = new RecordingGraphics(bitmap))
+        {
+            new PDFRenderer(document).RenderPageToGraphics(0, graphics);
+            Assert.Equal(["area in a clip copy"], graphics.Fills);
+            // Not formatted on failure: a disposed SKPath crashes formatting.
+            Assert.Equal(0, graphics.Clips.Count(clip => clip.Handle != IntPtr.Zero));
+        }
+
+        // Squares are painted inside both the clip (20 to 180) and the
+        // bounding box (40 to 160) only. Device row y shows PDF y 199 - y to
+        // 200 - y; squares cover x..x+3 of each 4.
+        var cleared = new SKColor(0, 0, 0, 0);
+        foreach (var (x, y, inside) in new[]
+                 {
+                     (41, 157, true), (101, 101, true), (157, 41, true), (101, 141, true),
+                     (21, 177, false), (177, 21, false), (161, 117, false), (101, 1, false),
+                 })
+        {
+            Assert.Equal(inside ? SKColors.Red : cleared, bitmap.GetPixel(x, y));
+            Assert.Equal(cleared, bitmap.GetPixel(x + 2, y));
+        }
+    }
+
+    // 2,500 3x3 squares at a 4-unit pitch on a 200-unit page, 12,500
+    // segments. (Skia's path intersection takes a minute or fails at 100,000
+    // segments.)
+    private static string LargeSquaresPath()
+    {
+        var squares = new System.Text.StringBuilder();
+        for (var y = 0; y < 200; y += 4)
+            for (var x = 0; x < 200; x += 4)
+                squares.Append($"{x} {y} m {x + 3} {y} l {x + 3} {y + 3} l {x} {y + 3} l h\n");
+        return squares.ToString();
     }
 
     // An intersection of areas keeps their holes, as java.awt.geom.Area does.
@@ -7831,8 +7884,9 @@ public sealed class PathIteratorTests
         }
     }
 
-    // A square page whose content may fill with /P1, a solid red tiling pattern.
-    private static PDDocument PatternPage(int size, string content) =>
+    // A square page whose content may fill with /P1, a solid red tiling
+    // pattern unless another pattern object is given.
+    private static PDDocument PatternPage(int size, string content, string? pattern = null) =>
         Loader.LoadPDF((sbyte[])(Array)RasterConversionConsumerTests.SequentialPdf(
         [
             "<< /Type /Catalog /Pages 2 0 R >>",
@@ -7840,7 +7894,7 @@ public sealed class PathIteratorTests
             $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {size} {size}] " +
             "/Resources << /Pattern << /P1 5 0 R >> >> /Contents 4 0 R >>",
             RasterConversionConsumerTests.PdfStream("", content),
-            RasterConversionConsumerTests.PdfStream(
+            pattern ?? RasterConversionConsumerTests.PdfStream(
                 "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 " +
                 "/Resources << >>", "1 0 0 rg 0 0 10 10 re f"),
         ]));
