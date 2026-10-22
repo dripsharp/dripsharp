@@ -6664,16 +6664,14 @@ public class PdfCartonGraphics2D : IDisposable
         using var normalized = !fill && NormalizesStrokes() ? NormalizedStroke(shape) : null;
         if (normalized is not null)
             shape = normalized;
-        // Skia draws an antialiased stroke at most a device pixel wide as a
-        // hairline with reduced alpha, which leaves the corners of a 1 px
-        // rectangle at 3/4 coverage where Java covers them; a stroke one
-        // device pixel wide is filled as its outline instead.
-        using var outline = !fill && bitmap is not null && IsAntialiasEnabled() ? ThinStrokeOutline(shape) : null;
-        if (outline is not null)
-        {
-            shape = outline;
-            fill = true;
-        }
+        // On a bitmap, an antialiased fill of a path, or of a BasicStroke's
+        // outline, takes Java 2D's coverage (PdfCartonAntialiasedFill). An
+        // axis-aligned Rectangle2D keeps Skia's exact coverage, as in Java,
+        // and a zero-width stroke stays a Skia hairline.
+        if (bitmap is not null && IsAntialiasEnabled() &&
+            (fill ? shape is not (SKRect or SKRectI) : stroke is JavaBasicStroke { Width: > 0 }) &&
+            FillAntialiased(shape, stroked: !fill, paintBounds))
+            return;
 
         if (paint is JavaColor)
         {
@@ -6867,12 +6865,17 @@ public class PdfCartonGraphics2D : IDisposable
 
     // devicePath, when given, is the aliased device-space shape to draw
     // instead of shape (see PdfCartonAliasedFill.Draw).
+    // coverage, when given, is an antialiased device-space mask to draw
+    // instead of shape (see PdfCartonAntialiasedFill.Draw).
     private void RenderPaintLayer(
         SKPath shape, bool stroked, SKPath? devicePath = null, bool rectilinear = false,
-        SKRect? paintBounds = null)
+        SKRect? paintBounds = null, (SKBitmap Mask, SKRectI Bounds)? coverage = null)
     {
-        var deviceSpace = devicePath is not null;
-        var bounds = devicePath is not null
+        var deviceSpace = devicePath is not null || coverage is not null;
+        var bounds = coverage is { Bounds: var maskBounds }
+            ? DrawingBounds(new SKRect(maskBounds.Left, maskBounds.Top, maskBounds.Right, maskBounds.Bottom),
+                stroked, deviceSpace: true)
+            : devicePath is not null
             ? DrawingBounds(PathBounds(devicePath), stroked, deviceSpace: true)
             : DrawingBounds(PathBounds(shape), stroked);
         if (bounds.IsEmpty) return;
@@ -6890,7 +6893,13 @@ public class PdfCartonGraphics2D : IDisposable
         {
             using var shader = texture.CreateShader(
                 deviceSpace ? SKMatrix.Identity : transform, bitmap);
-            if (shader is not null && devicePath is not null)
+            if (shader is not null && coverage is ({ } textureMask, var textureBounds))
+                RenderLayer((layer, _, drawingPaint) =>
+                        PdfCartonAntialiasedFill.Draw(layer, textureMask, textureBounds, drawingPaint),
+                    stroked, imagePaint: false,
+                    new SKRect(textureBounds.Left, textureBounds.Top, textureBounds.Right, textureBounds.Bottom),
+                    shader, deviceSpace: true);
+            else if (shader is not null && devicePath is not null)
                 RenderLayer((layer, _, drawingPaint) =>
                         PdfCartonAliasedFill.Draw(layer, devicePath, drawingPaint, rectilinear),
                     stroked, imagePaint: false, PathBounds(devicePath), shader, deviceSpace: true);
@@ -6937,7 +6946,9 @@ public class PdfCartonGraphics2D : IDisposable
             ConfigureLayerCanvas(maskCanvas, bounds, deviceSpace);
             using var maskPaint = CreateDrawingPaint(stroked);
             maskPaint.Color = SKColors.White;
-            if (devicePath is not null)
+            if (coverage is ({ } coverageMask, var coverageBounds))
+                PdfCartonAntialiasedFill.Draw(maskCanvas, coverageMask, coverageBounds, maskPaint);
+            else if (devicePath is not null)
                 PdfCartonAliasedFill.Draw(maskCanvas, devicePath, maskPaint, rectilinear);
             else
                 maskCanvas.DrawPath(shape, maskPaint);
@@ -7168,34 +7179,62 @@ public class PdfCartonGraphics2D : IDisposable
         return PdfCartonStrokeNormalization.Normalize(lease.Path, transform);
     }
 
-    // The outline of a BasicStroke one device pixel wide (where Skia would
-    // draw a hairline), or null. Thinner strokes stay hairlines: Skia
-    // supersamples a filled path with four subscanlines a pixel, which
-    // quantizes thin outlines more coarsely than its alpha-scaled hairline.
-    private SKPath? ThinStrokeOutline(object shape)
+    // Fills shape, or the outline of the current BasicStroke along it, with
+    // Java 2D's antialiased coverage; false (nothing drawn) for a perspective
+    // transform or an inverse fill.
+    private bool FillAntialiased(object shape, bool stroked, SKRect? paintBounds)
     {
-        if (stroke is not JavaBasicStroke { Width: > 0 } basicStroke ||
-            transform.Persp0 != 0 || transform.Persp1 != 0)
-            return null;
+        if (transform.Persp0 != 0 || transform.Persp1 != 0 || transform.Persp2 != 1)
+            return false;
+        using var lease = PdfCartonFontCompat.BorrowPath(shape);
+        if (lease.Path.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd)
+            return false;
+        using var outline = stroked ? StrokeOutline(lease.Path) : null;
+        using var devicePath = new SKPath(outline ?? lease.Path);
+        devicePath.Transform(transform);
+        var bounds = DrawingBounds(devicePath.Bounds, stroked: false, deviceSpace: true);
+        using var mask = PdfCartonAntialiasedFill.Mask(devicePath, bounds);
+        if (mask is null) return true;
+        var coverage = (mask, bounds);
+        var deviceBounds = new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+        if (paint is JavaColor)
+            RenderLayer(
+                (layer, _, drawingPaint) => PdfCartonAntialiasedFill.Draw(layer, mask, bounds, drawingPaint),
+                stroked: false, imagePaint: false, deviceBounds, deviceSpace: true);
+        else
+            RenderPaintLayer(outline ?? lease.Path, stroked: false, paintBounds: paintBounds, coverage: coverage);
+        return true;
+    }
+
+    // The outline of the current BasicStroke along path, in user space.
+    // Dashes are expanded only within the visible area, as Skia's own
+    // stroking does.
+    private SKPath StrokeOutline(SKPath path)
+    {
+        var basicStroke = (JavaBasicStroke)stroke;
         double a = transform.ScaleX, b = transform.SkewY, c = transform.SkewX, d = transform.ScaleY;
         var scale = Math.Max(Math.Sqrt(a * a + b * b), Math.Sqrt(c * c + d * d));
-        if (!(Math.Abs(scale * basicStroke.Width - 1) <= 0.001))
-            return null;
-        // Dashes are expanded only within the visible area, as Skia's own
-        // stroking does.
-        var clip = DrawingBounds(null, stroked: false);
-        if (clip.IsEmpty)
-            return new SKPath();
-        if (!transform.TryInvert(out var inverse))
-            return null;
-        var cull = inverse.MapRect(new SKRect(clip.Left, clip.Top, clip.Right, clip.Bottom));
-        var margin = (float)(basicStroke.Width * Math.Max(basicStroke.MiterLimit, 2) + 1 / scale);
-        cull.Inflate(margin, margin);
-        using var lease = PdfCartonFontCompat.BorrowPath(shape);
-        using var strokePaint = basicStroke.CreateSkiaPaint();
+        // Skia's offset curves at 8 times the device resolution came closer
+        // to Java's on random curved strokes (total alpha difference 10639
+        // -> 6928 over 60 cases) than at the device resolution.
+        var resolution = (float)Math.Max(1, scale) * 8;
         var outline = new SKPath();
-        if (!strokePaint.GetFillPath(lease.Path, outline, cull, (float)Math.Max(1, scale)))
-            outline.Reset();
+        var clip = DrawingBounds(null, stroked: false);
+        if (clip.IsEmpty) return outline;
+        using var strokePaint = basicStroke.CreateSkiaPaint();
+        bool stroked;
+        if (transform.TryInvert(out var inverse))
+        {
+            var cull = inverse.MapRect(new SKRect(clip.Left, clip.Top, clip.Right, clip.Bottom));
+            var margin = (float)(basicStroke.Width * Math.Max(basicStroke.MiterLimit, 2) + 1 / scale);
+            cull.Inflate(margin, margin);
+            stroked = strokePaint.GetFillPath(path, outline, cull, resolution);
+        }
+        else
+        {
+            stroked = strokePaint.GetFillPath(path, outline, resolution);
+        }
+        if (!stroked) outline.Reset();
         return outline;
     }
 
@@ -8339,6 +8378,355 @@ internal static class PdfCartonAliasedFill
     private static (double X, double Y) Map(SKMatrix m, float x, float y) =>
         ((double)m.ScaleX * x + (double)m.SkewX * y + m.TransX,
          (double)m.SkewY * x + (double)m.ScaleY * y + m.TransY);
+}
+
+// The coverage Java 2D gives an antialiased fill of a path (any shape but an
+// axis-aligned Rectangle2D, whose coverage is its exact area as in Skia), and
+// so of an antialiased BasicStroke's outline. Inferred from black-box probes
+// of OpenJDK 25 filling paths with opaque black on TYPE_INT_ARGB images and
+// reading the alpha back; no JDK source was read:
+// - Sliding a horizontal edge down a pixel in 1/256 pixel steps changes the
+//   alpha in 8 steps, at offsets 1/16 + k/8: each pixel row is sampled on 8
+//   subscanlines at y = row + (2k + 1)/16, and a subscanline is inside an
+//   edge from its top (included) to its bottom (excluded).
+// - Sliding a vertical edge in 1/2048 pixel steps changes the alpha by one
+//   every 1/256 pixel, at offsets (k + 1/2)/256 (a half rounds down): along
+//   a subscanline the inside spans start and end at the crossing x rounded
+//   to 1/256 pixel, and each pixel gets the exact length of span it holds.
+// - With T the sum of a pixel's span lengths over its 8 subscanlines in
+//   1/256 pixel (0..2048), the alpha is (255 T + 512) / 2048 rounded down:
+//   fitted on edges giving 1..8 subscanlines and every 1/256 position.
+// This matched Java exactly, every pixel, on 400 random self-intersecting
+// polygons (non-zero winding). Curves are cut into lines first: a quadratic
+// into n equal parameter steps, n the least power of two with
+// 4 (|x0 - 2x1 + x2| + |y0 - 2y1 + y2|) <= n^2 (fitted on 320 random
+// quadratics, all exact). A cubic is stepped adaptively, halving the step
+// while the second difference ahead exceeds a pixel (summed over the axes)
+// and doubling it while that falls below a quarter (the third difference
+// bounded too); this matched about half of 100 random cubics exactly and the
+// rest within a few pixels.
+internal static class PdfCartonAntialiasedFill
+{
+    private const int Subscanlines = 8;
+
+    [ThreadStatic] private static int[]? cover;
+    [ThreadStatic] private static int[]? delta;
+    [ThreadStatic] private static byte[]? row;
+    [ThreadStatic] private static Edge[]? edges;
+    [ThreadStatic] private static Crossing[]? crossings;
+    [ThreadStatic] private static int[]? active;
+
+    private struct Edge
+    {
+        public double X0, Y0, X1, Y1, Slope;
+        public int Winding;
+    }
+
+    private struct Crossing
+    {
+        public double X;
+        public int Winding;
+    }
+
+    // The Java 2D coverage of a device-space path within bounds, as an
+    // Alpha8 bitmap placed at bounds' top-left corner, or null when the
+    // path covers no pixel there. Inverse fill types are not handled.
+    internal static SKBitmap? Mask(SKPath devicePath, SKRectI bounds)
+    {
+        if (bounds.IsEmpty) return null;
+        int top = bounds.Top, bottom = bounds.Bottom, left = bounds.Left, right = bounds.Right;
+        var count = Flatten(devicePath, top, bottom);
+        if (count == 0) return null;
+        var evenOdd = devicePath.FillType == SKPathFillType.EvenOdd;
+        var list = edges!;
+        Array.Sort(list, 0, count, EdgeOrder.Instance);
+
+        var width = right - left;
+        var height = bottom - top;
+        cover = Grow(cover, width + 1);
+        delta = Grow(delta, width + 1);
+        row = Grow(row, width);
+        active = Grow(active, count);
+        crossings = Grow(crossings, count);
+        Array.Clear(cover, 0, width + 1);
+        Array.Clear(delta, 0, width + 1);
+        var mask = new SKBitmap(new SKImageInfo(width, height, SKColorType.Alpha8, SKAlphaType.Premul));
+        mask.Erase(SKColors.Transparent);
+        var pixels = mask.GetPixels();
+        var rowBytes = mask.RowBytes;
+        var any = false;
+        var next = 0;
+        var activeCount = 0;
+        double minimum = left * 256.0, maximum = right * 256.0;
+        for (var y = top; y < bottom; y++)
+        {
+            for (var sub = 0; sub < Subscanlines; sub++)
+            {
+                var sample = y + (2 * sub + 1) / (2.0 * Subscanlines);
+                while (next < count && list[next].Y0 <= sample)
+                    active[activeCount++] = next++;
+                var crossingCount = 0;
+                var kept = 0;
+                for (var index = 0; index < activeCount; index++)
+                {
+                    ref var edge = ref list[active[index]];
+                    if (edge.Y1 <= sample) continue;
+                    active[kept++] = active[index];
+                    crossings[crossingCount++] = new Crossing
+                    {
+                        X = edge.X0 + (sample - edge.Y0) * edge.Slope,
+                        Winding = edge.Winding
+                    };
+                }
+                activeCount = kept;
+                if (crossingCount < 2) continue;
+                SortCrossings(crossings, crossingCount);
+                var winding = 0;
+                var start = 0.0;
+                for (var index = 0; index < crossingCount; index++)
+                {
+                    var wasInside = evenOdd ? (winding & 1) != 0 : winding != 0;
+                    winding += crossings[index].Winding;
+                    var inside = evenOdd ? (winding & 1) != 0 : winding != 0;
+                    if (inside == wasInside) continue;
+                    if (inside)
+                    {
+                        start = crossings[index].X;
+                        continue;
+                    }
+                    var from = Quantize(start, minimum, maximum) - left * 256;
+                    var to = Quantize(crossings[index].X, minimum, maximum) - left * 256;
+                    if (to <= from) continue;
+                    any = true;
+                    int first = from >> 8, last = to >> 8;
+                    if (first == last)
+                    {
+                        cover[first] += to - from;
+                        continue;
+                    }
+                    cover[first] += 256 - (from & 255);
+                    delta[first + 1] += 256;
+                    delta[last] -= 256;
+                    cover[last] += to & 255;
+                }
+            }
+            var run = 0;
+            for (var x = 0; x < width; x++)
+            {
+                run += delta[x];
+                var total = run + cover[x];
+                row[x] = (byte)((total * 255 + 512) >> 11);
+            }
+            Array.Clear(cover, 0, width + 1);
+            Array.Clear(delta, 0, width + 1);
+            Marshal.Copy(row, 0, pixels + (y - top) * rowBytes, width);
+            if (next >= count && activeCount == 0) break;
+        }
+        if (!any)
+        {
+            mask.Dispose();
+            return null;
+        }
+        mask.NotifyPixelsChanged();
+        return mask;
+    }
+
+    // Draws a Mask placed at bounds' top-left corner on a canvas whose matrix
+    // maps device coordinates (an offset at most): its alpha is the coverage
+    // of the paint's colour or shader.
+    internal static void Draw(SKCanvas canvas, SKBitmap mask, SKRectI bounds, SKPaint paint)
+    {
+        using var pixmap = mask.PeekPixels();
+        using var image = SKImage.FromPixels(pixmap);
+        canvas.DrawImage(image, bounds.Left, bounds.Top, paint);
+    }
+
+    // The crossing x in 1/256 pixel, a half rounding down, kept within the mask.
+    private static int Quantize(double x, double minimum, double maximum)
+    {
+        var scaled = Math.Ceiling(x * 256 - 0.5);
+        return (int)(scaled < minimum ? minimum : scaled > maximum ? maximum : scaled);
+    }
+
+    // Insertion sort for the few crossings of most rows; a path with many
+    // edges on one row (a long zigzag, say) is sorted in n log n.
+    private static void SortCrossings(Crossing[] values, int count)
+    {
+        if (count > 32)
+        {
+            Array.Sort(values, 0, count, CrossingOrder.Instance);
+            return;
+        }
+        for (var index = 1; index < count; index++)
+        {
+            var value = values[index];
+            var position = index - 1;
+            while (position >= 0 && values[position].X > value.X)
+            {
+                values[position + 1] = values[position];
+                position--;
+            }
+            values[position + 1] = value;
+        }
+    }
+
+    private static T[] Grow<T>(T[]? array, int length) =>
+        array is not null && array.Length >= length ? array : new T[Math.Max(length, (array?.Length ?? 16) * 2)];
+
+    private sealed class CrossingOrder : IComparer<Crossing>
+    {
+        internal static readonly CrossingOrder Instance = new();
+        public int Compare(Crossing a, Crossing b) => a.X.CompareTo(b.X);
+    }
+
+    private sealed class EdgeOrder : IComparer<Edge>
+    {
+        internal static readonly EdgeOrder Instance = new();
+        public int Compare(Edge a, Edge b) => a.Y0.CompareTo(b.Y0);
+    }
+
+    // The path's outline as lines (subpaths closed), keeping the edges that
+    // reach the sample rows of [top, bottom); returns how many are in edges.
+    private static int Flatten(SKPath path, int top, int bottom)
+    {
+        edges ??= new Edge[64];
+        var count = 0;
+        var points = new SKPoint[4];
+        double startX = 0, startY = 0, x = 0, y = 0;
+        var open = false;
+        using var iterator = path.CreateRawIterator();
+        SKPathVerb verb;
+        while ((verb = iterator.Next(points)) != SKPathVerb.Done)
+        {
+            switch (verb)
+            {
+                case SKPathVerb.Move:
+                    if (open) Line(startX, startY);
+                    startX = x = points[0].X;
+                    startY = y = points[0].Y;
+                    open = true;
+                    break;
+                case SKPathVerb.Line:
+                    Line(points[1].X, points[1].Y);
+                    break;
+                case SKPathVerb.Quad:
+                    Quad(points[1].X, points[1].Y, points[2].X, points[2].Y);
+                    break;
+                case SKPathVerb.Conic:
+                    // Java has no conics; a Skia-made arc is followed as quadratics.
+                    var quads = SKPath.ConvertConicToQuads(points[0], points[1], points[2], iterator.ConicWeight(), 2);
+                    for (var index = 1; index + 1 < quads.Length; index += 2)
+                        Quad(quads[index].X, quads[index].Y, quads[index + 1].X, quads[index + 1].Y);
+                    break;
+                case SKPathVerb.Cubic:
+                    Cubic(points[1].X, points[1].Y, points[2].X, points[2].Y, points[3].X, points[3].Y);
+                    break;
+                case SKPathVerb.Close:
+                    Line(startX, startY);
+                    open = false;
+                    break;
+            }
+        }
+        if (open) Line(startX, startY);
+        return count;
+
+        void Line(double toX, double toY)
+        {
+            double fromX = x, fromY = y;
+            x = toX;
+            y = toY;
+            if (fromY == toY || double.IsNaN(fromX + fromY + toX + toY) ||
+                double.IsInfinity(fromX + fromY + toX + toY))
+                return;
+            var winding = 1;
+            if (fromY > toY)
+            {
+                (fromX, fromY, toX, toY) = (toX, toY, fromX, fromY);
+                winding = -1;
+            }
+            if (toY <= top || fromY >= bottom) return;
+            if (count == edges!.Length) Array.Resize(ref edges, count * 2);
+            edges[count++] = new Edge
+            {
+                X0 = fromX, Y0 = fromY, X1 = toX, Y1 = toY,
+                Slope = (toX - fromX) / (toY - fromY), Winding = winding
+            };
+        }
+
+        void Quad(double x1, double y1, double x2, double y2)
+        {
+            double x0 = x, y0 = y;
+            var size = Math.Abs(x0 - 2 * x1 + x2) + Math.Abs(y0 - 2 * y1 + y2);
+            var steps = 1;
+            while (steps < 1024 && 4 * size > (double)steps * steps) steps *= 2;
+            for (var index = 1; index < steps; index++)
+            {
+                var t = (double)index / steps;
+                var u = 1 - t;
+                Line(u * u * x0 + 2 * u * t * x1 + t * t * x2, u * u * y0 + 2 * u * t * y1 + t * t * y2);
+            }
+            Line(x2, y2);
+        }
+
+        void Cubic(double x1, double y1, double x2, double y2, double x3, double y3)
+        {
+            double x0 = x, y0 = y;
+            if (double.IsNaN(x0 + y0 + x1 + y1 + x2 + y2 + x3 + y3) ||
+                double.IsInfinity(x0 + y0 + x1 + y1 + x2 + y2 + x3 + y3))
+            {
+                Line(x3, y3);
+                return;
+            }
+            const int unit = 1 << 16;
+            // The third difference, 6 h^3 |P3 - 3P2 + 3P1 - P0|, also stays
+            // within 8 px, so that a step across an inflection, whose second
+            // difference can vanish, stays short. That bound left the fit on
+            // random cubics unchanged.
+            var third = 6 * (Math.Abs(x3 - 3 * x2 + 3 * x1 - x0) + Math.Abs(y3 - 3 * y2 + 3 * y1 - y0));
+            var level = 2;
+            var position = 0;
+            while (position < unit)
+            {
+                var u = (double)position / unit;
+                while (level < 16 && (SecondDifference(u, 1.0 / (1 << level)) > 1 || ThirdDifference(level) > 8))
+                    level++;
+                while (level > 0 && position % (unit >> (level - 1)) == 0 &&
+                       SecondDifference(u, 1.0 / (1 << (level - 1))) < 0.25 && ThirdDifference(level - 1) <= 8)
+                    level--;
+                position = Math.Min(unit, position + (unit >> level));
+                if (position == unit)
+                {
+                    Line(x3, y3);
+                }
+                else
+                {
+                    var (px, py) = Point((double)position / unit);
+                    Line(px, py);
+                }
+            }
+
+            double ThirdDifference(int stepLevel)
+            {
+                var h = 1.0 / (1 << stepLevel);
+                return third * h * h * h;
+            }
+
+            double SecondDifference(double u, double h)
+            {
+                var (ax, ay) = Point(u);
+                var (bx, by) = Point(u + h);
+                var (cx, cy) = Point(u + 2 * h);
+                return Math.Abs(ax - 2 * bx + cx) + Math.Abs(ay - 2 * by + cy);
+            }
+
+            (double X, double Y) Point(double t)
+            {
+                var s = 1 - t;
+                double a = s * s * s, b = 3 * s * s * t, c = 3 * s * t * t, d = t * t * t;
+                return (a * x0 + b * x1 + c * x2 + d * x3, a * y0 + b * y1 + c * y2 + d * y3);
+            }
+        }
+    }
 }
 
 // Owns its path: Dispose releases it at once instead of at finalization.

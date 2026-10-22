@@ -2338,6 +2338,130 @@ public sealed class RasterConversionConsumerTests
         Assert.Equal(drawn, ArgbMask(40, Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF, drawImage));
     }
 
+    // Java 2D samples an antialiased path's coverage on 8 subscanlines a
+    // pixel, with x to 1/256 pixel along each (see PdfCartonAntialiasedFill).
+    // The expected alphas were read back from OpenJDK 25 drawing opaque
+    // colour on TYPE_INT_ARGB images with VALUE_ANTIALIAS_ON.
+    [Fact]
+    public void AntialiasedPathsTakeJava2DSubscanlineCoverage()
+    {
+#pragma warning disable CS0618
+        byte[] Alpha(int size, Action<Compat.PdfCartonGraphics2D> draw)
+        {
+            var argb = ArgbMask(size, Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON, draw);
+            return argb.Select(pixel => (byte)(pixel >> 24)).ToArray();
+        }
+
+        SKPath Quad(float left, float top, float right, float bottom)
+        {
+            var path = new SKPath();
+            path.MoveTo(left, top);
+            path.LineTo(right, top);
+            path.LineTo(right, bottom);
+            path.LineTo(left, bottom);
+            path.Close();
+            return path;
+        }
+
+        // A horizontal edge swept down row 4 in 1/16 pixel steps.
+        int[] sweep = [255, 255, 223, 223, 191, 191, 159, 159, 127, 127, 95, 95, 64, 64, 32, 32, 0];
+        for (var step = 0; step <= 16; step++)
+        {
+            using var path = Quad(2, 4 + step / 16f, 14, 12);
+            Assert.Equal(sweep[step], Alpha(16, graphics => graphics.Fill(path))[4 * 16 + 8]);
+        }
+
+        // A vertical edge swept across column 4 in 1/64 pixel steps.
+        (int Step, int Alpha)[] across = [(0, 255), (1, 251), (16, 191), (47, 67), (48, 64), (63, 4)];
+        foreach (var (step, alpha) in across)
+        {
+            using var path = Quad(4 + step / 64f, 2, 14, 12);
+            Assert.Equal(alpha, Alpha(16, graphics => graphics.Fill(path))[6 * 16 + 4]);
+        }
+
+        // A 0.48 px rule as a path covers 4 of 8 subscanlines; as a
+        // Rectangle2D it takes its exact area.
+        using (var rule = Quad(2, 3, 14, 3.48f))
+        {
+            var mask = Alpha(16, graphics => graphics.Fill(rule));
+            Assert.Equal(new byte[] { 0, 127, 0 }, new[] { mask[2 * 16 + 5], mask[3 * 16 + 5], mask[4 * 16 + 5] });
+        }
+        Assert.Equal(122, Alpha(16, graphics => graphics.Fill(new SKRect(2, 3.3f, 14, 3.78f)))[3 * 16 + 5]);
+
+        // A 0.72 px stroke along y = 5.3: PURE keeps it there, the default
+        // stroke control moves it to the pixel centre.
+        using var line = new SKPath();
+        line.MoveTo(2, 5.3f);
+        line.LineTo(14, 5.3f);
+        foreach (var (pure, alpha) in new[] { (true, 159), (false, 191) })
+        {
+            var mask = Alpha(16, graphics =>
+            {
+                if (pure)
+                    graphics.SetRenderingHint(
+                        Compat.PdfCartonRenderingHints.KEY_STROKE_CONTROL,
+                        Compat.PdfCartonRenderingHints.VALUE_STROKE_PURE);
+                graphics.SetStroke(new Compat.JavaBasicStroke(0.72f));
+                graphics.Draw(line);
+            });
+            Assert.Equal(new byte[] { 0, (byte)alpha, 0 }, new[] { mask[4 * 16 + 6], mask[5 * 16 + 6], mask[6 * 16 + 6] });
+        }
+
+        // A 0.6 px butt-capped, mitred polyline, every pixel.
+        using var polyline = new SKPath();
+        polyline.MoveTo(1.3f, 2.2f);
+        polyline.LineTo(10.6f, 5.1f);
+        polyline.LineTo(3.4f, 9.7f);
+        var thin = Alpha(12, graphics =>
+        {
+            graphics.SetRenderingHint(
+                Compat.PdfCartonRenderingHints.KEY_STROKE_CONTROL,
+                Compat.PdfCartonRenderingHints.VALUE_STROKE_PURE);
+            graphics.SetStroke(new Compat.JavaBasicStroke(
+                0.6f, Compat.JavaBasicStroke.CAP_BUTT, Compat.JavaBasicStroke.JOIN_MITER, 10f, null, 0f));
+            graphics.Draw(polyline);
+        });
+        byte[] java =
+        [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 109, 160, 108, 30, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 51, 130, 160, 126, 46, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 34, 114, 160, 139, 63, 2,
+            0, 0, 0, 0, 0, 0, 0, 0, 11, 154, 133, 7,
+            0, 0, 0, 0, 0, 0, 0, 70, 168, 45, 0, 0,
+            0, 0, 0, 0, 0, 19, 150, 111, 2, 0, 0, 0,
+            0, 0, 0, 0, 91, 162, 31, 0, 0, 0, 0, 0,
+            0, 0, 0, 109, 89, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        Assert.Equal(java, thin);
+
+        // A cubic whose second difference vanishes across its inflection
+        // (Sol review): Java leaves (24, 500) and (10, 500) empty and fills
+        // (40, 500) and (24, 550).
+        using var inflection = new SKPath();
+        inflection.MoveTo(0, 600);
+        inflection.CubicTo(64, 600, 128, -1448, 192, 2648);
+        inflection.LineTo(192, 799);
+        inflection.LineTo(0, 799);
+        inflection.Close();
+        using var tall = Compat.PdfCartonFontCompat.CreateBitmap(256, 800, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using (var graphics = new Compat.PdfCartonGraphics2D(tall))
+        {
+            graphics.SetRenderingHint(
+                Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.SetColor(SKColors.Black);
+            graphics.Fill(inflection);
+        }
+        Assert.Equal(
+            new byte[] { 0, 0, 255, 255 },
+            new[] { tall.GetPixel(24, 500).Alpha, tall.GetPixel(10, 500).Alpha, tall.GetPixel(40, 500).Alpha, tall.GetPixel(24, 550).Alpha });
+#pragma warning restore CS0618
+    }
+
     private static uint[] ArgbMask(int size, object? antialiasing, Action<Compat.PdfCartonGraphics2D> draw)
     {
         using var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
