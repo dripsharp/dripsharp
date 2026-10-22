@@ -243,14 +243,17 @@ public sealed class PdfConsumerTests
             color => Assert.Equal(new SKColor(255, 0, 0), color));
 
         // ColorConvertOp converts through CIE XYZ, so it honours overrides of
-        // only FromCieXyz (destination) or only ToCieXyz (source).
+        // only FromCieXyz (destination) or only ToCieXyz (the op's space,
+        // which Java 25 converts through before the destination, and the
+        // source).
         using var fromXyz = new DripSharp.Runtime.JavaColorConvertOp(new ConstantFromCieXyzSpace())
             .Filter(source, null);
         Assert.All(IccRenderFixtures.Colors(fromXyz),
             color => Assert.Equal(new SKColor(64, 128, 191), color));
         using var redXyz = new DripSharp.Runtime.JavaColorConvertOp(new RedToCieXyzSpace())
             .Filter(source, null);
-        Assert.Equal([new SKColor(10, 20, 30), new SKColor(200, 100, 50)], IccRenderFixtures.Colors(redXyz));
+        Assert.All(IccRenderFixtures.Colors(redXyz),
+            color => Assert.Equal(new SKColor(255, 0, 0), color));
         using var fromRedXyz = new DripSharp.Runtime.JavaColorConvertOp(
                 Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB))
             .Filter(redXyz, null);
@@ -583,6 +586,129 @@ public sealed class PdfConsumerTests
         }
     }
 
+    // Java's ColorConvertOp converts through its constructor's spaces between
+    // the images' spaces, so they can clip or change colours. An op of ICC
+    // spaces runs one profile transform, rendered by the source's profile
+    // class, and leaves out a first or last space whose profile (by identity)
+    // the image already has; an op given a public-override space passes each
+    // colour through every space's fromCIEXYZ and toCIEXYZ in turn. Expected
+    // values are Java 25's, within one 8-bit step.
+    [Fact]
+    public void ColorConvertOpConvertsThroughItsConstructorSpacesAsJavaDoes()
+    {
+        int[][] samples = [[51, 102, 153], [255, 0, 0], [255, 255, 255], [0, 0, 0], [200, 100, 50], [10, 240, 130]];
+        static Compat.JavaIccColorSpace Space(string deviceClass, uint intent) =>
+            new(new Compat.JavaIccProfile(IccRenderFixtures.Signed(
+                IccRenderFixtures.LutIntentProfile(deviceClass, intent))));
+        var mntr = Space("mntr", 1);
+        var equalMntr = Space("mntr", 1);
+        var prtr = Space("prtr", 0);
+        var srgb = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB);
+        var gray = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY);
+        var clip = new ClipCieXyzSpace();
+        SKBitmap Image(Compat.JavaColorSpace space, bool filled = true)
+        {
+            var model = new Compat.JavaColorModel(space, false, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+            var raster = model.CreateCompatibleWritableRaster(samples.Length, 1);
+            for (var x = 0; filled && x < samples.Length; x++)
+                raster.SetPixel(x, 0, samples[x]);
+            return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
+        }
+        SKBitmap IntRgb()
+        {
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+            for (var x = 0; x < samples.Length; x++)
+                Compat.PdfCartonFontCompat.SetRgb(image, x, 0,
+                    unchecked((int)0xff000000) | samples[x][0] << 16 | samples[x][1] << 8 | samples[x][2]);
+            return image;
+        }
+        static void Near(int[] expected, int[] actual, string label) =>
+            Assert.True(expected.Length == actual.Length &&
+                        expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= 1),
+                $"{label}: expected [{string.Join(",", expected)}], got [{string.Join(",", actual)}].");
+        void Rgb(string label, Compat.JavaColorConvertOp op, SKBitmap source, params int[] expected)
+        {
+            using (source)
+            using (var result = op.Filter(source, Compat.PdfCartonFontCompat.CreateBitmap(
+                       samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB)))
+                Near(expected.SelectMany(rgb => new[] { rgb >> 16, rgb >> 8 & 0xff, rgb & 0xff }).ToArray(),
+                    Enumerable.Range(0, samples.Length).SelectMany(x =>
+                    {
+                        var rgb = Compat.PdfCartonFontCompat.GetRgb(result, x, 0);
+                        return new[] { rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff };
+                    }).ToArray(), label);
+        }
+        void Samples(string label, Compat.JavaColorConvertOp op, SKBitmap source, SKBitmap? destination, params int[] expected)
+        {
+            using (source)
+            using (destination)
+            {
+                var result = op.Filter(source, destination);
+                using var created = destination is null ? result : null;
+                var raster = Compat.PdfCartonFontCompat.GetRaster(result);
+                Near(expected, Enumerable.Range(0, samples.Length)
+                    .SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray(), label);
+            }
+        }
+        static Compat.JavaColorConvertOp Op(params Compat.JavaColorSpace[] spaces) =>
+            spaces.Length == 1 ? new(spaces[0]) : new(spaces[0], spaces[1]);
+        int[] perceptual = [0x0094a6, 0xff0035, 0xbeb9cf, 0x000000, 0xef0062, 0x00f289];
+        int[] rotated = [0x009f5d, 0xb500cf, 0xffd0ff, 0x000000, 0xb700b0, 0xff00bd];
+
+        // ICC spaces: intermediate gray and sRGB clip, an identical profile
+        // is left out but an equal one is not, and the source's class picks
+        // the intent for every profile.
+        Rgb("mntr (GRAY)", Op(gray), Image(mntr), 0x7c7c7c, 0x000000, 0xbcbcbc, 0x000000, 0x7a7a7a, 0xb6b6b6);
+        Rgb("mntr (sRGB, GRAY)", Op(srgb, gray), Image(mntr),
+            0x858585, 0x828282, 0xbcbcbc, 0x000000, 0x7b7b7b, 0xd3d3d3);
+        Rgb("mntr (sRGB)", Op(srgb), Image(mntr), perceptual);
+        Rgb("mntr (same mntr)", Op(mntr), Image(mntr), perceptual);
+        int[] twice = [0x004d57, 0xa80018, 0x64626e, 0x000000, 0x800031, 0x008247];
+        Rgb("mntr (equal mntr)", Op(equalMntr), Image(mntr), twice);
+        Rgb("mntr (prtr)", Op(prtr), Image(mntr), twice);
+        Rgb("prtr (mntr)", Op(mntr), Image(prtr), 0x778570, 0x5e1481, 0xbbacb8, 0x000000, 0x85578c, 0xa18383);
+        Rgb("INT_RGB (mntr, mntr)", Op(mntr, mntr), IntRgb(),
+            0x071727, 0x470000, 0x474747, 0x000000, 0x351607, 0x01421f);
+        Rgb("INT_RGB (GRAY)", Op(gray), IntRgb(), 0x626262, 0x828282, 0xffffff, 0x000000, 0x828282, 0xd1d1d1);
+        Samples("INT_RGB (mntr) -> new", Op(mntr), IntRgb(), null,
+            14, 16, 31, 56, 28, 2, 123, 128, 105, 0, 0, 0, 39, 28, 6, 47, 81, 31);
+        Samples("INT_RGB (mntr, prtr) -> new", Op(mntr, prtr), IntRgb(), null,
+            4, 4, 8, 14, 7, 0, 31, 32, 26, 0, 0, 0, 10, 7, 1, 12, 20, 8);
+        // ICC spaces with a public-override image space: that image's side
+        // converts through CIE XYZ, perceptually from a custom source.
+        Rgb("custom (prtr)", Op(prtr), Image(clip), 0x006b79, 0xe50024, 0x8b8798, 0x000000, 0xb00046, 0x00b263);
+        Samples("INT_RGB (equal mntr) -> custom", Op(equalMntr), IntRgb(), Image(clip, false),
+            7, 8, 15, 28, 14, 1, 51, 51, 51, 0, 0, 0, 19, 14, 3, 24, 41, 16);
+        Samples("prtr (equal mntr) -> custom", Op(equalMntr), Image(prtr), Image(clip, false),
+            49, 51, 36, 21, 11, 40, 51, 51, 51, 0, 0, 0, 45, 35, 51, 51, 51, 48);
+
+        // Public-override spaces: every space converts, repeated ones too,
+        // and ICC spaces convert colorimetrically.
+        Rgb("INT_RGB (clip)", Op(clip), IntRgb(), 0x41668c, 0x947800, 0x7d7a89, 0x000000, 0x917830, 0x7d7a89);
+        Rgb("mntr (clip)", Op(clip), Image(mntr), 0x7d7a89, 0x947800, 0x7d7a89, 0x000000, 0x7f7a85, 0x7d7a89);
+        Rgb("custom (same custom)", Op(clip), Image(clip), 0x7d7a89, 0xcf0020, 0x7d7a89, 0x000000, 0x7e7a87, 0x00a086);
+        Rgb("INT_RGB (rotate)", Op(new RotateCieXyzSpace()), IntRgb(), rotated);
+        Rgb("INT_RGB (rotate, sRGB)", Op(new RotateCieXyzSpace(), srgb), IntRgb(), rotated);
+        Rgb("INT_RGB (rotate, rotate)", Op(new RotateCieXyzSpace(), new RotateCieXyzSpace()), IntRgb(),
+            0xbe0070, 0x00eb7f, 0xc1ffff, 0x000000, 0x00c488, 0x00baeb);
+        Rgb("INT_RGB (GRAY, rotate)", Op(gray, new RotateCieXyzSpace()), IntRgb(),
+            0x704f6c, 0x94698f, 0xffd0ff, 0x000000, 0x94698f, 0xedabe6);
+        Rgb("prtr (rotate)", Op(new RotateCieXyzSpace()), Image(prtr),
+            0x84c4a5, 0xb500cf, 0xffd1ff, 0x000000, 0xf400dd, 0xff78c9);
+        Rgb("INT_RGB (clip, equal mntr)", Op(clip, equalMntr), IntRgb(),
+            0x465943, 0x591459, 0x595959, 0x000000, 0x592859, 0x595959);
+        Rgb("mntr (equal mntr, clip)", Op(equalMntr, clip), Image(mntr),
+            0x807b72, 0x5e1481, 0x7d7a89, 0x000000, 0x85578c, 0x7f7a85);
+        Samples("INT_RGB (rotate) -> new", Op(new RotateCieXyzSpace()), IntRgb(), null,
+            61, 28, 31, 4, 111, 57, 210, 246, 255, 0, 0, 0, 11, 78, 57, 62, 94, 163);
+        // Built-in spaces between them quantize through 16-bit samples as
+        // their public toCIEXYZ and fromCIEXYZ do: gray drops a tiny Y.
+        Rgb("tiny (GRAY, threshold)", Op(gray, new ThresholdSpace()), Image(new TinyCieXyzSpace()),
+            0, 0, 0, 0, 0, 0);
+        Rgb("tiny (threshold)", Op(new ThresholdSpace()), Image(new TinyCieXyzSpace()),
+            0xff0000, 0xff0000, 0xff0000, 0xff0000, 0xff0000, 0xff0000);
+    }
+
     private static COSArray CieFloats(params float[] values)
     {
         var array = new COSArray();
@@ -788,6 +914,54 @@ public sealed class PdfConsumerTests
         }
 
         public override float[] ToCieXyz(float[] components) => [0.4360747f, 0.2225045f, 0.0139322f];
+    }
+
+    // Identity CIE XYZ conversions whose fromCIEXYZ clips each component to 0.2.
+    private sealed class ClipCieXyzSpace : DripSharp.Runtime.JavaColorSpace
+    {
+        public ClipCieXyzSpace() : base(0, TYPE_RGB, 3)
+        {
+        }
+
+        public override float[] ToCieXyz(float[] components) => (float[])components.Clone();
+
+        public override float[] FromCieXyz(float[] xyz) =>
+            [Math.Min(xyz[0], 0.2f), Math.Min(xyz[1], 0.2f), Math.Min(xyz[2], 0.2f)];
+    }
+
+    // Every colour is a tiny Y in CIE XYZ.
+    private sealed class TinyCieXyzSpace : DripSharp.Runtime.JavaColorSpace
+    {
+        public TinyCieXyzSpace() : base(0, TYPE_RGB, 3)
+        {
+        }
+
+        public override float[] ToCieXyz(float[] components) => [0f, 0.00001f, 0f];
+    }
+
+    // Red for any positive Y and black otherwise.
+    private sealed class ThresholdSpace : DripSharp.Runtime.JavaColorSpace
+    {
+        public ThresholdSpace() : base(0, TYPE_RGB, 3)
+        {
+        }
+
+        public override float[] FromCieXyz(float[] xyz) => xyz[1] > 0 ? [1f, 0f, 0f] : [0f, 0f, 0f];
+
+        public override float[] ToCieXyz(float[] components) =>
+            components[0] > 0.5f ? [0.4360747f, 0.2225045f, 0.0139322f] : [0f, 0f, 0f];
+    }
+
+    // An identity toCIEXYZ whose fromCIEXYZ rotates the components.
+    private sealed class RotateCieXyzSpace : DripSharp.Runtime.JavaColorSpace
+    {
+        public RotateCieXyzSpace() : base(0, TYPE_RGB, 3)
+        {
+        }
+
+        public override float[] ToCieXyz(float[] components) => (float[])components.Clone();
+
+        public override float[] FromCieXyz(float[] xyz) => [xyz[1], xyz[2], xyz[0]];
     }
 }
 

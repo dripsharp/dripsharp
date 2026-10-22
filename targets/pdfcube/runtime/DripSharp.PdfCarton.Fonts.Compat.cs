@@ -3307,6 +3307,9 @@ public sealed class PdfCartonAffineTransformOp
 public sealed class JavaColorConvertOp
 {
     private readonly JavaColorSpace? destinationColorSpace;
+    // The constructor's spaces, which Java converts every colour through
+    // between the source and destination images' spaces.
+    private readonly JavaColorSpace[] spaces = Array.Empty<JavaColorSpace>();
     // Java's op holds ICC profiles when it was given only ICC spaces (all
     // but public-override subclasses) and a list of spaces otherwise.
     private readonly bool hasProfiles;
@@ -3323,6 +3326,7 @@ public sealed class JavaColorConvertOp
         ArgumentNullException.ThrowIfNull(sourceColorSpace);
         this.destinationColorSpace = destinationColorSpace ??
             throw new ArgumentNullException(nameof(destinationColorSpace));
+        spaces = [sourceColorSpace, destinationColorSpace];
         hasCustomSpaces = sourceColorSpace.OverridesArrayConversions ||
             destinationColorSpace.OverridesArrayConversions;
         hasProfiles = !hasCustomSpaces;
@@ -3332,6 +3336,7 @@ public sealed class JavaColorConvertOp
     {
         this.destinationColorSpace = destinationColorSpace ??
             throw new ArgumentNullException(nameof(destinationColorSpace));
+        spaces = [destinationColorSpace];
         hasCustomSpaces = destinationColorSpace.OverridesArrayConversions;
         hasProfiles = !hasCustomSpaces;
     }
@@ -3388,15 +3393,27 @@ public sealed class JavaColorConvertOp
         var destinationColorSpace = destinationColorModel.ColorSpace;
         var destinationColorCount = destinationColorModel.NumberOfColorComponents;
         var destinationHasAlpha = destinationColorModel.HasAlpha;
-        // Java renders relative colorimetric when the first profile of its
-        // transform, the source's, is an output profile and perceptually
-        // otherwise; an op given a public-override space, or one without
+        // Java converts through the constructor's spaces in turn. An op of
+        // ICC spaces runs one profile transform from the source's profile
+        // to the destination's, leaving out a first or last space with the
+        // profile that image already has; an op given a public-override
+        // space passes each colour through every space's fromCIEXYZ and
+        // toCIEXYZ.
+        var start = 0;
+        var stop = spaces.Length;
+        if (hasProfiles && SameProfile(sourceColorSpace, spaces[0])) start++;
+        if (hasProfiles && stop > start && SameProfile(destinationColorSpace, spaces[stop - 1])) stop--;
+        // Java renders relative colorimetric when the source's profile is an
+        // output profile and perceptually otherwise, whatever the op's
+        // profiles are (perceptually when the source is a public-override
+        // space); an op given a public-override space, or one without
         // profiles converting such a space, goes through toCIEXYZ and
         // fromCIEXYZ, which are colorimetric.
-        var colorimetric = hasCustomSpaces || sourceColorSpace is JavaIccColorSpace icc &&
-                !icc.IsSrgb && icc.Profile.GetProfileClass() == JavaIccProfile.CLASS_OUTPUT ||
+        var throughCieXyz = hasCustomSpaces ||
             !hasProfiles && (sourceColorSpace.OverridesArrayConversions ||
                 destinationColorSpace.OverridesArrayConversions);
+        var colorimetric = throughCieXyz || sourceColorSpace is JavaIccColorSpace icc &&
+            !icc.IsSrgb && icc.Profile.GetProfileClass() == JavaIccProfile.CLASS_OUTPUT;
         // Each pixel is read once into a reused row buffer and converted once
         // through the D50 PCS, as Java's profile-to-profile transform does,
         // without allocating.
@@ -3408,6 +3425,7 @@ public sealed class JavaColorConvertOp
             new float[destinationColorModel.NumberOfComponents];
         Span<float> xyz = stackalloc float[3];
         Span<float> converted = stackalloc float[JavaColorSpace.MaximumComponents];
+        Span<float> intermediate = stackalloc float[JavaColorSpace.MaximumComponents];
         // When the destination raster is the bitmap's own live pixel view under
         // its image-type model, the converted components go straight to the
         // native pixels: the per-pixel raster writes and the final re-render
@@ -3431,9 +3449,15 @@ public sealed class JavaColorConvertOp
                 {
                     var sourceComponents =
                         new ReadOnlySpan<float>(sourceRow, x * sourceCount, sourceCount);
-                    sourceColorSpace.ConvertToXyz(sourceComponents, xyz, colorimetric);
-                    var convertedCount =
-                        destinationColorSpace.ConvertFromXyz(xyz, converted, colorimetric);
+                    ToXyz(sourceColorSpace, sourceComponents, xyz, colorimetric, throughCieXyz);
+                    for (var index = start; index < stop; index++)
+                    {
+                        var space = spaces[index];
+                        var count = FromXyz(space, xyz, intermediate, colorimetric, throughCieXyz);
+                        ToXyz(space, intermediate.Slice(0, count), xyz, colorimetric, throughCieXyz);
+                    }
+                    var convertedCount = FromXyz(
+                        destinationColorSpace, xyz, converted, colorimetric, throughCieXyz);
                     if (convertedCount < destinationColorCount)
                         throw new ArgumentException(
                             "The converted color has fewer components than the destination.");
@@ -3478,6 +3502,38 @@ public sealed class JavaColorConvertOp
         PdfCartonFontCompat.SetImageData(destination, destinationRaster);
         return destination;
     }
+
+    // An op converting through CIE XYZ uses every space's public toCIEXYZ
+    // and fromCIEXYZ, which quantize through 16-bit samples as Java's do;
+    // a profile transform converts each space's PCS values unquantized.
+    private static void ToXyz(
+        JavaColorSpace space, ReadOnlySpan<float> components, Span<float> xyz,
+        bool colorimetric, bool throughCieXyz)
+    {
+        if (!throughCieXyz || space.OverridesArrayConversions)
+            space.ConvertToXyz(components, xyz, colorimetric);
+        else
+            space.ToCieXyz(components.ToArray()).AsSpan(0, 3).CopyTo(xyz);
+    }
+
+    private static int FromXyz(
+        JavaColorSpace space, ReadOnlySpan<float> xyz, Span<float> output,
+        bool colorimetric, bool throughCieXyz)
+    {
+        if (!throughCieXyz || space.OverridesArrayConversions)
+            return space.ConvertFromXyz(xyz, output, colorimetric);
+        var result = space.FromCieXyz(xyz.ToArray());
+        result.AsSpan().CopyTo(output);
+        return result.Length;
+    }
+
+    // Java compares the profiles of an image's ICC space and the op's by
+    // identity, not by content.
+    private static bool SameProfile(JavaColorSpace image, JavaColorSpace space) =>
+        !image.OverridesArrayConversions &&
+        (ReferenceEquals(image, space) ||
+            image is JavaIccColorSpace imageIcc && space is JavaIccColorSpace spaceIcc &&
+            ReferenceEquals(imageIcc.Profile, spaceIcc.Profile));
 }
 
 public sealed class JavaLookupTable
