@@ -1913,15 +1913,51 @@ public sealed class RasterConversionConsumerTests
     public void ArcsTakeJava2DAngleDirectionAndSegments(
         int x, int y, int width, int height, int start, int extent, bool fill, string expected)
     {
-        using var stream = new MemoryStream();
-        using (var canvas = SKSvgCanvas.Create(new SKRect(0, 0, 64, 64), stream))
-        using (var graphics = new Compat.PdfCartonGraphics2D(canvas))
+        AssertDrawsPath(graphics =>
         {
             if (fill)
                 graphics.FillArc(x, y, width, height, start, extent);
             else
                 graphics.DrawArc(x, y, width, height, start, extent);
-        }
+        }, expected);
+    }
+
+    // Ovals and rounded rectangles take the paths Java 2D's Ellipse2D and
+    // RoundRectangle2D iterate: start, direction and control points as
+    // Java's PathIterator reports them (arcs clamp to the size and take
+    // their absolute value; a negative size has no path), drawn or filled.
+    [Theory]
+    [InlineData(false, 5, 5, 40, 30, 0, 0, false,
+        "M45 20 C45 28.2843 36.0457 35 25 35 C13.9543 35 5 28.2843 5 20 C5 11.7157 13.9543 5 25 5 " +
+        "C36.0457 5 45 11.7157 45 20 Z")]
+    [InlineData(false, 5, 5, 40, 30, 0, 0, true,
+        "M45 20 C45 28.2843 36.0457 35 25 35 C13.9543 35 5 28.2843 5 20 C5 11.7157 13.9543 5 25 5 " +
+        "C36.0457 5 45 11.7157 45 20 Z")]
+    [InlineData(false, 45, 5, -40, 30, 0, 0, true, "")]
+    [InlineData(true, 4, 6, 40, 30, 18, 12, false,
+        "M4 12 L4 30 C4 33.3137 8.0294 36 13 36 L35 36 C39.9706 36 44 33.3137 44 30 L44 12 " +
+        "C44 8.6863 39.9706 6 35 6 L13 6 C8.0294 6 4 8.6863 4 12 Z")]
+    [InlineData(true, 4, 6, 20, 30, 50, -12, true,
+        "M4 12 L4 30 C4 33.3137 8.4772 36 14 36 L14 36 C19.5228 36 24 33.3137 24 30 L24 12 " +
+        "C24 8.6863 19.5228 6 14 6 L14 6 C8.4772 6 4 8.6863 4 12 Z")]
+    public void CurvedShapesTakeJava2DPaths(
+        bool rounded, int x, int y, int width, int height, int arcWidth, int arcHeight, bool fill, string expected) =>
+        AssertDrawsPath(graphics =>
+        {
+            if (rounded && fill) graphics.FillRoundRect(x, y, width, height, arcWidth, arcHeight);
+            else if (rounded) graphics.DrawRoundRect(x, y, width, height, arcWidth, arcHeight);
+            else if (fill) graphics.FillOval(x, y, width, height);
+            else graphics.DrawOval(x, y, width, height);
+        }, expected);
+
+    // The single path drawn through an SVG canvas, against expected path
+    // data (coordinates within 1e-3).
+    private static void AssertDrawsPath(Action<Compat.PdfCartonGraphics2D> draw, string expected)
+    {
+        using var stream = new MemoryStream();
+        using (var canvas = SKSvgCanvas.Create(new SKRect(0, 0, 64, 64), stream))
+        using (var graphics = new Compat.PdfCartonGraphics2D(canvas))
+            draw(graphics);
 
         var svg = System.Text.Encoding.UTF8.GetString(stream.ToArray());
         var paths = System.Text.RegularExpressions.Regex.Matches(svg, " d=\"([^\"]*)\"");
@@ -2118,25 +2154,73 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
-    // Aliased curves: a quadratic far larger than the image keeps the part
-    // that crosses it (its apex is at y = 1.185 above x = 0, so rows 0 and
-    // 1 are covered, as Java 2D covers them), and ovals and rounded
-    // rectangles, whose conics are flattened here, stay within a pixel of
-    // Java 2D's masks (OpenJDK 25, Graphics.fillOval and fillRoundRect).
-    // Java flattens curves its own way, so a few boundary pixels differ;
-    // the bounds are the current counts (dripsharp-82 tracks matching them).
+    // Aliased curves cover the pixels Java 2D does (OpenJDK 25 masks). Java
+    // flattens curves itself, and differently for corner sampling (opaque
+    // colour, thin stroke) and centre sampling (translucent colour, or a
+    // BasicStroke wider than a device pixel); see PdfCartonAliasedFill.
+    // A quadratic far larger than the image keeps the part that crosses it
+    // (its apex is at y = 1.185 above x = 0, so rows 0 and 1 are covered).
+    // The 12x12 fixtures are Ellipse2D.Double(0.6, 0.35, 10.3, 7.4) and a
+    // cubic-and-quadratic path; before Java's flattening 4, 5 and 5 of their
+    // pixels differed (opaque, translucent, BasicStroke(3)), and up to 9 on
+    // fillOval and fillRoundRect.
     [Fact]
-    public void AliasedCurvesFillNearJava2D()
+    public void AliasedCurvesFillLikeJava2D()
     {
         using var quadratic = new SKPath();
 #pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
         quadratic.MoveTo(-1049600, -3999995);
         quadratic.QuadTo(-1024, 4000005, 1047552, -3999995);
         quadratic.Close();
+        using var curved = new SKPath();
+        curved.MoveTo(0.4f, 8.5f);
+        curved.CubicTo(3.7f, 6.2f, 8.1f, 12.9f, 11.6f, 8.6f);
+        curved.QuadTo(6.3f, 11.8f, 0.4f, 11.4f);
+        curved.Close();
 #pragma warning restore CS0618
         Assert.Equal([.. Enumerable.Repeat("1111111111111111", 2), .. Enumerable.Repeat("0000000000000000", 14)],
             AliasedMask(16, 1, 255, graphics => graphics.Fill(quadratic)));
 
+        string[] blank = ["000000000000", "000000000000", "000000000000", "000000000000"];
+        string[] centreEllipse =
+        [
+            "000001100000", "001111111100", "011111111100", "011111111110", "111111111110", "011111111110",
+            "001111111100", "000011110000", .. blank,
+        ];
+        string[] centrePath =
+        [
+            .. blank, .. blank, "111100000000", "111111111000", "111111000000", "000000000000",
+        ];
+        foreach (var (name, alpha, wide, fill, expected) in
+                 new (string, byte, bool, Action<Compat.PdfCartonGraphics2D>, string[])[]
+                 {
+                     ("ellipse", 255, false, graphics => graphics.Fill(new Compat.JavaEllipse(0.6, 0.35, 10.3, 7.4)),
+                     [
+                         "000000000000", "000111111000", "001111111110", "011111111110", "011111111110",
+                         "011111111110", "001111111110", "000111111000", .. blank,
+                     ]),
+                     ("translucent ellipse", 128, false,
+                         graphics => graphics.Fill(new Compat.JavaEllipse(0.6, 0.35, 10.3, 7.4)), centreEllipse),
+                     ("wide-stroke ellipse", 255, true,
+                         graphics => graphics.Fill(new Compat.JavaEllipse(0.6, 0.35, 10.3, 7.4)), centreEllipse),
+                     ("path", 255, false, graphics => graphics.Fill(curved),
+                     [
+                         .. blank, .. blank, "000000000000", "011111000001", "011111111100", "011111000000",
+                     ]),
+                     ("translucent path", 128, false, graphics => graphics.Fill(curved), centrePath),
+                     ("wide-stroke path", 255, true, graphics => graphics.Fill(curved), centrePath),
+                 })
+        {
+            var mask = AliasedMask(12, 1, alpha, graphics =>
+            {
+                if (wide) graphics.SetStroke(new Compat.JavaBasicStroke(3));
+                fill(graphics);
+            });
+            Assert.True(expected.SequenceEqual(mask), $"{name}: {string.Join(" ", mask)}");
+        }
+
+        // fillOval and fillRoundRect, the latter under a fractional scale,
+        // which samples centres even for the opaque colour.
         string[] fractionalRoundRectangle =
         [
             "0000000000000000", "0000001111000000", "0001111111110000", "0011111111111000",
@@ -2144,17 +2228,17 @@ public sealed class RasterConversionConsumerTests
             "0111111111111000", "0011111111111000", "0001111111110000", "0000111111100000",
             "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
         ];
-        foreach (var (name, alpha, transform, fill, maxDiffering, expected) in
-                 new (string, byte, SKMatrix, Action<Compat.PdfCartonGraphics2D>, int, string[])[]
+        foreach (var (name, alpha, transform, fill, expected) in
+                 new (string, byte, SKMatrix, Action<Compat.PdfCartonGraphics2D>, string[])[]
                  {
-                     ("oval", 255, SKMatrix.Identity, graphics => graphics.FillOval(2, 3, 11, 9), 0,
+                     ("oval", 255, SKMatrix.Identity, graphics => graphics.FillOval(2, 3, 11, 9),
                      [
                          "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
                          "0000011111100000", "0001111111111000", "0001111111111000", "0001111111111000",
                          "0001111111111000", "0001111111111000", "0001111111111000", "0000011111100000",
                          "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
                      ]),
-                     ("translucent oval", 128, SKMatrix.Identity, graphics => graphics.FillOval(2, 3, 11, 9), 9,
+                     ("translucent oval", 128, SKMatrix.Identity, graphics => graphics.FillOval(2, 3, 11, 9),
                      [
                          "0000000000000000", "0000000000000000", "0000000000000000", "0000001100000000",
                          "0000111111110000", "0001111111110000", "0001111111111000", "0011111111111000",
@@ -2162,9 +2246,9 @@ public sealed class RasterConversionConsumerTests
                          "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
                      ]),
                      ("round rectangle", 255, new SKMatrix(1.21f, 0, 0.35f, 0, 0.93f, 0.6f, 0, 0, 1),
-                         graphics => graphics.FillRoundRect(1, 1, 10, 12, 7, 9), 7, fractionalRoundRectangle),
+                         graphics => graphics.FillRoundRect(1, 1, 10, 12, 7, 9), fractionalRoundRectangle),
                      ("translucent round rectangle", 128, new SKMatrix(1.21f, 0, 0.35f, 0, 0.93f, 0.6f, 0, 0, 1),
-                         graphics => graphics.FillRoundRect(1, 1, 10, 12, 7, 9), 7, fractionalRoundRectangle),
+                         graphics => graphics.FillRoundRect(1, 1, 10, 12, 7, 9), fractionalRoundRectangle),
                  })
         {
             var mask = AliasedMask(16, 1, alpha, graphics =>
@@ -2172,20 +2256,43 @@ public sealed class RasterConversionConsumerTests
                 graphics.SetTransform(transform);
                 fill(graphics);
             });
-            var differing = 0;
-            for (var y = 0; y < 16; y++)
-                for (var x = 0; x < 16; x++)
-                {
-                    if (mask[y][x] == expected[y][x]) continue;
-                    differing++;
-                    var nearBoundary = false;
-                    for (var nearY = Math.Max(0, y - 1); nearY <= Math.Min(15, y + 1); nearY++)
-                        for (var nearX = Math.Max(0, x - 1); nearX <= Math.Min(15, x + 1); nearX++)
-                            nearBoundary |= expected[nearY][nearX] != expected[y][x];
-                    Assert.True(nearBoundary, $"{name}: ({x},{y}) differs away from Java's boundary.");
-                }
-            Assert.True(differing <= maxDiffering, $"{name}: {differing} pixels differ from Java.");
+            Assert.True(expected.SequenceEqual(mask), $"{name}: {string.Join(" ", mask)}");
         }
+    }
+
+    // Java has no conics; an aliased fill follows a Skia conic as the four
+    // quadratics SKPath.ConvertConicToQuads gives, chained and snapped like
+    // any other quadratics, at any scale and for both sampling rules.
+    [Fact]
+    public void AliasedConicsFillAsTheirQuadratics()
+    {
+        var start = new SKPoint(2, 18);
+        (SKPoint Control, SKPoint End, float Weight)[] conics =
+            [(new SKPoint(4, 1), new SKPoint(20, 6), 0.4f), (new SKPoint(15, 22), start, 2.5f)];
+        using var conic = new SKPath();
+        using var quadratics = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        conic.MoveTo(start);
+        quadratics.MoveTo(start);
+        var from = start;
+        foreach (var (control, end, weight) in conics)
+        {
+            conic.ConicTo(control, end, weight);
+            var points = SKPath.ConvertConicToQuads(from, control, end, weight, 2);
+            for (var index = 1; index + 1 < points.Length; index += 2)
+                quadratics.QuadTo(points[index], points[index + 1]);
+            from = end;
+        }
+        conic.Close();
+        quadratics.Close();
+#pragma warning restore CS0618
+        foreach (var scale in new[] { 1f, 2.37f })
+            foreach (var alpha in new byte[] { 255, 128 })
+            {
+                var expected = AliasedMask(48, scale, alpha, graphics => graphics.Fill(quadratics));
+                Assert.Contains(expected, row => row.Contains('1'));
+                Assert.Equal(expected, AliasedMask(48, scale, alpha, graphics => graphics.Fill(conic)));
+            }
     }
 
     private static string[] AliasedMask(int size, float scale, byte alpha, Action<Compat.PdfCartonGraphics2D> fill)

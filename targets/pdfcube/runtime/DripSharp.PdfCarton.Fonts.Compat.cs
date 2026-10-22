@@ -6431,11 +6431,7 @@ public class PdfCartonGraphics2D : IDisposable
         int arcWidth,
         int arcHeight)
     {
-        using var path = new SKPath();
-        path.AddRoundRect(
-            new SKRect(x, y, x + width, y + height),
-            arcWidth / 2f,
-            arcHeight / 2f);
+        using var path = JavaCurves.RoundRectangle(x, y, width, height, arcWidth, arcHeight);
         DrawShape(path, fill: false);
     }
 
@@ -6447,11 +6443,7 @@ public class PdfCartonGraphics2D : IDisposable
         int arcWidth,
         int arcHeight)
     {
-        using var path = new SKPath();
-        path.AddRoundRect(
-            new SKRect(x, y, x + width, y + height),
-            arcWidth / 2f,
-            arcHeight / 2f);
+        using var path = JavaCurves.RoundRectangle(x, y, width, height, arcWidth, arcHeight);
         DrawShape(path, fill: true);
     }
 
@@ -6696,7 +6688,8 @@ public class PdfCartonGraphics2D : IDisposable
         var thinStroke = stroke is JavaBasicStroke basicStroke &&
             PdfCartonAliasedFill.IsThin(basicStroke.Width, transform);
         using var devicePath = PdfCartonAliasedFill.DevicePath(
-            shape, transform, copiesOpaqueColor, thinStroke, out var rectilinear);
+            shape, transform, copiesOpaqueColor, thinStroke, DrawingBounds(null, stroked: false),
+            out var rectilinear);
         if (paint is JavaColor)
         {
             RenderLayer(
@@ -7431,14 +7424,55 @@ public sealed class JavaEllipse
         return new JavaPathIterator(path, transform, ownsPath: true);
     }
 
+    // The path Java's Ellipse2D iterates (read back from Java 2D's
+    // PathIterator): four cubic quarters from the right end, downward on
+    // screen first, with control points 0.5522847498307933 of a radius from
+    // each end. A negative size has no path.
     internal SKPath ToPath()
     {
         var path = new SKPath();
-        path.AddOval(new SKRect(
-            (float)x,
-            (float)y,
-            (float)(x + width),
-            (float)(y + height)));
+        if (width < 0 || height < 0) return path;
+        double rx = width / 2, ry = height / 2, cx = x + rx, cy = y + ry, right = x + width, bottom = y + height;
+        double kx = rx * JavaCurves.Control, ky = ry * JavaCurves.Control;
+        path.MoveTo((float)right, (float)cy);
+        JavaCurves.CubicTo(path, right, cy + ky, cx + kx, bottom, cx, bottom);
+        JavaCurves.CubicTo(path, cx - kx, bottom, x, cy + ky, x, cy);
+        JavaCurves.CubicTo(path, x, cy - ky, cx - kx, y, cx, y);
+        JavaCurves.CubicTo(path, cx + kx, y, right, cy - ky, right, cy);
+        path.Close();
+        return path;
+    }
+}
+
+// Paths of Java 2D's curved shapes, as their PathIterators report them.
+internal static class JavaCurves
+{
+    // The distance of a quarter ellipse's control points from its ends, in radii.
+    internal const double Control = 0.5522847498307933;
+
+    internal static void CubicTo(SKPath path, double x1, double y1, double x2, double y2, double x3, double y3) =>
+        path.CubicTo((float)x1, (float)y1, (float)x2, (float)y2, (float)x3, (float)y3);
+
+    // RoundRectangle2D: arcs of min(width, |arcWidth|) by min(height,
+    // |arcHeight|), from the top of the left side, downward first; a negative
+    // size has no path.
+    internal static SKPath RoundRectangle(double x, double y, double width, double height, double arcWidth, double arcHeight)
+    {
+        var path = new SKPath();
+        if (width < 0 || height < 0) return path;
+        var rx = Math.Min(width, Math.Abs(arcWidth)) / 2;
+        var ry = Math.Min(height, Math.Abs(arcHeight)) / 2;
+        double right = x + width, bottom = y + height, kx = rx * Control, ky = ry * Control;
+        path.MoveTo((float)x, (float)(y + ry));
+        path.LineTo((float)x, (float)(bottom - ry));
+        CubicTo(path, x, bottom - ry + ky, x + rx - kx, bottom, x + rx, bottom);
+        path.LineTo((float)(right - rx), (float)bottom);
+        CubicTo(path, right - rx + kx, bottom, right, bottom - ry + ky, right, bottom - ry);
+        path.LineTo((float)right, (float)(y + ry));
+        CubicTo(path, right, y + ry - ky, right - rx + kx, y, right - rx, y);
+        path.LineTo((float)(x + rx), (float)y);
+        CubicTo(path, x + rx - kx, y, x, y + ry - ky, x, y + ry);
+        path.Close();
         return path;
     }
 }
@@ -7457,6 +7491,8 @@ public sealed class JavaEllipse
 //   to 1/1024 pixel.
 // - Otherwise each device point v moves to floor(v + 1/4) + 1/4 and the shape
 //   covers the pixels whose centre lies inside.
+// - Curves are first cut into lines by Java's own flattening, which differs
+//   between the two sampling rules (FlattenCorner, FlattenCentre).
 // A sample on a left or top edge is inside and one on a right or bottom edge
 // is not. Skia's aliased rasterizer takes pixel centres in (lo, hi] instead
 // and snaps sloped edges to 1/64 pixel, so only shapes made of horizontal and
@@ -7479,9 +7515,13 @@ internal static class PdfCartonAliasedFill
     }
 
     // The shape in device space, placed for Draw. Rectilinear device paths
-    // (horizontal and vertical lines only) are drawn directly.
+    // (horizontal and vertical lines only) are drawn directly. Any other
+    // shape comes back as lines, its curves flattened as Java 2D flattens
+    // them (FlattenCurve); parts of a curve wholly outside cull, the device
+    // clip, become chords, which cross the visible rows the same way.
     internal static SKPath DevicePath(
-        object shape, SKMatrix transform, bool copiesOpaqueColor, bool thinStroke, out bool rectilinear)
+        object shape, SKMatrix transform, bool copiesOpaqueColor, bool thinStroke, SKRect cull,
+        out bool rectilinear)
     {
         rectilinear = true;
         var axisAligned = transform.Persp0 == 0 && transform.Persp1 == 0 &&
@@ -7500,57 +7540,100 @@ internal static class PdfCartonAliasedFill
             return result;
         }
 
-        // Points snap to Java's grid first: 1/1024 pixel at corners, or the
-        // pixel at a quarter offset. Only then is rectilinearity decided.
+        // Points snap to Java's grid first: to 1/1024 pixel at corners, or
+        // else to the pixel at a quarter offset, where a curve's control
+        // points move with its ends (a quadratic's by their mean). Only then
+        // is rectilinearity decided.
         var corner = copiesOpaqueColor && thinStroke;
         var straight = true;
         using var lease = PdfCartonFontCompat.BorrowPath(shape);
-        var verbs = new List<(SKPathVerb Verb, int First, float Weight)>();
+        var verbs = new List<(SKPathVerb Verb, int First)>();
         var snapped = new List<(double X, double Y)>();
         using (var iterator = lease.Path.CreateRawIterator())
         {
             var points = new SKPoint[4];
             SKPathVerb verb;
             var start = 0;
+            // How far snapping moved the current point and the subpath's start.
+            (double X, double Y) moved = default, startMoved = default;
             while ((verb = iterator.Next(points)) != SKPathVerb.Done)
             {
-                var (first, count) = verb switch
+                switch (verb)
                 {
-                    SKPathVerb.Move => (0, 1),
-                    SKPathVerb.Line => (1, 1),
-                    SKPathVerb.Quad or SKPathVerb.Conic => (1, 2),
-                    SKPathVerb.Cubic => (1, 3),
-                    _ => (0, 0)
-                };
-                if (verb == SKPathVerb.Move)
-                {
-                    CheckImplicitClose(start);
-                    start = snapped.Count;
+                    case SKPathVerb.Move:
+                        CheckImplicitClose(start);
+                        start = snapped.Count;
+                        verbs.Add((verb, snapped.Count));
+                        moved = startMoved = AddEnd(points[0]);
+                        break;
+                    case SKPathVerb.Line:
+                        var previous = snapped.Count > 0 ? snapped[snapped.Count - 1] : default;
+                        verbs.Add((verb, snapped.Count));
+                        moved = AddEnd(points[1]);
+                        CheckLine(previous, snapped[snapped.Count - 1]);
+                        break;
+                    case SKPathVerb.Quad:
+                        AddCurve([points[1]], points[2]);
+                        break;
+                    case SKPathVerb.Conic:
+                        // Java has no conics; a Skia-made arc is followed as quadratics.
+                        var quads = SKPath.ConvertConicToQuads(
+                            points[0], points[1], points[2], iterator.ConicWeight(), 2);
+                        for (var index = 1; index + 1 < quads.Length; index += 2)
+                            AddCurve([quads[index]], quads[index + 1]);
+                        break;
+                    case SKPathVerb.Cubic:
+                        AddCurve([points[1], points[2]], points[3]);
+                        break;
+                    case SKPathVerb.Close:
+                        if (snapped.Count > start) CheckLine(snapped[snapped.Count - 1], snapped[start]);
+                        verbs.Add((verb, snapped.Count));
+                        moved = startMoved;
+                        break;
                 }
-                var previous = snapped.Count > 0 ? snapped[snapped.Count - 1] : default;
-                verbs.Add((verb, snapped.Count, verb == SKPathVerb.Conic ? iterator.ConicWeight() : 1f));
-                for (var index = first; index < first + count; index++)
-                {
-                    var (x, y) = Map(transform, points[index].X, points[index].Y);
-                    snapped.Add(corner
-                        ? (Math.Floor(x * 1024), Math.Floor(y * 1024))
-                        : (Math.Floor(x + 0.25), Math.Floor(y + 0.25)));
-                }
-                var end = verb == SKPathVerb.Close && snapped.Count > start ? snapped[start]
-                    : snapped.Count > 0 ? snapped[snapped.Count - 1] : default;
-                if (verb is SKPathVerb.Quad or SKPathVerb.Conic or SKPathVerb.Cubic ||
-                    (verb is SKPathVerb.Line or SKPathVerb.Close && end.X != previous.X && end.Y != previous.Y))
-                    straight = false;
             }
             CheckImplicitClose(start);
+
+            (double X, double Y) AddEnd(SKPoint point)
+            {
+                var (x, y) = Map(transform, point.X, point.Y);
+                var (snappedX, snappedY) = Snap(x, y);
+                snapped.Add((snappedX, snappedY));
+                return (snappedX - x, snappedY - y);
+            }
+
+            void AddCurve(SKPoint[] controls, SKPoint end)
+            {
+                straight = false;
+                verbs.Add((controls.Length == 1 ? SKPathVerb.Quad : SKPathVerb.Cubic, snapped.Count));
+                var (endX, endY) = Map(transform, end.X, end.Y);
+                var endSnapped = Snap(endX, endY);
+                (double X, double Y) endMoved = (endSnapped.X - endX, endSnapped.Y - endY);
+                for (var index = 0; index < controls.Length; index++)
+                {
+                    var (x, y) = Map(transform, controls[index].X, controls[index].Y);
+                    var shift = controls.Length == 1 ? ((moved.X + endMoved.X) / 2, (moved.Y + endMoved.Y) / 2)
+                        : index == 0 ? moved : endMoved;
+                    snapped.Add(corner ? Snap(x, y) : (x + shift.Item1, y + shift.Item2));
+                }
+                snapped.Add(endSnapped);
+                moved = endMoved;
+            }
+        }
+
+        (double X, double Y) Snap(double x, double y) => corner
+            ? (Math.Floor(x * 1024) / 1024, Math.Floor(y * 1024) / 1024)
+            : (Math.Floor(x + 0.25) + 0.25, Math.Floor(y + 0.25) + 0.25);
+
+        void CheckLine((double X, double Y) from, (double X, double Y) to)
+        {
+            if (from.X != to.X && from.Y != to.Y) straight = false;
         }
 
         // A fill closes an open subpath with a line back to its start.
         void CheckImplicitClose(int subpathStart)
         {
-            if (snapped.Count <= subpathStart) return;
-            var (first, last) = (snapped[subpathStart], snapped[snapped.Count - 1]);
-            if (first.X != last.X && first.Y != last.Y) straight = false;
+            if (snapped.Count > subpathStart) CheckLine(snapped[subpathStart], snapped[snapped.Count - 1]);
         }
 
         // The result samples pixel centres. Skia covers pixel i when its
@@ -7559,30 +7642,42 @@ internal static class PdfCartonAliasedFill
         // that exactly when t <= i < t' for the other edge (and rounds to
         // itself at 1/64). The span computation takes s = t + 1/2.
         var direct = rectilinear = straight;
+        var offset = corner ? 0.5 : 0;
         var device = new SKPath { FillType = lease.Path.FillType };
-        foreach (var (verb, first, weight) in verbs)
+        var flattened = new List<(double X, double Y)>();
+        (double X, double Y) current = default, subpathStart = default;
+        foreach (var (verb, first) in verbs)
         {
             switch (verb)
             {
-                case SKPathVerb.Move: device.MoveTo(Point(first)); break;
-                case SKPathVerb.Line: device.LineTo(Point(first)); break;
-                case SKPathVerb.Quad: device.QuadTo(Point(first), Point(first + 1)); break;
-                case SKPathVerb.Conic: device.ConicTo(Point(first), Point(first + 1), weight); break;
-                case SKPathVerb.Cubic: device.CubicTo(Point(first), Point(first + 1), Point(first + 2)); break;
-                case SKPathVerb.Close: device.Close(); break;
+                case SKPathVerb.Move:
+                    device.MoveTo(Point(snapped[first]));
+                    current = subpathStart = snapped[first];
+                    break;
+                case SKPathVerb.Line:
+                    device.LineTo(Point(snapped[first]));
+                    current = snapped[first];
+                    break;
+                case SKPathVerb.Quad or SKPathVerb.Cubic:
+                    var curve = new (double X, double Y)[verb == SKPathVerb.Quad ? 3 : 4];
+                    curve[0] = current;
+                    for (var index = 1; index < curve.Length; index++) curve[index] = snapped[first + index - 1];
+                    flattened.Clear();
+                    FlattenCurve(curve, corner, cull, flattened);
+                    foreach (var point in flattened) device.LineTo(Point(point));
+                    current = curve[curve.Length - 1];
+                    break;
+                case SKPathVerb.Close:
+                    device.Close();
+                    current = subpathStart;
+                    break;
             }
         }
         return device;
 
-        SKPoint Point(int index)
-        {
-            var (x, y) = snapped[index];
-            return corner
-                ? direct
-                    ? new SKPoint((float)((Math.Ceiling(x / 16) + 31) / 64), (float)((Math.Ceiling(y / 16) + 31) / 64))
-                    : new SKPoint((float)(x / 1024 + 0.5), (float)(y / 1024 + 0.5))
-                : new SKPoint((float)(x + 0.25), (float)(y + 0.25));
-        }
+        SKPoint Point((double X, double Y) point) => corner && direct
+            ? new SKPoint((float)((Math.Ceiling(point.X * 64) + 31) / 64), (float)((Math.Ceiling(point.Y * 64) + 31) / 64))
+            : new SKPoint((float)(point.X + offset), (float)(point.Y + offset));
     }
 
     // Draws a DevicePath on a canvas whose matrix maps device coordinates.
@@ -7597,12 +7692,13 @@ internal static class PdfCartonAliasedFill
         canvas.DrawPath(spans, paint);
     }
 
-    // The pixels whose centres lie inside the path, left and top edges
-    // included, as one integer rectangle per run, within the clip.
+    // The pixels whose centres lie inside the path (lines only, as
+    // DevicePath makes it), left and top edges included, as one integer
+    // rectangle per run, within the clip.
     private static SKPath Spans(SKPath path, SKRect clip)
     {
         var edges = new List<(double X0, double Y0, double X1, double Y1, int Winding)>();
-        Flatten(path, clip, edges);
+        Edges(path, edges);
         var inverse = path.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd;
         var evenOdd = path.FillType is SKPathFillType.EvenOdd or SKPathFillType.InverseEvenOdd;
         var bounds = path.Bounds;
@@ -7664,16 +7760,10 @@ internal static class PdfCartonAliasedFill
         return result;
     }
 
-    // The path's outline as line edges from top to bottom with their winding
-    // direction. Curves are halved until each piece's control polygon lies
-    // within 1/16 pixel of its chord, or the piece lies wholly above, below,
-    // left or right of the clip, where its chord crosses every visible row
-    // the same way.
-    private static void Flatten(
-        SKPath path, SKRect clip, List<(double X0, double Y0, double X1, double Y1, int Winding)> edges)
+    // The outline of a path of lines as edges from top to bottom with their
+    // winding direction; an open subpath is closed.
+    private static void Edges(SKPath path, List<(double X0, double Y0, double X1, double Y1, int Winding)> edges)
     {
-        const double tolerance = 1.0 / 16;
-        double left = clip.Left - 1, top = clip.Top - 1, right = clip.Right + 1, bottom = clip.Bottom + 1;
         using var iterator = path.CreateRawIterator();
         var points = new SKPoint[4];
         (double X, double Y) start = default, last = default;
@@ -7690,17 +7780,6 @@ internal static class PdfCartonAliasedFill
                     break;
                 case SKPathVerb.Line:
                     Line(last, (points[1].X, points[1].Y));
-                    break;
-                case SKPathVerb.Quad:
-                    Curve([Weighted(points[0], 1), Weighted(points[1], 1), Weighted(points[2], 1)], 0);
-                    break;
-                case SKPathVerb.Conic:
-                    Curve([Weighted(points[0], 1), Weighted(points[1], iterator.ConicWeight()),
-                        Weighted(points[2], 1)], 0);
-                    break;
-                case SKPathVerb.Cubic:
-                    Curve([Weighted(points[0], 1), Weighted(points[1], 1), Weighted(points[2], 1),
-                        Weighted(points[3], 1)], 0);
                     break;
                 case SKPathVerb.Close:
                     Line(last, start);
@@ -7719,57 +7798,199 @@ internal static class PdfCartonAliasedFill
                 ? (from.X, from.Y, to.X, to.Y, 1)
                 : (to.X, to.Y, from.X, from.Y, -1));
         }
+    }
 
-        // Control points in homogeneous form (x w, y w, w): a conic is a
-        // rational quadratic, and halving works the same for every degree.
-        static (double X, double Y, double W) Weighted(SKPoint point, double weight) =>
-            (point.X * weight, point.Y * weight, weight);
-
-        void Curve((double X, double Y, double W)[] control, int depth)
+    // Java 2D's flattening of one snapped device-space curve (a quadratic or
+    // a cubic, given by its control points), appended to output as the
+    // points after its start. Inferred from black-box probes of Java 2D's
+    // masks (see FlattenCorner and FlattenCentre).
+    private static void FlattenCurve(
+        (double X, double Y)[] curve, bool corner, SKRect cull, List<(double X, double Y)> output)
+    {
+        foreach (var (x, y) in curve)
         {
-            var count = control.Length;
-            var first = (control[0].X / control[0].W, control[0].Y / control[0].W);
-            var end = (control[count - 1].X / control[count - 1].W, control[count - 1].Y / control[count - 1].W);
-            double minX = Math.Min(first.Item1, end.Item1), maxX = Math.Max(first.Item1, end.Item1);
-            double minY = Math.Min(first.Item2, end.Item2), maxY = Math.Max(first.Item2, end.Item2);
-            var flat = true;
-            for (var index = 1; index < count - 1; index++)
+            if (double.IsNaN(x) || double.IsInfinity(x) || double.IsNaN(y) || double.IsInfinity(y))
             {
-                var (x, y) = (control[index].X / control[index].W, control[index].Y / control[index].W);
-                minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
-                minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
-                flat &= SegmentDistance(x, y, first, end) <= tolerance;
-            }
-            // The convex hull bounds the curve (conic weights are positive).
-            if (flat || depth >= 40 || maxY < top || minY > bottom || minX > right || maxX < left ||
-                double.IsNaN(minX + maxX + minY + maxY))
-            {
-                Line(last, end);
+                output.Add(curve[curve.Length - 1]);
                 return;
             }
-            var lower = new (double X, double Y, double W)[count];
-            var upper = new (double X, double Y, double W)[count];
-            var work = ((double X, double Y, double W)[])control.Clone();
-            for (var level = 0; level < count; level++)
-            {
-                lower[level] = work[0];
-                upper[count - 1 - level] = work[count - 1 - level];
-                for (var index = 0; index < count - 1 - level; index++)
-                    work[index] = ((work[index].X + work[index + 1].X) / 2, (work[index].Y + work[index + 1].Y) / 2,
-                        (work[index].W + work[index + 1].W) / 2);
-            }
-            Curve(lower, depth + 1);
-            Curve(upper, depth + 1);
         }
-
-        static double SegmentDistance(double x, double y, (double X, double Y) a, (double X, double Y) b)
+        if (!corner)
         {
-            double dx = b.X - a.X, dy = b.Y - a.Y;
-            var length = dx * dx + dy * dy;
-            var t = length == 0 ? 0 : Math.Max(0, Math.Min(1, ((x - a.X) * dx + (y - a.Y) * dy) / length));
-            double px = a.X + t * dx - x, py = a.Y + t * dy - y;
-            return Math.Sqrt(px * px + py * py);
+            FlattenCentre(curve, cull, output, 0);
+            return;
         }
+        var cuts = new List<double> { 0, 1 };
+        AddExtrema(curve, point => point.X, cuts);
+        AddExtrema(curve, point => point.Y, cuts);
+        cuts.Sort();
+        for (var index = 1; index < cuts.Count; index++)
+        {
+            double from = cuts[index - 1], to = cuts[index];
+            if (to <= from) continue;
+            var piece = to < 1 ? Split(curve, to, left: true) : curve;
+            FlattenCorner(from > 0 ? Split(piece, from / to, left: false) : piece, cull, output, 0);
+        }
+    }
+
+    // Corner sampling, measured by fitting each row's edge position (found
+    // to 1/256 pixel by sliding the curve in 1/256 pixel steps) on 1200
+    // random curves: Java cuts a curve at its x and y extrema, halves each
+    // monotone piece while its control points span more than 256 pixels on
+    // an axis, then steps through the piece starting at 1/8 of it (cubic) or
+    // 1/4 (quadratic). Before each step it halves the step while the second
+    // difference of the next points, h^2 B''(u + h), exceeds 4 pixels on an
+    // axis, or a cubic's third difference h^3 B''' exceeds 2. The step never
+    // grows again.
+    private static void FlattenCorner(
+        (double X, double Y)[] curve, SKRect cull, List<(double X, double Y)> output, int depth)
+    {
+        if (Outside(curve, cull))
+        {
+            output.Add(curve[curve.Length - 1]);
+            return;
+        }
+        double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
+        foreach (var (x, y) in curve)
+        {
+            minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+            minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+        }
+        if (depth < 40 && Math.Max(maxX - minX, maxY - minY) > 256)
+        {
+            FlattenCorner(Split(curve, 0.5, left: true), cull, output, depth + 1);
+            FlattenCorner(Split(curve, 0.5, left: false), cull, output, depth + 1);
+            return;
+        }
+        const int unit = 1 << 20;
+        var cubic = curve.Length == 4;
+        var level = cubic ? 3 : 2;
+        var position = 0;
+        while (position < unit)
+        {
+            var u = (double)position / unit;
+            while (level < 16 && TooCoarse(1.0 / (1 << level))) level++;
+            position = Math.Min(unit, position + (unit >> level));
+            output.Add(position == unit ? curve[curve.Length - 1] : Evaluate(curve, (double)position / unit));
+
+            bool TooCoarse(double h)
+            {
+                var (x, y) = SecondDerivative(curve, u + h);
+                if (Math.Max(Math.Abs(x), Math.Abs(y)) * h * h > 4) return true;
+                if (!cubic) return false;
+                var (nextX, nextY) = SecondDerivative(curve, u + 2 * h);
+                return Math.Max(Math.Abs(nextX - x), Math.Abs(nextY - y)) * h * h > 2;
+            }
+        }
+    }
+
+    // Centre sampling, measured by comparing whole masks of large and random
+    // curves against candidate subdivisions: Java halves the curve, without
+    // cutting it at its extrema, until every inner control point lies
+    // within one pixel of the chord between the ends.
+    private static void FlattenCentre(
+        (double X, double Y)[] curve, SKRect cull, List<(double X, double Y)> output, int depth)
+    {
+        var flat = true;
+        for (var index = 1; index < curve.Length - 1 && flat; index++)
+            flat = SegmentDistance(curve[index], curve[0], curve[curve.Length - 1]) <= 1;
+        if (flat || depth >= 24 || Outside(curve, cull))
+        {
+            output.Add(curve[curve.Length - 1]);
+            return;
+        }
+        FlattenCentre(Split(curve, 0.5, left: true), cull, output, depth + 1);
+        FlattenCentre(Split(curve, 0.5, left: false), cull, output, depth + 1);
+    }
+
+    // Whether the control points, and so the curve, lie wholly beyond one
+    // side of the clip; the piece and its chord then cross no visible row.
+    private static bool Outside((double X, double Y)[] curve, SKRect cull)
+    {
+        bool left = true, right = true, above = true, below = true;
+        foreach (var (x, y) in curve)
+        {
+            left &= x < cull.Left - 1;
+            right &= x > cull.Right + 1;
+            above &= y < cull.Top - 1;
+            below &= y > cull.Bottom + 1;
+        }
+        return left || right || above || below;
+    }
+
+    private static void AddExtrema(
+        (double X, double Y)[] curve, Func<(double X, double Y), double> axis, List<double> cuts)
+    {
+        double p0 = axis(curve[0]), p1 = axis(curve[1]), p2 = axis(curve[2]);
+        if (curve.Length == 3)
+        {
+            var denominator = p0 - 2 * p1 + p2;
+            if (denominator != 0) AddCut((p0 - p1) / denominator);
+            return;
+        }
+        // The derivative is a(1-t)^2 + 2b(1-t)t + ct^2 in the differences.
+        double a = p1 - p0, b = p2 - p1, c = axis(curve[3]) - p2;
+        double quadratic = a - 2 * b + c, linear = 2 * (b - a);
+        if (Math.Abs(quadratic) < 1e-12)
+        {
+            if (Math.Abs(linear) > 1e-12) AddCut(-a / linear);
+            return;
+        }
+        var discriminant = linear * linear - 4 * quadratic * a;
+        if (discriminant < 0) return;
+        var root = Math.Sqrt(discriminant);
+        AddCut((-linear - root) / (2 * quadratic));
+        AddCut((-linear + root) / (2 * quadratic));
+
+        void AddCut(double t)
+        {
+            if (t > 0 && t < 1) cuts.Add(t);
+        }
+    }
+
+    // One side of the curve split at t (de Casteljau).
+    private static (double X, double Y)[] Split((double X, double Y)[] curve, double t, bool left)
+    {
+        var count = curve.Length;
+        var work = ((double X, double Y)[])curve.Clone();
+        var result = new (double X, double Y)[count];
+        for (var level = 0; level < count; level++)
+        {
+            if (left) result[level] = work[0];
+            else result[count - 1 - level] = work[count - 1 - level];
+            for (var index = 0; index < count - 1 - level; index++)
+                work[index] = (work[index].X + (work[index + 1].X - work[index].X) * t,
+                    work[index].Y + (work[index + 1].Y - work[index].Y) * t);
+        }
+        return result;
+    }
+
+    private static (double X, double Y) Evaluate((double X, double Y)[] curve, double t)
+    {
+        var work = ((double X, double Y)[])curve.Clone();
+        for (var count = work.Length - 1; count > 0; count--)
+            for (var index = 0; index < count; index++)
+                work[index] = (work[index].X + (work[index + 1].X - work[index].X) * t,
+                    work[index].Y + (work[index + 1].Y - work[index].Y) * t);
+        return work[0];
+    }
+
+    private static (double X, double Y) SecondDerivative((double X, double Y)[] curve, double t)
+    {
+        if (curve.Length == 3)
+            return (2 * (curve[0].X - 2 * curve[1].X + curve[2].X), 2 * (curve[0].Y - 2 * curve[1].Y + curve[2].Y));
+        double ax = curve[0].X - 2 * curve[1].X + curve[2].X, ay = curve[0].Y - 2 * curve[1].Y + curve[2].Y;
+        double bx = curve[1].X - 2 * curve[2].X + curve[3].X, by = curve[1].Y - 2 * curve[2].Y + curve[3].Y;
+        return (6 * ((1 - t) * ax + t * bx), 6 * ((1 - t) * ay + t * by));
+    }
+
+    private static double SegmentDistance((double X, double Y) point, (double X, double Y) a, (double X, double Y) b)
+    {
+        double dx = b.X - a.X, dy = b.Y - a.Y;
+        var length = dx * dx + dy * dy;
+        var t = length == 0 ? 0 : Math.Max(0, Math.Min(1, ((point.X - a.X) * dx + (point.Y - a.Y) * dy) / length));
+        double px = a.X + t * dx - point.X, py = a.Y + t * dy - point.Y;
+        return Math.Sqrt(px * px + py * py);
     }
 
     private static (double X, double Y) Map(SKMatrix m, float x, float y) =>

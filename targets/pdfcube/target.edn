@@ -55,7 +55,7 @@
      :pdfcube/image-codecs-unsupported]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 34644 :total-lines 52128}}
+    :budget {:authored-lines 34865 :total-lines 52349}}
    :required-capabilities
    #{:font-discovery :icc :java-bidi :java-compat :java-regex-unicode
      :skia-geometry}}
@@ -86,7 +86,7 @@
      :pdfcube/jpeg]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 17708 :total-lines 200122}}
+    :budget {:authored-lines 17929 :total-lines 200343}}
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing
