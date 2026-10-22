@@ -6581,14 +6581,18 @@ public sealed class ImageCodecAdapterTests
     // headers are in its own header; the decoder sizes their bookkeeping from
     // the first TNsot of the tile, so JpxTilePartCounts corrects it first,
     // also when that first TNsot is 0 (not given) and when a main header
-    // marker without a segment (FF30) precedes the first SOT.
+    // marker without a segment (FF30) precedes the first SOT. In a JP2 file
+    // it finds the codestream in the jp2c box and corrects it there.
     [Theory]
-    [InlineData(false, "")]
-    [InlineData(true, "")]
-    [InlineData(false, "first unspecified")]
-    [InlineData(true, "first unspecified")]
-    [InlineData(true, "reserved marker")]
-    public async Task JpxTilePartsBeyondAnUndercountingTNsotAreDecoded(bool packedHeaders, string variant)
+    [InlineData(false, "", false)]
+    [InlineData(true, "", false)]
+    [InlineData(false, "first unspecified", false)]
+    [InlineData(true, "first unspecified", false)]
+    [InlineData(true, "reserved marker", false)]
+    [InlineData(true, "", true)]
+    [InlineData(true, "first unspecified", true)]
+    public async Task JpxTilePartsBeyondAnUndercountingTNsotAreDecoded(
+        bool packedHeaders, string variant, bool container)
     {
         const int width = 40, height = 16;
         var samples = new int[width * height];
@@ -6599,12 +6603,14 @@ public sealed class ImageCodecAdapterTests
         parameters["tiles"] = "32 16";
         parameters["Wlev"] = "2";
         parameters["tile_parts"] = "1";
-        parameters["file_format"] = "off";
+        parameters["file_format"] = container ? "on" : "off";
         if (packedHeaders) parameters["pph_tile"] = "on";
         var data = CoreJ2K.J2kImage.ToBytes(
             new CoreJ2K.Util.InterleavedImageSource(
                 width, height, 1, 8, new bool[1], [samples.Select(v => v - 128).ToArray()]),
             null, parameters);
+        // A JP2 file starts with its signature box, a codestream with SOC.
+        Assert.Equal(container ? new byte[] { 0, 0, 0, 12, 0x6A, 0x50 } : [0xFF, 0x4F], data.Take(container ? 6 : 2));
         int[] Decoded(byte[] jpx)
         {
             using var image = Compat.PdfCartonImageCodecs.Decode("JPX", jpx);
@@ -6637,7 +6643,7 @@ public sealed class ImageCodecAdapterTests
             return;
         }
         Assert.Equal(samples, Decoded(undercounting));
-        if (variant != "") return;
+        if (variant != "" || container) return;
 
         // The decoder itself reads the tile-parts past the announced count
         // (the CoreJ2K 0383d9f backport), without the adapter's correction.
