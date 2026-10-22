@@ -17,6 +17,21 @@
    {:count 59
     :sha256
     "c7eddf739e47327cf9128b9aca4734ffdd5f0b5385a89d03416748cf33c5deed"}}
+  {:id :pdfcube/area-intersection
+   :kind :file
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.AreaIntersection.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 681
+   :max-emitted-lines 681
+   :source-inventory-sha256
+   "26b4f41cb71b360b87f6f2c301fa8cb56c140cc6e8c8b44e561e9d2c6f4c7179"
+   :public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
   {:id :pdfcube/fontbox-discovery
    :kind :file
    :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Fonts.Discovery.cs"

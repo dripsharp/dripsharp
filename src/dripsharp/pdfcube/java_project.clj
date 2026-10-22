@@ -4441,6 +4441,17 @@
       :missing-kind :missing-pdfcube-fontbox-compatibility-source
       :missing-message "PdfCarton FontBox compatibility source is missing"})
 
+    (or (contains? (:internal-capabilities configuration) :skia-geometry)
+        (contains? (:internal-capabilities configuration) :skia-graphics))
+    (conj
+     {:source
+      (configured-runtime-source configuration
+                                 "DripSharp.PdfCarton.AreaIntersection.cs")
+      :destination "DripSharp/Runtime/PdfCartonAreaIntersection.cs"
+      :strategy :pdfcube.fontbox/area-intersection
+      :missing-kind :missing-pdfcube-area-intersection-source
+      :missing-message "PdfCarton area intersection source is missing"})
+
     (and
      (contains? (:internal-capabilities configuration) :skia-geometry)
      (not (or (contains? (:internal-capabilities configuration) :jbig2)

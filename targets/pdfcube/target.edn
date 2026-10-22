@@ -44,16 +44,18 @@
    :destination :fontbox
    :mapping-overlays []
    :runtime-assets
-   [:pdfcube/fontbox-compat :pdfcube/fontbox-discovery :pdfcube/icc
+   [:pdfcube/fontbox-compat :pdfcube/area-intersection
+    :pdfcube/fontbox-discovery :pdfcube/icc
     :pdfcube/image-codecs-unsupported]
    :validation-contracts [:pdfcube-fontbox]
    :authorship
    {:sources
-    [:pdfcube/fontbox-compat :pdfcube/fontbox-discovery :pdfcube/icc
+    [:pdfcube/fontbox-compat :pdfcube/area-intersection
+     :pdfcube/fontbox-discovery :pdfcube/icc
      :pdfcube/image-codecs-unsupported]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 33437 :total-lines 50921}}
+    :budget {:authored-lines 34118 :total-lines 51602}}
    :required-capabilities
    #{:font-discovery :icc :java-bidi :java-compat :java-regex-unicode
      :skia-geometry}}
@@ -74,17 +76,17 @@
    :destination :pdfbox
    :mapping-overlays []
    :runtime-assets
-   [:pdfcube/fontbox-compat :pdfcube/icc :pdfcube/image-codecs
-    :pdfcube/pdfbox-compat]
+   [:pdfcube/fontbox-compat :pdfcube/area-intersection :pdfcube/icc
+    :pdfcube/image-codecs :pdfcube/pdfbox-compat]
    :validation-contracts []
    :authorship
    {:sources
-    [:pdfcube/fontbox-compat :pdfcube/icc :pdfcube/image-codecs
-     :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx
+    [:pdfcube/fontbox-compat :pdfcube/area-intersection :pdfcube/icc
+     :pdfcube/image-codecs :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx
      :pdfcube/jpeg]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 16378 :total-lines 198792}}
+    :budget {:authored-lines 17059 :total-lines 199473}}
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing
@@ -112,6 +114,9 @@
  :runtime-assets
  [{:id :pdfcube/fontbox-compat
    :path "runtime/DripSharp.PdfCarton.Fonts.Compat.cs"
+   :capabilities #{:skia-geometry}}
+  {:id :pdfcube/area-intersection
+   :path "runtime/DripSharp.PdfCarton.AreaIntersection.cs"
    :capabilities #{:skia-geometry}}
   {:id :pdfcube/fontbox-discovery
    :path "runtime/DripSharp.PdfCarton.Fonts.Discovery.cs"

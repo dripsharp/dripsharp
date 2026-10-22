@@ -87,6 +87,7 @@
  :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
  :runtime-sources
  ["runtime/DripSharp.PdfCarton.Fonts.Compat.cs"
+  "runtime/DripSharp.PdfCarton.AreaIntersection.cs"
   "runtime/DripSharp.PdfCarton.Fonts.Discovery.cs"
   "runtime/DripSharp.PdfCarton.Icc.cs"
   "runtime/DripSharp.PdfCarton.ImageCodecs.Unsupported.cs"]

@@ -7287,16 +7287,16 @@ public sealed class JavaArea : IDisposable
     internal void IntersectTemporary(SKPath shape) =>
         IntersectInto(shape ?? throw new ArgumentNullException(nameof(shape)), shape);
 
-    // Skia's Op may write over an operand. Its even-odd result becomes the
-    // nonzero one an Area has, with its holes reversed (else stays even-odd).
+    // The result may be written over an operand. Skia intersects small paths
+    // and makes its even-odd result the nonzero one an Area has, with its
+    // holes reversed; larger ones are clipped (PdfCartonAreaIntersection).
     private void IntersectInto(SKPath other, SKPath result)
     {
-        if (!path.Op(other, SKPathOp.Intersect, result))
+        if (!PdfCartonAreaIntersection.Intersect(path, other, result))
         {
             if (result != path && result != other) result.Dispose();
             throw new InvalidOperationException("Unable to intersect paths.");
         }
-        result.ToWinding(result);
         if (result == path) return;
         if (ownsPath) path.Dispose();
         (path, ownsPath) = (result, true);

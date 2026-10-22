@@ -7870,6 +7870,192 @@ public sealed class PathIteratorTests
         }
     }
 
+    // Skia's path intersection fails (returns false) on a 10,000-segment
+    // polygon and a rectangle, and stalls for a minute or more at 100,000
+    // segments, where java.awt.geom.Area intersects them. Each case is a
+    // closed polyline of 100,000 segments intersected with a rectangle.
+    [Fact]
+    public void LargePathsIntersectWithARectangle()
+    {
+        var circle = new SKPath();
+        for (var index = 0; index < 100_000; index++)
+        {
+            var angle = index * 2 * Math.PI / 100_000;
+            var (x, y) = ((float)(250 + 250 * Math.Cos(angle)), (float)(250 + 250 * Math.Sin(angle)));
+            if (index == 0) circle.MoveTo(x, y);
+            else circle.LineTo(x, y);
+        }
+        circle.Close();
+        // Teeth 0.005 wide and 400 tall over a base from y -100 to 0.
+        var sawtooth = new SKPath();
+        sawtooth.MoveTo(0, 0);
+        for (var index = 0; index < 50_000; index++)
+        {
+            sawtooth.LineTo(index * 0.01f + 0.005f, 400);
+            sawtooth.LineTo((index + 1) * 0.01f, 0);
+        }
+        sawtooth.LineTo(500, -100);
+        sawtooth.LineTo(0, -100);
+        sawtooth.Close();
+        // Steps of 0.01 up the diagonal from (0, 0) to (500, 500).
+        var staircase = new SKPath();
+        staircase.MoveTo(0, 0);
+        for (var index = 0; index < 50_000; index++)
+        {
+            staircase.LineTo(index * 0.01f, (index + 1) * 0.01f);
+            staircase.LineTo((index + 1) * 0.01f, (index + 1) * 0.01f);
+        }
+        staircase.LineTo(500, 0);
+        staircase.Close();
+
+        foreach (var (path, inside, outside) in new[]
+                 {
+                     (circle, new SKPoint(60, 250), new SKPoint(70, 70)),
+                     (sawtooth, new SKPoint(100.005f, 300), new SKPoint(100.009f, 300)),
+                     (staircase, new SKPoint(300, 100), new SKPoint(100, 300)),
+                 })
+        {
+            using var area = new Compat.JavaArea(path);
+            path.Dispose();
+            using var rectangle = new SKPath();
+            rectangle.AddRect(new SKRect(50, 60, 420, 380));
+            using (var clip = Compat.JavaArea.Lend(rectangle))
+                area.Intersect(clip);
+            Assert.True(area.Path.Contains(inside.X, inside.Y), $"{inside}");
+            Assert.False(area.Path.Contains(outside.X, outside.Y), $"{outside}");
+            Assert.False(area.Path.Contains(inside.X, 50), "above the rectangle");
+            Assert.False(area.Path.Contains(450, inside.Y), "right of the rectangle");
+            Assert.True(area.Bounds.Left >= 50 && area.Bounds.Right <= 420, $"{area.Bounds}");
+        }
+    }
+
+    // Large intersections keep what the operands share: a rectangle drawn
+    // with an edge that runs back on itself is not taken for a convex clip, a
+    // curve crossing a clip keeps its shallow bulge, and 1,000 coincident
+    // half-unit squares far from the origin still overlap.
+    [Fact]
+    public void LargeIntersectionsKeepRetracedEdgesShallowCurvesAndSmallAreas()
+    {
+        SKPath Intersection(SKPath first, SKPath second)
+        {
+            using var area = new Compat.JavaArea(first);
+            using (var other = Compat.JavaArea.Lend(second))
+                area.Intersect(other);
+            return new SKPath(area.Path);
+        }
+
+        using var circle = new SKPath();
+        for (var index = 0; index < 10_000; index++)
+        {
+            var angle = index * 2 * Math.PI / 10_000;
+            var (x, y) = ((float)(10 + 50 * Math.Cos(angle)), (float)(10 + 50 * Math.Sin(angle)));
+            if (index == 0) circle.MoveTo(x, y);
+            else circle.LineTo(x, y);
+        }
+        circle.Close();
+        using var retraced = new SKPath();
+        retraced.MoveTo(0, 0);
+        foreach (var (x, y) in new[] { (10, 0), (5, 0), (20, 0), (20, 20), (0, 20) })
+            retraced.LineTo(x, y);
+        retraced.Close();
+        using (var result = Intersection(circle, retraced)) Assert.True(result.Contains(10, 10));
+        using (var result = Intersection(retraced, circle)) Assert.True(result.Contains(10, 10));
+
+        using var caps = new SKPath();
+        for (var index = 0; index < 1_000; index++)
+        {
+            caps.MoveTo(2 * index, 0);
+            caps.QuadTo(2 * index + 1, 0.004f, 2 * index + 2, 0);
+            caps.Close();
+        }
+        using var strip = new SKPath();
+        strip.AddRect(new SKRect(0.5f, -1, 1999.5f, 1));
+        using (var result = Intersection(caps, strip))
+        {
+            Assert.True(result.Contains(1, 0.001f));
+            Assert.True(result.Contains(0.6f, 0.0005f));
+            Assert.False(result.Contains(0.4f, 0.0005f));
+            Assert.False(result.Contains(1, 0.003f));
+        }
+
+        using var squares = new SKPath();
+        for (var index = 0; index < 1_000; index++)
+            squares.AddRect(new SKRect(1_000_000, 1_000_000, 1_000_000.5f, 1_000_000.5f));
+        using (var result = Intersection(squares, squares)) Assert.True(result.Contains(1_000_000.25f, 1_000_000.25f));
+    }
+
+    // A pattern fill of a 10,000-segment polygon approximating a circle,
+    // under a rectangular clip (PDFBOX-2901 intersects the two), paints only
+    // inside both. Skia's intersection of these two fails. The clip is device
+    // (50, 60) to (420, 380). Device row y shows PDF y 499 - y to 500 - y.
+    [Fact]
+    public void PatternFillOfALargePolygonUnderAClipPaintsInsideBoth()
+    {
+        using var document = PatternPage(
+            500, $"50 120 370 320 re W n /Pattern cs /P1 scn\n{CirclePolygon(250, 250, 250, 10_000)}f");
+        using var image = new PDFRenderer(document).RenderImage(0, 1);
+        var red = new SKColor(255, 0, 0);
+        foreach (var (x, pdfY, inside) in new[]
+                 {
+                     (250, 250, true), (55, 250, true), (415, 250, true), (250, 435, true), (250, 125, true),
+                     (250, 470, false), // in the circle, above the clip
+                     (250, 60, false),  // in the circle, below the clip
+                     (440, 250, false), // in the circle, right of the clip
+                     (419, 439, false), // in the clip, outside the circle
+                     (5, 5, false),
+                 })
+        {
+            Assert.True((inside ? red : SKColors.White) == image.GetPixel(x, 499 - pdfY),
+                $"({x}, {pdfY}) is {image.GetPixel(x, 499 - pdfY)}");
+        }
+    }
+
+    // Two 10,000-segment clipping paths are intersected (with the page box
+    // first) by PDGraphicsState.getCurrentClippingPath; a pattern fill of a
+    // third is then intersected with that clip.
+    [Fact]
+    public void LargeClippingPathsIntersect()
+    {
+        var clips = $"{CirclePolygon(80, 100, 60, 10_000)}W n\n{CirclePolygon(120, 100, 60, 10_000)}W n\n";
+        var red = new SKColor(255, 0, 0);
+        foreach (var (fill, lensOutsideFill) in new[]
+                 {
+                     ("1 0 0 rg 0 0 200 200 re f", true),
+                     ($"/Pattern cs /P1 scn\n{CirclePolygon(100, 100, 50, 10_000)}f", false),
+                 })
+        {
+            using var document = PatternPage(200, clips + fill);
+            using var image = new PDFRenderer(document).RenderImage(0, 1);
+            foreach (var (x, pdfY, inside) in new[]
+                     {
+                         (100, 100, true), (70, 100, true), (130, 100, true),
+                         (100, 153, lensOutsideFill), // in both clips, outside the pattern's circle
+                         (40, 100, false),            // in the first clip only
+                         (160, 100, false),           // in the second clip only
+                         (100, 165, false),           // above both clips
+                     })
+            {
+                Assert.True((inside ? red : SKColors.White) == image.GetPixel(x, 199 - pdfY),
+                    $"{fill[..10]}: ({x}, {pdfY}) is {image.GetPixel(x, 199 - pdfY)}");
+            }
+        }
+    }
+
+    // A closed polygon of the given number of segments on a circle, as PDF
+    // path operators.
+    private static string CirclePolygon(double centerX, double centerY, double radius, int segments)
+    {
+        var path = new System.Text.StringBuilder();
+        for (var index = 0; index < segments; index++)
+        {
+            var angle = index * 2 * Math.PI / segments;
+            path.Append(System.FormattableString.Invariant(
+                $"{centerX + radius * Math.Cos(angle):F4} {centerY + radius * Math.Sin(angle):F4} "));
+            path.Append(index == 0 ? "m\n" : "l\n");
+        }
+        return path.Append("h\n").ToString();
+    }
+
     // Records, for each area clip set, whether it covers PDF (200, 702) on
     // eu-001.pdf page 3's frame and (200, 695) in that frame's hole.
     private sealed class ClipRecordingGraphics(SKBitmap bitmap) : Compat.PdfCartonGraphics2D(bitmap)
