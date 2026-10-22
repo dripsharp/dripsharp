@@ -6638,6 +6638,12 @@ public class PdfCartonGraphics2D : IDisposable
             return;
         }
 
+        if (fill && !IsAntialiasEnabled())
+        {
+            FillAliased(shape);
+            return;
+        }
+
         if (paint is JavaColor)
         {
             if (shape is SKRect rectangle)
@@ -6680,6 +6686,31 @@ public class PdfCartonGraphics2D : IDisposable
         }
     }
 
+    // Java 2D chooses the pixels of an aliased fill by its own rules (see
+    // PdfCartonAliasedFill), so the shape is mapped to device space, moved
+    // onto Skia's pixel-centre sampling, and drawn without a canvas matrix.
+    private void FillAliased(object shape)
+    {
+        var copiesOpaqueColor = paint is JavaColor { Alpha: 255 } &&
+            composite is JavaAlphaComposite { Alpha: 1f };
+        var thinStroke = stroke is JavaBasicStroke basicStroke &&
+            PdfCartonAliasedFill.IsThin(basicStroke.Width, transform);
+        using var devicePath = PdfCartonAliasedFill.DevicePath(
+            shape, transform, copiesOpaqueColor, thinStroke, out var rectilinear);
+        if (paint is JavaColor)
+        {
+            RenderLayer(
+                (layer, _, drawingPaint) =>
+                    PdfCartonAliasedFill.Draw(layer, devicePath, drawingPaint, rectilinear),
+                stroked: false, imagePaint: false, PathBounds(devicePath), deviceSpace: true);
+        }
+        else
+        {
+            using var lease = PdfCartonFontCompat.BorrowPath(shape);
+            RenderPaintLayer(lease.Path, stroked: false, devicePath, rectilinear);
+        }
+    }
+
     private SKPaint CreateDrawingPaint(bool stroked, SKShader? shader = null)
     {
         var basicStroke = stroke as JavaBasicStroke ?? new JavaBasicStroke(1f);
@@ -6713,7 +6744,8 @@ public class PdfCartonGraphics2D : IDisposable
         path.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd
             ? null : path.Bounds;
 
-    private SKRectI DrawingBounds(SKRect? userBounds, bool stroked)
+    // deviceSpace: the bounds are already in device coordinates.
+    private SKRectI DrawingBounds(SKRect? userBounds, bool stroked, bool deviceSpace = false)
     {
         var clip = RequireCanvas().DeviceClipBounds;
         if (bitmap is not null)
@@ -6728,7 +6760,7 @@ public class PdfCartonGraphics2D : IDisposable
             var outset = drawingPaint.StrokeWidth * Math.Max(capScale, drawingPaint.StrokeMiter) / 2f;
             bounds.Inflate(outset, outset);
         }
-        bounds = transform.MapRect(bounds);
+        if (!deviceSpace) bounds = transform.MapRect(bounds);
         bounds.Inflate(2f, 2f); // antialiasing and image sampling at the edge
         if (float.IsNaN(bounds.Left) || float.IsNaN(bounds.Top) ||
             float.IsNaN(bounds.Right) || float.IsNaN(bounds.Bottom)) return clip;
@@ -6741,16 +6773,19 @@ public class PdfCartonGraphics2D : IDisposable
     }
 
     // draw gets the canvas, its bitmap (null if not known to be raster) and the paint.
+    // With deviceSpace, draw and userBounds use device coordinates: the canvas
+    // matrix is only the offset of the layer, if any.
     private void RenderLayer(
         Action<SKCanvas, SKBitmap?, SKPaint> draw,
         bool stroked,
         bool imagePaint,
         SKRect? userBounds,
-        SKShader? shader = null)
+        SKShader? shader = null,
+        bool deviceSpace = false)
     {
         ArgumentNullException.ThrowIfNull(draw);
         ThrowIfDisposed();
-        var bounds = DrawingBounds(userBounds, stroked);
+        var bounds = DrawingBounds(userBounds, stroked, deviceSpace);
         if (bounds.IsEmpty) return;
         if (composite is JavaAlphaComposite)
         {
@@ -6760,7 +6795,12 @@ public class PdfCartonGraphics2D : IDisposable
             ApplyFallbackComposite(directPaint);
             ApplyDestinationLuma(directPaint);
             using (BeginDrawing(bounds))
-                draw(RequireCanvas(), bitmap, directPaint);
+            {
+                var target = RequireCanvas();
+                if (deviceSpace) target.ResetMatrix();
+                draw(target, bitmap, directPaint);
+                if (deviceSpace) target.SetMatrix(transform);
+            }
             QuantizeBinaryDestination(bounds);
             return;
         }
@@ -6777,7 +6817,7 @@ public class PdfCartonGraphics2D : IDisposable
         source.Erase(SKColors.Transparent);
         using (var layer = new SKCanvas(source))
         {
-            ConfigureLayerCanvas(layer, bounds);
+            ConfigureLayerCanvas(layer, bounds, deviceSpace);
             using var sourcePaint = imagePaint
                 ? CreateImagePaint()
                 : CreateDrawingPaint(stroked, shader);
@@ -6786,9 +6826,15 @@ public class PdfCartonGraphics2D : IDisposable
         CompositeLayer(source, bounds);
     }
 
-    private void RenderPaintLayer(SKPath shape, bool stroked)
+    // devicePath, when given, is the aliased device-space shape to draw
+    // instead of shape (see PdfCartonAliasedFill.Draw).
+    private void RenderPaintLayer(
+        SKPath shape, bool stroked, SKPath? devicePath = null, bool rectilinear = false)
     {
-        var bounds = DrawingBounds(PathBounds(shape), stroked);
+        var deviceSpace = devicePath is not null;
+        var bounds = devicePath is not null
+            ? DrawingBounds(PathBounds(devicePath), stroked, deviceSpace: true)
+            : DrawingBounds(PathBounds(shape), stroked);
         if (bounds.IsEmpty) return;
         var deviceBounds = bounds;
         using var context = paint.CreateContext(
@@ -6802,8 +6848,13 @@ public class PdfCartonGraphics2D : IDisposable
         // Texture paints, TilingPaint's among them, fill with a Skia shader.
         if (context is JavaTexturePaint.TexturePaintContext texture)
         {
-            using var shader = texture.CreateShader(transform, bitmap);
-            if (shader is not null)
+            using var shader = texture.CreateShader(
+                deviceSpace ? SKMatrix.Identity : transform, bitmap);
+            if (shader is not null && devicePath is not null)
+                RenderLayer((layer, _, drawingPaint) =>
+                        PdfCartonAliasedFill.Draw(layer, devicePath, drawingPaint, rectilinear),
+                    stroked, imagePaint: false, PathBounds(devicePath), shader, deviceSpace: true);
+            else if (shader is not null)
                 RenderLayer((layer, _, drawingPaint) => layer.DrawPath(shape, drawingPaint),
                     stroked, imagePaint: false, PathBounds(shape), shader);
             return;
@@ -6843,10 +6894,13 @@ public class PdfCartonGraphics2D : IDisposable
         mask.Erase(SKColors.Transparent);
         using (var maskCanvas = new SKCanvas(mask))
         {
-            ConfigureLayerCanvas(maskCanvas, bounds);
+            ConfigureLayerCanvas(maskCanvas, bounds, deviceSpace);
             using var maskPaint = CreateDrawingPaint(stroked);
             maskPaint.Color = SKColors.White;
-            maskCanvas.DrawPath(shape, maskPaint);
+            if (devicePath is not null)
+                PdfCartonAliasedFill.Draw(maskCanvas, devicePath, maskPaint, rectilinear);
+            else
+                maskCanvas.DrawPath(shape, maskPaint);
         }
         using (var sourceCanvas = new SKCanvas(source))
         using (var maskPaint = new SKPaint { BlendMode = SKBlendMode.DstIn })
@@ -6930,7 +6984,7 @@ public class PdfCartonGraphics2D : IDisposable
         GC.KeepAlive(destination);
     }
 
-    private void ConfigureLayerCanvas(SKCanvas layer, SKRectI bounds)
+    private void ConfigureLayerCanvas(SKCanvas layer, SKRectI bounds, bool deviceSpace = false)
     {
         layer.ResetMatrix();
         layer.Translate(-bounds.Left, -bounds.Top);
@@ -6941,7 +6995,7 @@ public class PdfCartonGraphics2D : IDisposable
             initialDeviceClip.Bottom));
         if (clipPath is not null)
             layer.ClipPath(clipPath, SKClipOperation.Intersect, IsAntialiasEnabled());
-        layer.Concat(transform);
+        if (!deviceSpace) layer.Concat(transform);
     }
 
     private void ApplyUserClip(SKCanvas target)
@@ -7387,6 +7441,340 @@ public sealed class JavaEllipse
             (float)(y + height)));
         return path;
     }
+}
+
+// The pixels Java 2D covers when it fills a shape without antialiasing. The
+// rules were inferred from black-box Java 2D probes (OpenJDK 25 filling
+// shapes on BufferedImages while edges, transforms, strokes, colours and
+// composites varied) and checked against Java on random polygons:
+// - A rectangle (Rectangle2D) under a transform that keeps it axis-aligned
+//   covers device pixels [floor(lo + b), floor(hi + b)) on each axis, where
+//   b = 1/4 when an opaque colour is drawn with an opaque SRC_OVER composite
+//   and 0 otherwise.
+// - Other shapes, drawn with that opaque colour and composite while the
+//   current BasicStroke is at most one device pixel wide, cover the pixels
+//   whose top-left corner lies inside, after device coordinates are truncated
+//   to 1/1024 pixel.
+// - Otherwise each device point v moves to floor(v + 1/4) + 1/4 and the shape
+//   covers the pixels whose centre lies inside.
+// A sample on a left or top edge is inside and one on a right or bottom edge
+// is not. Skia's aliased rasterizer takes pixel centres in (lo, hi] instead
+// and snaps sloped edges to 1/64 pixel, so only shapes made of horizontal and
+// vertical lines go to it directly; the scanline spans of any other shape are
+// computed here and Skia fills them as integer rectangles. Samples exactly on,
+// or within about 1/300 pixel of, a sloped edge can still differ from Java,
+// whose edge arithmetic is not exact.
+internal static class PdfCartonAliasedFill
+{
+    // Whether a BasicStroke of this width is at most one device pixel wide
+    // under the transform's largest scale (its largest singular value). The
+    // allowance covers the float rounding of the transform's entries.
+    internal static bool IsThin(float width, SKMatrix transform)
+    {
+        double a = transform.ScaleX, b = transform.SkewX, c = transform.SkewY, d = transform.ScaleY;
+        var sum = a * a + b * b + c * c + d * d;
+        var determinant = a * d - b * c;
+        var largest = (sum + Math.Sqrt(Math.Max(0, sum * sum - 4 * determinant * determinant))) / 2;
+        return (double)width * width * largest <= 1 + 1e-7;
+    }
+
+    // The shape in device space, placed for Draw. Rectilinear device paths
+    // (horizontal and vertical lines only) are drawn directly.
+    internal static SKPath DevicePath(
+        object shape, SKMatrix transform, bool copiesOpaqueColor, bool thinStroke, out bool rectilinear)
+    {
+        rectilinear = true;
+        var axisAligned = transform.Persp0 == 0 && transform.Persp1 == 0 &&
+            ((transform.SkewX == 0 && transform.SkewY == 0) || (transform.ScaleX == 0 && transform.ScaleY == 0));
+        if (axisAligned && shape is SKRect or SKRectI)
+        {
+            var rectangle = shape is SKRect r ? r : (SKRect)(SKRectI)shape;
+            var result = new SKPath();
+            if (!(rectangle.Width > 0 && rectangle.Height > 0)) return result;
+            var bias = copiesOpaqueColor ? 0.25 : 0;
+            var (x0, y0) = Map(transform, rectangle.Left, rectangle.Top);
+            var (x1, y1) = Map(transform, rectangle.Right, rectangle.Bottom);
+            result.AddRect(new SKRect(
+                (float)Math.Floor(Math.Min(x0, x1) + bias), (float)Math.Floor(Math.Min(y0, y1) + bias),
+                (float)Math.Floor(Math.Max(x0, x1) + bias), (float)Math.Floor(Math.Max(y0, y1) + bias)));
+            return result;
+        }
+
+        // Points snap to Java's grid first: 1/1024 pixel at corners, or the
+        // pixel at a quarter offset. Only then is rectilinearity decided.
+        var corner = copiesOpaqueColor && thinStroke;
+        var straight = true;
+        using var lease = PdfCartonFontCompat.BorrowPath(shape);
+        var verbs = new List<(SKPathVerb Verb, int First, float Weight)>();
+        var snapped = new List<(double X, double Y)>();
+        using (var iterator = lease.Path.CreateRawIterator())
+        {
+            var points = new SKPoint[4];
+            SKPathVerb verb;
+            var start = 0;
+            while ((verb = iterator.Next(points)) != SKPathVerb.Done)
+            {
+                var (first, count) = verb switch
+                {
+                    SKPathVerb.Move => (0, 1),
+                    SKPathVerb.Line => (1, 1),
+                    SKPathVerb.Quad or SKPathVerb.Conic => (1, 2),
+                    SKPathVerb.Cubic => (1, 3),
+                    _ => (0, 0)
+                };
+                if (verb == SKPathVerb.Move)
+                {
+                    CheckImplicitClose(start);
+                    start = snapped.Count;
+                }
+                var previous = snapped.Count > 0 ? snapped[snapped.Count - 1] : default;
+                verbs.Add((verb, snapped.Count, verb == SKPathVerb.Conic ? iterator.ConicWeight() : 1f));
+                for (var index = first; index < first + count; index++)
+                {
+                    var (x, y) = Map(transform, points[index].X, points[index].Y);
+                    snapped.Add(corner
+                        ? (Math.Floor(x * 1024), Math.Floor(y * 1024))
+                        : (Math.Floor(x + 0.25), Math.Floor(y + 0.25)));
+                }
+                var end = verb == SKPathVerb.Close && snapped.Count > start ? snapped[start]
+                    : snapped.Count > 0 ? snapped[snapped.Count - 1] : default;
+                if (verb is SKPathVerb.Quad or SKPathVerb.Conic or SKPathVerb.Cubic ||
+                    (verb is SKPathVerb.Line or SKPathVerb.Close && end.X != previous.X && end.Y != previous.Y))
+                    straight = false;
+            }
+            CheckImplicitClose(start);
+        }
+
+        // A fill closes an open subpath with a line back to its start.
+        void CheckImplicitClose(int subpathStart)
+        {
+            if (snapped.Count <= subpathStart) return;
+            var (first, last) = (snapped[subpathStart], snapped[snapped.Count - 1]);
+            if (first.X != last.X && first.Y != last.Y) straight = false;
+        }
+
+        // The result samples pixel centres. Skia covers pixel i when its
+        // centre lies in (lo, hi], so for it a corner coordinate t = j / 1024
+        // becomes the multiple of 1/64 s = (ceil(64 t) + 31) / 64, which holds
+        // that exactly when t <= i < t' for the other edge (and rounds to
+        // itself at 1/64). The span computation takes s = t + 1/2.
+        var direct = rectilinear = straight;
+        var device = new SKPath { FillType = lease.Path.FillType };
+        foreach (var (verb, first, weight) in verbs)
+        {
+            switch (verb)
+            {
+                case SKPathVerb.Move: device.MoveTo(Point(first)); break;
+                case SKPathVerb.Line: device.LineTo(Point(first)); break;
+                case SKPathVerb.Quad: device.QuadTo(Point(first), Point(first + 1)); break;
+                case SKPathVerb.Conic: device.ConicTo(Point(first), Point(first + 1), weight); break;
+                case SKPathVerb.Cubic: device.CubicTo(Point(first), Point(first + 1), Point(first + 2)); break;
+                case SKPathVerb.Close: device.Close(); break;
+            }
+        }
+        return device;
+
+        SKPoint Point(int index)
+        {
+            var (x, y) = snapped[index];
+            return corner
+                ? direct
+                    ? new SKPoint((float)((Math.Ceiling(x / 16) + 31) / 64), (float)((Math.Ceiling(y / 16) + 31) / 64))
+                    : new SKPoint((float)(x / 1024 + 0.5), (float)(y / 1024 + 0.5))
+                : new SKPoint((float)(x + 0.25), (float)(y + 0.25));
+        }
+    }
+
+    // Draws a DevicePath on a canvas whose matrix maps device coordinates.
+    internal static void Draw(SKCanvas canvas, SKPath devicePath, SKPaint paint, bool rectilinear)
+    {
+        if (rectilinear)
+        {
+            canvas.DrawPath(devicePath, paint);
+            return;
+        }
+        using var spans = Spans(devicePath, canvas.LocalClipBounds);
+        canvas.DrawPath(spans, paint);
+    }
+
+    // The pixels whose centres lie inside the path, left and top edges
+    // included, as one integer rectangle per run, within the clip.
+    private static SKPath Spans(SKPath path, SKRect clip)
+    {
+        var edges = new List<(double X0, double Y0, double X1, double Y1, int Winding)>();
+        Flatten(path, clip, edges);
+        var inverse = path.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd;
+        var evenOdd = path.FillType is SKPathFillType.EvenOdd or SKPathFillType.InverseEvenOdd;
+        var bounds = path.Bounds;
+        var clipLeft = (int)Math.Floor(clip.Left);
+        var clipRight = (int)Math.Ceiling(clip.Right);
+        var firstRow = (int)Math.Floor(inverse ? clip.Top : Math.Max(clip.Top, bounds.Top - 1));
+        var lastRow = (int)Math.Ceiling(inverse ? clip.Bottom : Math.Min(clip.Bottom, bounds.Bottom + 1));
+        // Edges by first row, then an active list per row.
+        edges.Sort((a, b) => a.Y0.CompareTo(b.Y0));
+        var active = new List<int>();
+        var crossings = new List<(double X, int Winding)>();
+        var next = 0;
+        var result = new SKPath();
+        for (var row = firstRow; row < lastRow; row++)
+        {
+            var y = row + 0.5;
+            while (next < edges.Count && edges[next].Y0 <= y) active.Add(next++);
+            crossings.Clear();
+            for (var index = active.Count - 1; index >= 0; index--)
+            {
+                var edge = edges[active[index]];
+                if (edge.Y1 <= y)
+                {
+                    active.RemoveAt(index);
+                    continue;
+                }
+                crossings.Add((edge.X0 + (y - edge.Y0) * (edge.X1 - edge.X0) / (edge.Y1 - edge.Y0), edge.Winding));
+            }
+            crossings.Sort((a, b) => a.X.CompareTo(b.X));
+            // Pixel i is inside when its centre i + 1/2 lies at or after the
+            // crossing that enters and before the one that leaves.
+            var winding = 0;
+            var runStart = inverse ? (double?)clipLeft + 0.5 : null;
+            foreach (var (x, edgeWinding) in crossings)
+            {
+                var wasInside = (evenOdd ? winding & 1 : winding) != 0;
+                winding += edgeWinding;
+                var isInside = (evenOdd ? winding & 1 : winding) != 0;
+                if (isInside == wasInside) continue;
+                if (isInside != inverse)
+                {
+                    runStart = x;
+                }
+                else if (runStart is double start)
+                {
+                    AddRun(start, x);
+                    runStart = null;
+                }
+            }
+            if (runStart is double open) AddRun(open, clipRight + 0.5);
+
+            void AddRun(double from, double to)
+            {
+                var left = Math.Max(clipLeft, Math.Ceiling(from - 0.5));
+                var right = Math.Min(clipRight, Math.Ceiling(to - 0.5));
+                if (left < right) result.AddRect(new SKRect((float)left, row, (float)right, row + 1));
+            }
+        }
+        return result;
+    }
+
+    // The path's outline as line edges from top to bottom with their winding
+    // direction. Curves are halved until each piece's control polygon lies
+    // within 1/16 pixel of its chord, or the piece lies wholly above, below,
+    // left or right of the clip, where its chord crosses every visible row
+    // the same way.
+    private static void Flatten(
+        SKPath path, SKRect clip, List<(double X0, double Y0, double X1, double Y1, int Winding)> edges)
+    {
+        const double tolerance = 1.0 / 16;
+        double left = clip.Left - 1, top = clip.Top - 1, right = clip.Right + 1, bottom = clip.Bottom + 1;
+        using var iterator = path.CreateRawIterator();
+        var points = new SKPoint[4];
+        (double X, double Y) start = default, last = default;
+        var open = false;
+        SKPathVerb verb;
+        while ((verb = iterator.Next(points)) != SKPathVerb.Done)
+        {
+            switch (verb)
+            {
+                case SKPathVerb.Move:
+                    if (open) Line(last, start);
+                    start = last = (points[0].X, points[0].Y);
+                    open = true;
+                    break;
+                case SKPathVerb.Line:
+                    Line(last, (points[1].X, points[1].Y));
+                    break;
+                case SKPathVerb.Quad:
+                    Curve([Weighted(points[0], 1), Weighted(points[1], 1), Weighted(points[2], 1)], 0);
+                    break;
+                case SKPathVerb.Conic:
+                    Curve([Weighted(points[0], 1), Weighted(points[1], iterator.ConicWeight()),
+                        Weighted(points[2], 1)], 0);
+                    break;
+                case SKPathVerb.Cubic:
+                    Curve([Weighted(points[0], 1), Weighted(points[1], 1), Weighted(points[2], 1),
+                        Weighted(points[3], 1)], 0);
+                    break;
+                case SKPathVerb.Close:
+                    Line(last, start);
+                    last = start;
+                    open = false;
+                    break;
+            }
+        }
+        if (open) Line(last, start);
+
+        void Line((double X, double Y) from, (double X, double Y) to)
+        {
+            last = to;
+            if (from.Y == to.Y) return;
+            edges.Add(from.Y < to.Y
+                ? (from.X, from.Y, to.X, to.Y, 1)
+                : (to.X, to.Y, from.X, from.Y, -1));
+        }
+
+        // Control points in homogeneous form (x w, y w, w): a conic is a
+        // rational quadratic, and halving works the same for every degree.
+        static (double X, double Y, double W) Weighted(SKPoint point, double weight) =>
+            (point.X * weight, point.Y * weight, weight);
+
+        void Curve((double X, double Y, double W)[] control, int depth)
+        {
+            var count = control.Length;
+            var first = (control[0].X / control[0].W, control[0].Y / control[0].W);
+            var end = (control[count - 1].X / control[count - 1].W, control[count - 1].Y / control[count - 1].W);
+            double minX = Math.Min(first.Item1, end.Item1), maxX = Math.Max(first.Item1, end.Item1);
+            double minY = Math.Min(first.Item2, end.Item2), maxY = Math.Max(first.Item2, end.Item2);
+            var flat = true;
+            for (var index = 1; index < count - 1; index++)
+            {
+                var (x, y) = (control[index].X / control[index].W, control[index].Y / control[index].W);
+                minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+                minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+                flat &= SegmentDistance(x, y, first, end) <= tolerance;
+            }
+            // The convex hull bounds the curve (conic weights are positive).
+            if (flat || depth >= 40 || maxY < top || minY > bottom || minX > right || maxX < left ||
+                double.IsNaN(minX + maxX + minY + maxY))
+            {
+                Line(last, end);
+                return;
+            }
+            var lower = new (double X, double Y, double W)[count];
+            var upper = new (double X, double Y, double W)[count];
+            var work = ((double X, double Y, double W)[])control.Clone();
+            for (var level = 0; level < count; level++)
+            {
+                lower[level] = work[0];
+                upper[count - 1 - level] = work[count - 1 - level];
+                for (var index = 0; index < count - 1 - level; index++)
+                    work[index] = ((work[index].X + work[index + 1].X) / 2, (work[index].Y + work[index + 1].Y) / 2,
+                        (work[index].W + work[index + 1].W) / 2);
+            }
+            Curve(lower, depth + 1);
+            Curve(upper, depth + 1);
+        }
+
+        static double SegmentDistance(double x, double y, (double X, double Y) a, (double X, double Y) b)
+        {
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            var length = dx * dx + dy * dy;
+            var t = length == 0 ? 0 : Math.Max(0, Math.Min(1, ((x - a.X) * dx + (y - a.Y) * dy) / length));
+            double px = a.X + t * dx - x, py = a.Y + t * dy - y;
+            return Math.Sqrt(px * px + py * py);
+        }
+    }
+
+    private static (double X, double Y) Map(SKMatrix m, float x, float y) =>
+        ((double)m.ScaleX * x + (double)m.SkewX * y + m.TransX,
+         (double)m.SkewY * x + (double)m.ScaleY * y + m.TransY);
 }
 
 // Owns its path: Dispose releases it at once instead of at finalization.

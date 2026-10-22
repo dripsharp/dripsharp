@@ -2027,6 +2027,221 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // A skewed pattern matrix: TilingPaint draws its 12x11 tile with aliased
+    // rectangle fills, whose pixels follow Java 2D's rules (the red cell is
+    // 7x6 pixels, its right edge at 6.32), then filters the tile under the
+    // skew. Expected colours were rendered by Apache PDFBox 3.0.8; before
+    // the aliased rules, 15282 channels differed from it by more than 8.
+    [Fact]
+    public void SkewedTilingPatternFillsRenderLikePdfBox()
+    {
+        var rgba = IccRenderFixtures.Render(TilingPatternPdf("", "", "1.2 0.4 -0.3 1.1 5.5 7.25"));
+        foreach (var (x, y, rgb) in new (int X, int Y, int[] Rgb)[]
+                 {
+                     (14, 10, [237, 19, 19]), (28, 10, [175, 175, 200]), (67, 10, [198, 179, 183]),
+                     (93, 10, [255, 255, 255]), (119, 10, [255, 0, 0]), (171, 10, [255, 255, 255]),
+                     (55, 11, [48, 48, 216]), (19, 27, [255, 0, 0]), (18, 72, [255, 255, 255]),
+                     (17, 117, [237, 19, 19]), (16, 162, [255, 0, 0]), (21, 177, [218, 218, 223]),
+                 })
+        {
+            var offset = (y * 200 + x) * 4;
+            for (var channel = 0; channel < 3; channel++)
+                Assert.True(Math.Abs(rgba[offset + channel] - rgb[channel]) <= 2,
+                    $"({x},{y}): got [{rgba[offset]}, {rgba[offset + 1]}, {rgba[offset + 2]}].");
+        }
+    }
+
+    // Aliased fills cover the pixels Java 2D does (see PdfCartonAliasedFill).
+    // Masks are Java 2D's (OpenJDK 25) for the same fills on 16x16
+    // TYPE_INT_ARGB images: an opaque colour samples pixel corners while the
+    // stroke is at most a pixel wide, a translucent one, or a wider stroke
+    // (here the 2x transform), samples centres after moving points to
+    // floor(v + 1/4) + 1/4; a rectangle covers [floor(lo + b), floor(hi + b))
+    // with b = 1/4 for an opaque colour, else 0.
+    [Fact]
+    public void AliasedFillsCoverPixelsLikeJava2D()
+    {
+        float[] polygon = [14.13f, 0.335f, 14.41f, 10.991f, 13.71f, 14.794f, 1.36f, 3.528f, 2.751f, 14.438f, 5.079f, 4.014f];
+        float[] tile = [0, 0, 6.3245554f, 0, 6.3245554f, 5.7008771f, 0, 5.7008771f];
+        foreach (var (name, alpha, scale, points, expected) in new (string, byte, float, float[], string[])[]
+                 {
+                     ("opaque", 255, 1, polygon,
+                     [
+                         "0000000000000000", "0000000000000110", "0000000000011110", "0000000011111110",
+                         "0000001111111110", "0010011111111110", "0011111111111110", "0011101111111110",
+                         "0011100111111110", "0001000011111110", "0001000001111110", "0001000000111110",
+                         "0001000000011110", "0001000000001110", "0000000000000100", "0000000000000000",
+                     ]),
+                     ("opaque, 2x", 255, 2, polygon,
+                     [
+                         "0000000000000000", "0000000000011100", "0000000001111100", "0000000111111100",
+                         "0100011111111100", "0010011111111100", "0011011111111100", "0011111111111100",
+                         "0011001111111100", "0011000111111100", "0001000011111100", "0001000001111100",
+                         "0001000000111100", "0000000000011100", "0000000000001000", "0000000000000000",
+                     ]),
+                     ("translucent", 128, 1,
+                     [16.699f, 5.779f, 3.769f, 3.503f, 4.37f, 2.916f, 15.552f, 10.416f, -0.097f, 0.692f, 2.333f, 16.43f],
+                     [
+                         "1000000000000000", "1100000000000000", "0111000000000000", "0111100000000000",
+                         "0111111110000000", "0111111111111000", "0111111111111111", "0111111111111100",
+                         "0111111111111000", "0111111111110000", "0011111111000000", "0011111110000000",
+                         "0011111000000000", "0011110000000000", "0011100000000000", "0010000000000000",
+                     ]),
+                     ("tile cell, opaque", 255, 1, tile, [.. Enumerable.Repeat("1111111000000000", 6),
+                         .. Enumerable.Repeat("0000000000000000", 10)]),
+                     ("tile cell, translucent", 128, 1, tile, [.. Enumerable.Repeat("1111110000000000", 5),
+                         .. Enumerable.Repeat("0000000000000000", 11)]),
+                 })
+        {
+            using var path = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+            path.MoveTo(points[0] / scale, points[1] / scale);
+            for (var index = 2; index < points.Length; index += 2)
+                path.LineTo(points[index] / scale, points[index + 1] / scale);
+            path.Close();
+#pragma warning restore CS0618
+            Assert.Equal(expected, AliasedMask(16, scale, alpha, graphics => graphics.Fill(path)));
+        }
+
+        // Rectangle2D (1.3, 2.6, 6.5, 7.15), also drawn at 2x.
+        foreach (var scale in new[] { 1f, 2f })
+        {
+            foreach (var (alpha, box) in new (byte, SKRectI)[] { (255, new(1, 2, 8, 10)), (128, new(1, 2, 7, 9)) })
+            {
+                var mask = AliasedMask(16, scale, alpha,
+                    graphics => graphics.Fill(new SKRect(1.3f / scale, 2.6f / scale, 7.8f / scale, 9.75f / scale)));
+                for (var y = 0; y < 16; y++)
+                    for (var x = 0; x < 16; x++)
+                        Assert.True((mask[y][x] == '1') == box.Contains(x, y),
+                            $"rectangle at {scale}x, alpha {alpha}: pixel ({x},{y}).");
+            }
+        }
+    }
+
+    // Aliased curves: a quadratic far larger than the image keeps the part
+    // that crosses it (its apex is at y = 1.185 above x = 0, so rows 0 and
+    // 1 are covered, as Java 2D covers them), and ovals and rounded
+    // rectangles, whose conics are flattened here, stay within a pixel of
+    // Java 2D's masks (OpenJDK 25, Graphics.fillOval and fillRoundRect).
+    // Java flattens curves its own way, so a few boundary pixels differ;
+    // the bounds are the current counts (dripsharp-82 tracks matching them).
+    [Fact]
+    public void AliasedCurvesFillNearJava2D()
+    {
+        using var quadratic = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        quadratic.MoveTo(-1049600, -3999995);
+        quadratic.QuadTo(-1024, 4000005, 1047552, -3999995);
+        quadratic.Close();
+#pragma warning restore CS0618
+        Assert.Equal([.. Enumerable.Repeat("1111111111111111", 2), .. Enumerable.Repeat("0000000000000000", 14)],
+            AliasedMask(16, 1, 255, graphics => graphics.Fill(quadratic)));
+
+        string[] fractionalRoundRectangle =
+        [
+            "0000000000000000", "0000001111000000", "0001111111110000", "0011111111111000",
+            "0011111111111000", "0111111111111000", "0111111111111000", "0111111111111000",
+            "0111111111111000", "0011111111111000", "0001111111110000", "0000111111100000",
+            "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
+        ];
+        foreach (var (name, alpha, transform, fill, maxDiffering, expected) in
+                 new (string, byte, SKMatrix, Action<Compat.PdfCartonGraphics2D>, int, string[])[]
+                 {
+                     ("oval", 255, SKMatrix.Identity, graphics => graphics.FillOval(2, 3, 11, 9), 0,
+                     [
+                         "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
+                         "0000011111100000", "0001111111111000", "0001111111111000", "0001111111111000",
+                         "0001111111111000", "0001111111111000", "0001111111111000", "0000011111100000",
+                         "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
+                     ]),
+                     ("translucent oval", 128, SKMatrix.Identity, graphics => graphics.FillOval(2, 3, 11, 9), 9,
+                     [
+                         "0000000000000000", "0000000000000000", "0000000000000000", "0000001100000000",
+                         "0000111111110000", "0001111111110000", "0001111111111000", "0011111111111000",
+                         "0001111111111000", "0001111111110000", "0000111111100000", "0000001110000000",
+                         "0000000000000000", "0000000000000000", "0000000000000000", "0000000000000000",
+                     ]),
+                     ("round rectangle", 255, new SKMatrix(1.21f, 0, 0.35f, 0, 0.93f, 0.6f, 0, 0, 1),
+                         graphics => graphics.FillRoundRect(1, 1, 10, 12, 7, 9), 7, fractionalRoundRectangle),
+                     ("translucent round rectangle", 128, new SKMatrix(1.21f, 0, 0.35f, 0, 0.93f, 0.6f, 0, 0, 1),
+                         graphics => graphics.FillRoundRect(1, 1, 10, 12, 7, 9), 7, fractionalRoundRectangle),
+                 })
+        {
+            var mask = AliasedMask(16, 1, alpha, graphics =>
+            {
+                graphics.SetTransform(transform);
+                fill(graphics);
+            });
+            var differing = 0;
+            for (var y = 0; y < 16; y++)
+                for (var x = 0; x < 16; x++)
+                {
+                    if (mask[y][x] == expected[y][x]) continue;
+                    differing++;
+                    var nearBoundary = false;
+                    for (var nearY = Math.Max(0, y - 1); nearY <= Math.Min(15, y + 1); nearY++)
+                        for (var nearX = Math.Max(0, x - 1); nearX <= Math.Min(15, x + 1); nearX++)
+                            nearBoundary |= expected[nearY][nearX] != expected[y][x];
+                    Assert.True(nearBoundary, $"{name}: ({x},{y}) differs away from Java's boundary.");
+                }
+            Assert.True(differing <= maxDiffering, $"{name}: {differing} pixels differ from Java.");
+        }
+    }
+
+    private static string[] AliasedMask(int size, float scale, byte alpha, Action<Compat.PdfCartonGraphics2D> fill)
+    {
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        image.Erase(SKColors.Transparent);
+        using (var graphics = new Compat.PdfCartonGraphics2D(image))
+        {
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+            graphics.Scale(scale, scale);
+            graphics.SetColor(new SKColor(255, 0, 0, alpha));
+            fill(graphics);
+        }
+        return Enumerable.Range(0, size).Select(y => new string(Enumerable.Range(0, size)
+            .Select(x => image.GetPixel(x, y).Alpha != 0 ? '1' : '0').ToArray())).ToArray();
+    }
+
+    // A filtered texture next to transparent texels blends as Java's
+    // TexturePaint does, whatever colour the transparent texels hold. The
+    // tile is 13x12 TYPE_INT_ARGB: red 6x6 at the origin, blue below right,
+    // 0x00000000 elsewhere, filled through TexturePaint(tile, (0.3, 0.7,
+    // 12.65, 11.4)) under AffineTransform(1.2, 0.4, -0.3, 1.1, 5.5, 7.25) on
+    // white. Expected colours were rendered by Java 2D (OpenJDK 25).
+    [Fact]
+    public void FilteredTexturePaintsBlendTransparentTexelsLikeJava()
+    {
+        using var tile = Compat.PdfCartonFontCompat.CreateBitmap(13, 12, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        for (var y = 0; y < 12; y++)
+            for (var x = 0; x < 13; x++)
+                tile.SetPixel(x, y, x < 6 && y < 6 ? SKColors.Red : x >= 6 && y >= 6 ? SKColors.Blue : SKColor.Empty);
+        using var page = Compat.PdfCartonFontCompat.CreateBitmap(200, 200, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        page.Erase(SKColors.White);
+        using (var graphics = new Compat.PdfCartonGraphics2D(page))
+        {
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_INTERPOLATION,
+                Compat.PdfCartonRenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            graphics.SetTransform(new SKMatrix(1.2f, -0.3f, 5.5f, 0.4f, 1.1f, 7.25f, 0, 0, 1));
+            graphics.SetPaint(new Compat.JavaTexturePaint(tile, new SKRect(0.3f, 0.7f, 12.95f, 12.1f)));
+            graphics.Fill(new SKRect(0, 0, 150, 150));
+        }
+        foreach (var (x, y, rgb) in new (int X, int Y, int[] Rgb)[]
+                 {
+                     (46, 100, [87, 87, 198]), (70, 161, [193, 193, 208]), (104, 164, [245, 245, 245]),
+                     (26, 165, [165, 165, 197]), (13, 130, [36, 36, 224]), (150, 131, [111, 111, 192]),
+                     (143, 109, [193, 149, 149]), (19, 44, [221, 40, 40]), (136, 65, [195, 195, 209]),
+                 })
+        {
+            var color = page.GetPixel(x, y);
+            Assert.True(Math.Abs(color.Red - rgb[0]) <= 2 && Math.Abs(color.Green - rgb[1]) <= 2 &&
+                        Math.Abs(color.Blue - rgb[2]) <= 2, $"({x},{y}): got {color}.");
+        }
+    }
+
     // JavaTexturePaint fills through a Skia image shader, so it also draws
     // on a canvas without a bitmap. As in java.awt.TexturePaintContext, a
     // device pixel maps its corner to texture position u and takes texel
@@ -2092,7 +2307,8 @@ public sealed class RasterConversionConsumerTests
                 $"/BitsPerComponent 8 /Interpolate {(interpolate ? "true" : "false")} /Filter /ASCIIHexDecode",
                 string.Concat(InterpolationTexels.Select(texel => $"{texel[0]:X2}{texel[1]:X2}{texel[2]:X2}")) + ">"));
 
-    private static byte[] TilingPatternPdf(string before, string resources) => SequentialPdf(
+    private static byte[] TilingPatternPdf(string before, string resources,
+        string matrix = "1.5 0 0 1.5 3.3 2.6") => SequentialPdf(
     [
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -2100,7 +2316,7 @@ public sealed class RasterConversionConsumerTests
         resources + " >> /Contents 4 0 R >>",
         PdfStream("", before + "/Pattern cs /P1 scn 10 10 180 180 re f"),
         PdfStream("/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 " +
-            "/Matrix [1.5 0 0 1.5 3.3 2.6] /Resources << >>", "1 0 0 rg 0 0 5 5 re f 0 0 1 rg 5 5 5 5 re f"),
+            $"/Matrix [{matrix}] /Resources << >>", "1 0 0 rg 0 0 5 5 re f 0 0 1 rg 5 5 5 5 re f"),
     ]);
 
     private static Compat.JavaRaster Fill(Compat.JavaRaster raster, int max, int seed)
@@ -8508,11 +8724,11 @@ public sealed class PathIteratorTests
     //
     // Pixels are what PdfCarton renders now, not yet what Java PDFBox 3.0.8
     // renders. Java leaves row 142 (x 103..314) white and paints row 182,
-    // the top edge of the 'Ethyl benzene' cell, all #ffcc9a. PdfCarton
-    // antialiases its clips and fills the cells' aliased rectangles by pixel
-    // centre, so the cell fill covers row 142 and the hole shows as a
-    // #ffd9b3 seam on row 182 (dripsharp-91 tracks clipping by pixel
-    // centres). Without the hole that row would be #ffcc9a.
+    // the top edge of the 'Ethyl benzene' cell, all #ffcc9a. PdfCarton's
+    // aliased cell fills now leave row 142 to the frame as Java's do, but it
+    // antialiases its clips, so the hole shows as a #ffe5cc seam on row 142
+    // and a #ffd9b3 seam on row 182 (dripsharp-91 tracks clipping by pixel
+    // centres). Without the hole those rows would be #ffcc9a.
     [Fact]
     public void IntersectedFrameClipsKeepTheirHoles()
     {
@@ -8530,7 +8746,7 @@ public sealed class PathIteratorTests
         using var image = new PDFRenderer(document).RenderImage(2, 1, ImageType.Rgb);
         foreach (var (row, first, count, color) in new[]
                  {
-                     (142, 103, 212, new SKColor(0xff, 0xcc, 0x9a)),
+                     (142, 103, 211, new SKColor(0xff, 0xe5, 0xcc)),
                      (182, 104, 210, new SKColor(0xff, 0xd9, 0xb3)),
                  })
         {
