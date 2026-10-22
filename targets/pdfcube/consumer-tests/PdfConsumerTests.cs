@@ -8925,6 +8925,156 @@ public sealed class PathIteratorTests
         Assert.Equal(java, rows);
     }
 
+    // Unless KEY_STROKE_CONTROL is VALUE_STROKE_PURE, Java 2D moves an
+    // antialiased stroke's device points to pixel centres first; fills keep
+    // their exact edges. Expected alpha values are Java 25's (BufferedImage
+    // TYPE_INT_ARGB, antialiasing on, opaque black).
+    [Fact]
+    public void AntialiasedStrokesMoveToPixelCentresAsInJava2D()
+    {
+        static int[][] Alpha(int width, int height, bool pure, SKMatrix transform,
+            Action<Compat.PdfCartonGraphics2D> draw)
+        {
+            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+                width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using (var graphics = new Compat.PdfCartonGraphics2D(bitmap))
+            {
+                graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                    Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
+                if (pure)
+                {
+                    graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_STROKE_CONTROL,
+                        Compat.PdfCartonRenderingHints.VALUE_STROKE_PURE);
+                }
+                graphics.SetColor(SKColors.Black);
+                graphics.Transform(transform);
+                draw(graphics);
+            }
+            return Enumerable.Range(0, height).Select(y => Enumerable.Range(0, width)
+                .Select(x => (int)bitmap.GetPixel(x, y).Alpha).ToArray()).ToArray();
+        }
+        static void Near(int[] java, int[] actual, int tolerance)
+        {
+            Assert.Equal(java.Length, actual.Length);
+            Assert.True(java.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= tolerance),
+                $"Java [{string.Join(", ", java)}], PdfCarton [{string.Join(", ", actual)}]");
+        }
+        // PageDrawer's kind of transform: scaled and flipped.
+        var flip = new SKMatrix(1.5f, 0, 0.1f, 0, -1.5f, 15.1f, 0, 0, 1);
+
+        // A 1 px stroke of a fractional rectangle lands on whole pixels, corners
+        // included (its right side at x 20.849 covers column 20 only).
+        void Rectangle(Compat.PdfCartonGraphics2D graphics)
+        {
+            graphics.SetStroke(new Compat.JavaBasicStroke(1));
+            graphics.Draw(new SKRect(1, 1, 20.849f, 14.168f));
+        }
+        var rectangle = Alpha(24, 18, pure: false, SKMatrix.Identity, Rectangle);
+        Assert.Equal(
+            [
+                "........................",
+                ".####################...",
+                .. Enumerable.Repeat(".#..................#...", 12),
+                ".####################...",
+                "........................",
+                "........................",
+                "........................",
+            ],
+            rectangle.Select(row => new string(row
+                .Select(alpha => alpha switch { 0 => '.', 255 => '#', _ => '?' }).ToArray())).ToArray());
+        // VALUE_STROKE_PURE keeps the exact geometry: x 20.349..21.349.
+        Near([0, 166, 89, 0], Alpha(24, 18, pure: true, SKMatrix.Identity, Rectangle)[5][19..23], 1);
+
+        // Device x 6.25 moves to 6.5 (pure: stays); the stroke is 1.35 px wide.
+        void Vertical(Compat.PdfCartonGraphics2D graphics)
+        {
+            graphics.SetStroke(new Compat.JavaBasicStroke(0.9f, Compat.JavaBasicStroke.CAP_BUTT,
+                Compat.JavaBasicStroke.JOIN_MITER, 10, null, 0));
+            using var path = new SKPath();
+            path.MoveTo(4.1f, 1.3f);
+            path.LineTo(4.1f, 8.6f);
+            graphics.Draw(path);
+        }
+        Near([0, 45, 255, 45, 0], Alpha(12, 16, pure: false, flip, Vertical)[8][4..9], 1);
+        Near([0, 108, 236, 0, 0], Alpha(12, 16, pure: true, flip, Vertical)[8][4..9], 1);
+
+        // A cubic's control points move with its ends. Java's and Skia's
+        // rasterisers differ slightly, so its column sums are compared.
+        void Curve(Compat.PdfCartonGraphics2D graphics)
+        {
+            graphics.SetStroke(new Compat.JavaBasicStroke(1.3f, Compat.JavaBasicStroke.CAP_ROUND,
+                Compat.JavaBasicStroke.JOIN_MITER, 10, null, 0));
+            using var path = new SKPath();
+            path.MoveTo(1.2f, 1.3f);
+            path.CubicTo(2.1f, 9.7f, 7.3f, 9.9f, 9.3f, 2.2f);
+            graphics.Draw(path);
+        }
+        static int[] ColumnSums(int[][] alpha) =>
+            Enumerable.Range(0, alpha[0].Length).Select(x => alpha.Sum(row => row[x])).ToArray();
+        Near([250, 1404, 1657, 1051, 771, 628, 543, 495, 498, 548, 628, 754, 958, 1252, 992, 166],
+            ColumnSums(Alpha(16, 16, pure: false, flip, Curve)), 128);
+        Near([6, 1019, 1764, 1261, 839, 646, 544, 484, 519, 584, 699, 866, 1136, 1266, 647, 0],
+            ColumnSums(Alpha(16, 16, pure: true, flip, Curve)), 128);
+
+        // A thin fill, x 4.8..5.28, is not moved under either hint.
+        void ThinFill(Compat.PdfCartonGraphics2D graphics)
+        {
+            using var path = new SKPath();
+            path.MoveTo(4.8f, 1);
+            path.LineTo(5.28f, 1);
+            path.LineTo(5.28f, 7);
+            path.LineTo(4.8f, 7);
+            path.Close();
+            graphics.Fill(path);
+        }
+        Near([0, 51, 71, 0], Alpha(12, 8, pure: false, SKMatrix.Identity, ThinFill)[3][3..7], 1);
+        Near([0, 51, 71, 0], Alpha(12, 8, pure: true, SKMatrix.Identity, ThinFill)[3][3..7], 1);
+
+        // A 1 px dashed line far longer than the image keeps its dashes where
+        // it is visible (x 0..2 dash with square caps from x -0.5).
+        var dashed = Alpha(24, 16, pure: false, SKMatrix.Identity, graphics =>
+        {
+            graphics.SetStroke(new Compat.JavaBasicStroke(1, Compat.JavaBasicStroke.CAP_SQUARE,
+                Compat.JavaBasicStroke.JOIN_MITER, 10, [2, 2], 0));
+            using var path = new SKPath();
+            path.MoveTo(-3000000, 10.5f);
+            path.LineTo(3000000, 10.5f);
+            graphics.Draw(path);
+        });
+        Assert.Equal(
+            [255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0],
+            dashed[10]);
+
+        // A paint is given the bounds of the shape as drawn, not of the moved
+        // or outlined geometry, as Java's paint is.
+        foreach (var width in new[] { 2f, 1f })
+        {
+            var recording = new BoundsRecordingPaint();
+            Alpha(16, 16, pure: false, SKMatrix.Identity, graphics =>
+            {
+                graphics.SetPaint(recording);
+                graphics.SetStroke(new Compat.JavaBasicStroke(width));
+                graphics.Draw(new SKRect(1.2f, 1.2f, 10.2f, 10.2f));
+            });
+            Assert.Equal(new SKRect(1.2f, 1.2f, 10.2f, 10.2f), recording.UserBounds);
+        }
+    }
+
+    private sealed class BoundsRecordingPaint : Compat.JavaPaint
+    {
+        internal SKRect? UserBounds { get; private set; }
+
+        public Compat.JavaPaintContext CreateContext(Compat.JavaColorModel colorModel, SKRectI deviceBounds,
+            SKRect userBounds, SKMatrix transform, Compat.PdfCartonRenderingHints hints)
+        {
+            UserBounds = userBounds;
+            return new Compat.JavaColor(SKColors.Red).CreateContext(
+                colorModel, deviceBounds, userBounds, transform, hints);
+        }
+
+        public int GetTransparency() => new Compat.JavaColor(SKColors.Red).GetTransparency();
+    }
+
     // Java 2D keeps a Rectangle2D clip that its transform keeps axis-aligned
     // as a rectangle of the pixels whose centres it holds, [lo, hi), where a
     // path clip moves its points to floor(v + 1/4) + 1/4 first. Expected

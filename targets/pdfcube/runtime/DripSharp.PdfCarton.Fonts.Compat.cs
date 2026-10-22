@@ -3849,6 +3849,10 @@ public sealed class PdfCartonRenderingHints : Dictionary<object, object>
     public static readonly object KEY_ANTIALIASING = new();
     public static readonly object VALUE_ANTIALIAS_OFF = new();
     public static readonly object VALUE_ANTIALIAS_ON = new();
+    public static readonly object KEY_STROKE_CONTROL = new();
+    public static readonly object VALUE_STROKE_DEFAULT = new();
+    public static readonly object VALUE_STROKE_NORMALIZE = new();
+    public static readonly object VALUE_STROKE_PURE = new();
 
     public PdfCartonRenderingHints(object? initialValues)
     {
@@ -6653,6 +6657,24 @@ public class PdfCartonGraphics2D : IDisposable
             return;
         }
 
+        // A Java paint sees the bounds of the shape as given (probed), even
+        // when the drawn geometry is moved or outlined below.
+        SKRect? paintBounds = !fill && paint is not JavaColor ? PdfCartonFontCompat.ShapeBounds(shape) : null;
+        // Java 2D moves an antialiased stroke's path first (PdfCartonStrokeNormalization).
+        using var normalized = !fill && NormalizesStrokes() ? NormalizedStroke(shape) : null;
+        if (normalized is not null)
+            shape = normalized;
+        // Skia draws an antialiased stroke at most a device pixel wide as a
+        // hairline with reduced alpha, which leaves the corners of a 1 px
+        // rectangle at 3/4 coverage where Java covers them; a stroke one
+        // device pixel wide is filled as its outline instead.
+        using var outline = !fill && bitmap is not null && IsAntialiasEnabled() ? ThinStrokeOutline(shape) : null;
+        if (outline is not null)
+        {
+            shape = outline;
+            fill = true;
+        }
+
         if (paint is JavaColor)
         {
             if (shape is SKRect rectangle)
@@ -6691,7 +6713,7 @@ public class PdfCartonGraphics2D : IDisposable
         else
         {
             using var lease = PdfCartonFontCompat.BorrowPath(shape);
-            RenderPaintLayer(lease.Path, stroked: !fill);
+            RenderPaintLayer(lease.Path, stroked: !fill, paintBounds: paintBounds);
         }
     }
 
@@ -6839,7 +6861,8 @@ public class PdfCartonGraphics2D : IDisposable
     // devicePath, when given, is the aliased device-space shape to draw
     // instead of shape (see PdfCartonAliasedFill.Draw).
     private void RenderPaintLayer(
-        SKPath shape, bool stroked, SKPath? devicePath = null, bool rectilinear = false)
+        SKPath shape, bool stroked, SKPath? devicePath = null, bool rectilinear = false,
+        SKRect? paintBounds = null)
     {
         var deviceSpace = devicePath is not null;
         var bounds = devicePath is not null
@@ -6852,7 +6875,7 @@ public class PdfCartonGraphics2D : IDisposable
                 ? new JavaColorModel(PdfCartonFontCompat.TYPE_INT_ARGB)
                 : PdfCartonFontCompat.GetColorModel(bitmap),
             deviceBounds,
-            shape.Bounds,
+            paintBounds ?? shape.Bounds,
             transform,
             renderingHints);
         // Texture paints, TilingPaint's among them, fill with a Skia shader.
@@ -7121,6 +7144,52 @@ public class PdfCartonGraphics2D : IDisposable
         var area = initialDeviceClip;
         if (bitmap is not null) area = SKRectI.Intersect(area, new SKRectI(0, 0, bitmap.Width, bitmap.Height));
         return new SKRect(area.Left, area.Top, area.Right, area.Bottom);
+    }
+
+    // Only a bitmap has device pixels to move to; a canvas given directly
+    // (an SVG or PDF document canvas, say) keeps the exact geometry.
+    private bool NormalizesStrokes() =>
+        bitmap is not null &&
+        IsAntialiasEnabled() &&
+        !ReferenceEquals(
+            renderingHints.GetValueOrDefault(PdfCartonRenderingHints.KEY_STROKE_CONTROL),
+            PdfCartonRenderingHints.VALUE_STROKE_PURE);
+
+    private SKPath? NormalizedStroke(object shape)
+    {
+        using var lease = PdfCartonFontCompat.BorrowPath(shape);
+        return PdfCartonStrokeNormalization.Normalize(lease.Path, transform);
+    }
+
+    // The outline of a BasicStroke one device pixel wide (where Skia would
+    // draw a hairline), or null. Thinner strokes stay hairlines: Skia
+    // supersamples a filled path with four subscanlines a pixel, which
+    // quantizes thin outlines more coarsely than its alpha-scaled hairline.
+    private SKPath? ThinStrokeOutline(object shape)
+    {
+        if (stroke is not JavaBasicStroke { Width: > 0 } basicStroke ||
+            transform.Persp0 != 0 || transform.Persp1 != 0)
+            return null;
+        double a = transform.ScaleX, b = transform.SkewY, c = transform.SkewX, d = transform.ScaleY;
+        var scale = Math.Max(Math.Sqrt(a * a + b * b), Math.Sqrt(c * c + d * d));
+        if (!(Math.Abs(scale * basicStroke.Width - 1) <= 0.001))
+            return null;
+        // Dashes are expanded only within the visible area, as Skia's own
+        // stroking does.
+        var clip = DrawingBounds(null, stroked: false);
+        if (clip.IsEmpty)
+            return new SKPath();
+        if (!transform.TryInvert(out var inverse))
+            return null;
+        var cull = inverse.MapRect(new SKRect(clip.Left, clip.Top, clip.Right, clip.Bottom));
+        var margin = (float)(basicStroke.Width * Math.Max(basicStroke.MiterLimit, 2) + 1 / scale);
+        cull.Inflate(margin, margin);
+        using var lease = PdfCartonFontCompat.BorrowPath(shape);
+        using var strokePaint = basicStroke.CreateSkiaPaint();
+        var outline = new SKPath();
+        if (!strokePaint.GetFillPath(lease.Path, outline, cull, (float)Math.Max(1, scale)))
+            outline.Reset();
+        return outline;
     }
 
     private bool IsAntialiasEnabled() =>
@@ -7573,6 +7642,109 @@ internal static class JavaCurves
         CubicTo(path, x + rx - kx, y, x, y + ry - ky, x, y + ry);
         path.Close();
         return path;
+    }
+}
+
+// Java 2D moves an antialiased BasicStroke's path before stroking it unless
+// KEY_STROKE_CONTROL is VALUE_STROKE_PURE (PDFBox never sets it). The rule was
+// inferred from black-box Java 2D probes (OpenJDK 25 drawing on BufferedImages
+// with antialiasing on, read back as alpha masks): a stroke's edges, measured
+// to 1/255 pixel while its line was shifted in 1/16 pixel steps, stay put for
+// a whole pixel and then jump by one, the line sitting on the pixel centre.
+// Rendering a candidate device path with VALUE_STROKE_PURE gave Java's
+// normalised masks exactly on random polylines, quadratics, cubics, closed
+// and reopened subpaths, dashes, all caps and joins, widths 0 to 2.7 and
+// random rotated, sheared and scaled transforms:
+// - Every device end point v moves to floor(v) + 1/2 on each axis.
+// - A cubic's first control point moves as far as its start did and its
+//   second as far as its end did; a quadratic's moves by the mean of the two.
+// - The stroke itself (width, dashes, caps, joins) still applies in user
+//   space, to the moved path.
+// Antialiased fills are never moved (the same probes gave identical masks for
+// both stroke-control values). Aliased drawing follows PdfCartonAliasedFill.
+internal static class PdfCartonStrokeNormalization
+{
+    // The path moved as above, in user space again, or null when the
+    // transform cannot be inverted.
+    internal static SKPath? Normalize(SKPath path, SKMatrix transform)
+    {
+        double a = transform.ScaleX, c = transform.SkewX, e = transform.TransX;
+        double b = transform.SkewY, d = transform.ScaleY, f = transform.TransY;
+        var determinant = a * d - b * c;
+        if (transform.Persp0 != 0 || transform.Persp1 != 0 || determinant == 0 ||
+            double.IsNaN(determinant) || double.IsInfinity(determinant))
+            return null;
+        double ia = d / determinant, ib = -b / determinant, ic = -c / determinant, id = a / determinant;
+        var result = new SKPath { FillType = path.FillType };
+        var points = new SKPoint[4];
+        // How far the current point and the subpath's start moved.
+        (double X, double Y) moved = default, startMoved = default;
+        using var iterator = path.CreateRawIterator();
+        SKPathVerb verb;
+        while ((verb = iterator.Next(points)) != SKPathVerb.Done)
+        {
+            switch (verb)
+            {
+                case SKPathVerb.Move:
+                    result.MoveTo(End(points[0], out moved));
+                    startMoved = moved;
+                    break;
+                case SKPathVerb.Line:
+                    result.LineTo(End(points[1], out moved));
+                    break;
+                case SKPathVerb.Quad:
+                    Quad(points[1], points[2]);
+                    break;
+                case SKPathVerb.Conic:
+                    // Java has no conics; a Skia-made arc is followed as quadratics.
+                    var quads = SKPath.ConvertConicToQuads(
+                        points[0], points[1], points[2], iterator.ConicWeight(), 2);
+                    for (var index = 1; index + 1 < quads.Length; index += 2)
+                        Quad(quads[index], quads[index + 1]);
+                    break;
+                case SKPathVerb.Cubic:
+                    var start = moved;
+                    var end = End(points[3], out moved);
+                    result.CubicTo(Shift(points[1], start), Shift(points[2], moved), end);
+                    break;
+                case SKPathVerb.Close:
+                    result.Close();
+                    moved = startMoved;
+                    break;
+            }
+        }
+        return result;
+
+        void Quad(SKPoint control, SKPoint endPoint)
+        {
+            var start = moved;
+            var end = End(endPoint, out moved);
+            result.QuadTo(Shift(control, ((start.X + moved.X) / 2, (start.Y + moved.Y) / 2)), end);
+        }
+
+        // The end point moved to its device pixel's centre, in user space.
+        SKPoint End(SKPoint point, out (double X, double Y) shift)
+        {
+            var (x, y) = Device(point);
+            shift = (Math.Floor(x) + 0.5 - x, Math.Floor(y) + 0.5 - y);
+            return User(x + shift.X, y + shift.Y);
+        }
+
+        SKPoint Shift(SKPoint point, (double X, double Y) shift)
+        {
+            var (x, y) = Device(point);
+            return User(x + shift.X, y + shift.Y);
+        }
+
+        (double X, double Y) Device(SKPoint point) =>
+            (a * point.X + c * point.Y + e, b * point.X + d * point.Y + f);
+
+        SKPoint User(double x, double y)
+        {
+            x -= e;
+            y -= f;
+            return new SKPoint((float)(ia * x + ic * y), (float)(ib * x + id * y));
+        }
     }
 }
 
