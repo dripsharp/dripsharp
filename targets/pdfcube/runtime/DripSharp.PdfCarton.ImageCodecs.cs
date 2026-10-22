@@ -228,9 +228,10 @@ internal static class PdfCartonImageCodecs
 
     private static SKBitmap DecodeJpx(byte[] encoded)
     {
-        using var stream = new MemoryStream(
-            JpxTilePartCounts.Normalize(JpxChannelDefinitions.Normalize(encoded)),
-            writable: false);
+        var normalized = JpxTilePartCounts.Normalize(JpxChannelDefinitions.Normalize(encoded));
+        var palette = JpxIndexPalette.Read(normalized);
+        if (palette is not null) return DecodeIndexedJpx(normalized, palette);
+        using var stream = new MemoryStream(normalized, writable: false);
         using var image = J2kImage.FromStream(stream, out var metadata);
         var hasAlpha = metadata.ChannelDefinitions?.HasAlphaChannel == true;
         var colorComponents = image.NumberOfComponents - (hasAlpha ? 1 : 0);
@@ -239,12 +240,7 @@ internal static class PdfCartonImageCodecs
                 $"JPEG 2000 image has unsupported component count {image.NumberOfComponents}.");
 
         var bits = image.BitDepths.ToArray();
-        var dataType = bits.Max() switch
-        {
-            <= 8 => PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE,
-            <= 16 => PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT,
-            _ => PdfCartonFontCompat.DATA_BUFFER_TYPE_INT
-        };
+        var dataType = DataType(bits.Max());
         var colorSpace = CreateColorSpace(colorComponents);
         var colorModel =
             new JavaColorModel(colorSpace, hasAlpha, dataType, bits);
@@ -272,6 +268,38 @@ internal static class PdfCartonImageCodecs
             null);
     }
 
+    // A palettized JP2 decodes to its palette indexes, as jai-imageio-jpeg2000
+    // 1.4.0 reads it for Java PDFBox, so JPXFilter writes the indexes.
+    private static SKBitmap DecodeIndexedJpx(byte[] encoded, JpxIndexPalette palette)
+    {
+        var parameters = new ParameterList(J2kImage.GetDefaultDecoderParameterList());
+        parameters["nocolorspace"] = "on";
+        using var stream = new MemoryStream(encoded, writable: false);
+        using var image = J2kImage.FromStream(stream, out _, parameters);
+        if (image.NumberOfComponents != 1)
+            throw new IOException(
+                $"Palettized JPEG 2000 image decoded {image.NumberOfComponents} index components.");
+        var colorModel = palette.CreateColorModel(image.BitDepths[0]);
+        var raster = colorModel.CreateCompatibleWritableRaster(image.Width, image.Height);
+        var samples = new int[checked(image.Width * image.Height)];
+        image.CopyComponentTo(0, samples);
+        raster.SetSamples(0, 0, image.Width, image.Height, 0, samples);
+        // JPXFilter reads the raster; a draw renders the pixels on demand.
+        return PdfCartonFontCompat.CreateDeferredImage(
+            colorModel,
+            raster,
+            isRasterPremultiplied: false,
+            null);
+    }
+
+    internal static int DataType(int bits) =>
+        bits switch
+        {
+            <= 8 => PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE,
+            <= 16 => PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT,
+            _ => PdfCartonFontCompat.DATA_BUFFER_TYPE_INT
+        };
+
     private static JavaColorSpace CreateColorSpace(int components) =>
         components switch
         {
@@ -289,6 +317,101 @@ internal static class PdfCartonImageCodecs
         formatName.Equals("JPEG 2000", StringComparison.OrdinalIgnoreCase) ||
         formatName.Equals("JP2", StringComparison.OrdinalIgnoreCase) ||
         formatName.Equals("JPX", StringComparison.OrdinalIgnoreCase);
+}
+
+// The palette (pclr) of a JP2 file whose codestream has a single component,
+// the palette index. For such files jai-imageio-jpeg2000 1.4.0 returns the
+// indexes, not the colours (checked against Java PDFBox 3.0.8 JPXFilter). A
+// palette of three or four columns gives an IndexColorModel of the index
+// precision: channel c (red, green, blue, then alpha) holds the low eight
+// bits of the column the c-th component mapping (cmap) entry names, whatever
+// its mapping type, or of column c without a cmap; a cmap without an entry
+// for each column, or naming a column past the palette, fails the read. Any
+// other column count gives grey indexes: 1-, 2- and 4-bit indexes as an
+// IndexColorModel of an even grey ramp, wider ones as CS_GRAY samples of 8
+// or 16 bits. Files with more components keep the decoder's palette
+// expansion.
+internal sealed class JpxIndexPalette
+{
+    private readonly int[][] entries;
+    private readonly int columnCount;
+    private readonly int[]? mappedColumns;
+
+    private JpxIndexPalette(int[][] entries, int columnCount, int[]? mappedColumns)
+    {
+        this.entries = entries;
+        this.columnCount = columnCount;
+        this.mappedColumns = mappedColumns;
+    }
+
+    internal static JpxIndexPalette? Read(byte[] encoded)
+    {
+        using var stream = new MemoryStream(
+            encoded, 0, encoded.Length, writable: false, publiclyVisible: true);
+        var input = new ISRandomAccessIO(stream);
+        var fileFormat = new FileFormatReader(input);
+        fileFormat.readFileFormat();
+        var palette = fileFormat.Metadata.Palette;
+        if (!fileFormat.JP2FFUsed || palette?.Entries is not { Length: > 0 } entries ||
+            entries.Any(entry => entry is null || entry.Length < palette.NumColumns))
+            return null;
+        input.seek(fileFormat.FirstCodeStreamPos);
+        var header = new HeaderDecoder(
+            input,
+            new ParameterList(J2kImage.GetDefaultDecoderParameterList()),
+            new HeaderInfo());
+        if (header.NumComps != 1) return null;
+
+        var mapping = fileFormat.Metadata.ComponentMapping;
+        int[]? mappedColumns = null;
+        if (mapping is not null)
+        {
+            mappedColumns = new int[mapping.NumChannels];
+            for (var channel = 0; channel < mappedColumns.Length; channel++)
+                mappedColumns[channel] = mapping.GetPaletteColumn(channel);
+        }
+        return new JpxIndexPalette(entries, palette.NumColumns, mappedColumns);
+    }
+
+    internal JavaColorModel CreateColorModel(int indexBits)
+    {
+        if (columnCount is 3 or 4)
+            return new JavaColorModel(
+                indexBits,
+                entries.Length,
+                Channel(0),
+                Channel(1),
+                Channel(2),
+                columnCount == 4 ? Channel(3) : null);
+        if (indexBits is 1 or 2 or 4)
+        {
+            var levels = 1 << indexBits;
+            var ramp = new sbyte[levels];
+            for (var level = 0; level < levels; level++)
+                ramp[level] = unchecked((sbyte)(level * 255 / (levels - 1)));
+            return new JavaColorModel(indexBits, levels, ramp, ramp, ramp);
+        }
+        var bits = indexBits <= 8 ? 8 : indexBits <= 16 ? 16 : indexBits;
+        return new JavaColorModel(
+            PdfCartonFontCompat.GetColorSpace(JavaColorSpace.CS_GRAY),
+            false,
+            PdfCartonImageCodecs.DataType(bits),
+            [bits]);
+    }
+
+    private sbyte[] Channel(int channel)
+    {
+        var column = mappedColumns is null ? channel
+            : channel < mappedColumns.Length ? mappedColumns[channel]
+            : -1;
+        if ((uint)column >= (uint)columnCount)
+            throw new IOException(
+                $"JPEG 2000 palette has no column for colour channel {channel}.");
+        var values = new sbyte[entries.Length];
+        for (var entry = 0; entry < values.Length; entry++)
+            values[entry] = unchecked((sbyte)entries[entry][column]);
+        return values;
+    }
 }
 
 // The pinned CoreJ2K maps decoded component c to the cdef channel whose

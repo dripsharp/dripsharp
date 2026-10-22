@@ -5889,7 +5889,7 @@ public sealed class ImageCodecAdapterTests
             0, 1, 4, 8, 12, 16, 21, 27, 32, 38, 45, 51, 58, 66, 73, 81,
             89, 97, 106, 114, 123, 132, 141, 150, 160, 169, 179, 189, 199, 210, 220, 231
         ];
-        var (colour, smask, colourSpace) = DecodeJpxFilter(data, smaskInData: true);
+        var (colour, smask, colourSpace, _) = DecodeJpxFilter(data, smaskInData: true);
         using (smask)
         {
             Assert.NotNull(smask);
@@ -5899,7 +5899,7 @@ public sealed class ImageCodecAdapterTests
         Assert.Equal(3, colourSpace.GetNumberOfComponents());
         Assert.Equal(overBlack.SelectMany(value => new[] { value, value, value }).ToArray(), colour);
 
-        var (interleaved, noMask, graySpace) = DecodeJpxFilter(data, smaskInData: false);
+        var (interleaved, noMask, graySpace, _) = DecodeJpxFilter(data, smaskInData: false);
         Assert.Null(noMask);
         Assert.Equal(1, graySpace.GetNumberOfComponents());
         Assert.Equal(
@@ -5934,7 +5934,7 @@ public sealed class ImageCodecAdapterTests
             for (var component = 0; component < 5; component++)
                 Assert.Equal(samples[component], raster.GetSamples(0, 0, 8, 4, component, null));
         }
-        var (colour3, smask, colourSpace) = DecodeJpxFilter(data, smaskInData: true);
+        var (colour3, smask, colourSpace, _) = DecodeJpxFilter(data, smaskInData: true);
         using (smask)
         {
             Assert.NotNull(smask);
@@ -5945,24 +5945,302 @@ public sealed class ImageCodecAdapterTests
         Assert.Equal(8 * 4 * 3, colour3.Length);
     }
 
-    // The palette stage still expands a palettized JP2 (one index component
-    // and an RGB palette) after the grey + alpha fix.
+    // A palettized JP2 (one 8-bit index component, an RGB palette) decodes
+    // to its indexes, as jai-imageio-jpeg2000 1.4.0 reads it: an opaque
+    // IndexColorModel of the palette. Java PDFBox 3.0.8's JPXFilter writes
+    // the 32 index bytes with /BitsPerComponent 8 and the model's three-
+    // component sRGB space, so PDImageXObject.getImage and page rendering
+    // read the index bytes as RGB triples, and black once they run out.
+    // Every expected value here is Java PDFBox 3.0.8's for this fixture.
     [Fact]
-    public void JpxPaletteStillExpandsToItsColours()
+    public void JpxPaletteDecodesToItsIndexesAsJavaPdfBox()
     {
         const int width = 8, height = 4;
         var (data, palette) = PaletteJpx();
-        using var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
-        var raster = Compat.PdfCartonFontCompat.GetRaster(image);
-        Assert.Equal(3, raster.NumberOfBands);
-        for (var component = 0; component < 3; component++)
+        var indexes = Enumerable.Range(0, width * height).Select(index => index & 3).ToArray();
+        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+        {
+            var model = Compat.PdfCartonFontCompat.GetColorModel(image);
+            Assert.Equal(8, model.PixelSize);
+            Assert.Equal(3, model.ColorSpace.NumberOfComponents);
+            Assert.Equal(Compat.PdfCartonTransparency.OPAQUE, Compat.PdfCartonFontCompat.GetTransparency(image));
             Assert.Equal(
-                Enumerable.Range(0, width * height).Select(index => palette[index & 3][component]).ToArray(),
-                raster.GetSamples(0, 0, width, height, component, null));
+                palette.Select(entry => new SKColor((byte)entry[0], (byte)entry[1], (byte)entry[2])),
+                model.Palette!);
+            var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+            Assert.Equal(1, raster.NumberOfBands);
+            Assert.Equal(indexes, raster.GetSamples(0, 0, width, height, 0, null));
+        }
+
+        foreach (var smaskInData in new[] { false, true })
+        {
+            var (decoded, smask, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, smaskInData);
+            Assert.Null(smask);
+            Assert.Equal(indexes.Select(index => (byte)index), decoded);
+            Assert.Equal(8, bitsPerComponent);
+            Assert.Equal(3, colourSpace.GetNumberOfComponents());
+        }
+        // Columns 1, 3 and 5 of rows 0 and 2.
+        Assert.Equal(new byte[] { 1, 3, 1, 1, 3, 1 }, DecodeJpxFilter(data, false, RegionEveryOther()).Decoded);
+
+        uint[] java =
+        [
+            0xff000102, 0xff030001, 0xff020300, 0xff010203, 0xff000102, 0xff030001,
+            0xff020300, 0xff010203, 0xff000102, 0xff030001, 0xff020300
+        ];
+        AssertJpxImageRendersAs(
+            data, java.Concat(Enumerable.Repeat(0xff000000u, width * height - java.Length)).ToArray());
     }
 
-    private static (byte[] Decoded, SKBitmap? SoftMask, PDJPXColorSpace ColourSpace) DecodeJpxFilter(
-        byte[] data, bool smaskInData)
+    // Other palette layouts, each as jai-imageio-jpeg2000 1.4.0 and Java
+    // PDFBox 3.0.8 decode it: 1-, 2- and 4-bit indexes are packed (1-bit
+    // ones read as CS_GRAY, PDFBOX-4326), wider ones are unsigned shorts,
+    // a fourth palette column is the colour map's alpha, palettes of other
+    // column counts decode as grey indexes, and the map keeps the low eight
+    // bits of wider palette entries. Java's getImage fails for the packed
+    // multi-bit and 12-bit RGB layouts (an EOFException), and its JPXFilter
+    // fails with SMaskInData on a translucent palette, which has no alpha
+    // raster.
+    [Fact]
+    public void JpxPaletteLayoutsDecodeAsJavaPdfBox()
+    {
+        const int pixels = 32;
+        int[][] rgb = [[0, 0, 0], [255, 0, 0], [12, 200, 34], [90, 91, 250]];
+        var twoBit = Enumerable.Range(0, pixels).Select(index => index & 3).ToArray();
+
+        // 4-bit indexes, sixteen entries.
+        var data = PaletteJpx(
+            4, Enumerable.Range(0, 16).Select(e => new[] { e * 16, 255 - e * 16, e * 37 & 255 }).ToArray(),
+            index => index & 15);
+        var (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(
+            new byte[] { 1, 35, 69, 103, 137, 171, 205, 239, 1, 35, 69, 103, 137, 171, 205, 239 },
+            decoded);
+        Assert.Equal(4, bitsPerComponent);
+        Assert.Equal(3, colourSpace.GetNumberOfComponents());
+        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage().Dispose());
+        Assert.Equal(new byte[] { 0x13, 0x50, 0x13, 0x50 }, DecodeJpxFilter(data, false, RegionEveryOther()).Decoded);
+
+        // 1-bit indexes.
+        data = PaletteJpx(1, [[10, 20, 30], [200, 100, 50]], index => index >> 1 & 1);
+        (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(new byte[] { 51, 51, 51, 51 }, decoded);
+        Assert.Equal(1, bitsPerComponent);
+        Assert.Equal(1, colourSpace.GetNumberOfComponents());
+        Assert.Equal(new byte[] { 0x40, 0x40 }, DecodeJpxFilter(data, false, RegionEveryOther()).Decoded);
+        AssertJpxImageRendersAs(
+            data, Enumerable.Range(0, pixels).Select(index => (index >> 1 & 1) == 0 ? 0xff000000 : 0xffffffff).ToArray());
+
+        // 12-bit indexes, 300 entries.
+        data = PaletteJpx(
+            12, Enumerable.Range(0, 300).Select(e => new[] { e & 255, e * 3 & 255, e * 7 & 255 }).ToArray(),
+            index => index * 9);
+        (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(
+            Enumerable.Range(0, pixels).SelectMany(index => new[] { (byte)(index * 9 >> 8), (byte)(index * 9) }),
+            decoded);
+        Assert.Equal(12, bitsPerComponent);
+        Assert.Equal(3, colourSpace.GetNumberOfComponents());
+        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage().Dispose());
+
+        // One-, two- and five-column palettes: 8-bit CS_GRAY indexes.
+        foreach (var palette in new[] { new[] { new[] { 0 }, [77], [180], [255] },
+                                        [[0, 255], [77, 128], [180, 0], [255, 64]],
+                                        rgb.Select(entry => entry.Concat(new[] { 7, 9 }).ToArray()).ToArray() })
+        {
+            data = PaletteJpx(8, palette, index => index & 3);
+            (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+            Assert.Equal(twoBit.Select(index => (byte)index), decoded);
+            Assert.Equal(8, bitsPerComponent);
+            Assert.Equal(1, colourSpace.GetNumberOfComponents());
+            uint[] linearGray = [0xff000000, 0xff0d0d0d, 0xff161616, 0xff1c1c1c];
+            AssertJpxImageRendersAs(data, twoBit.Select(index => linearGray[index]).ToArray());
+        }
+
+        // Grey indexes of other precisions: 3-bit ones as 8-bit samples,
+        // 12-bit ones as 16-bit samples, and 1-, 2- and 4-bit ones packed
+        // under a grey-ramp IndexColorModel.
+        data = PaletteJpx(3, Enumerable.Range(0, 8).Select(e => new[] { e * 36 }).ToArray(), index => index & 7);
+        (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(Enumerable.Range(0, pixels).Select(index => (byte)(index & 7)), decoded);
+        Assert.Equal(8, bitsPerComponent);
+        Assert.Equal(1, colourSpace.GetNumberOfComponents());
+
+        data = PaletteJpx(12, Enumerable.Range(0, 300).Select(e => new[] { e & 255 }).ToArray(), index => index * 9);
+        (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(
+            Enumerable.Range(0, pixels).SelectMany(index => new[] { (byte)(index * 9 >> 8), (byte)(index * 9) }),
+            decoded);
+        Assert.Equal(16, bitsPerComponent);
+        Assert.Equal(1, colourSpace.GetNumberOfComponents());
+        AssertJpxImageRendersAs(
+            data, Enumerable.Range(0, pixels).Select(index => index < 15 ? 0xff000000 : 0xff0d0d0d).ToArray());
+
+        data = PaletteJpx(2, [[0], [77], [180], [255]], index => index & 3);
+        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+            Assert.Equal(
+                new[] { new SKColor(0, 0, 0), new SKColor(85, 85, 85), new SKColor(170, 170, 170),
+                        new SKColor(255, 255, 255) },
+                Compat.PdfCartonFontCompat.GetColorModel(image).Palette!);
+        (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(Enumerable.Repeat((byte)0x1b, 8), decoded);
+        Assert.Equal(2, bitsPerComponent);
+        Assert.Equal(3, colourSpace.GetNumberOfComponents());
+        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage().Dispose());
+
+        data = PaletteJpx(
+            4, Enumerable.Range(0, 16).Select(e => new[] { e * 17, 255 - e }).ToArray(), index => index & 15);
+        (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(
+            new byte[] { 1, 35, 69, 103, 137, 171, 205, 239, 1, 35, 69, 103, 137, 171, 205, 239 },
+            decoded);
+        Assert.Equal(4, bitsPerComponent);
+        Assert.Equal(3, colourSpace.GetNumberOfComponents());
+
+        data = PaletteJpx(1, [[0], [255]], index => index >> 1 & 1);
+        (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+        Assert.Equal(new byte[] { 51, 51, 51, 51 }, decoded);
+        Assert.Equal(1, bitsPerComponent);
+        Assert.Equal(1, colourSpace.GetNumberOfComponents());
+
+        // An alpha channel: translucent, bitmask or, when every entry is
+        // opaque, an opaque model without alpha.
+        foreach (var (alpha, transparency) in new[]
+                 {
+                     (new[] { 255, 128, 0, 64 }, Compat.PdfCartonTransparency.TRANSLUCENT),
+                     ([255, 0, 255, 0], Compat.PdfCartonTransparency.BITMASK),
+                     ([255, 255, 255, 255], Compat.PdfCartonTransparency.OPAQUE)
+                 })
+        {
+            data = PaletteJpx(8, rgb.Select((entry, e) => entry.Append(alpha[e]).ToArray()).ToArray(), index => index & 3);
+            using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+            {
+                var model = Compat.PdfCartonFontCompat.GetColorModel(image);
+                Assert.Equal(transparency, model.Transparency);
+                Assert.Equal(transparency != Compat.PdfCartonTransparency.OPAQUE, model.HasAlpha);
+                Assert.Equal(alpha.Select(value => (byte)value), model.Palette!.Select(color => color.Alpha));
+                Assert.Null(Compat.PdfCartonFontCompat.GetAlphaRaster(image));
+            }
+            (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+            Assert.Equal(twoBit.Select(index => (byte)index), decoded);
+            Assert.Equal(3, colourSpace.GetNumberOfComponents());
+            if (transparency == Compat.PdfCartonTransparency.TRANSLUCENT)
+                Assert.ThrowsAny<Exception>(() => DecodeJpxFilter(data, true));
+            else
+                Assert.Equal(twoBit.Select(index => (byte)index), DecodeJpxFilter(data, true).Decoded);
+        }
+
+        // 16-bit palette entries: the map keeps their low eight bits.
+        data = PaletteJpx(
+            8, [[0x1234, 0xAB00, 0x00FF], [0xFF01, 0x0180, 0x7F7F], [0, 0, 0], [65535, 65535, 65535]],
+            index => index & 3, columnBits: 16);
+        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+            Assert.Equal(
+                new[] { new SKColor(0x34, 0x00, 0xff), new SKColor(0x01, 0x80, 0x7f), new SKColor(0, 0, 0),
+                        new SKColor(0xff, 0xff, 0xff) },
+                Compat.PdfCartonFontCompat.GetColorModel(image).Palette!);
+        Assert.Equal(twoBit.Select(index => (byte)index), DecodeJpxFilter(data, false).Decoded);
+    }
+
+    // The palette's column count, not its component mapping, chooses the
+    // model; the mapping picks the column of each colour channel, whatever
+    // its mapping type, and the palette's columns serve in order without
+    // one. Java PDFBox 3.0.8 (jai-imageio-jpeg2000 1.4.0) fails to read a
+    // three-column palette whose mapping lacks a channel or names a column
+    // past the palette.
+    [Fact]
+    public void JpxPaletteColumnMappingDecodesAsJavaPdfBox()
+    {
+        int[][] rgb = [[0, 0, 0], [255, 0, 0], [12, 200, 34], [90, 91, 250]];
+        var indexes = Enumerable.Range(0, 32).Select(index => (byte)(index & 3)).ToArray();
+        var reversed = new[]
+        {
+            new SKColor(0, 0, 0), new SKColor(0, 0, 255), new SKColor(34, 200, 12), new SKColor(250, 91, 90)
+        };
+        var inOrder = rgb.Select(entry => new SKColor((byte)entry[0], (byte)entry[1], (byte)entry[2])).ToArray();
+        foreach (var (name, data, palette) in new[]
+                 {
+                     ("reversed cmap", PaletteJpx(8, rgb, index => index & 3, cmap: [2, 1, 0]), reversed),
+                     ("no cmap", PaletteJpx(8, rgb, index => index & 3, cmap: []), inOrder),
+                     ("direct mapping type", PaletteJpx(8, rgb, index => index & 3, mappingType: 0), inOrder),
+                     ("extra cmap entry", PaletteJpx(8, rgb, index => index & 3, cmap: [0, 1, 2, 1]), inOrder)
+                 })
+        {
+            using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+                Assert.True(palette.SequenceEqual(Compat.PdfCartonFontCompat.GetColorModel(image).Palette!), name);
+            var (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
+            Assert.True(indexes.SequenceEqual(decoded), name);
+            Assert.Equal(8, bitsPerComponent);
+            Assert.Equal(3, colourSpace.GetNumberOfComponents());
+        }
+
+        // Five columns of which the mapping uses three: grey indexes.
+        var fiveColumns = PaletteJpx(
+            8, rgb.Select(entry => entry.Concat(new[] { 7, 9 }).ToArray()).ToArray(), index => index & 3,
+            cmap: [0, 1, 2]);
+        var (grey, _, greySpace, _) = DecodeJpxFilter(fiveColumns, false);
+        Assert.Equal(indexes, grey);
+        Assert.Equal(1, greySpace.GetNumberOfComponents());
+
+        foreach (var cmap in new byte[][] { [1], [0, 1, 5] })
+        {
+            var data = PaletteJpx(8, rgb, index => index & 3, cmap: cmap);
+            var error = Assert.Throws<IOException>(() => DecodeJpxFilter(data, false));
+            Assert.Equal("Could not read JPEG 2000 (JPX) image", error.Message);
+        }
+    }
+
+    // Columns 1 to 6, every other pixel of every other row.
+    private static DecodeOptions RegionEveryOther()
+    {
+        var options = new DecodeOptions(2);
+        options.SetSourceRegion(SKRectI.Create(1, 0, 6, 4));
+        return options;
+    }
+
+    // An image XObject holding only the JPX stream: no /ColorSpace and no
+    // /BitsPerComponent, so both come from JPXFilter.
+    private static PDImageXObject JpxImage(byte[] data, PDDocument? document = null)
+    {
+        var stream = document?.GetDocument().CreateCOSStream() ?? new COSStream();
+        using (var output = stream.CreateRawOutputStream())
+            output.Write(data);
+        stream.SetItem(COSName.Type, COSName.Xobject);
+        stream.SetItem(COSName.Subtype, COSName.Image);
+        stream.SetItem(COSName.Filter, COSName.JpxDecode);
+        stream.SetInt(COSName.Width, 8);
+        stream.SetInt(COSName.Height, 4);
+        return new PDImageXObject(new PDStream(stream), null!);
+    }
+
+    // PDImageXObject.getImage and an 8x4 page that draws the image over it,
+    // rendered at 72 dpi, both give these ARGB pixels.
+    private static void AssertJpxImageRendersAs(byte[] data, uint[] argb)
+    {
+        using (var image = JpxImage(data).GetImage())
+            AssertArgb(argb, image, "getImage");
+        using var document = new PDDocument();
+        var page = new PDPage(new PDRectangle(8, 4));
+        document.AddPage(page);
+        using (var content = new PDPageContentStream(document, page))
+            content.DrawImage(JpxImage(data, document), 0, 0, 8, 4);
+        using var rendered = new PDFRenderer(document).RenderImage(0);
+        AssertArgb(argb, rendered, "page");
+
+        static void AssertArgb(uint[] expected, SKBitmap actual, string label)
+        {
+            Assert.Equal((8, 4), (actual.Width, actual.Height));
+            var pixels = new uint[32];
+            for (var index = 0; index < pixels.Length; index++)
+                pixels[index] = unchecked((uint)Compat.PdfCartonFontCompat.GetRgb(actual, index % 8, index / 8));
+            Assert.True(expected.SequenceEqual(pixels),
+                $"{label}: expected {string.Join(" ", expected.Select(value => value.ToString("x8")))}, " +
+                $"got {string.Join(" ", pixels.Select(value => value.ToString("x8")))}.");
+        }
+    }
+
+    private static (byte[] Decoded, SKBitmap? SoftMask, PDJPXColorSpace ColourSpace, int BitsPerComponent) DecodeJpxFilter(
+        byte[] data, bool smaskInData, DecodeOptions? options = null)
     {
         var stream = new COSStream();
         using (var output = stream.CreateRawOutputStream())
@@ -5971,8 +6249,9 @@ public sealed class ImageCodecAdapterTests
         if (smaskInData) stream.SetInt(COSName.SmaskInData, 1);
         using var encoded = stream.CreateRawInputStream();
         using var decoded = new MemoryStream();
-        var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
-        return (decoded.ToArray(), result.GetJPXSMask(), result.GetJPXColorSpace());
+        var result = new JPXFilter().Decode(encoded, decoded, stream, 0, options ?? DecodeOptions.Default);
+        return (decoded.ToArray(), result.GetJPXSMask(), result.GetJPXColorSpace(),
+            result.GetParameters().GetInt(COSName.BitsPerComponent));
     }
 
     // A lossless 8x4 grey + alpha JP2 as OpenJPEG writes one: colr
@@ -6012,31 +6291,47 @@ public sealed class ImageCodecAdapterTests
     // palette: index of pixel i is i & 3.
     private static (byte[] Data, int[][] Palette) PaletteJpx()
     {
-        const int width = 8, height = 4;
         int[][] palette = [[0, 0, 0], [255, 0, 0], [12, 200, 34], [90, 91, 250]];
+        return (PaletteJpx(8, palette, index => index & 3), palette);
+    }
+
+    // A lossless 8x4 JP2 whose single indexBits-bit component, index(i) at
+    // pixel i, indexes palette; the component mapping (of mappingType) takes
+    // the palette columns cmap lists, every column in order by default, and
+    // is left out when cmap is empty.
+    private static byte[] PaletteJpx(
+        int indexBits, int[][] palette, Func<int, int> index, int columnBits = 8,
+        byte[]? cmap = null, byte mappingType = 1)
+    {
+        const int width = 8, height = 4;
+        var columns = palette[0].Length;
         var indexes = new int[width * height];
-        for (var index = 0; index < indexes.Length; index++)
-            indexes[index] = (index & 3) - 128;
-        var mapping = new CoreJ2K.j2k.fileformat.metadata.ComponentMappingData();
-        for (byte column = 0; column < 3; column++)
-            mapping.AddMapping(0, 1, column);
+        for (var pixel = 0; pixel < indexes.Length; pixel++)
+            indexes[pixel] = index(pixel) - (1 << indexBits - 1);
+        cmap ??= Enumerable.Range(0, columns).Select(column => (byte)column).ToArray();
+        CoreJ2K.j2k.fileformat.metadata.ComponentMappingData? mapping = null;
+        if (cmap.Length > 0)
+        {
+            mapping = new CoreJ2K.j2k.fileformat.metadata.ComponentMappingData();
+            foreach (var column in cmap)
+                mapping.AddMapping(0, mappingType, column);
+        }
         var parameters = new CoreJ2K.j2k.util.ParameterList(CoreJ2K.J2kImage.GetDefaultEncoderParameterList());
         parameters["lossless"] = "on";
-        var data = CoreJ2K.J2kImage.ToBytes(
-            new CoreJ2K.Util.InterleavedImageSource(width, height, 1, 8, new bool[1], [indexes]),
+        return CoreJ2K.J2kImage.ToBytes(
+            new CoreJ2K.Util.InterleavedImageSource(width, height, 1, indexBits, new bool[1], [indexes]),
             new CoreJ2K.j2k.fileformat.metadata.J2KMetadata
             {
                 Palette = new CoreJ2K.j2k.fileformat.metadata.PaletteData
                 {
                     NumEntries = palette.Length,
-                    NumColumns = 3,
-                    BitDepths = [7, 7, 7],
+                    NumColumns = columns,
+                    BitDepths = Enumerable.Repeat((short)(columnBits - 1), columns).ToArray(),
                     Entries = palette
                 },
                 ComponentMapping = mapping
             },
             parameters);
-        return (data, palette);
     }
 
     // CoreJ2K looks decoded component c up as the channel associated with

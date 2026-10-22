@@ -4205,13 +4205,29 @@ public class JavaColorModel
         sbyte[] red,
         sbyte[] green,
         sbyte[] blue)
+        : this(pixelBits, mapSize, red, green, blue, null)
+    {
+    }
+
+    // Java's IndexColorModel: pixels of more than eight bits are stored as
+    // unsigned shorts. With alpha, the model is OPAQUE when every entry is
+    // opaque, BITMASK when every entry is opaque or fully transparent, and
+    // TRANSLUCENT otherwise; it has alpha unless it is OPAQUE.
+    internal JavaColorModel(
+        int pixelBits,
+        int mapSize,
+        sbyte[] red,
+        sbyte[] green,
+        sbyte[] blue,
+        sbyte[]? alpha)
     {
         if (pixelBits is <= 0 or > 16)
             throw new ArgumentOutOfRangeException(nameof(pixelBits));
         if (mapSize <= 0 ||
             red.Length < mapSize ||
             green.Length < mapSize ||
-            blue.Length < mapSize)
+            blue.Length < mapSize ||
+            alpha is not null && alpha.Length < mapSize)
         {
             throw new ArgumentException(
                 "The indexed color arrays must contain every palette entry.");
@@ -4219,18 +4235,28 @@ public class JavaColorModel
 
         imageType = PdfCartonFontCompat.TYPE_CUSTOM;
         explicitColorSpace = PdfCartonFontCompat.GetColorSpace(JavaColorSpace.CS_sRGB);
-        explicitAlpha = false;
-        explicitDataType = PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE;
+        explicitDataType = pixelBits > 8
+            ? PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT
+            : PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE;
         explicitPixelSize = pixelBits;
         ColorSpace = explicitColorSpace;
         Palette = new SKColor[mapSize];
+        var transparency = PdfCartonTransparency.OPAQUE;
         for (var index = 0; index < mapSize; index++)
         {
+            var entryAlpha = alpha is null ? byte.MaxValue : unchecked((byte)alpha[index]);
+            if (entryAlpha is not byte.MaxValue)
+                transparency = entryAlpha is 0 && transparency != PdfCartonTransparency.TRANSLUCENT
+                    ? PdfCartonTransparency.BITMASK
+                    : PdfCartonTransparency.TRANSLUCENT;
             Palette[index] = new SKColor(
                 unchecked((byte)red[index]),
                 unchecked((byte)green[index]),
-                unchecked((byte)blue[index]));
+                unchecked((byte)blue[index]),
+                entryAlpha);
         }
+        explicitAlpha = transparency != PdfCartonTransparency.OPAQUE;
+        explicitTransparency = transparency;
     }
 
     internal SKColor[]? Palette { get; }
@@ -4479,7 +4505,9 @@ public class JavaColorModel
             if (explicitPixelSize is 1 or 2 or 4)
                 return JavaRaster.Packed(width, height, explicitPixelSize.Value);
             return new JavaRaster(
-                PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE,
+                explicitPixelSize > 8
+                    ? PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT
+                    : PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE,
                 width,
                 height,
                 1);
@@ -4640,6 +4668,13 @@ public class JavaColorModel
                 if (distance >= closestDistance) continue;
                 closestDistance = distance;
                 closestIndex = index;
+            }
+            if (explicitPixelSize > 8)
+            {
+                var wide = pixel as short[] ?? new short[1];
+                if (wide.Length == 0) throw new IndexOutOfRangeException();
+                wide[0] = unchecked((short)closestIndex);
+                return wide;
             }
             var indexed = pixel as sbyte[] ?? new sbyte[1];
             if (indexed.Length == 0) throw new IndexOutOfRangeException();
@@ -8487,7 +8522,10 @@ internal static class PdfCartonFontCompat
     internal static JavaRaster? GetAlphaRaster(SKBitmap bitmap)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
-        if (!GetColorModel(bitmap).HasAlpha) return null;
+        // An indexed model's alpha is in its colour map, not in a band, so
+        // like Java it has no alpha raster.
+        var colorModel = GetColorModel(bitmap);
+        if (!colorModel.HasAlpha || colorModel.Palette is not null) return null;
         EnsureNativePixels(bitmap);
         var raster = new JavaRaster(
             DATA_BUFFER_TYPE_BYTE,
