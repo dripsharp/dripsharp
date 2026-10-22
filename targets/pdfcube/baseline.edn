@@ -44,7 +44,22 @@
     :source "vendor/pdfcube/jpx/COPYRIGHT-JJ2000-5.1"
     :destination "Legal/COPYRIGHT-JJ2000-5.1.txt"
     :package-path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
-    :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}]}
+    :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}
+   {:kind :notice
+    :source "vendor/pdfcube/jpeg/NOTICE"
+    :destination "Legal/THIRD-PARTY-LIBJPEG-TURBO-NOTICE.txt"
+    :package-path "THIRD-PARTY/LIBJPEG-TURBO-NOTICE.txt"
+    :sha256 "24e7a79961954fed08674c68c9c62e341757666d9330cb5b0a8b574536ef6bbe"}
+   {:kind :notice
+    :source "vendor/pdfcube/jpeg/README.ijg"
+    :destination "Legal/THIRD-PARTY-LIBJPEG-TURBO-README.ijg.txt"
+    :package-path "THIRD-PARTY/LIBJPEG-TURBO-README.ijg.txt"
+    :sha256 "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6"}
+   {:kind :notice
+    :source "vendor/pdfcube/jpeg/LICENSE.md"
+    :destination "Legal/THIRD-PARTY-LIBJPEG-TURBO-LICENSE.md.txt"
+    :package-path "THIRD-PARTY/LIBJPEG-TURBO-LICENSE.md.txt"
+    :sha256 "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579"}]}
  :packages
  {"DripSharp.PdfCarton.IO" {:version "3.0.8-alpha.6" :assembly-version "3.0.8.0"}
   "DripSharp.PdfCarton.Fonts" {:version "3.0.8-alpha.6" :assembly-version "3.0.8.0"}

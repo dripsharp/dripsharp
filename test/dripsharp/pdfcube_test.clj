@@ -69,6 +69,12 @@
     (is (= 2 (count codec-assets)))
     (is (every? #(= :vendored-third-party (:authorship-class %))
                 codec-assets))
+    ;; The libjpeg-turbo port is kept with its notices, not as authored code.
+    (is (= [{:source-tree "vendor/pdfcube/jpeg"
+             :authorship-class :vendored-third-party}]
+           (->> assets
+                (filter #(= :pdfcube.pdfbox/jpeg-samples-source (:strategy %)))
+                (mapv #(select-keys % [:source-tree :authorship-class])))))
     (is (every? ifn? (map :text-transform codec-assets)))
     (is (every? #(= expected ((:text-transform %) source))
                 codec-assets))

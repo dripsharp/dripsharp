@@ -272,8 +272,9 @@ without another third-party dependency:
 * JPEG 2000/JPX decoding.
 * The stored CMYK or YCCK samples of four-component JPEG images, which ImageIO's
   `readRaster` returns and `DCTFilter` interprets; Skia decodes JPEG only to
-  RGB. PdfCarton's authored decoder reproduces the samples that the reference
-  Java toolchain's ImageIO produces (its OpenJDK links libjpeg-turbo).
+  RGB. PdfCarton's decoder, a C# port of libjpeg-turbo code (see the pinned
+  source below), reproduces the samples that the reference Java toolchain's
+  ImageIO produces (its OpenJDK links libjpeg-turbo).
 * Unicode Bidirectional Algorithm behavior matching `java.text.Bidi`.
 * `Printable` and `Pageable`-style page layout and rendering over `SKCanvas`;
   SkiaSharp does not provide portable printer discovery or job submission.
@@ -289,12 +290,13 @@ under other license terms requires explicit approval.
 ### Pinned Internal Image Codec Source
 
 PdfCarton builds the following codec source directly into `DripSharp.PdfCarton`; it
-does not reference either codec as a package dependency:
+does not reference any of these codecs as a package dependency:
 
 | Capability | Pinned source identity | License and notices |
 | --- | --- | --- |
 | JBIG2 | `nicholsab/JBig2Decoder.NETStandard` tag `1.5.2`, commit `29a79f7f138bbcd01c077cef3120e555b8fda3d3` | The preserved `LICENSE` records the original IDRsolutions BSD-3-Clause terms and the C# port's MIT terms and copyrights. |
 | JPEG 2000/JPX | `cinderblocks/CoreJ2K` tag `v2.3.3`, commit `4405df86bcd3c41bca9e0c12f3094209834bbba7` | BSD-3-Clause `LICENSE` plus the required preserved `COPYRIGHT-JJ2000-5.1` notice. |
+| Four-component JPEG samples | `libjpeg-turbo/libjpeg-turbo` tag `3.2.0`, commit `c85e6b905bf237038faa936dab160ebfc5da0344`, ported to C# | The IJG License: the preserved `README.ijg` and `LICENSE.md`, and a `NOTICE` that carries the required statement "This software is based in part on the work of the Independent JPEG Group", the ported files' copyright notices and the changes from them. |
 
 The source snapshots live under `vendor/pdfcube/jbig2` and
 `vendor/pdfcube/jpx`. They are exact apart from these backported upstream fixes:
@@ -305,8 +307,20 @@ The source snapshots live under `vendor/pdfcube/jbig2` and
 | `vendor/pdfcube/jpx/Color/PalettizedColorSpaceMapper.cs` | The `PalettizedColorSpaceMapper.cs` hunk of CoreJ2K commit `fffc184` (released in `v2.4.1`): the component-count check applies only when the file has a palette box, so JP2 files with two, or five or more, components and no palette (for example grey plus alpha) decode instead of failing. The file matches upstream blob `990216637a595ffb25fd718756ccbda335e60bbc`. |
 | `vendor/pdfcube/jpx/j2k/codestream/reader/FileBitstreamReaderAgent.cs` | The tile-part hunks of the `FileBitstreamReaderAgent.cs` changes in CoreJ2K commit `0383d9f` (released in `v2.4.1`): tile-parts are read while another SOT marker follows, a tile-part beyond the count its tile-part headers announce (TNsot written as the index of the last tile-part) is taken in instead of dropped, and packet reading passes over tile-parts that hold no packet. The `lQuit` layer-limit hunk of that commit and the intervening upstream changes to the file are not backported. |
 
+The JPEG sample decoder under `vendor/pdfcube/jpeg` is a port rather than a
+snapshot: `PdfCartonJpegSamples.cs` rewrites in C# the parts of the libjpeg API
+library that decode baseline, extended sequential and progressive Huffman JPEG
+data to component samples (`jdhuff.c`, `jdphuff.c`, `jdcoefct.c`,
+`jidctint.c`, `jdsample.c`, `jdinput.c`, `jdmarker.c`, `jdmaster.c` and
+`jutils.c` at the pinned commit). It follows libjpeg-turbo 3.2.0 because the
+reference Java toolchain's ImageIO links that release. Its SPDX header names the
+upstream copyright holders and `IJG AND Apache-2.0`, and its `NOTICE` lists the
+changes from the upstream files, as the IJG License requires.
+
 Generation copies their C# source into the internal codec
-area of `DripSharp.PdfCarton`, adds only compiler-warning and nullable wrappers, and
-packs the license and copyright files under `THIRD-PARTY/`. Advancing either
-pin or backporting another upstream change requires re-running the image
-differential corpus and updating the recorded identity and legal-file digests.
+area of `DripSharp.PdfCarton`, adds only compiler-warning and nullable wrappers
+to the JBIG2 and JPEG 2000 snapshots, and packs the license, copyright and
+notice files under `THIRD-PARTY/`. Advancing a pin, backporting another
+upstream change or changing the JPEG port requires re-running the image
+differential corpus or the JPEG sample tests and updating the recorded identity
+and legal-file digests.

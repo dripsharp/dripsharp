@@ -80,10 +80,11 @@
    :authorship
    {:sources
     [:pdfcube/fontbox-compat :pdfcube/icc :pdfcube/image-codecs
-     :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx]
+     :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx
+     :pdfcube/jpeg]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 17553 :total-lines 198766}}
+    :budget {:authored-lines 16378 :total-lines 198792}}
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing

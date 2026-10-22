@@ -4476,6 +4476,19 @@
       :missing-kind :missing-pdfcube-image-codec-adapter
       :missing-message "PdfCarton image codec adapter source is missing"})
 
+    ;; The adapters call the JPEG component-sample decoder, a C# port of
+    ;; libjpeg-turbo code kept with its notices outside the authored runtime.
+    (or (contains? (:internal-capabilities configuration) :jbig2)
+        (contains? (:internal-capabilities configuration) :jpx))
+    (conj
+     {:source-tree "vendor/pdfcube/jpeg"
+      :destination-tree "DripSharp/Runtime/Codecs/Jpeg"
+      :include-pattern "\\.cs$"
+      :authorship-class :vendored-third-party
+      :strategy :pdfcube.pdfbox/jpeg-samples-source
+      :missing-kind :missing-pdfcube-jpeg-samples-source
+      :missing-message "Ported PdfCarton JPEG sample decoder source is missing"})
+
     (contains? (:internal-capabilities configuration) :jbig2)
     (conj
      {:source-tree "vendor/pdfcube/jbig2"

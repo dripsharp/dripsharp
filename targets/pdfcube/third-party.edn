@@ -39,4 +39,23 @@
    :emitted-public-types
    {:count 0
     :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+  {:id :pdfcube/jpeg
+   :kind :tree
+   :provenance "vendor/pdfcube/jpeg"
+   :include-pattern ".*\\.cs"
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 1201
+   :max-emitted-lines 1201
+   :source-inventory-sha256
+   "0238992d05f2d66edea2b3436aaed8f8e2756d033e3a6414b5707438372b8103"
+   :public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+   :emitted-public-types
+   {:count 0
+    :sha256
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}]}

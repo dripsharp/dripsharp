@@ -1,0 +1,130 @@
+PdfCarton JPEG component-sample decoder
+=======================================
+
+This software is based in part on the work of the Independent JPEG Group.
+
+PdfCartonJpegSamples.cs, built into DripSharp.PdfCarton, is a C# port of parts
+of the libjpeg API library of libjpeg-turbo 3.2.0:
+
+  Project:  libjpeg-turbo, https://github.com/libjpeg-turbo/libjpeg-turbo
+  Version:  tag 3.2.0, commit c85e6b905bf237038faa936dab160ebfc5da0344
+
+That code is covered by the IJG License, whose text is in README.ijg,
+included unaltered from that commit. libjpeg-turbo's LICENSE.md, also
+included unaltered, explains how the libjpeg-turbo licenses apply. The
+ported code is derived only from the libjpeg API library; it contains no
+TurboJPEG API, SIMD or libspng code.
+
+Ported upstream files
+---------------------
+
+The port follows these files of libjpeg-turbo 3.2.0, whose notices read:
+
+src/jdhuff.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1997, Thomas G. Lane.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2009-2011, 2016, 2018-2019, 2022, D. R. Commander.
+  Copyright (C) 2018, Matthias Räncker.
+
+src/jdphuff.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1995-1997, Thomas G. Lane.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2015-2016, 2018-2022, D. R. Commander.
+
+src/jdcoefct.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1994-1997, Thomas G. Lane.
+  libjpeg-turbo Modifications:
+  Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  Copyright (C) 2010, 2015-2016, 2019-2020, 2022-2026, D. R. Commander.
+  Copyright (C) 2015, 2020, Google, Inc.
+
+src/jidctint.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1998, Thomas G. Lane.
+  Modification developed 2002-2018 by Guido Vollbeding.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2015, 2020, 2022, 2026, D. R. Commander.
+
+src/jdsample.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1996, Thomas G. Lane.
+  libjpeg-turbo Modifications:
+  Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  Copyright (C) 2010, 2015-2016, 2022, 2024-2026, D. R. Commander.
+  Copyright (C) 2015, Google, Inc.
+  Copyright (C) 2019-2020, Arm Limited.
+
+src/jdinput.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1997, Thomas G. Lane.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2010, 2016, 2018, 2022, 2024, D. R. Commander.
+  Copyright (C) 2015, Google, Inc.
+
+src/jdmarker.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1998, Thomas G. Lane.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2012, 2015, 2022, 2024, 2026, D. R. Commander.
+
+src/jdmaster.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1997, Thomas G. Lane.
+  Modified 2002-2009 by Guido Vollbeding.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2009-2011, 2016, 2019, 2022-2024, 2026, D. R. Commander.
+  Copyright (C) 2013, Linaro Limited.
+  Copyright (C) 2015, Google, Inc.
+
+src/jutils.c
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1996, Thomas G. Lane.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2022, D. R. Commander.
+
+Changes from the upstream files
+-------------------------------
+
+Copyright (C) 2026 Isak Sky. The changes are licensed under Apache-2.0.
+
+* The parts used are rewritten in C# as one internal class,
+  PdfCartonJpegSamples, which decodes a whole JPEG held in memory to its
+  stored component samples with no colour conversion. The libjpeg API,
+  its object and memory managers, source managers, error handling and
+  suspension are not ported.
+* Only baseline, extended sequential and progressive Huffman decoding of
+  8-bit samples is kept, with restart intervals: from jdhuff.c and
+  jdphuff.c, Huffman table derivation and checks, DC and AC decoding,
+  progressive AC refinement and end-of-band runs, and the zero coefficients
+  used after the entropy-coded data runs out; from jdmarker.c and
+  jdinput.c, marker and frame checks, component dimensions, quantization
+  table latching and restart resynchronization. Arithmetic, lossless and
+  hierarchical decoding, 12- and 16-bit samples, DNL heights and fractional
+  sampling ratios are not ported; the decoder returns no result for them.
+* Huffman decoding uses a 9-bit lookahead table and a 64-bit bit buffer in
+  place of libjpeg's 8-bit lookahead and bit-reading macros.
+* From jidctint.c, only the 8x8 jpeg_idct_islow is kept, with its passes
+  written as one shared routine; output range limiting uses a 1024-entry
+  table in place of jdmaster.c's range-limit table. The other IDCT sizes and
+  methods are not ported.
+* From jdsample.c, the h2v1, h2v2 and h1v2 triangle-filter ("fancy")
+  upsampling and the integral replication upsampling are kept, written over
+  whole rows; merged upsampling and colour conversion are not ported.
+* From jdcoefct.c, smoothing_ok and decompress_smooth_data's 5x5 block
+  smoothing for incomplete progressive images are kept, applied after all
+  scans are read rather than per iMCU row; coefficient and sample buffers
+  come from System.Buffers.ArrayPool.
+* From jutils.c, the natural-order table with its 16 extra entries is kept.

@@ -303,7 +303,7 @@
                                          "not affiliated with or endorsed by the JSqlParser project")))
         (is (every? (set (map :kind files)) [:license :notice :readme]))
         (when (= "DripSharp.PdfCarton" (:id package))
-          (is (= 3 (count (filter #(str/starts-with? (:path %) "THIRD-PARTY/")
+          (is (= 6 (count (filter #(str/starts-with? (:path %) "THIRD-PARTY/")
                                   files)))))
         (is (str/includes? project "<Authors>Isak Sky</Authors>"))
         (doseq [property ["<DebugType>portable</DebugType>"
