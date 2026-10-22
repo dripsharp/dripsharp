@@ -5,9 +5,10 @@
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
-            [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.pdfcube.generated-project :as generated-project]
+            [dripsharp.process :as process]
+            [dripsharp.target-execution :as target-execution])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption]
@@ -192,7 +193,7 @@
                    :directory root
                    :timeout-ms 300000})))
 
-(defn- run-package-probe!
+(defn- run-consumer-probe!
   [run-command! ^Path root package-proof ^Path output ^Path pdfbox-root]
   (let [generation (get-in package-proof [:verification :generation])
         consumer-profile (get-in generation [:destination :package-consumer])
@@ -224,17 +225,45 @@
    StandardCharsets/UTF_8
    (make-array OpenOption 0)))
 
+(defn- run-extraction-probe!
+  "Runs the extraction probe in the packed consumer, or the checked-in
+  project-reference probe in generated-project mode."
+  [run-command! ^Path root proof ^Path output ^Path pdfbox-root]
+  (if-let [project (:probe proof)]
+    (do
+      (generated-project/build-probe! run-command! root project)
+      (generated-project/run-probe! run-command! root project
+                                    [output pdfbox-root]))
+    (run-consumer-probe! run-command! root proof output pdfbox-root)))
+
 (defn verify!
-  "Runs clean package consumption plus direct and extraction bidi differentials."
+  "Runs clean package consumption plus direct and extraction bidi
+  differentials. Package mode is the release proof: it packs through the
+  PdfCarton target, which requires a product checkout synchronized with the
+  generated staging.
+
+  With :generated-project? true the extraction half instead runs against the
+  existing generated project through a checked-in project-reference probe;
+  :maven-manifest overrides target/maven-reactor-inputs-0.tsv."
   ([] (verify! {}))
-  ([{:keys [workspace-root package-fn run-command!]
-     :or {package-fn packaging/verify-package-consumption!
+  ([{:keys [workspace-root package-fn run-command! generated-project?
+            maven-manifest]
+     :or {package-fn #(target-execution/package! (assoc % :target :pdfcube))
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          package-proof
-         (package-fn {:workspace-root root
-                      :profile "pdfcube-pdfbox"
-                      :run-command! run-command!})
+         (if generated-project?
+           (assoc (generated-project/proof
+                   {:run-command! run-command!
+                    :workspace-root root
+                    :maven-manifest maven-manifest
+                    :fail! fail!})
+                  :probe (generated-project/probe-project
+                          root "pdfcube-pdfbox-bidi"
+                          "extraction/DripSharp.PdfCarton.BidiExtractionProbe.csproj"))
+           (package-fn {:workspace-root root
+                        :profile "pdfcube-pdfbox"
+                        :run-command! run-command!}))
          generation (get-in package-proof [:verification :generation])
          proof-root
          (harness/clean-directory!
@@ -251,7 +280,10 @@
          dotnet-extraction
          (paths/resolve-path proof-root "dotnet-extraction.tsv")
          java-trace (paths/resolve-path proof-root "upstream-java.tsv")
-         dotnet-trace (paths/resolve-path proof-root "package-dotnet.tsv")]
+         dotnet-trace (paths/resolve-path proof-root
+                                          (if generated-project?
+                                            "project-dotnet.tsv"
+                                            "package-dotnet.tsv"))]
      (when-not (paths/regular-file? mirroring)
        (fail! "Pinned PDFBox bidi mirroring resource is missing"
               {:resource (str mirroring)}))
@@ -261,7 +293,7 @@
       run-command! root dotnet-direct mirroring)
      (compile-and-run-extraction-oracle!
       run-command! root generation proof-root java-extraction pdfbox-root)
-     (run-package-probe!
+     (run-extraction-probe!
       run-command! root package-proof dotnet-extraction pdfbox-root)
      (combine-traces! java-trace [java-direct java-extraction])
      (combine-traces! dotnet-trace [dotnet-direct dotnet-extraction])
@@ -270,17 +302,16 @@
            summary
            {:profile "pdfcube-pdfbox"
             :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
-            :package
-            {:id (get-in package-proof [:identity :id])
-             :version (get-in package-proof [:identity :version])
-             :sha256 (get-in package-proof [:identity :sha256])}
-            :consumer (:dependency-proof package-proof)
+            :package (generated-project/package-summary package-proof)
+            :consumer (generated-project/consumer-summary package-proof)
             :trace trace
             :comparison comparison
             :proof-root proof-root}]
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package DripSharp.PdfCarton bidi differential passed:"
+        (str "Pinned Java/"
+             (if generated-project? "generated-project" "package")
+             " DripSharp.PdfCarton bidi differential passed:")
         (pr-str (select-keys summary [:source :package :trace])))
        summary))))

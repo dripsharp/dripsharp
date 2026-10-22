@@ -6,8 +6,8 @@
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
-            [dripsharp.maven :as maven]
             [dripsharp.paths :as paths]
+            [dripsharp.pdfcube.generated-project :as generated-project]
             [dripsharp.process :as process]
             [dripsharp.target-execution :as target-execution])
   (:import [java.io File]
@@ -207,58 +207,16 @@
 
 (def generate-command
   "Generates the staging that the local generated-project mode compares."
-  ["clojure" "-J-Xmx28g" "-M:run" "generate" "pdfcube" "pdfcube-pdfbox"])
-
-(defn- generated-project-proof
-  "Selects the existing generated PdfCarton project and the Maven discovery
-  manifest written by the same generation. This claims neither clean
-  generation nor package consumption."
-  [run-command! ^Path root manifest]
-  (let [manifest (configured-path
-                  root (or manifest "target/maven-reactor-inputs-0.tsv"))
-        project (paths/resolve-path root "target" "generated" "pdfcarton"
-                                    "src" "DripSharp.PdfCarton"
-                                    "DripSharp.PdfCarton.csproj")]
-    (doseq [path [manifest project]]
-      (when-not (paths/regular-file? path)
-        (fail! "Generated PdfCarton project is missing; generate it first"
-               {:path (str path)
-                :command (str/join " " generate-command)})))
-    (let [input (maven/project-by-id!
-                 (maven/read-reactor-manifest manifest)
-                 (str "org.apache.pdfbox:pdfbox:"
-                      (baseline/upstream-version :pdfcube)))
-          revision
-          (str/trim
-           (:output
-            (run-command!
-             {:command ["git" "rev-parse" "HEAD"]
-              :directory (paths/resolve-path root "research" "pdfbox")
-              :timeout-ms 10000})))]
-      (when-not (= revision pinned-revision)
-        (fail! "PDFBox checkout differs from the pinned oracle revision"
-               {:expected pinned-revision :actual revision}))
-      {:verification {:generation (harness/configuration root revision input)}
-       :project project
-       :manifest manifest})))
+  generated-project/generate-command)
 
 (defn- run-generated-project-probe!
   [run-command! ^Path root ^Path output ^Path resources]
-  (let [project (paths/resolve-path root "validation" "pdfcube-pdfbox-image"
-                                    "DripSharp.PdfCarton.ImageProbe.csproj")]
-    (run-command! {:command ["dotnet" "build" (str project)
-                             "--configuration" "Release"
-                             "--nologo" "--verbosity:minimal"
-                             "--no-incremental" "-warnaserror"
-                             "-p:NuGetAudit=false"]
-                   :directory root
-                   :timeout-ms 900000})
-    (run-command! {:command ["dotnet" "run" "--project" (str project)
-                             "--configuration" "Release"
-                             "--no-build" "--no-restore" "--"
-                             (str output) (str resources)]
-                   :directory root
-                   :timeout-ms 300000})))
+  (let [project (generated-project/probe-project
+                 root "pdfcube-pdfbox-image"
+                 "DripSharp.PdfCarton.ImageProbe.csproj")]
+    (generated-project/build-probe! run-command! root project)
+    (generated-project/run-probe! run-command! root project
+                                  [output resources])))
 
 (defn verify!
   "Runs clean packaging, package-only consumption, and normalized Java/.NET
@@ -285,7 +243,10 @@
                   {:fixture fixture :path (str path)}))))
      (let [proof
            (if generated-project?
-             (generated-project-proof run-command! root maven-manifest)
+             (generated-project/proof {:run-command! run-command!
+                                       :workspace-root root
+                                       :maven-manifest maven-manifest
+                                       :fail! fail!})
              (package-fn {:workspace-root root
                           :profile "pdfcube-pdfbox"
                           :run-command! run-command!}))

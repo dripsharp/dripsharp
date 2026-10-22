@@ -5,7 +5,6 @@
             [clojure.set :as set]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
-            [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.pdfbox-document-lifecycle-differential
              :as document-lifecycle]
@@ -24,6 +23,7 @@
             [dripsharp.pdfcube.pdfbox-security-differential
              :as security]
             [dripsharp.process :as process]
+            [dripsharp.target-execution :as target-execution]
             [dripsharp.util :as util])
   (:import [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
            [java.nio.file.attribute FileAttribute]))
@@ -283,6 +283,24 @@
 
 (def ^:private current-host util/current-host)
 
+(defn- slice-result [id workflows summary]
+  {:id id
+   :workflows workflows
+   :summary summary
+   :evidence
+   (cond-> {:proof-root (str (:proof-root summary))
+            :comparison
+            (if (:trace summary)
+              (:comparison summary)
+              (get-in summary [:comparison :manifest]))}
+     (:trace summary)
+     (assoc :observations (get-in summary [:trace :observations])
+            :families (get-in summary [:trace :families]))
+
+     (= :rendering id)
+     (assoc :image-ids
+            (get-in summary [:comparison :manifest :image-ids])))})
+
 (defn- run-slice!
   [^Path root package-proof run-command! {:keys [id workflows verify]}]
   (let [summary
@@ -300,22 +318,19 @@
     (when-not (= (:dependency-proof package-proof) (:consumer summary))
       (fail! "A package workflow escaped the aggregate isolated consumer"
              {:slice id}))
-    {:id id
-     :workflows workflows
-     :summary summary
-     :evidence
-     (cond-> {:proof-root (str (:proof-root summary))
-              :comparison
-              (if (:trace summary)
-                (:comparison summary)
-                (get-in summary [:comparison :manifest]))}
-       (:trace summary)
-       (assoc :observations (get-in summary [:trace :observations])
-              :families (get-in summary [:trace :families]))
+    (slice-result id workflows summary)))
 
-       (= :rendering id)
-       (assoc :image-ids
-              (get-in summary [:comparison :manifest :image-ids])))}))
+(defn- run-generated-project-slice!
+  [^Path root run-command! maven-manifest {:keys [id workflows verify]}]
+  (let [summary
+        (verify {:workspace-root root
+                 :generated-project? true
+                 :maven-manifest maven-manifest
+                 :run-command! run-command!})]
+    (when-not (= :generated-project (get-in summary [:package :boundary]))
+      (fail! "A workflow did not run against the generated project"
+             {:slice id :package (:package summary)}))
+    (slice-result id workflows summary)))
 
 (defn- retain-host-canonical!
   [^Path proof-root slice-results]
@@ -338,25 +353,40 @@
 
 (defn verify!
   "Packs DripSharp.PdfCarton and its translated dependencies once, then reuses that
-  exact fresh package-only consumer for every representative workflow proof."
+  exact fresh package-only consumer for every representative workflow proof.
+  Packing goes through the PdfCarton target, which requires a product checkout
+  synchronized with the generated staging.
+
+  With :generated-project? true every workflow instead runs its own
+  generated-project mode against the existing generated staging, and the
+  package contract is not checked; :maven-manifest overrides
+  target/maven-reactor-inputs-0.tsv."
   ([] (verify! {}))
-  ([{:keys [workspace-root package-fn run-command! slices]
-     :or {package-fn packaging/verify-package-consumption!
+  ([{:keys [workspace-root package-fn run-command! slices generated-project?
+            maven-manifest]
+     :or {package-fn #(target-execution/package! (assoc % :target :pdfcube))
           run-command! process/run!
           slices verification-slices}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          _ (workflow-coverage slices)
          package-proof
-         (package-fn {:workspace-root root
-                      :profile "pdfcube-pdfbox"
-                      :run-command! run-command!})
-         package-contract (validate-package-contract! package-proof)
+         (when-not generated-project?
+           (package-fn {:workspace-root root
+                        :profile "pdfcube-pdfbox"
+                        :run-command! run-command!}))
+         package-contract
+         (when-not generated-project?
+           (validate-package-contract! package-proof))
          proof-root
          (harness/clean-directory!
           (paths/resolve-path root "validation-output"
                               "pdfcube-pdfbox-differential"))
          slice-results
-         (mapv #(run-slice! root package-proof run-command! %) slices)
+         (if generated-project?
+           (mapv #(run-generated-project-slice!
+                   root run-command! maven-manifest %)
+                 slices)
+           (mapv #(run-slice! root package-proof run-command! %) slices))
          low-level-result
          (first (filter #(= :low-level (:id %)) slice-results))
          oracle
@@ -376,9 +406,11 @@
          {:profile "pdfcube-pdfbox"
           :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
           :package
-          (merge
-           (select-keys (:identity package-proof) [:id :version :sha256])
-           {:contract package-contract})
+          (if generated-project?
+            (get-in low-level-result [:summary :package])
+            (merge
+             (select-keys (:identity package-proof) [:id :version :sha256])
+             {:contract package-contract}))
           :consumer (:dependency-proof package-proof)
           :workflows
           (into (sorted-map)
@@ -398,7 +430,9 @@
      (write-text! (paths/resolve-path proof-root "summary.edn")
                   (str (pr-str summary) "\n"))
      (println
-      "Pinned Java/package DripSharp.PdfCarton aggregate differential passed:"
+      (str "Pinned Java/"
+           (if generated-project? "generated-project" "package")
+           " DripSharp.PdfCarton aggregate differential passed:")
       (pr-str
        {:source (:source summary)
         :package (select-keys (:package summary) [:id :version :sha256])

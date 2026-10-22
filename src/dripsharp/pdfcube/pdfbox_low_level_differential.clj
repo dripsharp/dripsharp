@@ -5,8 +5,8 @@
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
-            [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
+            [dripsharp.pdfcube.generated-project :as generated-project]
             [dripsharp.process :as process]
             [dripsharp.target-execution :as target-execution])
   (:import [java.io File]
@@ -154,7 +154,7 @@
                    :directory root
                    :timeout-ms 300000})))
 
-(defn- run-package-probe!
+(defn- run-consumer-probe!
   [run-command! ^Path root package-proof ^Path output
    ^Path resources ^Path exchange mode]
   (let [generation (get-in package-proof [:verification :generation])
@@ -183,53 +183,43 @@
                    :directory consumer-root
                    :timeout-ms 300000})))
 
-(defn- run-project-probe!
-  [run-command! ^Path root ^Path output
-   ^Path resources ^Path exchange mode]
-  (let [consumer-root (paths/resolve-path root "validation" "pdfcube-pdfbox")
-        project (paths/resolve-path
-                 consumer-root "DripSharp.PdfCarton.LowLevelProbe.csproj")
-        arguments
-        (cond-> [(str output) (str resources) (str exchange)]
-          mode (conj mode))]
-    (run-command! {:command ["dotnet" "build" (str project)
-                             "--nologo" "--verbosity:minimal"
-                             "--no-incremental"
-                             "-p:RestoreIgnoreFailedSources=true"
-                             "-warnaserror"]
-                   :directory consumer-root
-                   :timeout-ms 300000})
-    (run-command! {:command
-                   (into ["dotnet" "run" "--project" (str project)
-                          "--no-build" "--no-restore" "--"]
-                         arguments)
-                   :directory consumer-root
-                   :timeout-ms 300000})))
-
-(defn- verify-generated-project!
-  [options]
-  {:verification
-   (target-execution/verify! (assoc options :target :pdfcube))})
+(defn- run-probe!
+  "Runs the .NET probe in the packed consumer, or the checked-in
+  project-reference probe in generated-project mode."
+  [run-command! ^Path root proof & arguments]
+  (if-let [project (:probe proof)]
+    (generated-project/run-probe! run-command! root project
+                                  (remove nil? arguments))
+    (apply run-consumer-probe! run-command! root proof arguments)))
 
 (defn verify!
   "Runs clean deterministic packaging and normalized low-level Java/.NET
-  differential validation. The explicit :generated-project boundary retains a
-  local public-project replay when product-repository publication is pending."
+  differential validation. Package mode is the release proof: it packs
+  through the PdfCarton target, which requires a product checkout synchronized
+  with the generated staging.
+
+  With :generated-project? true it instead compares the existing generated
+  project through the checked-in project-reference probe; :maven-manifest
+  overrides target/maven-reactor-inputs-0.tsv."
   ([] (verify! {}))
-  ([{:keys [workspace-root package-fn run-command! boundary]
-     :or {package-fn packaging/verify-package-consumption!
-          boundary :package
+  ([{:keys [workspace-root package-fn run-command! generated-project?
+            maven-manifest]
+     :or {package-fn #(target-execution/package! (assoc % :target :pdfcube))
           run-command! process/run!}}]
-   (when-not (contains? #{:package :generated-project} boundary)
-     (fail! "Low-level PDFBox differential boundary is unsupported"
-            {:boundary boundary :supported [:package :generated-project]}))
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         project-probe? (= :generated-project boundary)
          package-proof
-         ((if project-probe? verify-generated-project! package-fn)
-          {:workspace-root root
-           :profile "pdfcube-pdfbox"
-           :run-command! run-command!})
+         (if generated-project?
+           (assoc (generated-project/proof
+                   {:run-command! run-command!
+                    :workspace-root root
+                    :maven-manifest maven-manifest
+                    :fail! fail!})
+                  :probe (generated-project/probe-project
+                          root "pdfcube-pdfbox"
+                          "DripSharp.PdfCarton.LowLevelProbe.csproj"))
+           (package-fn {:workspace-root root
+                        :profile "pdfcube-pdfbox"
+                        :run-command! run-command!}))
          generation (get-in package-proof [:verification :generation])
          proof-root
          (harness/clean-directory!
@@ -242,48 +232,40 @@
          (paths/resolve-path root "research" "pdfbox" "pdfbox"
                              "src" "test" "resources")
          java-trace (paths/resolve-path proof-root "upstream-java.tsv")
-         dotnet-trace (paths/resolve-path proof-root "package-dotnet.tsv")]
+         dotnet-trace (paths/resolve-path proof-root
+                                          (if generated-project?
+                                            "project-dotnet.tsv"
+                                            "package-dotnet.tsv"))]
      (when-not (paths/directory? resources)
        (fail! "Authoritative PDFBox test resources are missing"
               {:resources (str resources)}))
-     (if project-probe?
-       (run-project-probe!
-        run-command! root dotnet-trace resources exchange "--write-only")
-       (run-package-probe!
-        run-command! root package-proof dotnet-trace resources exchange
-        "--write-only"))
+     (when generated-project?
+       (generated-project/build-probe!
+        run-command! root (:probe package-proof)))
+     (run-probe!
+      run-command! root package-proof dotnet-trace resources exchange
+      "--write-only")
      (compile-and-run-oracle!
       run-command! root generation proof-root java-trace resources exchange)
-     (if project-probe?
-       (run-project-probe!
-        run-command! root dotnet-trace resources exchange nil)
-       (run-package-probe!
-        run-command! root package-proof dotnet-trace resources exchange nil))
+     (run-probe!
+      run-command! root package-proof dotnet-trace resources exchange nil)
      (let [comparison (assert-match! java-trace dotnet-trace)
            trace (trace-summary java-trace)
            summary
            {:profile "pdfcube-pdfbox"
             :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package
-            (if project-probe?
-              {:id (get-in generation [:destination :package :id])
-               :version (get-in generation [:destination :package :version])
-               :boundary :generated-project}
-              {:id (get-in package-proof [:identity :id])
-               :version (get-in package-proof [:identity :version])
-               :sha256 (get-in package-proof [:identity :sha256])
-               :boundary :nuget})
-            :consumer
-            (if project-probe?
-              {:strategy :public-project-reference
-               :project "validation/pdfcube-pdfbox/DripSharp.PdfCarton.LowLevelProbe.csproj"
-               :target-framework "net10.0"}
-              (:dependency-proof package-proof))
+            (cond-> (generated-project/package-summary package-proof)
+              (not generated-project?) (assoc :boundary :nuget))
+            :consumer (generated-project/consumer-summary package-proof)
             :trace trace
             :comparison comparison
             :proof-root proof-root}]
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
-       (println "Pinned Java/package DripSharp.PdfCarton low-level differential passed:"
-                (pr-str (select-keys summary [:source :package :trace])))
+       (println
+        (str "Pinned Java/"
+             (if generated-project? "generated-project" "package")
+             " DripSharp.PdfCarton low-level differential passed:")
+        (pr-str (select-keys summary [:source :package :trace])))
        summary))))

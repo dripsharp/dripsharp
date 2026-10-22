@@ -6,6 +6,7 @@
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
+            [dripsharp.pdfcube.generated-project :as generated-project]
             [dripsharp.process :as process]
             [dripsharp.target-execution :as target-execution])
   (:import [java.io File]
@@ -157,7 +158,7 @@
                    :directory root
                    :timeout-ms 300000})))
 
-(defn- run-package-probe!
+(defn- run-consumer-probe!
   [run-command! ^Path root package-proof ^Path output ^Path exchange mode]
   (let [generation (get-in package-proof [:verification :generation])
         consumer-profile (get-in generation [:destination :package-consumer])
@@ -189,22 +190,42 @@
                    :directory consumer-root
                    :timeout-ms 300000})))
 
-(defn- verify-package-consumption!
-  [options]
-  (target-execution/package! (assoc options :target :pdfcube)))
+(defn- run-probe!
+  "Runs the .NET probe in the packed consumer, or the checked-in
+  project-reference probe in generated-project mode."
+  [run-command! ^Path root proof & arguments]
+  (if-let [project (:probe proof)]
+    (generated-project/run-probe! run-command! root project
+                                  (remove nil? arguments))
+    (apply run-consumer-probe! run-command! root proof arguments)))
 
 (defn verify!
   "Runs clean deterministic packaging, independent package consumption, and
-  normalized Java/.NET document lifecycle differential validation."
+  normalized Java/.NET document lifecycle differential validation.
+
+  With :generated-project? true it instead compares the existing generated
+  project through the checked-in project-reference probe (see
+  validation/pdfcube-pdfbox/README.md); :maven-manifest overrides
+  target/maven-reactor-inputs-0.tsv."
   ([] (verify! {}))
-  ([{:keys [workspace-root package-fn run-command!]
-     :or {package-fn verify-package-consumption!
+  ([{:keys [workspace-root package-fn run-command! generated-project?
+            maven-manifest]
+     :or {package-fn #(target-execution/package! (assoc % :target :pdfcube))
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          package-proof
-         (package-fn {:workspace-root root
-                      :profile "pdfcube-pdfbox"
-                      :run-command! run-command!})
+         (if generated-project?
+           (assoc (generated-project/proof
+                   {:run-command! run-command!
+                    :workspace-root root
+                    :maven-manifest maven-manifest
+                    :fail! fail!})
+                  :probe (generated-project/probe-project
+                          root "pdfcube-pdfbox-document-lifecycle"
+                          "DripSharp.PdfCarton.DocumentLifecycleProbe.csproj"))
+           (package-fn {:workspace-root root
+                        :profile "pdfcube-pdfbox"
+                        :run-command! run-command!}))
          generation (get-in package-proof [:verification :generation])
          proof-root
          (harness/clean-directory!
@@ -215,29 +236,34 @@
          (doto (paths/resolve-path proof-root "exchange")
            (Files/createDirectories (make-array FileAttribute 0)))
          java-trace (paths/resolve-path proof-root "upstream-java.tsv")
-         dotnet-trace (paths/resolve-path proof-root "package-dotnet.tsv")]
-     (run-package-probe!
+         dotnet-trace (paths/resolve-path proof-root
+                                          (if generated-project?
+                                            "project-dotnet.tsv"
+                                            "package-dotnet.tsv"))]
+     (when generated-project?
+       (generated-project/build-probe!
+        run-command! root (:probe package-proof)))
+     (run-probe!
       run-command! root package-proof dotnet-trace exchange "--write-only")
      (compile-and-run-oracle!
       run-command! root generation proof-root java-trace exchange)
-     (run-package-probe!
+     (run-probe!
       run-command! root package-proof dotnet-trace exchange nil)
      (let [comparison (assert-match! java-trace dotnet-trace)
            trace (trace-summary java-trace)
            summary
            {:profile "pdfcube-pdfbox"
             :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
-            :package
-            {:id (get-in package-proof [:identity :id])
-             :version (get-in package-proof [:identity :version])
-             :sha256 (get-in package-proof [:identity :sha256])}
-            :consumer (:dependency-proof package-proof)
+            :package (generated-project/package-summary package-proof)
+            :consumer (generated-project/consumer-summary package-proof)
             :trace trace
             :comparison comparison
             :proof-root proof-root}]
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package DripSharp.PdfCarton document lifecycle differential passed:"
+        (str "Pinned Java/"
+             (if generated-project? "generated-project" "package")
+             " DripSharp.PdfCarton document lifecycle differential passed:")
         (pr-str (select-keys summary [:source :package :trace])))
        summary))))
