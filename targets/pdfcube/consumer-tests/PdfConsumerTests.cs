@@ -262,7 +262,9 @@ public sealed class PdfConsumerTests
     }
 
     // Converting into a caller-supplied unpremultiplied ARGB bitmap writes
-    // its native pixels directly; alpha and the colors under it must survive.
+    // its native pixels directly and keeps alpha. Both images are sRGB, so
+    // Java 25 draws the source over the transparent destination: a fully
+    // transparent pixel's colour is not kept.
     [Fact]
     public void ColorConversionPreservesAlphaInDirectDestinations()
     {
@@ -275,7 +277,7 @@ public sealed class PdfConsumerTests
         var result = new DripSharp.Runtime.JavaColorConvertOp().Filter(source, destination);
 
         Assert.Same(destination, result);
-        Assert.Equal(colors, IccRenderFixtures.Colors(destination));
+        Assert.Equal([new SKColor(0, 0, 0, 0), colors[1], colors[2]], IccRenderFixtures.Colors(destination));
     }
 
     // Expected values are Java 25's ColorSpace.getInstance(CS_CIEXYZ) (D50
@@ -709,6 +711,125 @@ public sealed class PdfConsumerTests
             0xff0000, 0xff0000, 0xff0000, 0xff0000, 0xff0000, 0xff0000);
     }
 
+    // When no constructor space is left between two images whose spaces
+    // share one profile (by identity), Java's ColorConvertOp draws the source
+    // onto the destination as Graphics2D.drawImage does: colours go through
+    // 8-bit sRGB, so a wide-gamut image's saturated colours are clipped,
+    // the source's alpha composites over the destination's pixels, and
+    // every profile class renders perceptually. Equal profiles from the same
+    // bytes convert directly. Expected values are Java 25's, within one
+    // 8-bit step.
+    [Fact]
+    public void ColorConvertOpDrawsBetweenImagesOfOneProfileAsJavaDoes()
+    {
+        static Compat.JavaIccColorSpace Space(byte[] profile) =>
+            new(new Compat.JavaIccProfile(IccRenderFixtures.Signed(profile)));
+        static SKBitmap Image(Compat.JavaColorSpace space, bool alpha, int[][] pixels, int? fill = null)
+        {
+            var model = new Compat.JavaColorModel(space, alpha, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+            var raster = model.CreateCompatibleWritableRaster(pixels.Length, 1);
+            var count = model.NumberOfComponents;
+            for (var x = 0; x < pixels.Length; x++)
+                raster.SetPixel(x, 0, fill is { } value
+                    ? Enumerable.Repeat(value, count).ToArray()
+                    : pixels[x].Take(count - (alpha ? 1 : 0)).Concat(alpha ? [pixels[x][3]] : []).ToArray());
+            return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
+        }
+        static void Samples(string label, Compat.JavaColorConvertOp op, SKBitmap source, SKBitmap destination, params int[] expected)
+        {
+            using (source)
+            using (destination)
+            {
+                var raster = Compat.PdfCartonFontCompat.GetRaster(op.Filter(source, destination));
+                var actual = Enumerable.Range(0, destination.Width)
+                    .SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray();
+                Assert.True(expected.Length == actual.Length &&
+                            expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= 1),
+                    $"{label}: expected [{string.Join(",", expected)}], got [{string.Join(",", actual)}].");
+            }
+        }
+
+        int[][] colors = [[51, 102, 153], [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255], [0, 0, 0], [200, 100, 50], [10, 240, 130]];
+        int[] unchanged = colors.SelectMany(color => color).ToArray();
+        int[] clipped = [84, 106, 154, 179, 70, 26, 138, 237, 78, 86, 35, 235, 255, 255, 255, 0, 0, 0, 185, 95, 48, 145, 237, 130];
+        var wide = Space(IccRenderFixtures.WideGamutProfile());
+        var equalWide = Space(IccRenderFixtures.WideGamutProfile());
+        var sameProfile = new Compat.JavaIccColorSpace(wide.Profile);
+        Samples("wide -> same space", new Compat.JavaColorConvertOp(), Image(wide, false, colors),
+            Image(wide, false, colors, 0), clipped);
+        Samples("wide -> same profile", new Compat.JavaColorConvertOp(), Image(wide, false, colors),
+            Image(sameProfile, false, colors, 0), clipped);
+        Samples("wide -> equal profile", new Compat.JavaColorConvertOp(), Image(wide, false, colors),
+            Image(equalWide, false, colors, 0), unchanged);
+        Samples("wide (wide) -> wide", new Compat.JavaColorConvertOp(wide), Image(wide, false, colors),
+            Image(wide, false, colors, 0), clipped);
+        Samples("wide (wide, wide) -> wide", new Compat.JavaColorConvertOp(wide, wide), Image(wide, false, colors),
+            Image(wide, false, colors, 0), clipped);
+        Samples("wide (equal) -> wide", new Compat.JavaColorConvertOp(equalWide), Image(wide, false, colors),
+            Image(wide, false, colors, 0), unchanged);
+        // An output profile renders perceptually here too (its colorimetric
+        // tables would give different colours).
+        foreach (var deviceClass in new[] { "mntr", "prtr" })
+        {
+            var lut = Space(IccRenderFixtures.LutIntentProfile(deviceClass));
+            Samples($"{deviceClass} -> same space", new Compat.JavaColorConvertOp(), Image(lut, false, colors),
+                Image(lut, false, colors, 0),
+                22, 30, 38, 56, 29, 5, 47, 87, 12, 14, 7, 64, 64, 64, 64, 0, 0, 0, 50, 25, 13, 48, 83, 34);
+        }
+
+        // Alpha composites over the destination's pixels.
+        int[][] translucent = [[51, 102, 153, 128], [255, 0, 0, 255], [0, 255, 0, 0], [0, 0, 255, 10], [200, 100, 50, 200], [10, 240, 130, 77]];
+        Samples("wide alpha -> wide alpha", new Compat.JavaColorConvertOp(), Image(wide, true, translucent),
+            Image(wide, true, translucent, 0),
+            83, 105, 153, 128, 179, 70, 26, 255, 0, 0, 0, 0, 86, 35, 235, 10, 185, 95, 48, 200, 145, 237, 130, 77);
+        Samples("wide alpha -> wide alpha over 200", new Compat.JavaColorConvertOp(), Image(wide, true, translucent),
+            Image(wide, true, translucent, 200),
+            119, 142, 172, 228, 179, 70, 26, 255, 200, 200, 200, 200, 189, 187, 200, 202, 182, 108, 68, 243, 162, 209, 171, 217);
+        Samples("wide alpha -> wide", new Compat.JavaColorConvertOp(), Image(wide, true, translucent),
+            Image(wide, false, translucent, 0),
+            37, 48, 67, 179, 70, 26, 0, 0, 0, 3, 1, 9, 136, 71, 37, 34, 56, 33);
+        Samples("wide alpha -> wide over 200", new Compat.JavaColorConvertOp(), Image(wide, true, translucent),
+            Image(wide, false, translucent, 200),
+            126, 149, 176, 179, 70, 26, 200, 200, 200, 192, 191, 201, 182, 111, 73, 167, 208, 176);
+        // Every destination pixel is stored again, so one already showing
+        // the source's colour, or under a transparent source pixel, is
+        // clipped too.
+        Samples("wide -> wide of the same samples", new Compat.JavaColorConvertOp(), Image(wide, false, colors),
+            Image(wide, false, colors), clipped);
+        int[][] clear = [[10, 20, 30, 0], [10, 20, 30, 0], [10, 20, 30, 1], [255, 0, 0, 128]];
+        Samples("wide alpha -> saturated wide", new Compat.JavaColorConvertOp(), Image(wide, true, clear),
+            Image(wide, false, [[255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0]]),
+            179, 70, 26, 138, 237, 78, 137, 235, 77, 100, 106, 35);
+        // Both images' current raster samples are drawn, including writes
+        // made after the images were created.
+        var edited = Image(wide, true, translucent, 0);
+        var editedDestination = Image(wide, true, translucent, 0);
+        for (var x = 0; x < translucent.Length; x++)
+        {
+            Compat.PdfCartonFontCompat.GetRaster(edited).SetPixel(x, 0, translucent[x]);
+            Compat.PdfCartonFontCompat.GetRaster(editedDestination).SetPixel(x, 0, [200, 200, 200, 200]);
+        }
+        Samples("edited wide alpha -> edited wide alpha", new Compat.JavaColorConvertOp(), edited, editedDestination,
+            119, 142, 172, 228, 179, 70, 26, 255, 200, 200, 200, 200, 189, 187, 200, 202, 182, 108, 68, 243, 162, 209, 171, 217);
+
+        // sRGB images share the built-in profile: JPEGFactory's conversion
+        // of an ARGB image to TYPE_3BYTE_BGR composites it over black.
+        int[] argb = [unchecked((int)0x80336699), unchecked((int)0xffff0000), 0x0000ff00, 0x0a0000ff,
+            unchecked((int)0xc8c86432), 0x4d0af082];
+        uint[] overBlack = [0xff1a334d, 0xffff0000, 0xff000000, 0xff00000a, 0xff9d4e27, 0xff034827];
+        using var argbImage = Compat.PdfCartonFontCompat.CreateBitmap(argb.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        for (var x = 0; x < argb.Length; x++)
+            Compat.PdfCartonFontCompat.SetRgb(argbImage, x, 0, argb[x]);
+        using var bgr = Compat.PdfCartonFontCompat.CreateBitmap(argb.Length, 1, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
+        new Compat.JavaColorConvertOp().Filter(argbImage, bgr);
+        var actualBgr = Enumerable.Range(0, argb.Length)
+            .Select(x => (uint)Compat.PdfCartonFontCompat.GetRgb(bgr, x, 0)).ToArray();
+        Assert.True(overBlack.Zip(actualBgr).All(pair => Enumerable.Range(0, 4).All(shift =>
+                Math.Abs((int)(pair.First >> shift * 8 & 0xff) - (int)(pair.Second >> shift * 8 & 0xff)) <= 1)),
+            $"INT_ARGB -> 3BYTE_BGR: expected [{string.Join(",", overBlack.Select(c => c.ToString("x8")))}], " +
+            $"got [{string.Join(",", actualBgr.Select(c => c.ToString("x8")))}].");
+    }
+
     private static COSArray CieFloats(params float[] values)
     {
         var array = new COSArray();
@@ -1139,7 +1260,15 @@ internal static class IccRenderFixtures
 
     // A v2 display profile with sRGB's D50 primaries and a gamma 1.8 TRC
     // shared by all three channels.
-    internal static byte[] RgbGammaProfile()
+    internal static byte[] RgbGammaProfile() =>
+        RgbGammaProfile([0.4361, 0.2225, 0.0139], [0.3851, 0.7169, 0.0971], [0.1431, 0.0606, 0.7141]);
+
+    // RgbGammaProfile with ROMM RGB's (ProPhoto's) D50 primaries, whose
+    // saturated colours lie far outside sRGB.
+    internal static byte[] WideGamutProfile() =>
+        RgbGammaProfile([0.7977, 0.2880, 0.0], [0.1352, 0.7119, 0.0], [0.0313, 0.0001, 0.8249]);
+
+    private static byte[] RgbGammaProfile(double[] red, double[] green, double[] blue)
     {
         var data = new byte[312];
         void U32(int at, uint value)
@@ -1180,9 +1309,9 @@ internal static class IccRenderFixtures
             U32(entry + 4, tag < 4 ? (uint)(216 + tag * 20) : 296u);
             U32(entry + 8, tag < 4 ? 20u : 14u);
         }
-        Xyz(216, 0.4361, 0.2225, 0.0139);
-        Xyz(236, 0.3851, 0.7169, 0.0971);
-        Xyz(256, 0.1431, 0.0606, 0.7141);
+        Xyz(216, red[0], red[1], red[2]);
+        Xyz(236, green[0], green[1], green[2]);
+        Xyz(256, blue[0], blue[1], blue[2]);
         Xyz(276, 0.9642, 1.0, 0.8249);
         Ascii(296, "curv");
         U32(304, 1);

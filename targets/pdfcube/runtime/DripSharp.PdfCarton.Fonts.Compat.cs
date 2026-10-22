@@ -3403,6 +3403,12 @@ public sealed class JavaColorConvertOp
         var stop = spaces.Length;
         if (hasProfiles && SameProfile(sourceColorSpace, spaces[0])) start++;
         if (hasProfiles && stop > start && SameProfile(destinationColorSpace, spaces[stop - 1])) stop--;
+        // With no space left between two images sharing one profile, Java
+        // draws the source onto the destination as Graphics2D.drawImage
+        // does: through 8-bit sRGB (clipping a wide gamut), compositing the
+        // source's alpha over the destination's pixels.
+        if (start >= stop && !hasCustomSpaces && SameProfile(sourceColorSpace, destinationColorSpace))
+            return DrawOver(destination, sourceColorModel, sourceRaster, destinationColorModel, destinationRaster);
         // Java renders relative colorimetric when the source's profile is an
         // output profile and perceptually otherwise, whatever the op's
         // profiles are (perceptually when the source is a public-override
@@ -3498,6 +3504,45 @@ public sealed class JavaColorConvertOp
         finally
         {
             if (direct) output.Dispose();
+        }
+        PdfCartonFontCompat.SetImageData(destination, destinationRaster);
+        return destination;
+    }
+
+    // Every destination pixel is stored again, through the colour model as
+    // Java2D's drawing loops store a colour, from the source-over composite
+    // of both rasters' current pixels as those loops read them.
+    private static SKBitmap DrawOver(
+        SKBitmap destination,
+        JavaColorModel sourceColorModel,
+        JavaRaster sourceRaster,
+        JavaColorModel destinationColorModel,
+        JavaRaster destinationRaster)
+    {
+        int[]? sourceSamples = null, destinationSamples = null;
+        object? sourcePixel = null, destinationPixel = null, element = null;
+        float[]? components = null;
+        for (var y = 0; y < destinationRaster.Height; y++)
+        {
+            for (var x = 0; x < destinationRaster.Width; x++)
+            {
+                var top = sourceColorModel.RenderedColorAt(sourceRaster, x, y, ref sourceSamples, ref sourcePixel);
+                var under = destinationColorModel.RenderedColorAt(
+                    destinationRaster, x, y, ref destinationSamples, ref destinationPixel);
+                var sourceAlpha = top.Alpha / 255f;
+                var underAlpha = under.Alpha / 255f * (1f - sourceAlpha);
+                var alpha = sourceAlpha + underAlpha;
+                byte Channel(byte over, byte below) => alpha <= 0f ? (byte)0 :
+                    PdfCartonFontCompat.ComponentByte((over * sourceAlpha + below * underAlpha) / 255f / alpha);
+                var drawn = new SKColor(
+                    Channel(top.Red, under.Red),
+                    Channel(top.Green, under.Green),
+                    Channel(top.Blue, under.Blue),
+                    PdfCartonFontCompat.ComponentByte(alpha));
+                element = destinationColorModel.GetDrawnDataElements(
+                    unchecked((int)(uint)drawn), ref components, element);
+                destinationRaster.SetDataElements(x, y, element);
+            }
         }
         PdfCartonFontCompat.SetImageData(destination, destinationRaster);
         return destination;
