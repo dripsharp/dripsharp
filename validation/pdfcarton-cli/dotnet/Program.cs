@@ -3,6 +3,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -90,6 +91,9 @@ internal static class Program
 
     public static int Main(string[] args)
     {
+        // stdout carries only the envelope: anything a library writes to
+        // Console.Out (the JBIG2 decoder prints warnings) goes to stderr.
+        Console.SetOut(Console.Error);
         var (exit, output) = Run(args);
         using var stdout = Console.OpenStandardOutput();
         var bytes = new UTF8Encoding(false).GetBytes(output);
@@ -296,9 +300,32 @@ internal static class Program
     // ------------------------------------------------------------------
     // Input and output checks (untimed)
 
+    // The runtime's own stat shim (System.Native, shipped with every .NET on
+    // Unix): its FileStatus begins with int Flags, int Mode.
+    [DllImport("libSystem.Native", EntryPoint = "SystemNative_Stat")]
+    private static extern int SystemNativeStat([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] status);
+
+    /// <summary>Java's File.isFile(): a regular file, following symbolic links.</summary>
+    private static bool IsRegularFile(string path)
+    {
+        if (!File.Exists(path)) return false;
+        if (OperatingSystem.IsWindows()) return true;
+        try
+        {
+            var status = new byte[512];
+            if (SystemNativeStat(path, status) != 0) return false;
+            const int typeMask = 0xF000, regular = 0x8000;
+            return (BitConverter.ToInt32(status, 4) & typeMask) == regular;
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return true;
+        }
+    }
+
     private static void CheckInput(string path)
     {
-        if (!File.Exists(path)) throw new CliException("io", $"Cannot read input file: {path}");
+        if (!IsRegularFile(path)) throw new CliException("io", $"Cannot read input file: {path}");
         try
         {
             using var _ = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -351,24 +378,38 @@ internal static class Program
         }
         using (json)
         {
-            if (json.RootElement.ValueKind != JsonValueKind.Object)
-                throw new CliException("usage", "The values file must hold a JSON object");
-            var values = new SortedDictionary<string, object>(StringComparer.Ordinal);
-            foreach (var property in json.RootElement.EnumerateObject())
+            try
             {
-                if (values.ContainsKey(property.Name))
-                    throw new CliException("usage", $"Invalid values JSON: duplicate field {property.Name}");
-                var v = property.Value;
-                if (v.ValueKind == JsonValueKind.String)
-                    values[property.Name] = v.GetString()!;
-                else if (v.ValueKind == JsonValueKind.Array &&
-                         v.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String))
-                    values[property.Name] = v.EnumerateArray().Select(item => item.GetString()!).ToList();
-                else
-                    throw new CliException("usage", $"Value of {property.Name} must be a string or an array of strings");
+                return Values(json);
             }
-            return values;
+            catch (CliException) { throw; }
+            catch (Exception e)
+            {
+                // System.Text.Json may reject invalid UTF-8 only when a string is read.
+                throw new CliException("usage", $"Invalid values JSON: {e.Message}", e);
+            }
         }
+    }
+
+    private static SortedDictionary<string, object> Values(JsonDocument json)
+    {
+        if (json.RootElement.ValueKind != JsonValueKind.Object)
+            throw new CliException("usage", "The values file must hold a JSON object");
+        var values = new SortedDictionary<string, object>(StringComparer.Ordinal);
+        foreach (var property in json.RootElement.EnumerateObject())
+        {
+            if (values.ContainsKey(property.Name))
+                throw new CliException("usage", $"Invalid values JSON: duplicate field {property.Name}");
+            var v = property.Value;
+            if (v.ValueKind == JsonValueKind.String)
+                values[property.Name] = v.GetString()!;
+            else if (v.ValueKind == JsonValueKind.Array &&
+                     v.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String))
+                values[property.Name] = v.EnumerateArray().Select(item => item.GetString()!).ToList();
+            else
+                throw new CliException("usage", $"Value of {property.Name} must be a string or an array of strings");
+        }
+        return values;
     }
 
     // ------------------------------------------------------------------

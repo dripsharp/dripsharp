@@ -13,9 +13,14 @@
             [clojure.test :refer [deftest is run-tests test-vars]]
             [pdfcli.main :as main]
             [pdfcli.main-test :as contract])
-  (:import (org.apache.pdfbox.cos COSName)
-           (org.apache.pdfbox.pdmodel PDDocument PDDocumentInformation PDPage)
-           (org.apache.pdfbox.pdmodel.common PDRectangle)))
+  (:import (java.io ByteArrayInputStream)
+           (java.util.concurrent TimeUnit)
+           (javax.imageio ImageIO)
+           (org.apache.pdfbox.cos COSName)
+           (org.apache.pdfbox.pdmodel PDDocument PDDocumentInformation PDPage PDResources)
+           (org.apache.pdfbox.pdmodel.common PDRectangle)
+           (org.apache.pdfbox.pdmodel.graphics.color PDDeviceGray)
+           (org.apache.pdfbox.pdmodel.graphics.image PDImageXObject)))
 
 (def project "validation/pdfcarton-cli/dotnet")
 
@@ -92,6 +97,87 @@
         dotnet (dotnet-run ["info" file])]
     (is (= 0 (:exit jvm) (:exit dotnet)))
     (is (= (without-implementation (:out jvm)) (without-implementation (:out dotnet))))))
+
+(defn- out [name] (str (io/file (str @@#'contract/out-root) name)))
+
+(defn- envelope
+  "Checks that out is exactly one JSON line and returns it parsed."
+  [^String out]
+  (is (str/ends-with? out "\n"))
+  (is (= 1 (count (str/split-lines out))) (str "one JSON line: " out))
+  (#'contract/parse out))
+
+(defn- jbig2-pdf
+  "A page whose image stream is a JBIG2 file header with reserved flag bits
+  set, which the JBIG2 decoder warns about on Console.Out."
+  [path]
+  (with-open [doc (PDDocument.)]
+    (let [page (PDPage. PDRectangle/LETTER)
+          data (byte-array (map unchecked-byte [0x97 0x4a 0x42 0x32 0x0d 0x0a 0x1a 0x0a 0x07 0 0 0 1]))
+          image (PDImageXObject. doc (ByteArrayInputStream. data) COSName/JBIG2_DECODE 1 1 1
+                                 PDDeviceGray/INSTANCE)]
+      (.setResources page (PDResources.))
+      (.add (.getResources page) image)
+      (.addPage doc page)
+      (.save doc (io/file path)))))
+
+(deftest library-console-output-stays-off-stdout
+  (jbig2-pdf (out "jbig2.pdf"))
+  (let [{:keys [exit out]} (dotnet-run ["images" (out "jbig2.pdf")])
+        json (envelope out)]
+    (is (= 0 exit))
+    (is (= "decode-failed" (get (first (get-in json ["result" "images"])) "error")))))
+
+(defn- run-with-timeout
+  "Runs the .NET CLI, killing it after 60 s; returns {:exit :out}, :exit nil on timeout."
+  [args]
+  (let [p (.start (ProcessBuilder. ^java.util.List (into ["dotnet" dll] args)))]
+    (.close (.getOutputStream p))
+    (if (.waitFor p 60 TimeUnit/SECONDS)
+      {:exit (.exitValue p) :out (slurp (.getInputStream p) :encoding "UTF-8")}
+      (do (.destroyForcibly p) {:exit nil :out ""}))))
+
+(deftest non-regular-inputs-are-io-errors
+  (let [fifo (out "input.fifo")]
+    (is (= 0 (:exit (shell/sh "mkfifo" fifo))))
+    (doseq [path ["/dev/null" fifo (str @@#'contract/out-root)]]
+      (let [{:keys [exit out]} (run-with-timeout ["info" path])]
+        (is (= 3 exit) path)
+        (when exit (is (= "io" (get-in (envelope out) ["error" "code"])) path))))))
+
+(defn- utf8 [^String s] (seq (.getBytes s "UTF-8")))
+
+(deftest invalid-utf8-values-are-usage-errors
+  (doseq [[name bytes] [["value" (concat (utf8 "{\"TextField\":\"") [0xff] (utf8 "\"}"))]
+                        ["key" (concat (utf8 "{\"") [0xff] (utf8 "\":\"x\"}"))]]]
+    (let [values (out (str "utf8-" name ".json"))
+          output (out (str "utf8-" name ".pdf"))]
+      (with-open [o (io/output-stream values)] (.write o (byte-array (map unchecked-byte bytes))))
+      (let [{:keys [exit out]} (dotnet-run ["form-fill" "--values" values "--out" output @contract/form-doc])]
+        (is (= 2 exit) name)
+        (is (= "usage" (get-in (envelope out) ["error" "code"])) name)
+        (is (not (.exists (io/file output))) name)))))
+
+(deftest binary-rendering-writes-a-bilevel-png
+  (let [dir (out "render-binary")
+        {:keys [exit out]} (dotnet-run ["render" "--image-type" "binary" "--out-dir" dir @contract/jpeg])
+        page (first (get-in (envelope out) ["result" "pages"]))
+        image (ImageIO/read (io/file dir "page-0001.png"))
+        pixels (set (for [y (range (.getHeight image)) x (range (.getWidth image))] (.getRGB image x y)))]
+    (is (= 0 exit))
+    (is (= [(get page "width") (get page "height")] [(.getWidth image) (.getHeight image)]))
+    (is (every? #{(unchecked-int 0xff000000) (unchecked-int 0xffffffff)} pixels))
+    (is (= 2 (count pixels)) "both black and white pixels")))
+
+(deftest timing-milliseconds-have-at-most-three-fraction-digits
+  (let [{:keys [exit out]} (dotnet-run ["info" "--warmup" "1" "--repeat" "4" @contract/hello])
+        timing (second (re-find #"\"timing\":(\{.*\})\}$" (str/trim out)))
+        numbers (re-seq #"[0-9.]+" (second (re-find #"\"iterationsMs\":\[([^\]]*)\]" timing)))
+        median (second (re-find #"\"medianMs\":([^,]*)," timing))]
+    (is (= 0 exit))
+    (is (= 4 (count numbers)))
+    (doseq [n (cons median numbers)]
+      (is (re-matches #"(0|[1-9][0-9]*)(\.[0-9]{0,2}[1-9])?" n) n))))
 
 (defn -main [& _]
   (build!)
