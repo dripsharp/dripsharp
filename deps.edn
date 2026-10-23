@@ -28,4 +28,27 @@
   :unit-test
   {:jvm-opts ["-Xms64m" "-Xmx512m"]
    :extra-paths ["test"]
-   :main-opts ["-m" "dripsharp.test-runner" "--tier" "unit"]}}}
+   :main-opts ["-m" "dripsharp.test-runner" "--tier" "unit"]}
+
+  ;; Validation CLI over Java PDFBox; see validation/pdfcarton-cli/contract.md.
+  :pdfcli
+  {:replace-deps
+   {org.clojure/clojure {:mvn/version "1.12.5"}
+    org.apache.pdfbox/pdfbox {:mvn/version "3.0.8"}
+    org.apache.pdfbox/xmpbox {:mvn/version "3.0.8"}
+    org.apache.pdfbox/jbig2-imageio {:mvn/version "3.0.5"}
+    com.fasterxml.jackson.core/jackson-databind {:mvn/version "2.22.0"}}
+   :replace-paths ["validation/pdfcarton-cli/jvm/src"]
+   :jvm-opts ["-Djava.awt.headless=true"]
+   :main-opts ["-m" "pdfcli.main"]}
+
+  :pdfcli-test
+  {:replace-deps
+   {org.clojure/clojure {:mvn/version "1.12.5"}
+    org.apache.pdfbox/pdfbox {:mvn/version "3.0.8"}
+    org.apache.pdfbox/xmpbox {:mvn/version "3.0.8"}
+    org.apache.pdfbox/jbig2-imageio {:mvn/version "3.0.5"}
+    com.fasterxml.jackson.core/jackson-databind {:mvn/version "2.22.0"}}
+   :replace-paths ["validation/pdfcarton-cli/jvm/src" "validation/pdfcarton-cli/jvm/test"]
+   :jvm-opts ["-Djava.awt.headless=true" "-Xmx4g"]
+   :main-opts ["-m" "pdfcli.main-test"]}}}
