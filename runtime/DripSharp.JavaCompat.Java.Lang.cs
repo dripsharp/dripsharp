@@ -1134,30 +1134,60 @@ internal static partial class JavaCompat
 
     internal static string EnumName(object value)
     {
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
-        var field = value.GetType().GetFields(flags)
-            .FirstOrDefault(candidate => ReferenceEquals(candidate.GetValue(null), value));
-        return field?.GetCustomAttribute<JavaEnumNameAttribute>()?.Name
-               ?? field?.Name
-               ?? value.ToString()
-               ?? string.Empty;
+        var field = EnumConstantField(value, out _);
+        if (field is not null)
+            return field.GetCustomAttribute<JavaEnumNameAttribute>()?.Name ?? field.Name;
+        // A translated enum's ToString calls EnumName, so only values that are
+        // not translated enum constants may fall back to ToString.
+        if (!IsTranslatedEnum(value.GetType()))
+            return value.ToString() ?? string.Empty;
+        throw new InvalidOperationException(
+            $"{value.GetType().FullName} is not a declared enum constant yet; its enum is still initializing.");
     }
 
     internal static int EnumOrdinal(object value)
     {
         var type = value.GetType();
         if (type.IsEnum) return Convert.ToInt32(value, CultureInfo.InvariantCulture);
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
-        var constants = type.GetFields(flags)
-            .Where(field => type.IsAssignableFrom(field.FieldType))
-            .OrderBy(field => field.MetadataToken)
-            .ToArray();
-        var field = constants.FirstOrDefault(
-            candidate => ReferenceEquals(candidate.GetValue(null), value));
+        var field = EnumConstantField(value, out var constants);
         if (field is null)
             throw new ArgumentException("Value is not a declared enum constant", nameof(value));
         return field.GetCustomAttribute<JavaEnumOrdinalAttribute>()?.Ordinal
                ?? Array.IndexOf(constants, field);
+    }
+
+    // A constant with a body is an instance of a nested subclass that declares
+    // no constants, so the declaring enum is the nearest type in the value's
+    // base chain with a public static field holding the value.
+    private static FieldInfo? EnumConstantField(object value, out FieldInfo[] constants)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        for (var type = value.GetType(); type is not null && type != typeof(object); type = type.BaseType)
+        {
+            var declaring = type;
+            constants = declaring.GetFields(flags)
+                .Where(field => declaring.IsAssignableFrom(field.FieldType))
+                .OrderBy(field => field.MetadataToken)
+                .ToArray();
+            foreach (var field in constants)
+            {
+                if (ReferenceEquals(field.GetValue(null), value))
+                    return field;
+            }
+        }
+        constants = Array.Empty<FieldInfo>();
+        return null;
+    }
+
+    private static bool IsTranslatedEnum(Type type)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        for (var current = type; current is not null && current != typeof(object); current = current.BaseType)
+        {
+            if (current.GetFields(flags).Any(field => field.IsDefined(typeof(JavaEnumNameAttribute), false)))
+                return true;
+        }
+        return false;
     }
 
     internal static T EnumValueOf<T>(string name)

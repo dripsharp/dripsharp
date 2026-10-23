@@ -9878,4 +9878,47 @@ public sealed class GlyphPathLifetimeTests
         if (clip) FillPage();
         return document;
     }
+
+    // Each ImageType constant has a body and so is an instance of a nested
+    // subclass that declares none of the constants; its name and ordinal
+    // come from the declaring enum. ToString used to recurse until the
+    // process died with a stack overflow.
+    [Fact]
+    public void EnumConstantsWithBodiesHaveTheirJavaNamesAndOrdinals()
+    {
+        var withBodies = new[] { ImageType.Binary, ImageType.Gray, ImageType.Rgb, ImageType.Argb, ImageType.Bgr };
+        var names = new[] { "BINARY", "GRAY", "RGB", "ARGB", "BGR" };
+        Assert.NotEqual(typeof(ImageType), ImageType.Rgb.GetType());
+        for (var ordinal = 0; ordinal < withBodies.Length; ordinal++)
+        {
+            Assert.Equal(names[ordinal], withBodies[ordinal].ToString());
+            Assert.Equal(names[ordinal], $"{withBodies[ordinal]}");
+            Assert.Equal(names[ordinal], Compat.JavaCompat.EnumName(withBodies[ordinal]));
+            Assert.Equal(ordinal, Compat.JavaCompat.EnumOrdinal(withBodies[ordinal]));
+        }
+        Assert.Equal("RGB", ImageType.Rgb.ToString());
+        Assert.Equal(2, Compat.JavaCompat.EnumOrdinal(ImageType.Rgb));
+
+        var plain = new[] { RenderDestination.Export, RenderDestination.View, RenderDestination.Print };
+        var plainNames = new[] { "EXPORT", "VIEW", "PRINT" };
+        for (var ordinal = 0; ordinal < plain.Length; ordinal++)
+        {
+            Assert.Equal(typeof(RenderDestination), plain[ordinal].GetType());
+            Assert.Equal(plainNames[ordinal], plain[ordinal].ToString());
+            Assert.Equal(plainNames[ordinal], Compat.JavaCompat.EnumName(plain[ordinal]));
+            Assert.Equal(ordinal, Compat.JavaCompat.EnumOrdinal(plain[ordinal]));
+        }
+    }
+
+    // An instance of a translated enum that no constant field holds (as
+    // while the enum is still initializing) must fail instead of falling
+    // back to its ToString, which is EnumName again.
+    [Fact]
+    public void EnumNameRejectsUnregisteredConstantWithoutRecursing()
+    {
+        var unregistered = System.Runtime.CompilerServices.RuntimeHelpers
+            .GetUninitializedObject(ImageType.Rgb.GetType());
+        Assert.Throws<InvalidOperationException>(() => Compat.JavaCompat.EnumName(unregistered));
+        Assert.Throws<Compat.ArgumentException>(() => Compat.JavaCompat.EnumOrdinal(unregistered));
+    }
 }
