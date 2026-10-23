@@ -6985,7 +6985,7 @@ public class PdfCartonGraphics2D : IDisposable
     // instead of shape (see PdfCartonAntialiasedFill.Draw).
     private void RenderPaintLayer(
         SKPath shape, bool stroked, SKPath? devicePath = null, bool rectilinear = false,
-        SKRect? paintBounds = null, (SKBitmap Mask, SKRectI Bounds)? coverage = null)
+        SKRect? paintBounds = null, (byte[] Mask, SKRectI Bounds)? coverage = null)
     {
         var deviceSpace = devicePath is not null || coverage is not null;
         var bounds = coverage is { Bounds: var maskBounds }
@@ -7363,7 +7363,7 @@ public class PdfCartonGraphics2D : IDisposable
         // fill to fill (one per glyph shown), the shape transformed into it.
         var devicePath = scratchDevicePath ?? new SKPath();
         scratchDevicePath = null;
-        SKBitmap? mask;
+        byte[]? mask;
         SKRectI bounds;
         try
         {
@@ -7376,16 +7376,22 @@ public class PdfCartonGraphics2D : IDisposable
             if (disposed || scratchDevicePath is not null) devicePath.Dispose();
             else scratchDevicePath = devicePath;
         }
-        using var maskScope = mask;
         if (mask is null) return true;
-        var coverage = (mask, bounds);
-        var deviceBounds = new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
-        if (paint is JavaColor)
-            RenderLayer(
-                (layer, _, drawingPaint) => PdfCartonAntialiasedFill.Draw(layer, mask, bounds, drawingPaint),
-                stroked: false, imagePaint: false, deviceBounds, deviceSpace: true);
-        else
-            RenderPaintLayer(outline ?? lease.Path, stroked: false, paintBounds: paintBounds, coverage: coverage);
+        try
+        {
+            var deviceBounds = new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+            if (paint is JavaColor)
+                RenderLayer(
+                    (layer, _, drawingPaint) => PdfCartonAntialiasedFill.Draw(layer, mask, bounds, drawingPaint),
+                    stroked: false, imagePaint: false, deviceBounds, deviceSpace: true);
+            else
+                RenderPaintLayer(outline ?? lease.Path, stroked: false, paintBounds: paintBounds,
+                    coverage: (mask, bounds));
+        }
+        finally
+        {
+            PdfCartonAntialiasedFill.Return(mask);
+        }
         return true;
     }
 
@@ -8597,137 +8603,307 @@ internal static class PdfCartonAliasedFill
 internal static class PdfCartonAntialiasedFill
 {
     private const int Subscanlines = 8;
+    // The most crossings gathered at once (rows of a taller path go in
+    // bands; one row takes what it needs), and the largest scratch arrays
+    // and mask buffer kept for the next Mask on a thread.
+    private const int CrossingBudget = 1 << 16;
+    private const int KeptScratchLength = 1 << 16;
 
     [ThreadStatic] private static int[]? cover;
     [ThreadStatic] private static int[]? delta;
-    [ThreadStatic] private static byte[]? row;
     [ThreadStatic] private static Edge[]? edges;
-    [ThreadStatic] private static Crossing[]? crossings;
-    [ThreadStatic] private static int[]? active;
+    [ThreadStatic] private static int[]? sampleCounts;
+    [ThreadStatic] private static int[]? sampleStarts;
+    [ThreadStatic] private static long[]? crossings;
+    [ThreadStatic] private static int[]? edgeKeys;
+    [ThreadStatic] private static int[]? edgeOrder;
+    [ThreadStatic] private static int[]? activeEdges;
+    [ThreadStatic] private static SKPoint[]? verbPoints;
+    // A mask buffer free for the next Mask on this thread (a nested fill,
+    // drawn while another mask is out, takes a new one).
+    [ThreadStatic] private static byte[]? spareMask;
 
+    // A line of the outline; its subscanlines are those of FirstSample until
+    // EndSample (indices from bounds' top, set by Mask).
     private struct Edge
     {
         public double X0, Y0, X1, Y1, Slope;
-        public int Winding;
+        public int Winding, FirstSample, EndSample;
     }
 
-    private struct Crossing
-    {
-        public double X;
-        public int Winding;
-    }
-
-    // The Java 2D coverage of a device-space path within bounds, as an
-    // Alpha8 bitmap placed at bounds' top-left corner, or null when the
-    // path covers no pixel there. Inverse fill types are not handled.
-    internal static SKBitmap? Mask(SKPath devicePath, SKRectI bounds)
+    // The Java 2D coverage of a device-space path within bounds, one byte a
+    // pixel in rows of bounds' width from its top-left corner, or null when
+    // the path covers no pixel there. The buffer may be longer than the
+    // mask; it is handed back with Return once drawn. Inverse fill types are
+    // not handled.
+    // Each edge's crossings are gathered by subscanline (a counting sort),
+    // each as its x in 1/256 pixel and its direction; a subscanline's few
+    // crossings are then sorted by that x. Crossings at the same quantized x
+    // may come in any order: the spans between them are empty, and a span
+    // they split adds up to the same cover. A page fills thousands of glyphs
+    // at most, too few for tiered compilation to reach these loops, so they
+    // are optimized from the first call (512 is
+    // MethodImplOptions.AggressiveOptimization, which netstandard2.0 lacks).
+    [MethodImpl((MethodImplOptions)512)]
+    internal static byte[]? Mask(SKPath devicePath, SKRectI bounds)
     {
         if (bounds.IsEmpty) return null;
         int top = bounds.Top, bottom = bounds.Bottom, left = bounds.Left, right = bounds.Right;
         var count = Flatten(devicePath, top, bottom);
         if (count == 0) return null;
-        var evenOdd = devicePath.FillType == SKPathFillType.EvenOdd;
-        var list = edges!;
-        Array.Sort(list, 0, count, EdgeOrder.Instance);
+        try
+        {
+            return Scan(edges!, count, devicePath.FillType == SKPathFillType.EvenOdd, top, left,
+                right - left, bottom - top);
+        }
+        finally
+        {
+            // A large path's scratch does not outlive it.
+            if (sampleCounts?.Length > KeptScratchLength) sampleCounts = null;
+            if (sampleStarts?.Length > KeptScratchLength) sampleStarts = null;
+            if (crossings?.Length > CrossingBudget) crossings = null;
+            if (edges?.Length > KeptScratchLength) edges = null;
+            if (edgeKeys?.Length > KeptScratchLength) edgeKeys = null;
+            if (edgeOrder?.Length > KeptScratchLength) edgeOrder = null;
+            if (activeEdges?.Length > KeptScratchLength) activeEdges = null;
+            if (cover?.Length > KeptScratchLength) cover = null;
+            if (delta?.Length > KeptScratchLength) delta = null;
+        }
+    }
 
-        var width = right - left;
-        var height = bottom - top;
-        cover = Grow(cover, width + 1);
-        delta = Grow(delta, width + 1);
-        row = Grow(row, width);
-        active = Grow(active, count);
-        crossings = Grow(crossings, count);
+    [MethodImpl((MethodImplOptions)512)]
+    private static byte[]? Scan(Edge[] list, int count, bool evenOdd, int top, int left, int width, int height)
+    {
+        var samples = height * Subscanlines;
+        // The crossings of each subscanline, from a difference array.
+        var perSample = sampleCounts = Grow(sampleCounts, samples + 1);
+        Array.Clear(perSample, 0, samples + 1);
+        long total = 0;
+        var spanning = 0;
+        for (var index = 0; index < count; index++)
+        {
+            ref var edge = ref list[index];
+            edge.FirstSample = FirstSampleFrom(edge.Y0, top, samples);
+            edge.EndSample = FirstSampleFrom(edge.Y1, top, samples);
+            if (edge.EndSample <= edge.FirstSample) continue;
+            perSample[edge.FirstSample]++;
+            perSample[edge.EndSample]--;
+            total += edge.EndSample - edge.FirstSample;
+            spanning++;
+        }
+        if (total < 2) return null;
+        var running = 0;
+        for (var sample = 0; sample < samples; sample++)
+        {
+            running += perSample[sample];
+            perSample[sample] = running;
+        }
+        // More crossings than the budget come in bands of rows, each from
+        // the edges that reach it, taken in order of their first subscanline.
+        var banded = total > CrossingBudget;
+        int[]? order = null, active = null;
+        if (banded)
+        {
+            var keys = edgeKeys = Grow(edgeKeys, spanning);
+            order = edgeOrder = Grow(edgeOrder, spanning);
+            active = activeEdges = Grow(activeEdges, spanning);
+            var kept = 0;
+            for (var index = 0; index < count; index++)
+            {
+                if (list[index].EndSample <= list[index].FirstSample) continue;
+                keys[kept] = list[index].FirstSample;
+                order[kept++] = index;
+            }
+            Array.Sort(keys, order, 0, spanning);
+        }
+
+        var cover = PdfCartonAntialiasedFill.cover = Grow(PdfCartonAntialiasedFill.cover, width + 1);
+        var delta = PdfCartonAntialiasedFill.delta = Grow(PdfCartonAntialiasedFill.delta, width + 1);
         Array.Clear(cover, 0, width + 1);
         Array.Clear(delta, 0, width + 1);
-        var mask = new SKBitmap(new SKImageInfo(width, height, SKColorType.Alpha8, SKAlphaType.Premul));
-        mask.Erase(SKColors.Transparent);
-        var pixels = mask.GetPixels();
-        var rowBytes = mask.RowBytes;
+        var size = checked(width * height);
+        var mask = spareMask is { } spare && spare.Length >= size ? spare : new byte[size];
+        if (ReferenceEquals(mask, spareMask)) spareMask = null;
+        Array.Clear(mask, 0, size);
+        double minimum = left * 256.0, maximum = (left + width) * 256.0;
+        var origin = left * 256;
         var any = false;
-        var next = 0;
-        var activeCount = 0;
-        double minimum = left * 256.0, maximum = right * 256.0;
-        for (var y = top; y < bottom; y++)
+        int nextEdge = 0, activeCount = 0;
+        for (var bandTop = 0; bandTop < height;)
         {
-            for (var sub = 0; sub < Subscanlines; sub++)
+            // Rows [bandTop, bandBottom) whose crossings fit the budget.
+            var bandTotal = RowCrossings(perSample, bandTop);
+            var bandBottom = bandTop + 1;
+            while (bandBottom < height)
             {
-                var sample = y + (2 * sub + 1) / (2.0 * Subscanlines);
-                while (next < count && list[next].Y0 <= sample)
-                    active[activeCount++] = next++;
-                var crossingCount = 0;
+                var more = RowCrossings(perSample, bandBottom);
+                if (bandTotal + more > CrossingBudget) break;
+                bandTotal += more;
+                bandBottom++;
+            }
+            int firstSample = bandTop * Subscanlines, endSample = bandBottom * Subscanlines;
+            if (bandTotal < 2)
+            {
+                bandTop = bandBottom;
+                continue;
+            }
+            var starts = sampleStarts = Grow(sampleStarts, endSample - firstSample);
+            var position = 0;
+            for (var sample = firstSample; sample < endSample; sample++)
+            {
+                starts[sample - firstSample] = position;
+                position += perSample[sample];
+            }
+            var sorted = crossings = Grow(crossings, position);
+            if (!banded)
+            {
+                for (var index = 0; index < count; index++)
+                    Gather(ref list[index], firstSample, endSample, starts, sorted, top, minimum, maximum, origin);
+            }
+            else
+            {
+                while (nextEdge < spanning && list[order![nextEdge]].FirstSample < endSample)
+                    active![activeCount++] = order[nextEdge++];
                 var kept = 0;
                 for (var index = 0; index < activeCount; index++)
                 {
-                    ref var edge = ref list[active[index]];
-                    if (edge.Y1 <= sample) continue;
+                    ref var edge = ref list[active![index]];
+                    if (edge.EndSample <= firstSample) continue;
                     active[kept++] = active[index];
-                    crossings[crossingCount++] = new Crossing
-                    {
-                        X = edge.X0 + (sample - edge.Y0) * edge.Slope,
-                        Winding = edge.Winding
-                    };
+                    Gather(ref edge, firstSample, endSample, starts, sorted, top, minimum, maximum, origin);
                 }
                 activeCount = kept;
-                if (crossingCount < 2) continue;
-                SortCrossings(crossings, crossingCount);
-                var winding = 0;
-                var start = 0.0;
-                for (var index = 0; index < crossingCount; index++)
-                {
-                    var wasInside = evenOdd ? (winding & 1) != 0 : winding != 0;
-                    winding += crossings[index].Winding;
-                    var inside = evenOdd ? (winding & 1) != 0 : winding != 0;
-                    if (inside == wasInside) continue;
-                    if (inside)
-                    {
-                        start = crossings[index].X;
-                        continue;
-                    }
-                    var from = Quantize(start, minimum, maximum) - left * 256;
-                    var to = Quantize(crossings[index].X, minimum, maximum) - left * 256;
-                    if (to <= from) continue;
-                    any = true;
-                    int first = from >> 8, last = to >> 8;
-                    if (first == last)
-                    {
-                        cover[first] += to - from;
-                        continue;
-                    }
-                    cover[first] += 256 - (from & 255);
-                    delta[first + 1] += 256;
-                    delta[last] -= 256;
-                    cover[last] += to & 255;
-                }
             }
-            var run = 0;
-            for (var x = 0; x < width; x++)
+            // starts[i] is now where subscanline firstSample + i + 1 begins.
+
+            for (var row = bandTop; row < bandBottom; row++)
             {
-                run += delta[x];
-                var total = run + cover[x];
-                row[x] = (byte)((total * 255 + 512) >> 11);
+                // The cells this row's spans touched: the rest stay clear.
+                int touchedFrom = int.MaxValue, touchedTo = -1;
+                for (var sub = 0; sub < Subscanlines; sub++)
+                {
+                    var local = row * Subscanlines + sub - firstSample;
+                    var first = local == 0 ? 0 : starts[local - 1];
+                    var end = starts[local];
+                    if (end - first < 2) continue;
+                    SortCrossings(sorted, first, end);
+                    var winding = 0;
+                    var start = 0;
+                    for (var index = first; index < end; index++)
+                    {
+                        var crossing = sorted[index];
+                        var wasInside = evenOdd ? (winding & 1) != 0 : winding != 0;
+                        winding += (crossing & 1) != 0 ? 1 : -1;
+                        var inside = evenOdd ? (winding & 1) != 0 : winding != 0;
+                        if (inside == wasInside) continue;
+                        if (inside)
+                        {
+                            start = (int)(crossing >> 1);
+                            continue;
+                        }
+                        int from = start, to = (int)(crossing >> 1);
+                        if (to <= from) continue;
+                        int firstCell = from >> 8, lastCell = to >> 8;
+                        if (firstCell < touchedFrom) touchedFrom = firstCell;
+                        if (lastCell > touchedTo) touchedTo = lastCell;
+                        if (firstCell == lastCell)
+                        {
+                            cover[firstCell] += to - from;
+                            continue;
+                        }
+                        cover[firstCell] += 256 - (from & 255);
+                        delta[firstCell + 1] += 256;
+                        delta[lastCell] -= 256;
+                        cover[lastCell] += to & 255;
+                    }
+                }
+                if (touchedTo < 0) continue;
+                any = true;
+                var run = 0;
+                var offset = row * width;
+                var last = Math.Min(touchedTo, width - 1);
+                for (var x = touchedFrom; x <= last; x++)
+                {
+                    run += delta[x];
+                    mask[offset + x] = (byte)(((run + cover[x]) * 255 + 512) >> 11);
+                }
+                Array.Clear(cover, touchedFrom, touchedTo - touchedFrom + 1);
+                Array.Clear(delta, touchedFrom, touchedTo - touchedFrom + 1);
             }
-            Array.Clear(cover, 0, width + 1);
-            Array.Clear(delta, 0, width + 1);
-            Marshal.Copy(row, 0, pixels + (y - top) * rowBytes, width);
-            if (next >= count && activeCount == 0) break;
+            bandTop = bandBottom;
         }
         if (!any)
         {
-            mask.Dispose();
+            Return(mask);
             return null;
         }
-        mask.NotifyPixelsChanged();
         return mask;
     }
 
-    // Draws a Mask placed at bounds' top-left corner on a canvas whose matrix
-    // maps device coordinates (an offset at most): its alpha is the coverage
-    // of the paint's colour or shader.
-    internal static void Draw(SKCanvas canvas, SKBitmap mask, SKRectI bounds, SKPaint paint)
+    [MethodImpl((MethodImplOptions)512)]
+    private static long RowCrossings(int[] perSample, int row)
     {
-        using var pixmap = mask.PeekPixels();
-        using var image = SKImage.FromPixels(pixmap);
-        canvas.DrawImage(image, bounds.Left, bounds.Top, paint);
+        long sum = 0;
+        for (var sample = row * Subscanlines; sample < (row + 1) * Subscanlines; sample++)
+            sum += perSample[sample];
+        return sum;
+    }
+
+    // Puts edge's crossings of subscanlines [firstSample, endSample) at
+    // their subscanline's next free place in sorted, x in 1/256 pixel from
+    // the mask's left side doubled, plus one going down.
+    [MethodImpl((MethodImplOptions)512)]
+    private static void Gather(
+        ref Edge edge, int firstSample, int endSample, int[] starts, long[] sorted,
+        int top, double minimum, double maximum, int origin)
+    {
+        var direction = edge.Winding > 0 ? 1L : 0L;
+        var end = Math.Min(edge.EndSample, endSample);
+        for (var sample = Math.Max(edge.FirstSample, firstSample); sample < end; sample++)
+        {
+            var x = edge.X0 + (SampleY(top, sample) - edge.Y0) * edge.Slope;
+            sorted[starts[sample - firstSample]++] = ((long)(Quantize(x, minimum, maximum) - origin) << 1) | direction;
+        }
+    }
+
+    // The y of a subscanline, counted from the top row's first.
+    private static double SampleY(int top, int sample) =>
+        top + (sample >> 3) + (2 * (sample & (Subscanlines - 1)) + 1) / (2.0 * Subscanlines);
+
+    // The first of the samples subscanlines whose y is y or below.
+    private static int FirstSampleFrom(double y, int top, int samples)
+    {
+        var estimate = (y - top) * Subscanlines - 0.5;
+        var sample = estimate <= 0 ? 0 : estimate >= samples ? samples : (int)Math.Ceiling(estimate);
+        while (sample > 0 && SampleY(top, sample - 1) >= y) sample--;
+        while (sample < samples && SampleY(top, sample) < y) sample++;
+        return sample;
+    }
+
+    // Gives back a buffer Mask returned, for a later Mask on this thread to
+    // reuse; a page-sized one is left to the collector.
+    internal static void Return(byte[] mask)
+    {
+        if (mask.Length <= KeptScratchLength && (spareMask is null || spareMask.Length < mask.Length))
+            spareMask = mask;
+    }
+
+    // Draws a Mask of bounds' size placed at bounds' top-left corner on a
+    // canvas whose matrix maps device coordinates (an offset at most): its
+    // alpha is the coverage of the paint's colour or shader.
+    internal static void Draw(SKCanvas canvas, byte[] mask, SKRectI bounds, SKPaint paint)
+    {
+        var pinned = GCHandle.Alloc(mask, GCHandleType.Pinned);
+        try
+        {
+            var info = new SKImageInfo(bounds.Width, bounds.Height, SKColorType.Alpha8, SKAlphaType.Premul);
+            using var image = SKImage.FromPixels(info, pinned.AddrOfPinnedObject(), bounds.Width);
+            canvas.DrawImage(image, bounds.Left, bounds.Top, paint);
+        }
+        finally
+        {
+            pinned.Free();
+        }
     }
 
     // The crossing x in 1/256 pixel, a half rounding down, kept within the mask.
@@ -8737,20 +8913,20 @@ internal static class PdfCartonAntialiasedFill
         return (int)(scaled < minimum ? minimum : scaled > maximum ? maximum : scaled);
     }
 
-    // Insertion sort for the few crossings of most rows; a path with many
-    // edges on one row (a long zigzag, say) is sorted in n log n.
-    private static void SortCrossings(Crossing[] values, int count)
+    // Insertion sort for the few crossings of most subscanlines; a path
+    // with many edges on one (a long zigzag, say) is sorted in n log n.
+    private static void SortCrossings(long[] values, int first, int end)
     {
-        if (count > 32)
+        if (end - first > 32)
         {
-            Array.Sort(values, 0, count, CrossingOrder.Instance);
+            Array.Sort(values, first, end - first);
             return;
         }
-        for (var index = 1; index < count; index++)
+        for (var index = first + 1; index < end; index++)
         {
             var value = values[index];
             var position = index - 1;
-            while (position >= 0 && values[position].X > value.X)
+            while (position >= first && values[position] > value)
             {
                 values[position + 1] = values[position];
                 position--;
@@ -8762,25 +8938,16 @@ internal static class PdfCartonAntialiasedFill
     private static T[] Grow<T>(T[]? array, int length) =>
         array is not null && array.Length >= length ? array : new T[Math.Max(length, (array?.Length ?? 16) * 2)];
 
-    private sealed class CrossingOrder : IComparer<Crossing>
-    {
-        internal static readonly CrossingOrder Instance = new();
-        public int Compare(Crossing a, Crossing b) => a.X.CompareTo(b.X);
-    }
-
-    private sealed class EdgeOrder : IComparer<Edge>
-    {
-        internal static readonly EdgeOrder Instance = new();
-        public int Compare(Edge a, Edge b) => a.Y0.CompareTo(b.Y0);
-    }
-
     // The path's outline as lines (subpaths closed), keeping the edges that
     // reach the sample rows of [top, bottom); returns how many are in edges.
+    // It and its hot local functions are optimized from the first call, as
+    // Mask is.
+    [MethodImpl((MethodImplOptions)512)]
     private static int Flatten(SKPath path, int top, int bottom)
     {
         edges ??= new Edge[64];
         var count = 0;
-        var points = new SKPoint[4];
+        var points = verbPoints ??= new SKPoint[4];
         double startX = 0, startY = 0, x = 0, y = 0;
         var open = false;
         using var iterator = path.CreateRawIterator();
@@ -8819,6 +8986,7 @@ internal static class PdfCartonAntialiasedFill
         if (open) Line(startX, startY);
         return count;
 
+        [MethodImpl((MethodImplOptions)512)]
         void Line(double toX, double toY)
         {
             double fromX = x, fromY = y;
@@ -8842,6 +9010,7 @@ internal static class PdfCartonAntialiasedFill
             };
         }
 
+        [MethodImpl((MethodImplOptions)512)]
         void Quad(double x1, double y1, double x2, double y2)
         {
             double x0 = x, y0 = y;
@@ -8857,6 +9026,7 @@ internal static class PdfCartonAntialiasedFill
             Line(x2, y2);
         }
 
+        [MethodImpl((MethodImplOptions)512)]
         void Cubic(double x1, double y1, double x2, double y2, double x3, double y3)
         {
             double x0 = x, y0 = y;
@@ -8900,6 +9070,7 @@ internal static class PdfCartonAntialiasedFill
                 return third * h * h * h;
             }
 
+            [MethodImpl((MethodImplOptions)512)]
             double SecondDifference(double u, double h)
             {
                 var (ax, ay) = Point(u);
@@ -8908,6 +9079,7 @@ internal static class PdfCartonAntialiasedFill
                 return Math.Abs(ax - 2 * bx + cx) + Math.Abs(ay - 2 * by + cy);
             }
 
+            [MethodImpl((MethodImplOptions)512)]
             (double X, double Y) Point(double t)
             {
                 var s = 1 - t;

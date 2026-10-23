@@ -167,6 +167,251 @@ public sealed class PdfConsumerTests
         Assert.Equal(new float?[] { 1f, 2f, 3f }, copy);
     }
 
+    // dripsharp-119: every antialiased glyph fill takes Java 2D's coverage
+    // (PdfCartonAntialiasedFill). A native coverage bitmap per glyph, and
+    // scan loops that ran unoptimized for most of a short render, made pdfcli
+    // render PDFBOX-3042-003177-p2.pdf take 61 ms where PDFBox takes 11 ms.
+    // The glyph cost is the difference between pages of n and 2n glyphs, so
+    // the per-page work cancels out: about 4 us a 10 point glyph at 72 dpi
+    // once warm. A mask reuses its buffers, and its loops are compiled
+    // optimized from their first call: a page or two of glyphs is too few
+    // calls for tiered compilation to reach them.
+    [Fact]
+    public void TextHeavyPagesKeepTheGlyphCoverageCostBounded()
+    {
+        // Pages of 30 and 60 lines of 100 glyphs, at 10 points.
+        const int lines = 30;
+        const int perLine = 100;
+        const int glyphs = lines * perLine;
+        var pdf = NonEmbeddedTextPdf(lines, perLine, size: 10);
+        using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
+        var renderer = new PDFRenderer(document);
+        renderer.RenderImage(0).Dispose();
+        for (var round = 0; round < 3; round++)
+        {
+            renderer.RenderImage(1).Dispose();
+            renderer.RenderImage(2).Dispose();
+        }
+        var single = MeasureGlyphPage(renderer, 1);
+        var twice = MeasureGlyphPage(renderer, 2);
+        // The second page shows the first page's lines twice over.
+        Assert.Equal(2 * single.Ink, twice.Ink);
+        var perGlyph = (twice.Elapsed - single.Elapsed) / glyphs;
+        var allocated = (twice.Allocated - single.Allocated) / glyphs;
+        Assert.True(allocated < 2048, $"A glyph allocated {allocated} bytes.");
+        // Generous for loaded test machines.
+        Assert.True(perGlyph < TimeSpan.FromMicroseconds(25), $"A glyph took {perGlyph.TotalMicroseconds} us.");
+
+        // A glyph's mask allocates no buffer once they have grown: 1000
+        // masks allocate 88 KB (path iterators), and allocated 256 KB with a
+        // bitmap per mask.
+        using var glyph = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        glyph.MoveTo(3.3f, 2.1f);
+        glyph.CubicTo(9.8f, 0.6f, 12.4f, 9.7f, 6.2f, 11.6f);
+        glyph.QuadTo(1.1f, 12.9f, 3.3f, 2.1f);
+        glyph.Close();
+        glyph.MoveTo(5.2f, 4.4f);
+        glyph.LineTo(8.9f, 8.3f);
+        glyph.LineTo(4.6f, 9.1f);
+        glyph.Close();
+#pragma warning restore CS0618
+        var bounds = new SKRectI(0, 0, 16, 16);
+        var mask = Compat.PdfCartonAntialiasedFill.Mask(glyph, bounds);
+        Assert.NotNull(mask);
+        Assert.Contains(mask!.Take(16 * 16), alpha => alpha == 255);
+        Compat.PdfCartonAntialiasedFill.Return(mask);
+        var maskAllocation = MeasureRepeatedMasks(glyph, bounds);
+        Assert.True(maskAllocation < 1000 * 160, $"1000 masks allocated {maskAllocation} bytes.");
+        foreach (var name in new[] { "Mask", "Flatten" })
+        {
+            var method = typeof(Compat.PdfCartonAntialiasedFill).GetMethod(
+                name, System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+            Assert.True(method.MethodImplementationFlags.HasFlag(
+                System.Reflection.MethodImplAttributes.AggressiveOptimization), name);
+        }
+    }
+
+    // A path taller than a glyph gathers its crossings in bands of rows, so
+    // its scratch stays bounded: these 400 edges cross 6.4 million
+    // subscanlines, 51 MB of crossings at once.
+    [Fact]
+    public void TallAntialiasedPathsKeepCrossingStorageBounded()
+    {
+        const int width = 256;
+        const int height = 2000;
+        using var path = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        for (var index = 0; index < 200; index++)
+        {
+            float left = 10 + index % 50, right = left + 100;
+            path.MoveTo(left, 0);
+            path.LineTo(right, 0);
+            path.LineTo(right, height);
+            path.LineTo(left, height);
+            path.Close();
+        }
+#pragma warning restore CS0618
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using var graphics = new Compat.PdfCartonGraphics2D(image);
+        graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+            Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
+        graphics.SetColor(SKColors.Black);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        graphics.Fill(path);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(allocated < 4 << 20, $"The fill allocated {allocated} bytes.");
+        // The rectangles' union is columns 10 to 158, every row.
+        foreach (var y in new[] { 0, 1, 999, 1000, 1999 })
+        {
+            var row = Enumerable.Range(0, width).Select(x => image.GetPixel(x, y).Alpha).ToArray();
+            Assert.All(row.Take(10), alpha => Assert.Equal(0, alpha));
+            Assert.All(row.Skip(10).Take(149), alpha => Assert.Equal(255, alpha));
+            Assert.All(row.Skip(159), alpha => Assert.Equal(0, alpha));
+        }
+    }
+
+    // A mask buffer goes back to the thread for the next glyph, but not one
+    // of a page-sized fill, which the collector then reclaims.
+    [Fact]
+    public void LargeMasksDoNotRemainInTheThreadCache()
+    {
+        using var small = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        small.MoveTo(2.5f, 2.5f);
+        small.LineTo(12.5f, 4.5f);
+        small.LineTo(6.5f, 13.5f);
+        small.Close();
+#pragma warning restore CS0618
+        var smallBounds = new SKRectI(0, 0, 16, 16);
+        var first = Compat.PdfCartonAntialiasedFill.Mask(small, smallBounds)!;
+        Compat.PdfCartonAntialiasedFill.Return(first);
+        var second = Compat.PdfCartonAntialiasedFill.Mask(small, smallBounds)!;
+        Assert.Same(first, second);
+        Assert.Contains(second.Take(256), alpha => alpha == 255);
+        Compat.PdfCartonAntialiasedFill.Return(second);
+
+        var large = LargeMaskReturned();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.False(large.IsAlive);
+        var third = Compat.PdfCartonAntialiasedFill.Mask(small, smallBounds)!;
+        Assert.Same(first, third);
+        Compat.PdfCartonAntialiasedFill.Return(third);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference LargeMaskReturned()
+    {
+        using var page = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        page.MoveTo(10.5f, 10.5f);
+        page.LineTo(1190.5f, 30.5f);
+        page.LineTo(600.5f, 1590.5f);
+        page.Close();
+#pragma warning restore CS0618
+        var mask = Compat.PdfCartonAntialiasedFill.Mask(page, new SKRectI(0, 0, 1200, 1600))!;
+        Assert.Equal(255, mask[800 * 1200 + 600]);
+        Compat.PdfCartonAntialiasedFill.Return(mask);
+        return new WeakReference(mask);
+    }
+
+    // A Java paint's context can fill antialiased paths of its own (a
+    // pattern's tile, say) while the fill it paints holds its mask: each
+    // fill keeps its own coverage, whether the nested mask is smaller or
+    // larger.
+    [Fact]
+    public void NestedAntialiasedPaintFillsPreserveOuterCoverage()
+    {
+        static SKPath Triangle(float scale)
+        {
+            var path = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+            path.MoveTo(1.3f * scale, 2.2f * scale);
+            path.LineTo(10.6f * scale, 5.1f * scale);
+            path.LineTo(3.4f * scale, 9.7f * scale);
+            path.Close();
+#pragma warning restore CS0618
+            return path;
+        }
+
+        static uint[] Fill(int size, SKPath path, Compat.JavaPaint paint)
+        {
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using (var graphics = new Compat.PdfCartonGraphics2D(image))
+            {
+                graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                    Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
+                graphics.SetPaint(paint);
+                graphics.Fill(path);
+            }
+            return image.Pixels.Select(pixel => (uint)pixel).ToArray();
+        }
+
+        using var outer = Triangle(2);
+        var expectedOuter = Fill(24, outer, new NestedFillPaint(null));
+        Assert.Contains(expectedOuter, pixel => pixel >> 24 == 255);
+        foreach (var scale in new[] { 0.5f, 6f })
+        {
+            using var inner = Triangle(scale);
+            var size = (int)(12 * scale) + 2;
+            var expectedInner = Fill(size, inner, new NestedFillPaint(null));
+            var nested = new NestedFillPaint(paint => Fill(size, inner, paint));
+            Assert.Equal(expectedOuter, Fill(24, outer, nested));
+            Assert.Equal(expectedInner, nested.Inner);
+        }
+    }
+
+    // Paints red; given a nested fill, does it first, from CreateContext.
+    private sealed class NestedFillPaint(Func<Compat.JavaPaint, uint[]>? nested) : Compat.JavaPaint
+    {
+        internal uint[]? Inner { get; private set; }
+
+        public Compat.JavaPaintContext CreateContext(Compat.JavaColorModel colorModel, SKRectI deviceBounds,
+            SKRect userBounds, SKMatrix transform, Compat.PdfCartonRenderingHints hints)
+        {
+            if (nested is not null) Inner = nested(new NestedFillPaint(null));
+            return new Compat.JavaColor(SKColors.Red).CreateContext(
+                colorModel, deviceBounds, userBounds, transform, hints);
+        }
+
+        public int GetTransparency() => new Compat.JavaColor(SKColors.Red).GetTransparency();
+    }
+
+    // The fastest of five renders of page, its allocation and its count of
+    // pixels that are not white.
+    private static (TimeSpan Elapsed, long Allocated, int Ink) MeasureGlyphPage(PDFRenderer renderer, int page)
+    {
+        var elapsed = TimeSpan.MaxValue;
+        long allocated = 0;
+        var ink = 0;
+        for (var round = 0; round < 5; round++)
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            using var image = renderer.RenderImage(page);
+            var time = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            if (time < elapsed) elapsed = time;
+            if (round == 0) ink = image.Pixels.Count(pixel => pixel != SKColors.White);
+        }
+        return (elapsed, allocated, ink);
+    }
+
+    // Optimized from its first call, so that no on-stack replacement
+    // compiles (and allocates) on this thread while it measures.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    private static long MeasureRepeatedMasks(SKPath glyph, SKRectI bounds)
+    {
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        for (var round = 0; round < 1000; round++)
+            Compat.PdfCartonAntialiasedFill.Return(Compat.PdfCartonAntialiasedFill.Mask(glyph, bounds)!);
+        return GC.GetAllocatedBytesForCurrentThread() - allocated;
+    }
+
     // A glyph path is transformed into a new path, keeping its winding rule
     // and leaving the cached glyph as it was.
     [Fact]
@@ -188,8 +433,8 @@ public sealed class PdfConsumerTests
 
     // Three pages of one non-embedded TrueType font with /Widths: every
     // character code once (to warm the glyph cache), then lines x perLine
-    // glyphs, then twice that many.
-    private static byte[] NonEmbeddedTextPdf(int lines, int perLine)
+    // glyphs, then twice that many, at size points with 1.2 size leading.
+    private static byte[] NonEmbeddedTextPdf(int lines, int perLine, int size = 5)
     {
         using var document = new PDDocument();
         var widths = new COSArray();
@@ -219,7 +464,8 @@ public sealed class PdfConsumerTests
         var line = Literal(string.Concat(Enumerable.Repeat(all, perLine / all.Length + 1))[..perLine]);
         foreach (var count in new[] { 1, lines, 2 * lines })
         {
-            var text = new System.Text.StringBuilder("BT /F1 5 Tf 6 TL 10 780 Td\n");
+            var text = new System.Text.StringBuilder(
+                $"BT /F1 {size} Tf {size * 6 / 5} TL 10 780 Td\n");
             for (var index = 0; index < count; index++)
                 text.Append(count == 1 ? Literal(all) : line).Append(" '\n");
             text.Append("ET\n");
