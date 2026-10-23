@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :scope :pdfcube
  :class :authored-destination-runtime
  :sources
@@ -9,8 +9,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 11499
-   :max-emitted-lines 11501
    :source-inventory-sha256
    "009138448258754a96c6a95922a4e6ed02248edbc1a70f63c5ee77b94054d957"
    :public-types
@@ -24,8 +22,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 681
-   :max-emitted-lines 681
    :source-inventory-sha256
    "26b4f41cb71b360b87f6f2c301fa8cb56c140cc6e8c8b44e561e9d2c6f4c7179"
    :public-types
@@ -39,8 +35,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 129
-   :max-emitted-lines 131
    :source-inventory-sha256
    "b79728edebff903c62787cb5aac70c60b59fd86b16815d17c472cd7109514411"
    :public-types
@@ -54,8 +48,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 974
-   :max-emitted-lines 974
    :source-inventory-sha256
    "9c3bcfe351b949e0b878a8e5298fbaa09a085e018e91fabcab5ad0324c19108c"
    :public-types
@@ -69,8 +61,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 35
-   :max-emitted-lines 35
    :source-inventory-sha256
    "cdf10d3b43d6461d19d3c60b433d61bad68d5faf3b97948fdb9442197304bf3f"
    :public-types
@@ -84,8 +74,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 728
-   :max-emitted-lines 728
    :source-inventory-sha256
    "0b87b1437a6b64e9846c0b8f078909683682754893678d2d0aaaf1f70020ddd5"
    :public-types
@@ -99,8 +87,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 160
-   :max-emitted-lines 160
    :source-inventory-sha256
    "b6cb60928472674c4d2740c4c7245967f4a6d7d0e5468c700eeff43343d88511"
    :public-types
@@ -114,8 +100,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 47
-   :max-emitted-lines 47
    :source-inventory-sha256
    "edf05663a8c56884ff0ae6b94893d8beac88f3a7f3545885aeefaa3576349404"
    :public-types

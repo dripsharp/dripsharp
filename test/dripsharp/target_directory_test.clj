@@ -254,7 +254,7 @@
      {:sources [:acme/runtime :acme/vendor]
       :evidence [:acme-required-proof]
       :review "acme-authorship-review"
-      :budget {:authored-lines 2 :total-lines 3}}
+      :max-authored-fraction 2/3}
      :required-capabilities
      #{:java-compat :acme/mapping :acme/runtime}}]
    :destinations [{:id :core :path "destinations/core.edn"}]
@@ -347,7 +347,7 @@
 
 (defn- shared-authorship
   []
-  {:schema-version 1
+  {:schema-version 2
    :scope :shared-compatibility
    :class :authored-compat
    :sources
@@ -358,15 +358,13 @@
      :charset nil
      :capability :java-compat
      :source-files 1
-     :max-source-lines 1
-     :max-emitted-lines 1
      :source-inventory-sha256
      (util/sha256-text "runtime/Shared.JavaCompat.cs")
      :public-types (public-type-proof)}]})
 
 (defn- target-authorship
   []
-  {:schema-version 1
+  {:schema-version 2
    :scope :acme
    :class :authored-destination-runtime
    :sources
@@ -377,15 +375,13 @@
      :charset nil
      :capability nil
      :source-files 1
-     :max-source-lines 1
-     :max-emitted-lines 1
      :source-inventory-sha256
      (util/sha256-text "targets/acme/runtime/Acme.Core.Runtime.cs")
      :public-types (public-type-proof)}]})
 
 (defn- third-party-authorship
   []
-  {:schema-version 1
+  {:schema-version 2
    :scope :acme
    :class :vendored-third-party
    :sources
@@ -396,8 +392,6 @@
      :charset nil
      :capability nil
      :source-files 1
-     :max-source-lines 1
-     :max-emitted-lines 1
      :source-inventory-sha256
      (util/sha256-text "vendor/acme/Vendor.cs")
      :public-types (public-type-proof)}]})
@@ -1428,17 +1422,18 @@
   (in-target-workspace
    (fn [root]
      (create-target-workspace! root)
-     (testing "authored package budgets equal their reviewed source ceilings"
-       (update-edn! root "targets/acme/target.edn"
-                    assoc-in
-                    [:profiles 0 :authorship :budget :authored-lines]
-                    3)
-       (let [failure
-             (failure-data #(target-directory/read-target root :acme))]
-         (is (= :invalid-target-directory (:kind failure)))
-         (is (= 3
-                (get-in failure
-                        [:contract :budget :authored-lines])))))
+     (testing "the frozen authored ratio is an exact fraction from 0 to 1"
+       (doseq [invalid [3/2 2 -1/3 0.5 1.0M "2/3" nil]]
+         (update-edn! root "targets/acme/target.edn"
+                      assoc-in
+                      [:profiles 0 :authorship :max-authored-fraction]
+                      invalid)
+         (let [failure
+               (failure-data #(target-directory/read-target root :acme))]
+           (is (= :invalid-target-directory (:kind failure)))
+           (is (= [:profiles "acme-core" :authorship :max-authored-fraction]
+                  (:path failure)))
+           (is (= invalid (:value failure))))))
      (testing "evidence must be a required ladder covering the profile"
        (write-edn! root "targets/acme/target.edn" (target-manifest))
        (update-edn! root "targets/acme/target.edn"
@@ -1463,8 +1458,6 @@
          :charset nil
          :capability :unused/compat
          :source-files 1
-         :max-source-lines 1
-         :max-emitted-lines 1
          :source-inventory-sha256
          (util/sha256-text "runtime/Leaky.cs")
          :public-types (public-type-proof)})

@@ -1,6 +1,6 @@
 (ns dripsharp.authorship-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.authored-spdx :as authored-spdx]
             [dripsharp.authorship :as authorship]
             [dripsharp.java-project :as java-project]
@@ -34,7 +34,7 @@
     (catch clojure.lang.ExceptionInfo error error)))
 
 (defn- source-group
-  [root id provenance capability max-emitted-lines]
+  [root id provenance capability]
   (let [base
         {:id id
          :kind :file
@@ -46,8 +46,6 @@
     (merge
      base
      {:source-files (:files observation)
-      :max-source-lines (:source-lines observation)
-      :max-emitted-lines max-emitted-lines
       :source-inventory-sha256 (:source-inventory-sha256 observation)
       :public-types (:public-types observation)})))
 
@@ -56,20 +54,20 @@
   (:sources
    (authorship/validate-source-contract!
     root scope class
-    {:schema-version 1
+    {:schema-version authorship/source-contract-schema-version
      :scope scope
      :class class
      :sources groups})))
 
 (defn- policy
-  [compatibility-sources budget]
+  [compatibility-sources max-authored-fraction]
   {:schema-version authorship/policy-schema-version
    :target :fixture
    :profile "fixture"
    :package-id "Fixture.Package"
    :review "pkl-c8t.20"
    :evidence [:fixture/behavior-proof]
-   :budget budget
+   :max-authored-fraction max-authored-fraction
    :forbidden-identities ["fixture"]
    :compatibility-sources compatibility-sources
    :destination-sources (sorted-map)
@@ -126,17 +124,17 @@
             (normalized-groups
              root :authored-compat :shared-compatibility
              [(source-group root :shared/compatibility
-                            "runtime/Compatibility.cs" :java-compat 4)])
+                            "runtime/Compatibility.cs" :java-compat)])
             destination-groups
             (normalized-groups
              root :authored-destination-runtime :fixture
              [(source-group root :fixture/destination
-                            "runtime/Destination.cs" nil 4)])
+                            "runtime/Destination.cs" nil)])
             third-party-groups
             (normalized-groups
              root :vendored-third-party :fixture
              [(source-group root :fixture/vendor
-                            "vendor/Library.cs" nil 1)])
+                            "vendor/Library.cs" nil)])
             groups
             (concat (vals compatibility-groups)
                     (vals destination-groups)
@@ -290,12 +288,12 @@
             (normalized-groups
              root :authored-destination-runtime :fixture
              [(source-group root :fixture/runtime
-                            "runtime/Shared.cs" nil 4)])
+                            "runtime/Shared.cs" nil)])
             vendored-groups
             (normalized-groups
              root :vendored-third-party :fixture
              [(source-group root :fixture/vendor
-                            "vendor/Shared.cs" nil 4)])
+                            "vendor/Shared.cs" nil)])
             conflict
             (caught
              #(authorship/verify-authored-spdx-headers!
@@ -350,20 +348,20 @@
             (normalized-groups
              root :authored-compat :shared-compatibility
              [(source-group root :shared/compatibility
-                            "runtime/Compatibility.cs" :java-compat 4)])
+                            "runtime/Compatibility.cs" :java-compat)])
             destination-one
             (normalized-groups
              root :authored-destination-runtime :one
-             [(source-group root :one/runtime "runtime/One.cs" nil 4)])
+             [(source-group root :one/runtime "runtime/One.cs" nil)])
             destination-two
             (normalized-groups
              root :authored-destination-runtime :two
-             [(source-group root :two/runtime "runtime/Two.cs" nil 4)])
+             [(source-group root :two/runtime "runtime/Two.cs" nil)])
             third-party
             (normalized-groups
              root :vendored-third-party :fixture
              [(source-group root :fixture/vendor
-                            "vendor/Library.cs" nil 1)])
+                            "vendor/Library.cs" nil)])
             target-contract
             (fn [target destination]
               {:target target
@@ -786,7 +784,7 @@
                #(normalized-groups
                  root :authored-destination-runtime :fixture
                  [(source-group root :fixture/runtime
-                                "runtime/Runtime.cs" nil 4)]))]
+                                "runtime/Runtime.cs" nil)]))]
           (is (= :invalid-authorship-ledger
                  (:kind (ex-data escaped-source))))
           (is (= :outside-workspace
@@ -991,8 +989,8 @@
             (normalized-groups
              root :authored-compat :shared-compatibility
              [(source-group root :shared/neutral "runtime/Neutral.cs"
-                            :java-compat 1)])
-            contract (policy groups {:authored-lines 1 :total-lines 1})
+                            :java-compat)])
+            contract (policy groups 1)
             artifacts
             [{:file "src/Neutral.cs"
               :source {:file "runtime/Neutral.cs"}
@@ -1018,21 +1016,20 @@
       (finally
         (delete-tree! root)))))
 
-(deftest authored-policy-freezes-growth-public-types-and-package-fraction
+(deftest authored-policy-allows-growth-but-freezes-public-types-and-package-ratio
   (let [root (Files/createTempDirectory
-              "dripsharp-authorship-budget-"
+              "dripsharp-authorship-ratio-"
               (make-array FileAttribute 0))]
     (try
       (let [source-text "public sealed class Neutral { }\n"
-            _ (write-text! root "runtime/Neutral.cs" source-text)
+            source (write-text! root "runtime/Neutral.cs" source-text)
             output (write-text! root "generated/src/Neutral.cs" source-text)
-            groups
-            (normalized-groups
-             root :authored-compat :shared-compatibility
-             [(source-group root :shared/neutral "runtime/Neutral.cs"
-                            :java-compat 1)])
-            exact-contract
-            (policy groups {:authored-lines 1 :total-lines 1})
+            group
+            #(normalized-groups
+              root :authored-compat :shared-compatibility
+              [(source-group root :shared/neutral "runtime/Neutral.cs"
+                             :java-compat)])
+            reviewed-groups (group)
             authored-artifact
             {:file "src/Neutral.cs"
              :source {:file "runtime/Neutral.cs"}
@@ -1044,61 +1041,72 @@
                        "sealed class SplitDeclaration\n{\n}\n")]))))
         (is (= [:fixture/behavior-proof]
                (get-in
-                (create-ledger! root [authored-artifact] exact-contract)
+                (create-ledger! root [authored-artifact]
+                                (policy reviewed-groups 1))
                 [:policy :sources 0 :evidence])))
-        (Files/writeString
-         output
-         (str source-text "// unreviewed authored growth\n")
-         (make-array OpenOption 0))
-        (let [growth
-              (caught
-               #(create-ledger! root [authored-artifact] exact-contract))]
-          (is (= :invalid-authorship-ledger
-                 (:kind (ex-data growth))))
-          (is (= 1 (:expected-at-most (ex-data growth))))
-          (is (= 2 (:actual (ex-data growth)))))
-        (Files/writeString output
-                           "public sealed class Changed { }\n"
-                           (make-array OpenOption 0))
-        (let [public-type
-              (caught
-               #(create-ledger! root [authored-artifact] exact-contract))]
-          (is (= :invalid-authorship-ledger
-                 (:kind (ex-data public-type))))
-          (is (not=
-               (get-in (ex-data public-type) [:expected :sha256])
-               (get-in (ex-data public-type) [:actual :sha256]))))
-        (Files/writeString output source-text (make-array OpenOption 0))
-        (let [configuration
-              {:repository "https://example.invalid/upstream.git"
-               :revision "1111111111111111111111111111111111111111"
-               :notice-reference nil}
-              upstream "example/Mechanical.java"
-              header
-              (java-project/mechanical-source-header configuration upstream)
-              mechanical-text (str header "internal class Mechanical { }\n")
-              mechanical-lines
-              (count (str/split-lines mechanical-text))
-              _ (write-text! root "generated/src/Mechanical.cs"
-                             mechanical-text)
-              mechanical-artifact
-              {:file "src/Mechanical.cs"
-               :upstream-source upstream
-               :mechanical-source-header header}
-              over-fraction-contract
-              (assoc exact-contract :budget
-                     {:authored-lines 1
-                      :total-lines (+ mechanical-lines 2)})
-              fraction
-              (caught
-               #(create-ledger!
-                 root [authored-artifact mechanical-artifact]
-                 over-fraction-contract))]
-          (is (= :invalid-authorship-ledger
-                 (:kind (ex-data fraction))))
-          (is (= {:numerator 1
-                  :denominator (+ mechanical-lines 1)}
-                 (:actual (ex-data fraction))))))
+        (let [grown-text (str source-text
+                              (str/join
+                               (repeat 40 "// reviewed authored growth\n")))]
+          (Files/writeString source grown-text (make-array OpenOption 0))
+          (Files/writeString output grown-text (make-array OpenOption 0))
+          (testing "growth past the old line ceiling needs no ledger change"
+            (let [ledger (create-ledger! root [authored-artifact]
+                                         (policy reviewed-groups 1))]
+              (is (= reviewed-groups (group)))
+              (is (= 41 (get-in ledger [:policy :sources 0 :emitted-lines])))
+              (is (= 1 (get-in ledger [:policy :max-authored-fraction])))))
+          (testing "public type drift still fails"
+            (Files/writeString output
+                               "public sealed class Changed { }\n"
+                               (make-array OpenOption 0))
+            (let [public-type
+                  (caught
+                   #(create-ledger! root [authored-artifact]
+                                    (policy reviewed-groups 1)))]
+              (is (= :invalid-authorship-ledger
+                     (:kind (ex-data public-type))))
+              (is (not=
+                   (get-in (ex-data public-type) [:expected :sha256])
+                   (get-in (ex-data public-type) [:actual :sha256])))))
+          (Files/writeString output grown-text (make-array OpenOption 0))
+          (testing "an authored fraction above the frozen ratio still fails"
+            (let [configuration
+                  {:repository "https://example.invalid/upstream.git"
+                   :revision "1111111111111111111111111111111111111111"
+                   :notice-reference nil}
+                  upstream "example/Mechanical.java"
+                  header
+                  (java-project/mechanical-source-header configuration
+                                                         upstream)
+                  mechanical-text
+                  (str header
+                       (str/join (repeat 100 "internal class M { }\n")))
+                  mechanical-lines
+                  (count (str/split-lines mechanical-text))
+                  total-lines (+ mechanical-lines 41)
+                  exact-fraction (/ 41 total-lines)
+                  below-fraction (/ 40 total-lines)
+                  _ (write-text! root "generated/src/Mechanical.cs"
+                                 mechanical-text)
+                  artifacts
+                  [authored-artifact
+                   {:file "src/Mechanical.cs"
+                    :upstream-source upstream
+                    :mechanical-source-header header}]
+                  within (create-ledger! root artifacts
+                                         (policy reviewed-groups exact-fraction))
+                  fraction
+                  (caught
+                   #(create-ledger! root artifacts
+                                    (policy reviewed-groups below-fraction)))]
+              (is (= 41 (get-in within [:totals :authored-lines])))
+              (is (= total-lines (get-in within [:totals :total-lines])))
+              (is (= :invalid-authorship-ledger
+                     (:kind (ex-data fraction))))
+              (is (= below-fraction
+                     (:expected-at-most (ex-data fraction))))
+              (is (= {:numerator 41 :denominator total-lines}
+                     (:actual (ex-data fraction))))))))
       (finally
         (delete-tree! root)))))
 
@@ -1114,8 +1122,8 @@
             (normalized-groups
              root :authored-compat :shared-compatibility
              [(source-group root :shared/compatibility
-                            "runtime/Compatibility.cs" :java-compat 1)])
-            contract (policy groups {:authored-lines 1 :total-lines 1})
+                            "runtime/Compatibility.cs" :java-compat)])
+            contract (policy groups 1)
             identity-error
             (caught
              #(create-ledger!
@@ -1143,11 +1151,11 @@
             third-party-sources
             (normalized-groups
              root :vendored-third-party :fixture
-             [(source-group root :fixture/vendor "vendor/Library.cs" nil 1)])
+             [(source-group root :fixture/vendor "vendor/Library.cs" nil)])
             contract
             (assoc
              (policy (sorted-map)
-                     {:authored-lines 0 :total-lines 1})
+                     0)
              :third-party-sources third-party-sources)
             ledger
             (create-ledger!
@@ -1198,7 +1206,7 @@
             group
             (assoc
              (source-group root :fixture/vendor
-                           "vendor/Library.cs" nil 1)
+                           "vendor/Library.cs" nil)
              :emitted-public-types
              (authorship/public-type-proof [emitted-text]))
             third-party-sources
@@ -1207,7 +1215,7 @@
             contract
             (assoc
              (policy (sorted-map)
-                     {:authored-lines 0 :total-lines 1})
+                     0)
              :third-party-sources third-party-sources)
             artifact
             {:file "src/Library.cs"

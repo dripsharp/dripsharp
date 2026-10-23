@@ -32,7 +32,7 @@
    {:sources []
     :evidence [:pkl-complete-product-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 17688 :total-lines 26150}}
+    :max-authored-fraction 8844/13075}
    :required-capabilities #{:java-compat :java-regex-unicode}}
   {:id "pkl-core-value-model"
    :path "profiles/core.edn"
@@ -46,7 +46,7 @@
    {:sources [:pkl/runtime]
     :evidence [:pkl-complete-product-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 24954 :total-lines 141166}}
+    :max-authored-fraction 12477/70583}
    :required-capabilities
    #{:java-compat :java-regex-unicode :pkl/runtime}}]
  :destinations

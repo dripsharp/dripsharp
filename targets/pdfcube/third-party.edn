@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :scope :pdfcube
  :class :vendored-third-party
  :sources
@@ -9,8 +9,6 @@
    :charset nil
    :capability nil
    :source-files 34
-   :max-source-lines 5777
-   :max-emitted-lines 5845
    :source-inventory-sha256
    "6c619257e3742cc64c73f134ff417683e7456d5c8a3ffbd88b9a03fb3ccf0655"
    :public-types
@@ -28,8 +26,6 @@
    :charset "ISO-8859-1"
    :capability nil
    :source-files 296
-   :max-source-lines 99286
-   :max-emitted-lines 99878
    :source-inventory-sha256
    "fd4e1d470b862ca711049110229c761a291b236a62004148c10ccb33a29bd883"
    :public-types
@@ -47,8 +43,6 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 1201
-   :max-emitted-lines 1201
    :source-inventory-sha256
    "0238992d05f2d66edea2b3436aaed8f8e2756d033e3a6414b5707438372b8103"
    :public-types

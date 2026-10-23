@@ -10,8 +10,8 @@
            [java.util.regex Pattern]))
 
 (def schema-version 3)
-(def policy-schema-version 2)
-(def source-contract-schema-version 1)
+(def policy-schema-version 3)
+(def source-contract-schema-version 2)
 (def spdx-policy-schema-version 2)
 
 (def ^:private source-classes
@@ -313,8 +313,7 @@
 
 (def ^:private source-group-keys
   #{:id :kind :provenance :include-pattern :charset :capability :source-files
-    :max-source-lines :max-emitted-lines :source-inventory-sha256
-    :public-types})
+    :source-inventory-sha256 :public-types})
 
 (def ^:private emitted-public-types-key :emitted-public-types)
 
@@ -486,11 +485,9 @@
        :paths (mapv first authored-paths)})))
 
 (defn- verify-source-observation!
-  [{:keys [id source-files max-source-lines source-inventory-sha256
-           public-types]}
+  [{:keys [id source-files source-inventory-sha256 public-types]}
    observation]
   (when-not (and (= source-files (:files observation))
-                 (<= (:source-lines observation) max-source-lines)
                  (= source-inventory-sha256
                     (:source-inventory-sha256 observation))
                  (= public-types (:public-types observation)))
@@ -498,7 +495,6 @@
            {:source id
             :expected
             {:files source-files
-             :max-source-lines max-source-lines
              :source-inventory-sha256 source-inventory-sha256
              :public-types public-types}
             :actual observation}))
@@ -536,9 +532,7 @@
     (let [groups
           (mapv
            (fn [{:keys [id kind provenance include-pattern charset capability
-                        source-files
-                        max-source-lines max-emitted-lines
-                        source-inventory-sha256 public-types
+                        source-files source-inventory-sha256 public-types
                         emitted-public-types]
                  :as group}]
              (exact-keys!
@@ -568,9 +562,6 @@
                                      (not (str/blank? charset))
                                      (Charset/isSupported charset)))
                             (pos-int? source-files)
-                            (pos-int? max-source-lines)
-                            (pos-int? max-emitted-lines)
-                            (<= max-source-lines max-emitted-lines)
                             (valid-sha256? source-inventory-sha256))
                (fail! "Source group contract is invalid"
                       {:source id :group group}))
@@ -630,19 +621,22 @@
        :sources (into (sorted-map) (map (juxt :id identity)) groups)})))
 
 (def ^:private policy-contract-keys
-  #{:schema-version :target :profile :package-id :review :evidence :budget
-    :forbidden-identities :compatibility-sources :destination-sources
-    :third-party-sources})
+  #{:schema-version :target :profile :package-id :review :evidence
+    :max-authored-fraction :forbidden-identities :compatibility-sources
+    :destination-sources :third-party-sources})
 
-(def ^:private budget-keys
-  #{:authored-lines :total-lines})
+(defn valid-authored-fraction?
+  "True for a frozen package authored/total line ratio: an exact integer or
+  ratio from 0 to 1."
+  [value]
+  (and (or (integer? value) (ratio? value)) (<= 0 value 1)))
 
 (defn validate-policy-contract!
   "Validates the normalized per-package source-accounting policy."
   [contract]
   (exact-keys! contract policy-contract-keys :authorship-policy)
   (let [{:keys [schema-version target profile package-id review evidence
-                budget forbidden-identities compatibility-sources
+                max-authored-fraction forbidden-identities compatibility-sources
                 destination-sources third-party-sources]}
         contract
         groups (concat (vals compatibility-sources)
@@ -702,17 +696,13 @@
              (every? #(= :vendored-third-party (:class %))
                      (vals third-party-sources))
              (every?
-              (fn [{:keys [class paths source-files max-source-lines
-                           max-emitted-lines source-inventory-sha256
+              (fn [{:keys [class paths source-files source-inventory-sha256
                            public-types emitted-public-types]}]
                 (and (vector? paths)
                      (= source-files (count paths))
                      (= (count paths) (count (distinct paths)))
                      (every? normalized-relative-path? paths)
                      (pos-int? source-files)
-                     (pos-int? max-source-lines)
-                     (pos-int? max-emitted-lines)
-                     (<= max-source-lines max-emitted-lines)
                      (valid-sha256? source-inventory-sha256)
                      (map? public-types)
                      (= public-type-proof-keys
@@ -731,15 +721,7 @@
                        (valid-sha256?
                         (:sha256 emitted-public-types))))))
               groups)
-             (nat-int? (:authored-lines budget))
-             (pos-int? (:total-lines budget))
-             (<= (:authored-lines budget) (:total-lines budget))
-             (= (:authored-lines budget)
-                (reduce
-                 + 0
-                 (map :max-emitted-lines
-                      (filter #(authored? (:class %)) groups)))))]
-    (exact-keys! budget budget-keys :authorship-budget)
+             (valid-authored-fraction? max-authored-fraction))]
     (when-not valid?
       (fail! "Authorship policy contract is invalid"
              {:contract contract}))
@@ -801,8 +783,7 @@
                                    contracted-files)
         groups
         (mapv
-         (fn [{:keys [id class max-emitted-lines public-types]
-               :as group}]
+         (fn [{:keys [id class public-types] :as group}]
            (let [observation
                  (verify-source-observation!
                   group (source-observation workspace-root group))
@@ -831,10 +812,6 @@
                  (fail! "Source class differs from its reviewed contract"
                         {:source id :expected class
                          :actual (mapv :class actual-entries)}))
-               (when (> emitted-lines max-emitted-lines)
-                 (fail! "Contracted source grew beyond its reviewed line budget"
-                        {:source id :expected-at-most max-emitted-lines
-                         :actual emitted-lines}))
                (when-not (= (or (:emitted-public-types group)
                                 public-types)
                             emitted-public-types)
@@ -849,7 +826,6 @@
                 :source-inventory-sha256
                 (:source-inventory-sha256 observation)
                 :emitted-lines emitted-lines
-                :max-emitted-lines max-emitted-lines
                 :public-types emitted-public-types
                 :evidence (:evidence contract)})))
          (policy-groups contract))
@@ -860,7 +836,7 @@
            {:target (:target contract)})
         expected-provenance (set (mapcat :source-paths groups))
         actual-provenance (set (keys actual-by-provenance))
-        budget (:budget contract)
+        max-authored-fraction (:max-authored-fraction contract)
         authored-lines (:authored-lines totals)
         total-lines (:total-lines totals)]
     (when-not (= expected-provenance actual-provenance)
@@ -871,17 +847,9 @@
               :unexpected
               (vec (sort (set/difference actual-provenance
                                          expected-provenance)))}))
-    (when (> authored-lines (:authored-lines budget))
-      (fail! "Package authored lines exceed its reviewed budget"
-             {:expected-at-most (:authored-lines budget)
-              :actual authored-lines}))
-    (when (>
-           (*' authored-lines (:total-lines budget))
-           (*' (:authored-lines budget) total-lines))
-      (fail! "Package authored fraction exceeds its reviewed budget"
-             {:expected
-              {:numerator (:authored-lines budget)
-               :denominator (:total-lines budget)}
+    (when (> authored-lines (*' max-authored-fraction total-lines))
+      (fail! "Package authored fraction exceeds its reviewed ratio"
+             {:expected-at-most max-authored-fraction
               :actual {:numerator authored-lines
                        :denominator total-lines}}))
     {:schema-version policy-schema-version
@@ -890,11 +858,7 @@
      :package-id (:package-id contract)
      :review (:review contract)
      :evidence (:evidence contract)
-     :budget
-     (assoc budget
-            :authored-fraction
-            (/ (double (:authored-lines budget))
-               (double (:total-lines budget))))
+     :max-authored-fraction max-authored-fraction
      :guarded-compatibility-sources
      (reduce + 0
              (map #(count (:source-paths %))
@@ -915,8 +879,8 @@
   Mechanical entries are checked against the configured upstream revision and
   exact generated header. Authored entries are checked against their durable
   provenance path and the SHA-256 of the emitted source that entered the
-  assembly. When a package policy is supplied, authored inventory, growth,
-  public types, evidence, fraction budget, and compatibility neutrality are
+  assembly. When a package policy is supplied, authored inventory, public
+  types, evidence, the authored/total ratio, and compatibility neutrality are
   recomputed rather than trusted from the ledger."
   [{:keys [workspace-root project-root source-root mechanical-source
            mechanical-header ledger contract configuration]}]

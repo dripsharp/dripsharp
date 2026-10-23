@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :scope :shared-compatibility
  :class :authored-compat
  :sources
@@ -9,8 +9,6 @@
    :charset nil
    :capability :java-compat
    :source-files 14
-   :max-source-lines 17603
-   :max-emitted-lines 17605
    :source-inventory-sha256
    "11f7c0ca56758d8846f825746b57118e787755cdc4befb84b47a8d11d796405b"
    :public-types
@@ -24,8 +22,6 @@
    :charset nil
    :capability :java-regex-unicode
    :source-files 1
-   :max-source-lines 83
-   :max-emitted-lines 83
    :source-inventory-sha256
    "beeaaa8d025ea7909aa516874316abd1357f1b11acc7362f2fccc03a54951fe8"
    :public-types
@@ -39,8 +35,6 @@
    :charset nil
    :capability :java-bidi
    :source-files 15
-   :max-source-lines 4661
-   :max-emitted-lines 4661
    :source-inventory-sha256
    "e264419d1ade473a485c5fc5bf8691c6a75c65c09b0dce365d9890fe44d993bc"
    :public-types

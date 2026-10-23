@@ -56,7 +56,7 @@ publication.
    {:sources [:example/runtime]
     :evidence [:example-complete-proof]
     :review "reviewed-change-id"
-    :budget {:authored-lines 120 :total-lines 1200}}
+    :max-authored-fraction 1/10}
    :required-capabilities
    #{:java-compat :example/mappings :example/runtime}}]
 
@@ -393,14 +393,14 @@ directory must not claim product behavior belonging to another target.
 ### Source-accounting contracts
 
 The workspace owns one shared compatibility contract under `config/`; each
-target owns `authorship.edn` and `third-party.edn`. All use schema version 1
+target owns `authorship.edn` and `third-party.edn`. All use schema version 2
 and list the complete reviewed non-mechanical source inventory. Shared groups
 are `:authored-compat`, product-owned target groups are
 `:authored-destination-runtime`, and pinned source owned by external projects
 is `:vendored-third-party`.
 
 ```clojure
-{:schema-version 1
+{:schema-version 2
  :scope :example
  :class :authored-destination-runtime
  :sources
@@ -411,17 +411,17 @@ is `:vendored-third-party`.
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 120
-   :max-emitted-lines 120
    :source-inventory-sha256 "…"
    :public-types {:count 3 :sha256 "…"}}]}
 ```
 
 A `:tree` group uses an anchored `:include-pattern`; a shared compatibility
 group also names the capability that selects it. File count, portable path
-inventory, source line ceiling, emitted line ceiling, and public declaration
-fingerprint are frozen reviewed facts. Drift fails target preflight and is
-recomputed again from live inputs during emission and package inspection.
+inventory, and public declaration fingerprint are frozen reviewed facts. Drift
+fails target preflight and is recomputed again from live inputs during
+emission and package inspection. Groups carry no line ceilings: an authored or
+vendored file may grow or shrink without a contract change while its path
+inventory and public declarations stay the same.
 When generation deliberately projects vendored implementation declarations to
 lower accessibility, that vendored group also records
 `:emitted-public-types {:count … :sha256 …}`. `:public-types` continues to pin
@@ -432,13 +432,16 @@ Every declared target or third-party group must be selected by at least one
 profile, and every selected runtime asset must belong to a selected authored
 target group.
 
-Each profile freezes its package-level authored line count and authored/total
-line fraction. The declared authored count must equal the sum of only its
-selected `:authored-compat` and `:authored-destination-runtime` group ceilings;
-vendored third-party lines remain in the total denominator but never count as
-DripSharp-authored. Increasing a group ceiling, changing the public-type
-fingerprint, selecting a new group, or raising the package budget therefore
-requires an explicit `:review` contract diff. `:evidence` must name a required
+Each profile freezes only its package-level authored/total line ratio as
+`:max-authored-fraction`, an exact integer or ratio literal from 0 to 1 such as
+`47/8455`; there is no frozen authored line count. The authored count is measured from the live emitted lines of the
+package's selected `:authored-compat` and `:authored-destination-runtime`
+inputs and the total from all of its compile inputs; vendored third-party lines
+remain in the total denominator but never count as DripSharp-authored. A
+package fails when its authored lines exceed `:max-authored-fraction` ×
+total lines. Changing the public-type fingerprint, selecting a new group, or
+raising the frozen ratio therefore requires an explicit `:review` contract
+diff. `:evidence` must name a required
 proof ladder that covers that profile; a successful product proof makes the
 linked behavior evidence green.
 
@@ -446,9 +449,9 @@ Emission records every compile input in authorship-ledger schema version 3.
 Mechanical inputs carry exact upstream revision and header provenance;
 authored and vendored third-party inputs carry their reviewed source path,
 class, hash, and line count. Authored inputs additionally participate in
-evidence linkage and budget proof. Package inspection rejects a missing or
-extra compile input, an uncontracted source, source growth, public surface
-drift, or an authored fraction above the frozen ratio.
+evidence linkage and the ratio proof. Package inspection rejects a missing or
+extra compile input, an uncontracted source, public surface drift, or an
+authored fraction above the frozen ratio.
 Shared compatibility text is additionally scanned for target, product-family,
 package, assembly, and destination namespace identities so it remains
 product-neutral for existing and future targets.

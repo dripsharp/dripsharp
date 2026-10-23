@@ -44,15 +44,13 @@
          :total-lines 111
          :authored-fraction (/ 10.0 111.0)}
         policy
-        {:schema-version 2
+        {:schema-version 3
          :target :acme
          :profile "acme-core"
          :package-id "Acme.Core"
          :review "review-42"
          :evidence [:acme-complete-proof]
-         :budget {:authored-lines 10
-                  :total-lines 111
-                  :authored-fraction (/ 10.0 111.0)}
+         :max-authored-fraction 10/111
          :guarded-compatibility-sources 1
          :sources []}]
     {:profile "acme-core"

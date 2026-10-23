@@ -47,10 +47,7 @@
   #{:compatibility :destination :third-party})
 
 (def ^:private profile-authorship-keys
-  #{:sources :evidence :review :budget})
-
-(def ^:private authorship-budget-keys
-  #{:authored-lines :total-lines})
+  #{:sources :evidence :review :max-authored-fraction})
 
 (def ^:private path-descriptor-keys
   #{:id :path})
@@ -1057,10 +1054,7 @@
     (exact-keys! "Profile authorship contract"
                  [:profiles profile-id :authorship]
                  profile-authorship-keys selection)
-    (exact-keys! "Profile authorship budget"
-                 [:profiles profile-id :authorship :budget]
-                 authorship-budget-keys (:budget selection))
-    (let [{:keys [sources evidence review budget]} selection
+    (let [{:keys [sources evidence review max-authored-fraction]} selection
           available-destination-sources
           (get-in authorship-contracts [:destination :sources])
           available-third-party-sources
@@ -1101,6 +1095,13 @@
           (validation/check! context
                              [:profiles profile-id :authorship :review]
                              review "a non-blank string" non-blank-string?)
+          _max-authored-fraction
+          (validation/check! context
+                             [:profiles profile-id :authorship
+                              :max-authored-fraction]
+                             max-authored-fraction
+                             "an exact integer or ratio from 0 to 1"
+                             authorship/valid-authored-fraction?)
           compatibility-capabilities
           (set
            (if (contains? destination :bridge-capabilities)
@@ -1133,7 +1134,7 @@
            :package-id (get-in destination [:package :id])
            :review review
            :evidence evidence
-           :budget budget
+           :max-authored-fraction max-authored-fraction
            :forbidden-identities
            (product-identity-fragments target family destination)
            :compatibility-sources compatibility-sources
