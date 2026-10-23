@@ -1438,8 +1438,8 @@
                             "public static class PdfCartonFontDiscovery")))
     (is (str/includes?
          source
-         (str "global::DripSharp.PdfCarton.Runtime.Fonts.JavaCompat."
-              "NewSortedDictionary<string, sbyte[]>()")))))
+         (str "new global::DripSharp.PdfCarton.Runtime.Fonts."
+              "JavaTreeMap<string, sbyte[]>()")))))
 
 (deftest resolved-module-surface-is-complete-and-blocks-stubs
   (let [workspace (paths/workspace-root)

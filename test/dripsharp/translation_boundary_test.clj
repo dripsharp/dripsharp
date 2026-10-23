@@ -83,6 +83,7 @@
    ["JavaDeque" "JavaDeque<>"]
    ["JavaWeakHashMap" "JavaWeakHashMap<,>"]
    ["JavaLinkedHashMap" "JavaLinkedHashMap<,>"]
+   ["JavaTreeMap" "JavaTreeMap<,>"]
    ["JavaStack" "JavaStack<>"]
    ["JavaLogLevel" "JavaLogLevel"]
    ["JavaLogger" "JavaLogger"]

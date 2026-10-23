@@ -2457,6 +2457,576 @@ internal sealed class JavaMapKeySet<K, V> : ISet<K> where K : notnull
         "[" + string.Join(", ", source.Keys.Select(item => JavaCompat.StringValueOf(item))) + "]";
 }
 
+// java.util.TreeMap: a height-balanced (AVL) search tree ordered by the map's
+// comparator. SortedDictionary cannot seek to a key, so SortedMap.subMap would
+// have to scan and copy the whole map. A subMap view here is another
+// JavaTreeMap sharing the same tree with the half-open key range
+// [lower, upper): it seeks its lower bound in O(log n), stays backed by the
+// map, and rejects writes outside its range, as Java's view does.
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+class JavaTreeMap<K, V> : IDictionary<K, V>, IDictionary where K : notnull
+{
+    // Java natural ordering. For primitive keys it is exactly their CompareTo,
+    // which the default comparer calls without boxing.
+    private static readonly IComparer<K> NaturalOrder = typeof(K).IsPrimitive
+        ? Comparer<K>.Default
+        : Comparer<K>.Create(JavaCompat.CompareNatural);
+
+    private sealed class Node(K key, V value)
+    {
+        internal readonly K Key = key;
+        internal V Value = value;
+        internal Node? Left;
+        internal Node? Right;
+        internal int Height = 1;
+    }
+
+    private sealed class Tree(IComparer<K> comparer)
+    {
+        internal readonly IComparer<K> Comparer = comparer;
+        internal Node? Root;
+        internal int Count;
+        // Bumped by structural changes only; replacing a value is not one.
+        internal int Version;
+
+        internal Node? Find(K key)
+        {
+            if (key is null) throw new ArgumentNullException(nameof(key));
+            var node = Root;
+            while (node is not null)
+            {
+                var order = Comparer.Compare(key, node.Key);
+                if (order == 0) return node;
+                node = order < 0 ? node.Left : node.Right;
+            }
+            return null;
+        }
+
+        internal void Put(K key, V value, bool replace)
+        {
+            var existing = Find(key);
+            if (existing is not null)
+            {
+                if (!replace)
+                    throw new ArgumentException("An item with the same key has already been added.");
+                existing.Value = value;
+                return;
+            }
+            Root = Insert(Root, key, value);
+            Count++;
+            Version++;
+        }
+
+        internal bool Delete(K key)
+        {
+            if (Find(key) is null) return false;
+            Root = Delete(Root!, key);
+            Count--;
+            Version++;
+            return true;
+        }
+
+        internal void Clear()
+        {
+            Root = null;
+            Count = 0;
+            Version++;
+        }
+
+        private Node Insert(Node? node, K key, V value)
+        {
+            if (node is null) return new Node(key, value);
+            if (Comparer.Compare(key, node.Key) < 0) node.Left = Insert(node.Left, key, value);
+            else node.Right = Insert(node.Right, key, value);
+            return Balance(node);
+        }
+
+        private Node? Delete(Node node, K key)
+        {
+            var order = Comparer.Compare(key, node.Key);
+            if (order < 0)
+            {
+                node.Left = Delete(node.Left!, key);
+            }
+            else if (order > 0)
+            {
+                node.Right = Delete(node.Right!, key);
+            }
+            else
+            {
+                if (node.Left is null) return node.Right;
+                if (node.Right is null) return node.Left;
+                var successor = node.Right;
+                while (successor.Left is not null) successor = successor.Left;
+                successor.Right = DeleteFirst(node.Right);
+                successor.Left = node.Left;
+                node = successor;
+            }
+            return Balance(node);
+        }
+
+        private static Node? DeleteFirst(Node node)
+        {
+            if (node.Left is null) return node.Right;
+            node.Left = DeleteFirst(node.Left);
+            return Balance(node);
+        }
+
+        private static int Height(Node? node) => node?.Height ?? 0;
+
+        private static void Measure(Node node) =>
+            node.Height = Math.Max(Height(node.Left), Height(node.Right)) + 1;
+
+        private static Node RotateRight(Node node)
+        {
+            var left = node.Left!;
+            node.Left = left.Right;
+            left.Right = node;
+            Measure(node);
+            Measure(left);
+            return left;
+        }
+
+        private static Node RotateLeft(Node node)
+        {
+            var right = node.Right!;
+            node.Right = right.Left;
+            right.Left = node;
+            Measure(node);
+            Measure(right);
+            return right;
+        }
+
+        private static Node Balance(Node node)
+        {
+            Measure(node);
+            var skew = Height(node.Left) - Height(node.Right);
+            if (skew > 1)
+            {
+                if (Height(node.Left!.Left) < Height(node.Left.Right)) node.Left = RotateLeft(node.Left);
+                return RotateRight(node);
+            }
+            if (skew < -1)
+            {
+                if (Height(node.Right!.Right) < Height(node.Right.Left)) node.Right = RotateRight(node.Right);
+                return RotateLeft(node);
+            }
+            return node;
+        }
+    }
+
+    private readonly Tree tree;
+    private readonly bool bounded;
+    private readonly K lower;
+    private readonly K upper;
+
+    public JavaTreeMap() : this(null) { }
+
+    public JavaTreeMap(IComparer<K>? comparer)
+    {
+        tree = new Tree(comparer ?? NaturalOrder);
+        lower = default!;
+        upper = default!;
+    }
+
+    private JavaTreeMap(Tree tree, K lower, K upper)
+    {
+        this.tree = tree;
+        bounded = true;
+        this.lower = lower;
+        this.upper = upper;
+    }
+
+    private int Compare(K left, K right) => tree.Comparer.Compare(left, right);
+
+    private bool InRange(K key) =>
+        !bounded || (Compare(key, lower) >= 0 && Compare(key, upper) < 0);
+
+    private K RequireInRange(K key) =>
+        InRange(key) ? key : throw new ArgumentException("key out of range");
+
+    private Cursor<Node> Nodes() => new(this, node => node);
+
+    // In-order walk over lower <= key < upper (every node when unbounded),
+    // failing fast once the map changes structurally. The pending left spine
+    // never holds more nodes than the tree is high, so it is sized once.
+    private sealed class Cursor<TResult>(JavaTreeMap<K, V> map, Func<Node, TResult> project)
+        : IEnumerator<TResult>
+    {
+        private Node[]? pending;
+        private int depth;
+        private int version;
+        private TResult current = default!;
+
+        public TResult Current => current;
+        object? IEnumerator.Current => current;
+        public Cursor<TResult> GetEnumerator() => this;
+
+        public bool MoveNext()
+        {
+            var tree = map.tree;
+            if (pending is null)
+            {
+                version = tree.Version;
+                pending = new Node[tree.Root?.Height ?? 0];
+                for (var node = tree.Root; node is not null;)
+                {
+                    if (map.bounded && tree.Comparer.Compare(node.Key, map.lower) < 0)
+                    {
+                        node = node.Right;
+                    }
+                    else
+                    {
+                        pending[depth++] = node;
+                        node = node.Left;
+                    }
+                }
+            }
+            else if (version != tree.Version)
+            {
+                throw new InvalidOperationException(
+                    "Collection was modified; enumeration operation may not execute.");
+            }
+            if (depth == 0) return false;
+            var next = pending[--depth];
+            if (map.bounded && tree.Comparer.Compare(next.Key, map.upper) >= 0)
+            {
+                depth = 0;
+                return false;
+            }
+            for (var node = next.Right; node is not null; node = node.Left) pending[depth++] = node;
+            current = project(next);
+            return true;
+        }
+
+        public void Reset()
+        {
+            pending = null;
+            depth = 0;
+        }
+
+        public void Dispose() { }
+    }
+
+    // SortedMap.subMap(fromKey, toKey): the live view of fromKey <= key < toKey.
+    internal JavaTreeMap<K, V> SubMap(K fromKey, K toKey)
+    {
+        if (Compare(fromKey, toKey) > 0) throw new ArgumentException("fromKey > toKey");
+        if (bounded)
+        {
+            if (!InRange(fromKey)) throw new ArgumentException("fromKey out of range");
+            if (Compare(toKey, lower) < 0 || Compare(toKey, upper) > 0)
+                throw new ArgumentException("toKey out of range");
+        }
+        return new JavaTreeMap<K, V>(tree, fromKey, toKey);
+    }
+
+    public int Count
+    {
+        get
+        {
+            if (!bounded) return tree.Count;
+            var count = 0;
+            foreach (var _ in Nodes()) count++;
+            return count;
+        }
+    }
+
+    public bool IsReadOnly => false;
+    bool IDictionary.IsFixedSize => false;
+    bool IDictionary.IsReadOnly => false;
+    bool ICollection.IsSynchronized => false;
+    object ICollection.SyncRoot => this;
+    public ICollection<K> Keys => new KeyCollection(this);
+    public ICollection<V> Values => new ValueCollection(this);
+    ICollection IDictionary.Keys => new KeyCollection(this);
+    ICollection IDictionary.Values => new ValueCollection(this);
+
+    public V this[K key]
+    {
+        get => TryGetValue(key, out var value) ? value : throw new KeyNotFoundException();
+        set => tree.Put(RequireInRange(key), value, replace: true);
+    }
+
+    object? IDictionary.this[object key]
+    {
+        get => JavaCompat.TryMapKey(key, out K typed) && TryGetValue(typed, out var value)
+            ? value
+            : null;
+        set => this[RequireKey(key)] = RequireValue(value);
+    }
+
+    public void Add(K key, V value) => tree.Put(RequireInRange(key), value, replace: false);
+    public void Add(KeyValuePair<K, V> item) => Add(item.Key, item.Value);
+    void IDictionary.Add(object key, object? value) => Add(RequireKey(key), RequireValue(value));
+
+    public bool ContainsKey(K key) => InRange(key) && tree.Find(key) is not null;
+
+    public bool TryGetValue(K key, out V value)
+    {
+        var node = InRange(key) ? tree.Find(key) : null;
+        value = node is null ? default! : node.Value;
+        return node is not null;
+    }
+
+    public bool Remove(K key) => InRange(key) && tree.Delete(key);
+    public bool Remove(KeyValuePair<K, V> item) => Contains(item) && Remove(item.Key);
+
+    void IDictionary.Remove(object key)
+    {
+        if (JavaCompat.TryMapKey(key, out K typed)) Remove(typed);
+    }
+
+    public void Clear()
+    {
+        if (!bounded)
+        {
+            tree.Clear();
+            return;
+        }
+        var keys = new List<K>();
+        foreach (var node in Nodes()) keys.Add(node.Key);
+        foreach (var key in keys) tree.Delete(key);
+    }
+
+    public bool Contains(KeyValuePair<K, V> item) =>
+        TryGetValue(item.Key, out var value) && JavaCompat.Equals(value, item.Value);
+
+    bool IDictionary.Contains(object key) =>
+        JavaCompat.TryMapKey(key, out K typed) && ContainsKey(typed);
+
+    public void CopyTo(KeyValuePair<K, V>[] array, int arrayIndex)
+    {
+        foreach (var item in this) array[arrayIndex++] = item;
+    }
+
+    void ICollection.CopyTo(Array array, int index)
+    {
+        foreach (var item in this) array.SetValue(new DictionaryEntry(item.Key, item.Value), index++);
+    }
+
+    public IEnumerator<KeyValuePair<K, V>> GetEnumerator() =>
+        new Cursor<KeyValuePair<K, V>>(this, node => new KeyValuePair<K, V>(node.Key, node.Value));
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    IDictionaryEnumerator IDictionary.GetEnumerator() => new DictionaryEnumerator(GetEnumerator());
+
+    private static K RequireKey(object? key) =>
+        JavaCompat.TryMapKey(key, out K typed)
+            ? typed
+            : throw new ArgumentException($"Key must be assignable to {typeof(K)}.", nameof(key));
+
+    private static V RequireValue(object? value)
+    {
+        if (value is V typed) return typed;
+        if (value is null && default(V) is null) return default!;
+        throw new ArgumentException($"Value must be assignable to {typeof(V)}.", nameof(value));
+    }
+
+    private sealed class DictionaryEnumerator(IEnumerator<KeyValuePair<K, V>> inner) : IDictionaryEnumerator
+    {
+        public DictionaryEntry Entry => new(Key, Value);
+        public object Key => inner.Current.Key;
+        public object? Value => inner.Current.Value;
+        public object Current => Entry;
+        public bool MoveNext() => inner.MoveNext();
+        public void Reset() => inner.Reset();
+    }
+
+    private sealed class KeyCollection(JavaTreeMap<K, V> source) : ICollection<K>, ICollection
+    {
+        bool ICollection.IsSynchronized => false;
+        object ICollection.SyncRoot => source;
+        void ICollection.CopyTo(Array array, int index)
+        {
+            foreach (var item in this) array.SetValue(item, index++);
+        }
+        public int Count => source.Count;
+        public bool IsReadOnly => false;
+        public void Add(K item) => throw new NotSupportedException("Java Map.keySet does not support add().");
+        public void Clear() => source.Clear();
+        public bool Contains(K item) => source.ContainsKey(item);
+        public void CopyTo(K[] array, int arrayIndex)
+        {
+            foreach (var item in this) array[arrayIndex++] = item;
+        }
+        public bool Remove(K item) => source.Remove(item);
+        public IEnumerator<K> GetEnumerator() => new Cursor<K>(source, node => node.Key);
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class ValueCollection(JavaTreeMap<K, V> source) : ICollection<V>, ICollection
+    {
+        bool ICollection.IsSynchronized => false;
+        object ICollection.SyncRoot => source;
+        void ICollection.CopyTo(Array array, int index)
+        {
+            foreach (var item in this) array.SetValue(item, index++);
+        }
+        public int Count => source.Count;
+        public bool IsReadOnly => false;
+        public void Add(V item) => throw new NotSupportedException("Java Map.values does not support add().");
+        public void Clear() => source.Clear();
+        public bool Contains(V item)
+        {
+            foreach (var node in source.Nodes())
+                if (JavaCompat.Equals(node.Value, item)) return true;
+            return false;
+        }
+        public void CopyTo(V[] array, int arrayIndex)
+        {
+            foreach (var item in this) array[arrayIndex++] = item;
+        }
+        public bool Remove(V item)
+        {
+            foreach (var node in source.Nodes())
+                if (JavaCompat.Equals(node.Value, item)) return source.Remove(node.Key);
+            return false;
+        }
+        public IEnumerator<V> GetEnumerator() => new Cursor<V>(source, node => node.Value);
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+}
+
+// SortedSet.headSet/subSet on a TreeSet: the live view of its half-open range
+// [lower, upper), with no lower bound for headSet. SortedSet.GetViewBetween
+// seeks in O(log n) but includes its upper bound, so the view leaves it out.
+internal sealed class JavaSortedSetView<T> : ISet<T>, ICollection
+{
+    private readonly SortedSet<T> source;
+    private readonly bool hasLower;
+    private readonly T lower;
+    private readonly T upper;
+
+    private JavaSortedSetView(SortedSet<T> source, bool hasLower, T lower, T upper)
+    {
+        this.source = source;
+        this.hasLower = hasLower;
+        this.lower = lower;
+        this.upper = upper;
+    }
+
+    internal static JavaSortedSetView<T> HeadSet(SortedSet<T> source, T toKey) =>
+        new(source, false, default!, toKey);
+
+    internal static JavaSortedSetView<T> SubSet(SortedSet<T> source, T fromKey, T toKey) =>
+        source.Comparer.Compare(fromKey, toKey) > 0
+            ? throw new ArgumentException("fromKey > toKey")
+            : new(source, true, fromKey, toKey);
+
+    internal JavaSortedSetView<T> HeadSet(T toKey) =>
+        new(source, hasLower, lower, RequireUpperInRange(toKey));
+
+    internal JavaSortedSetView<T> SubSet(T fromKey, T toKey)
+    {
+        if (Compare(fromKey, toKey) > 0) throw new ArgumentException("fromKey > toKey");
+        if (!InRange(fromKey)) throw new ArgumentException("fromKey out of range");
+        return new(source, true, fromKey, RequireUpperInRange(toKey));
+    }
+
+    private int Compare(T left, T right) => source.Comparer.Compare(left, right);
+
+    private bool InRange(T item) =>
+        (!hasLower || Compare(item, lower) >= 0) && Compare(item, upper) < 0;
+
+    private T RequireUpperInRange(T toKey) =>
+        (hasLower && Compare(toKey, lower) < 0) || Compare(toKey, upper) > 0
+            ? throw new ArgumentException("toKey out of range")
+            : toKey;
+
+    // The SortedSet view of [lower, upper], or null when the range is empty.
+    private SortedSet<T>? Window()
+    {
+        if (source.Count == 0) return null;
+        var from = hasLower ? lower : source.Min!;
+        return Compare(from, upper) > 0 ? null : source.GetViewBetween(from, upper);
+    }
+
+    private SortedSet<T> Snapshot() => new(this, source.Comparer);
+
+    public int Count
+    {
+        get
+        {
+            var window = Window();
+            if (window is null || window.Count == 0) return 0;
+            return window.Count - (Compare(window.Max!, upper) == 0 ? 1 : 0);
+        }
+    }
+
+    public bool IsReadOnly => false;
+    bool ICollection.IsSynchronized => false;
+    object ICollection.SyncRoot => source;
+
+    void ICollection.CopyTo(Array array, int index)
+    {
+        foreach (var item in this) array.SetValue(item, index++);
+    }
+
+    public bool Add(T item) =>
+        InRange(item) ? source.Add(item) : throw new ArgumentException("key out of range");
+
+    void ICollection<T>.Add(T item) => Add(item);
+    public bool Contains(T item) => InRange(item) && source.Contains(item);
+    public bool Remove(T item) => InRange(item) && source.Remove(item);
+
+    public void Clear()
+    {
+        foreach (var item in this.ToList()) source.Remove(item);
+    }
+
+    public void CopyTo(T[] array, int arrayIndex)
+    {
+        foreach (var item in this) array[arrayIndex++] = item;
+    }
+
+    public IEnumerator<T> GetEnumerator()
+    {
+        var window = Window();
+        if (window is null) yield break;
+        foreach (var item in window)
+        {
+            if (Compare(item, upper) >= 0) yield break;
+            yield return item;
+        }
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public void UnionWith(IEnumerable<T> other)
+    {
+        foreach (var item in other) Add(item);
+    }
+
+    public void ExceptWith(IEnumerable<T> other)
+    {
+        foreach (var item in other.ToList()) Remove(item);
+    }
+
+    public void IntersectWith(IEnumerable<T> other)
+    {
+        var retained = new SortedSet<T>(other, source.Comparer);
+        foreach (var item in this.Where(item => !retained.Contains(item)).ToList()) source.Remove(item);
+    }
+
+    public void SymmetricExceptWith(IEnumerable<T> other)
+    {
+        foreach (var item in new SortedSet<T>(other, source.Comparer))
+            if (!Remove(item)) Add(item);
+    }
+
+    public bool IsProperSubsetOf(IEnumerable<T> other) => Snapshot().IsProperSubsetOf(other);
+    public bool IsProperSupersetOf(IEnumerable<T> other) => Snapshot().IsProperSupersetOf(other);
+    public bool IsSubsetOf(IEnumerable<T> other) => Snapshot().IsSubsetOf(other);
+    public bool IsSupersetOf(IEnumerable<T> other) => Snapshot().IsSupersetOf(other);
+    public bool Overlaps(IEnumerable<T> other) => Snapshot().Overlaps(other);
+    public bool SetEquals(IEnumerable<T> other) => Snapshot().SetEquals(other);
+}
+
 internal sealed class JavaStringJoiner
 {
     private readonly string delimiter;
@@ -3528,18 +4098,32 @@ internal static partial class JavaCompat
         map.Keys.First();
     internal static K SortedLastKey<K, V>(IDictionary<K, V> map) where K : notnull =>
         map.Keys.Last();
+    // TreeMap and TreeSet range queries return live views that seek their
+    // bounds in O(log n); other maps and sets fall back to a filtered copy.
     internal static IDictionary<K, V> SortedSubMap<K, V>(
         IDictionary<K, V> map, K lower, K upper) where K : notnull =>
-        map.Where(pair => JavaCompare(pair.Key, lower) >= 0
-            && JavaCompare(pair.Key, upper) < 0)
-            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        map is JavaTreeMap<K, V> tree
+            ? tree.SubMap(lower, upper)
+            : map.Where(pair => JavaCompare(pair.Key, lower) >= 0
+                    && JavaCompare(pair.Key, upper) < 0)
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
     internal static ISet<T> SortedHeadSet<T>(ISet<T> values, T upper) =>
-        new SortedSet<T>(values.Where(value => JavaCompare(value, upper) < 0),
-            Comparer<T>.Create(JavaCompare));
+        values switch
+        {
+            JavaSortedSetView<T> view => view.HeadSet(upper),
+            SortedSet<T> sorted => JavaSortedSetView<T>.HeadSet(sorted, upper),
+            _ => new SortedSet<T>(values.Where(value => JavaCompare(value, upper) < 0),
+                Comparer<T>.Create(JavaCompare)),
+        };
     internal static ISet<T> SortedSubSet<T>(ISet<T> values, T lower, T upper) =>
-        new SortedSet<T>(values.Where(value =>
-                JavaCompare(value, lower) >= 0 && JavaCompare(value, upper) < 0),
-            Comparer<T>.Create(JavaCompare));
+        values switch
+        {
+            JavaSortedSetView<T> view => view.SubSet(lower, upper),
+            SortedSet<T> sorted => JavaSortedSetView<T>.SubSet(sorted, lower, upper),
+            _ => new SortedSet<T>(values.Where(value =>
+                    JavaCompare(value, lower) >= 0 && JavaCompare(value, upper) < 0),
+                Comparer<T>.Create(JavaCompare)),
+        };
     internal static T SortedFirst<T>(ISet<T> values) => values.First();
     internal static T SortedLast<T>(ISet<T> values) => values.Last();
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull =>

@@ -2554,7 +2554,10 @@
                       "static TreeSet<String> reverseSet() { "
                       "return new TreeSet<>((left, right) -> right.compareTo(left)); } "
                       "static TreeMap<String, Integer> reverseMap() { "
-                      "return new TreeMap<>((left, right) -> right.compareTo(left)); } }")})
+                      "return new TreeMap<>((left, right) -> right.compareTo(left)); } "
+                      "static java.util.Collection rawRange(TreeSet<Float> values) { "
+                      "return (java.util.Collection) values.subSet(1f, 2f); } "
+                      "public static final class Tally extends TreeMap<String, Integer> { } }")})
         emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
         (slurp (str (paths/resolve-path (:project-root emission)
@@ -2584,7 +2587,7 @@
               "global::System.Collections.Generic.Comparer<string>.Create(")))
     (is (contains-csharp?
          source
-         (str "new global::System.Collections.Generic.SortedDictionary<string, int>("
+         (str "new global::DripSharp.Runtime.JavaTreeMap<string, int>("
               "global::System.Collections.Generic.Comparer<string>.Create(")))
     (is (not (str/includes?
               source

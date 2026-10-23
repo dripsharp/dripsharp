@@ -520,8 +520,8 @@
                          :dotnet.type/time-zone-info]
    "java.util.SimpleTimeZone" ["global::System.TimeZoneInfo"
                                :dotnet.type/time-zone-info]
-   "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary"
-                        :dotnet.type/sorted-dictionary]
+   "java.util.TreeMap" ["global::DripSharp.Runtime.JavaTreeMap"
+                        :dotnet.type/java-tree-map]
    "java.util.WeakHashMap" ["global::DripSharp.Runtime.JavaWeakHashMap"
                             :dotnet.type/weak-map]
    "java.util.Base64" ["global::DripSharp.Runtime.JavaBase64"

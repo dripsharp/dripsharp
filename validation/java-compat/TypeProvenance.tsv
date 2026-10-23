@@ -140,6 +140,7 @@ JavaSimpleImmutableEntry	java.util.AbstractMap$SimpleImmutableEntry	pdfcube,pkl,
 JavaSocketFactory	javax.net.SocketFactory	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSocketFactory
 JavaSoftReference	java.lang.ref.SoftReference	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSoftReference
 JavaSoftReferenceSlot	java.lang.ref.SoftReference	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSoftReferenceSlot
+JavaSortedSetView	java.util.SortedSet	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSortedSetView
 JavaSqlDate	java.sql.Date	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSqlDate
 JavaSqlTime	java.sql.Time	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSqlTime
 JavaSqlTimestamp	java.sql.Timestamp	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSqlTimestamp
@@ -161,6 +162,7 @@ JavaTimeUnit	java.util.concurrent.TimeUnit	pdfcube,pkl,rawhttp,sqltrellis	behavi
 JavaTimeUnits	java.util.concurrent.TimeUnit	pdfcube,pkl,rawhttp,sqltrellis	behavior/time-format,type-contract/JavaTimeUnits
 JavaToIntFunction	java.util.function.ToIntFunction	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaToIntFunction
 JavaToLongFunction	java.util.function.ToLongFunction	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaToLongFunction
+JavaTreeMap	java.util.TreeMap	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaTreeMap
 JavaTrustManager	javax.net.ssl.TrustManager	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaTrustManager
 JavaTrustManagerFactory	javax.net.ssl.TrustManagerFactory	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaTrustManagerFactory
 JavaUnixFileMode	java.nio.file.attribute.PosixFilePermission	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaUnixFileMode

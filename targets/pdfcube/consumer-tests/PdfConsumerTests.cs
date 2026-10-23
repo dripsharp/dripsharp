@@ -5500,6 +5500,242 @@ public sealed class JavaArrayHashAndLinkedMapConsumerTests
     }
 }
 
+// java.util.TreeMap.subMap and TreeSet.headSet/subSet behind
+// PDFTextStripper's duplicate-glyph check (one subMap and subSet per glyph)
+// and TTFSubsetter. They copied the whole map or set on every call.
+public sealed class JavaSortedRangeConsumerTests
+{
+    private sealed class CountingComparer : IComparer<int>
+    {
+        internal long Calls;
+
+        public int Compare(int left, int right)
+        {
+            Calls++;
+            return left.CompareTo(right);
+        }
+    }
+
+    private static Compat.JavaTreeMap<int, string> Map(params int[] keys)
+    {
+        var map = new Compat.JavaTreeMap<int, string>();
+        foreach (var key in keys) map[key] = "v" + key;
+        return map;
+    }
+
+    [Fact]
+    public void SubMapIsAHalfOpenLiveViewThatRejectsKeysOutsideItsRange()
+    {
+        var map = Map(1, 2, 3, 4, 5, 6, 7, 8, 9);
+        var view = Compat.JavaCompat.SortedSubMap(map, 2, 6);
+
+        Assert.Equal(new[] { 2, 3, 4, 5 }, view.Keys);
+        Assert.Equal(new[] { "v2", "v3", "v4", "v5" }, view.Values);
+        Assert.Equal(4, view.Count);
+        Assert.Empty(Compat.JavaCompat.SortedSubMap(map, 4, 4));
+
+        map.Remove(3);
+        map[0] = "v0";
+        map[10] = "v10";
+        map[2] = "two";
+        Assert.Equal(new[] { 2, 4, 5 }, view.Keys);
+        Assert.Equal("two", view[2]);
+
+        view[3] = "three";
+        Assert.Equal("three", map[3]);
+        Assert.True(view.Remove(4));
+        Assert.False(map.ContainsKey(4));
+        Assert.False(view.ContainsKey(7));
+        Assert.False(view.TryGetValue(7, out _));
+        Assert.False(view.Remove(7));
+        Assert.True(map.ContainsKey(7));
+        Assert.Equal("key out of range", Assert.ThrowsAny<ArgumentException>(() => view[6] = "x").Message);
+        Assert.ThrowsAny<ArgumentException>(() => view.Add(1, "x"));
+
+        view.Clear();
+        Assert.Empty(view);
+        Assert.Equal(new[] { 0, 1, 6, 7, 8, 9, 10 }, map.Keys);
+    }
+
+    [Fact]
+    public void SubMapBoundsFailLikeJava()
+    {
+        var map = Map(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+        Assert.Equal("fromKey > toKey",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedSubMap(map, 3, 2)).Message);
+
+        var view = Compat.JavaCompat.SortedSubMap(map, 2, 6);
+        Assert.Equal(new[] { 2, 3, 4, 5 }, Compat.JavaCompat.SortedSubMap(view, 2, 6).Keys);
+        Assert.Equal(new[] { 3, 4 }, Compat.JavaCompat.SortedSubMap(view, 3, 5).Keys);
+        Assert.Equal("fromKey out of range",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedSubMap(view, 6, 6)).Message);
+        Assert.Equal("fromKey out of range",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedSubMap(view, 1, 4)).Message);
+        Assert.Equal("toKey out of range",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedSubMap(view, 3, 7)).Message);
+        Assert.Equal("fromKey > toKey",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedSubMap(view, 5, 3)).Message);
+    }
+
+    [Fact]
+    public void HeadSetAndSubSetAreHalfOpenLiveViewsOfATreeSet()
+    {
+        var set = new SortedSet<int>(Enumerable.Range(0, 10));
+        var head = Compat.JavaCompat.SortedHeadSet(set, 5);
+        var sub = Compat.JavaCompat.SortedSubSet(set, 2, 6);
+
+        Assert.Equal(new[] { 0, 1, 2, 3, 4 }, head);
+        Assert.Equal(new[] { 2, 3, 4, 5 }, sub);
+        Assert.Equal(4, sub.Count);
+        Assert.Empty(Compat.JavaCompat.SortedHeadSet(set, -1));
+        Assert.Empty(Compat.JavaCompat.SortedSubSet(set, 1, 1));
+        Assert.Equal(10, Compat.JavaCompat.SortedHeadSet(set, 10).Count);
+        Assert.Equal("fromKey > toKey",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedSubSet(set, 3, 1)).Message);
+
+        set.Remove(3);
+        set.Add(-5);
+        Assert.Equal(new[] { -5, 0, 1, 2, 4 }, head);
+        Assert.Equal(new[] { 2, 4, 5 }, sub);
+        Assert.True(sub.Add(3));
+        Assert.Contains(3, set);
+        Assert.Equal("key out of range", Assert.ThrowsAny<ArgumentException>(() => head.Add(7)).Message);
+        Assert.False(head.Remove(7));
+        Assert.False(head.Contains(7));
+        Assert.Contains(7, set);
+
+        Assert.Equal(new[] { 0, 1, 2 }, Compat.JavaCompat.SortedSubSet(head, -1, 3));
+        Assert.Equal(new[] { -5, 0, 1, 2, 3, 4 }, Compat.JavaCompat.SortedHeadSet(head, 5));
+        Assert.Equal("toKey out of range",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedHeadSet(head, 6)).Message);
+        Assert.Equal("fromKey out of range",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedSubSet(head, 5, 5)).Message);
+        Assert.Equal("toKey out of range",
+            Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortedHeadSet(sub, 1)).Message);
+
+        sub.Clear();
+        Assert.Equal(new[] { -5, 0, 1, 6, 7, 8, 9 }, set);
+    }
+
+    [Fact]
+    public void RawCollectionsOfTreeMapsAndRangeViewsStayLiveAndCastable()
+    {
+        // Raw java.util.Map, Collection and Set translate to the non-generic
+        // System.Collections interfaces.
+        var map = new Compat.JavaTreeMap<int, string>();
+        var rawMap = (System.Collections.IDictionary)map;
+        var keys = rawMap.Keys;
+        var values = rawMap.Values;
+        var view = (System.Collections.IDictionary)Compat.JavaCompat.SortedSubMap(map, 1, 3);
+        var viewValues = view.Values;
+        map[1] = "one";
+        map[5] = "five";
+        Assert.Equal(new object[] { 1, 5 }, keys.Cast<object>());
+        Assert.Equal(new object[] { "one", "five" }, values.Cast<object>());
+        Assert.Equal(new object[] { "one" }, viewValues.Cast<object>());
+        map[1] = "uno";
+        map.Remove(5);
+        Assert.Equal(new object[] { "uno" }, values.Cast<object>());
+        Assert.Equal(new object[] { 1 }, keys.Cast<object>());
+        var copy = new object[1];
+        ((System.Collections.ICollection)map.Values).CopyTo(copy, 0);
+        Assert.Equal("uno", copy[0]);
+
+        var set = new SortedSet<int>(Enumerable.Range(0, 10));
+        var head = (System.Collections.ICollection)Compat.JavaCompat.SortedHeadSet(set, 3);
+        var sub = (System.Collections.ICollection)Compat.JavaCompat.SortedSubSet(set, 2, 5);
+        Assert.Equal(new object[] { 0, 1, 2 }, head.Cast<object>());
+        Assert.Equal(3, sub.Count);
+        var items = new object[3];
+        sub.CopyTo(items, 0);
+        Assert.Equal(new object[] { 2, 3, 4 }, items);
+    }
+
+    [Fact]
+    public void RepeatedRangeQueriesOnALargeMapAndSetCostLogarithmicComparisons()
+    {
+        const int Size = 100_000;
+        const int Queries = 10_000;
+        var mapComparer = new CountingComparer();
+        var setComparer = new CountingComparer();
+        var values = new SortedSet<int>(Enumerable.Range(0, Size).Select(value => value * 2), setComparer);
+        var map = new Compat.JavaTreeMap<int, SortedSet<int>>(mapComparer);
+        for (var key = 0; key < Size; key++) map[key * 2] = values;
+        mapComparer.Calls = 0;
+        setComparer.Calls = 0;
+
+        // The PDFTextStripper overlap check: subMap around x, then subSet
+        // around y in each matching value set.
+        var matches = 0;
+        for (var query = 0; query < Queries; query++)
+        {
+            var center = query * 34 % (Size * 2);
+            foreach (var match in Compat.JavaCompat.SortedSubMap(map, center - 1, center + 2).Values)
+                if (!Compat.JavaCompat.CollectionIsEmpty(Compat.JavaCompat.SortedSubSet(match, center - 1, center + 1)))
+                    matches++;
+        }
+
+        // A scan of either collection costs Size comparisons per query; a
+        // seek costs a few per tree level.
+        Assert.Equal(Queries, matches);
+        Assert.InRange(mapComparer.Calls / Queries, 1, 100);
+        Assert.InRange(setComparer.Calls / Queries, 1, 200);
+    }
+
+    [Fact]
+    public void TreeMapMatchesSortedDictionaryUnderRandomInsertionsAndRemovals()
+    {
+        var random = new Random(111);
+        var map = new Compat.JavaTreeMap<int, int>();
+        var expected = new SortedDictionary<int, int>();
+        for (var step = 0; step < 20_000; step++)
+        {
+            var key = random.Next(2_000);
+            if (random.Next(3) == 0)
+            {
+                Assert.Equal(expected.Remove(key), map.Remove(key));
+            }
+            else
+            {
+                expected[key] = step;
+                map[key] = step;
+            }
+            if (step % 997 != 0) continue;
+            Assert.Equal(expected, map);
+            Assert.Equal(expected.Count, map.Count);
+            var lower = random.Next(2_000);
+            var upper = lower + random.Next(300);
+            Assert.Equal(expected.Where(pair => pair.Key >= lower && pair.Key < upper),
+                Compat.JavaCompat.SortedSubMap(map, lower, upper));
+        }
+        Assert.Equal(expected.Keys, map.Keys);
+        Assert.ThrowsAny<ArgumentException>(() => map.Add(expected.Keys.First(), 0));
+        Assert.Throws<KeyNotFoundException>(() => map[-1]);
+
+        var enumerator = map.GetEnumerator();
+        Assert.True(enumerator.MoveNext());
+        map[-1] = 0;
+        Assert.Throws<InvalidOperationException>(() => enumerator.MoveNext());
+    }
+
+    [Fact]
+    public void TreeMapUsesItsComparatorAndJavaNaturalOrder()
+    {
+        var reversed = new Compat.JavaTreeMap<string, int>(
+            Comparer<string>.Create((left, right) => string.CompareOrdinal(right, left)));
+        reversed["a"] = 1;
+        reversed["c"] = 3;
+        reversed["b"] = 2;
+        Assert.Equal(new[] { "c", "b", "a" }, reversed.Keys);
+        Assert.Equal(new[] { "c", "b" }, Compat.JavaCompat.SortedSubMap(reversed, "c", "a").Keys);
+
+        // String.compareTo orders by UTF-16 code unit, not by culture.
+        var natural = new Compat.JavaTreeMap<string, int> { ["b"] = 1, ["B"] = 2, ["a"] = 3 };
+        Assert.Equal(new[] { "B", "a", "b" }, natural.Keys);
+        Assert.Equal("{B=2, a=3, b=1}", Compat.JavaCompat.StringValueOf(natural));
+    }
+}
+
 // java.util.WeakHashMap behind LegacyPDFStreamEngine.fontHeightMap (one lookup
 // per glyph of PDFTextStripper output) and TilingPaintFactory. It was a list
 // that every operation swept for collected keys and then scanned with equals.

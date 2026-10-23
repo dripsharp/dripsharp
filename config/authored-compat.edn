@@ -12,9 +12,9 @@
    :source-inventory-sha256
    "11f7c0ca56758d8846f825746b57118e787755cdc4befb84b47a8d11d796405b"
    :public-types
-   {:count 67
+   {:count 68
     :sha256
-    "9b46b6a0e77cbb4897a811ac4a1088dc0c96046c7d0072e393c5ab24ce3866fb"}}
+    "cccbb00d9fed4b392c0e7c8d2d7022819a55079258966113eb61c5ab51452615"}}
   {:id :shared/java-regex-unicode
    :kind :file
    :provenance "runtime/DripSharp.JavaRegexUnicodeData.cs"

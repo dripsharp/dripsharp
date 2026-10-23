@@ -6209,9 +6209,15 @@
      [{:keys [element]}]
      {:node
       (let
-       [types (vec (.getActualTypeArguments (.getType element)))]
+       [types (vec (.getActualTypeArguments (.getType element)))
+        ;; A destination that keeps TreeMap as SortedDictionary needs the
+        ;; Java natural-order comparer; JavaTreeMap() already defaults to it.
+        sorted-dictionary?
+        (str/starts-with?
+         (:text (csharp/render (type-node @ctx-holder (.getType element))))
+         "global::System.Collections.Generic.SortedDictionary")]
         (if
-         (= 2 (count types))
+         (and sorted-dictionary? (= 2 (count types)))
           (sequence-node
            [(raw "global::DripSharp.Runtime.JavaCompat.NewSortedDictionary<")
             (type-node @ctx-holder (first types))
