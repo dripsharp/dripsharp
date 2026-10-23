@@ -5291,6 +5291,135 @@ public sealed class RasterConversionConsumerTests
         Assert.True(mismatches.Count == 0, $"{mismatches.Count} pixels differ: " + string.Join(", ", mismatches.Take(40)));
     }
 
+    // PageDrawer draws an image scaled below 0.5 as Image.getScaledInstance(
+    // SCALE_SMOOTH) followed by drawImage under the bicubic hint. The page is
+    // a 31x17 1-bit image drawn at 14.7 x 7.9 pt (about 0.47x, so a 15x8
+    // scaled instance drawn at 0.98 x 0.99). Expected grays are Java PDFBox
+    // 3.0.8's render at scale 1, which area-averages and then interpolates
+    // with the Catmull-Rom cubic; Skia's Mitchell scaling and filtering left
+    // pixels up to 30 levels off (JBIG2Image.pdf). The partly covered edge
+    // rows and columns (image edges under antialiasing) are not compared.
+    // Each interior pixel may differ by 2.
+    [Fact]
+    public void DownscaledBilevelImageRendersAsJavaPdfBox()
+    {
+        byte[] bits =
+        [
+            219, 183, 110, 220, 36, 72, 145, 34, 90, 181, 106, 212, 129, 2, 4, 8, 60, 120, 241, 226, 195, 135,
+            14, 28, 36, 72, 145, 34, 219, 183, 110, 220, 36, 72, 145, 34, 90, 181, 106, 212, 129, 2, 4, 8,
+            60, 120, 241, 226, 195, 135, 14, 28, 36, 72, 145, 34, 219, 183, 110, 220, 36, 72, 145, 34, 90,
+            181, 106, 212
+        ];
+        // Device rows 2-8, columns 1-14.
+        int[][] javaRows =
+        [
+            [120, 111, 108, 121, 105, 126, 109, 113, 123, 106, 120, 108, 115, 115],
+            [113, 93, 92, 114, 90, 106, 99, 102, 102, 93, 112, 90, 99, 107],
+            [122, 120, 124, 122, 128, 109, 129, 126, 111, 129, 122, 124, 119, 126],
+            [109, 112, 111, 110, 111, 117, 109, 110, 116, 110, 110, 111, 112, 109],
+            [101, 103, 100, 101, 97, 113, 96, 99, 111, 96, 102, 101, 104, 99],
+            [128, 117, 117, 127, 116, 114, 122, 121, 114, 118, 126, 116, 119, 125],
+            [108, 119, 121, 109, 126, 119, 119, 117, 120, 123, 110, 122, 116, 113]
+        ];
+        using var document = new PDDocument();
+        var page = new PDPage(new PDRectangle(18, 11));
+        document.AddPage(page);
+        var image = new PDImageXObject(document, new MemoryStream(bits), null!, 31, 17, 1, PDDeviceGray.Instance);
+        using (var content = new PDPageContentStream(document, page))
+            content.DrawImage(image, 1, 1.5f, 14.7f, 7.9f);
+
+        using var rendered = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
+        Assert.Equal(18, rendered.Width);
+        Assert.Equal(11, rendered.Height);
+        var mismatches = new List<string>();
+        for (var y = 0; y < javaRows.Length; y++)
+        {
+            for (var x = 0; x < javaRows[y].Length; x++)
+            {
+                var argb = Compat.PdfCartonFontCompat.GetRgb(rendered, x + 1, y + 2);
+                var gray = argb & 255;
+                if (Math.Abs(gray - javaRows[y][x]) > 2)
+                    mismatches.Add($"({x + 1}, {y + 2}) {gray} Java {javaRows[y][x]}");
+            }
+        }
+        Assert.True(mismatches.Count == 0, $"{mismatches.Count} pixels differ: " + string.Join(", ", mismatches.Take(40)));
+    }
+
+    // Image.getScaledInstance(SCALE_SMOOTH) area-averages: each pixel is the
+    // mean of the source span it covers, partial pixels weighted by their
+    // share, rounded. Expected pixels are Java 25's for a 13-pixel row of
+    // 0/255 grays scaled to 6, 5 and 7 pixels and for 10, 20, 200 scaled to 2.
+    [Fact]
+    public void SmoothScaledInstanceAveragesAreasAsJava()
+    {
+        int[] row = [0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255];
+        string Scaled(int[] values, int width, int type)
+        {
+            using var source = Compat.PdfCartonFontCompat.CreateBitmap(values.Length, 1, type);
+            for (var x = 0; x < values.Length; x++)
+                Compat.PdfCartonFontCompat.SetRgb(source, x, 0,
+                    unchecked((int)0xff000000) | values[x] << 16 | values[x] << 8 | values[x]);
+            using var scaled = Compat.PdfCartonFontCompat.ScaleImage(
+                source, width, 1, Compat.PdfCartonFontCompat.SCALE_SMOOTH);
+            return string.Join(" ", Enumerable.Range(0, width)
+                .Select(x => $"{scaled.GetPixel(x, 0).Red},{scaled.GetPixel(x, 0).Green},{scaled.GetPixel(x, 0).Blue}"));
+        }
+        foreach (var type in new[] { Compat.PdfCartonFontCompat.TYPE_INT_RGB, Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY })
+        {
+            Assert.Equal("118,118,118 157,157,157 78,78,78 196,196,196 157,157,157 118,118,118", Scaled(row, 6, type));
+            Assert.Equal("98,98,98 196,196,196 78,78,78 216,216,216 98,98,98", Scaled(row, 5, type));
+            Assert.Equal("118,118,118 118,118,118 177,177,177 59,59,59 255,255,255 98,98,98 137,137,137",
+                Scaled(row, 7, type));
+        }
+        Assert.Equal("13,13,13 140,140,140", Scaled([10, 20, 200], 2, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
+    }
+
+    // Translucent pixels average with their colours weighted by alpha.
+    // Expected ARGB values are Java 25's getScaledInstance(SCALE_SMOOTH) of
+    // this row (transparent red, blue, half green, white, quarter orange,
+    // three-quarter slate, black) scaled to 3 and 2 pixels, read back
+    // through a TYPE_INT_ARGB image; Java's premultiplied readback rounds,
+    // so each channel may differ by 2. A premultiplied source bitmap scales
+    // the same way.
+    [Fact]
+    public void SmoothScaledInstanceWeighsTranslucentColorsAsJava()
+    {
+        uint[] row = [0x00ff0000, 0xff0000ff, 0x8000ff00, 0xffffffff, 0x40ff8000, 0xc0204080, 0xff000000];
+        var expected = new Dictionary<int, uint[]>
+        {
+            [3] = [0x800026d9, 0xa4c5f1a9, 0xc9192034],
+            [2] = [0x924180be, 0xb655535a],
+        };
+        using var straight = Compat.PdfCartonFontCompat.CreateBitmap(row.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        for (var x = 0; x < row.Length; x++)
+            Compat.PdfCartonFontCompat.SetRgb(straight, x, 0, unchecked((int)row[x]));
+        using var premultiplied = new SKBitmap(new SKImageInfo(row.Length, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (var x = 0; x < row.Length; x++)
+            premultiplied.SetPixel(x, 0, new SKColor(row[x]));
+        var mismatches = new List<string>();
+        foreach (var (name, source) in new[] { ("straight", straight), ("premultiplied", premultiplied) })
+        {
+            foreach (var (width, java) in expected)
+            {
+                using var scaled = Compat.PdfCartonFontCompat.ScaleImage(
+                    source, width, 1, Compat.PdfCartonFontCompat.SCALE_SMOOTH);
+                for (var x = 0; x < width; x++)
+                {
+                    var actual = (uint)scaled.GetPixel(x, 0);
+                    for (var shift = 0; shift < 32; shift += 8)
+                    {
+                        if (Math.Abs((int)(actual >> shift & 255) - (int)(java[x] >> shift & 255)) > 2)
+                        {
+                            mismatches.Add($"{name} to {width}, x {x}: {actual:x8} Java {java[x]:x8}");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Assert.True(mismatches.Count == 0, string.Join(", ", mismatches));
+    }
+
     // getRGB after setRGB of an opaque gray on Java's CS_GRAY image: the
     // ComponentColorModel conversions (sRGB to 16-bit linear, the gray
     // weights, then linear to sRGB) in Java's float arithmetic. It equals
@@ -9545,7 +9674,7 @@ public sealed class BitmapDrawCopyTests
                 {
                     0 or 1 => SKSamplingOptions.Default,
                     2 => new SKSamplingOptions(SKFilterMode.Linear),
-                    _ => new SKSamplingOptions(SKCubicResampler.Mitchell),
+                    _ => new SKSamplingOptions(SKCubicResampler.CatmullRom),
                 };
                 canvas.DrawBitmap(snapshot, new SKRect(x, y, x + width, y + height),
                     new SKRect(x + dx, y + dy, x + dx + width, y + dy + height), options, paint);

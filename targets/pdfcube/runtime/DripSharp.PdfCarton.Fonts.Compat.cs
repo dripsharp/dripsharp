@@ -6117,9 +6117,12 @@ public class PdfCartonGraphics2D : IDisposable
         renderingHints[key] = value;
         if (ReferenceEquals(key, PdfCartonRenderingHints.KEY_INTERPOLATION))
         {
+            // Java's bicubic interpolates with the Catmull-Rom cubic (a = -0.5):
+            // black-box probes of Java 25 drawing an impulse at quarter-pixel
+            // offsets give weights -7, 87, 23, -2 per 100 at 0.25.
             samplingOptions =
                 ReferenceEquals(value, PdfCartonRenderingHints.VALUE_INTERPOLATION_BICUBIC)
-                    ? new SKSamplingOptions(SKCubicResampler.Mitchell)
+                    ? new SKSamplingOptions(SKCubicResampler.CatmullRom)
                     : ReferenceEquals(
                         value,
                         PdfCartonRenderingHints.VALUE_INTERPOLATION_BILINEAR)
@@ -10133,6 +10136,8 @@ internal static class PdfCartonFontCompat
         if (width == 0 || height == 0)
             throw new ArgumentException("Scaled image dimensions cannot be zero.");
 
+        if (hints == SCALE_SMOOTH)
+            return AreaAverageImage(source, width, height);
         var destination = new PdfCartonNativeBitmap(new SKImageInfo(
             width,
             height,
@@ -10142,12 +10147,169 @@ internal static class PdfCartonFontCompat
         PdfCartonBitmapView.Publish(source);
         using var canvas = new SKCanvas(destination);
         using var paint = new SKPaint();
-        var sampling = hints == SCALE_SMOOTH
-            ? new SKSamplingOptions(SKCubicResampler.Mitchell)
-            : SKSamplingOptions.Default;
         using var image = DrawableImage(source, destination);
-        canvas.DrawImage(image!, new SKRect(0, 0, width, height), sampling, paint);
+        canvas.DrawImage(image!, new SKRect(0, 0, width, height), SKSamplingOptions.Default, paint);
         return destination;
+    }
+
+    // getScaledInstance(SCALE_SMOOTH) averages areas (black-box probes of
+    // Java 25 against random opaque and translucent images, 1-bit to
+    // 32-bit, scaled up and down): a destination pixel is the mean of the
+    // source rectangle it covers, partly covered source pixels weighted by
+    // the covered fraction and colours by their alpha, each channel rounded
+    // to nearest. A gray source stays gray; anything else becomes 32-bit.
+    private static SKBitmap AreaAverageImage(SKBitmap source, int width, int height)
+    {
+        EnsureNativePixels(source);
+        int sourceWidth = source.Width, sourceHeight = source.Height;
+        var gray = source.ColorType == SKColorType.Gray8;
+        var opaque = gray || source.AlphaType == SKAlphaType.Opaque;
+        var readable = gray || source.ColorType == SKColorType.Bgra8888 &&
+            source.AlphaType != SKAlphaType.Premul
+            ? source
+            : ConvertedForReading(source);
+        try
+        {
+            var destination = new PdfCartonNativeBitmap(new SKImageInfo(
+                width,
+                height,
+                gray ? SKColorType.Gray8 : SKColorType.Bgra8888,
+                opaque ? SKAlphaType.Opaque : SKAlphaType.Unpremul,
+                source.ColorSpace));
+            var input = readable.GetPixelSpan();
+            var output = destination.GetPixelSpan();
+            int inputRowBytes = readable.RowBytes, outputRowBytes = destination.RowBytes;
+            var channels = gray ? 1 : 4;
+            var columns = AreaWeights(sourceWidth, width);
+            var rows = AreaWeights(sourceHeight, height);
+            var area = (double)sourceWidth / width * sourceHeight / height;
+            // Per destination row: the weighted sum of horizontally averaged
+            // source rows, in premultiplied (alpha-weighted) channels.
+            var sum = new double[width * channels];
+            var filtered = new double[width * channels];
+            var filteredRow = -1;
+            for (var y = 0; y < height; y++)
+            {
+                Array.Clear(sum, 0, sum.Length);
+                foreach (var (row, rowWeight) in rows[y])
+                {
+                    if (row != filteredRow)
+                    {
+                        FilterRow(input.Slice(row * inputRowBytes), columns, channels, opaque, filtered);
+                        filteredRow = row;
+                    }
+                    for (var i = 0; i < sum.Length; i++)
+                        sum[i] += filtered[i] * rowWeight;
+                }
+                var target = output.Slice(y * outputRowBytes);
+                for (var x = 0; x < width; x++)
+                {
+                    var at = x * channels;
+                    if (gray)
+                    {
+                        target[x] = RoundChannel(sum[at] / area);
+                        continue;
+                    }
+                    if (opaque)
+                    {
+                        target[at] = RoundChannel(sum[at] / area);
+                        target[at + 1] = RoundChannel(sum[at + 1] / area);
+                        target[at + 2] = RoundChannel(sum[at + 2] / area);
+                        target[at + 3] = byte.MaxValue;
+                        continue;
+                    }
+                    var alpha = sum[at + 3];
+                    target[at + 3] = RoundChannel(alpha / area);
+                    for (var c = 0; c < 3; c++)
+                        target[at + c] = alpha > 0 ? RoundChannel(sum[at + c] / alpha) : (byte)0;
+                }
+            }
+            destination.NotifyPixelsChanged();
+            GC.KeepAlive(readable);
+            return destination;
+        }
+        finally
+        {
+            if (!ReferenceEquals(readable, source)) readable.Dispose();
+        }
+    }
+
+    private static SKBitmap ConvertedForReading(SKBitmap source)
+    {
+        var converted = new SKBitmap(new SKImageInfo(
+            source.Width, source.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul, source.ColorSpace));
+        using var from = source.PeekPixels();
+        using var to = converted.PeekPixels();
+        if (from is null || to is null || !from.ReadPixels(to))
+        {
+            converted.Dispose();
+            throw new InvalidOperationException("Unable to read the image's pixels.");
+        }
+        GC.KeepAlive(source);
+        return converted;
+    }
+
+    // For each destination pixel along one axis, the source pixels its
+    // span [i * s / d, (i + 1) * s / d) overlaps and the overlapped length.
+    private static (int Index, double Weight)[][] AreaWeights(int sourceLength, int destinationLength)
+    {
+        var weights = new (int, double)[destinationLength][];
+        var step = (double)sourceLength / destinationLength;
+        var list = new List<(int, double)>();
+        for (var i = 0; i < destinationLength; i++)
+        {
+            double start = i * step, end = (i + 1) * step;
+            list.Clear();
+            var last = Math.Min(sourceLength, (int)Math.Ceiling(end));
+            for (var j = (int)Math.Floor(start); j < last; j++)
+            {
+                var overlap = Math.Min(end, j + 1) - Math.Max(start, j);
+                if (overlap > 0) list.Add((j, overlap));
+            }
+            weights[i] = list.ToArray();
+        }
+        return weights;
+    }
+
+    // One source row averaged horizontally; colour channels of a
+    // translucent row are weighted by alpha, which is the fourth channel.
+    private static void FilterRow(
+        ReadOnlySpan<byte> row,
+        (int Index, double Weight)[][] columns,
+        int channels,
+        bool opaque,
+        double[] filtered)
+    {
+        for (var x = 0; x < columns.Length; x++)
+        {
+            double c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+            foreach (var (column, weight) in columns[x])
+            {
+                var at = column * channels;
+                if (channels == 1)
+                {
+                    c0 += row[at] * weight;
+                    continue;
+                }
+                var alphaWeight = opaque ? weight : row[at + 3] * weight;
+                c0 += row[at] * alphaWeight;
+                c1 += row[at + 1] * alphaWeight;
+                c2 += row[at + 2] * alphaWeight;
+                c3 += opaque ? 0 : alphaWeight;
+            }
+            var to = x * channels;
+            filtered[to] = c0;
+            if (channels == 1) continue;
+            filtered[to + 1] = c1;
+            filtered[to + 2] = c2;
+            filtered[to + 3] = c3;
+        }
+    }
+
+    private static byte RoundChannel(double value)
+    {
+        var rounded = Math.Floor(value + 0.5);
+        return (byte)(rounded <= 0 ? 0 : rounded >= 255 ? 255 : rounded);
     }
 
     internal static void SetImageIoUseCache(bool useCache)
