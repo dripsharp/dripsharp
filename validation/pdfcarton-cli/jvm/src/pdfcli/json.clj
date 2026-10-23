@@ -53,7 +53,7 @@
             (= c \newline) (.append sb "\\n")
             (= c \formfeed) (.append sb "\\f")
             (= c \return) (.append sb "\\r")
-            (< (int c) 0x20) (.append sb (format "\\u%04x" (int c)))
+            (< (int c) 0x20) (.append sb (String/format java.util.Locale/ROOT "\\u%04x" (to-array [(int c)])))
             (Character/isHighSurrogate c)
             (if (and (< (inc i) n) (Character/isLowSurrogate (.charAt s (inc i))))
               (do (.append sb c) (.append sb (.charAt s (inc i))))

@@ -8,11 +8,20 @@
             [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing run-tests]]
+            [pdfcli.json :as json]
             [pdfcli.main :as main])
   (:import (com.fasterxml.jackson.databind ObjectMapper)
+           (java.awt.image BufferedImage)
            (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)
-           (java.util LinkedHashMap List Map)))
+           (java.util LinkedHashMap List Locale Locale$Category Map)
+           (org.apache.pdfbox.cos COSName)
+           (org.apache.pdfbox.pdmodel PDDocument PDPage PDResources)
+           (org.apache.pdfbox.pdmodel.common PDRectangle)
+           (org.apache.pdfbox.pdmodel.encryption AccessPermission)
+           (org.apache.pdfbox.pdmodel.font PDType1Font Standard14Fonts$FontName)
+           (org.apache.pdfbox.pdmodel.graphics.form PDFormXObject)
+           (org.apache.pdfbox.pdmodel.graphics.image LosslessFactory)))
 
 (def resources "research/pdfbox/pdfbox/src/test/resources/")
 
@@ -280,6 +289,11 @@
   (error! 1 "operation-failed" "form-fill" "--values" (out "multi-values.json") "--out" (out "x.pdf") @form-doc)
   (spit (out "malformed-values.json") "{\"TextField\":1}")
   (error! 2 "usage" "form-fill" "--values" (out "malformed-values.json") "--out" (out "x.pdf") @form-doc)
+  (spit (out "trailing-values.json") "{\"TextField\":\"x\"} {}")
+  (error! 2 "usage" "form-fill" "--values" (out "trailing-values.json") "--out" (out "trailing.pdf") @form-doc)
+  (spit (out "garbage-values.json") "{\"TextField\":\"x\"} garbage")
+  (error! 2 "usage" "form-fill" "--values" (out "garbage-values.json") "--out" (out "trailing.pdf") @form-doc)
+  (is (not (.exists (io/file (out "trailing.pdf")))))
   (error! 1 "no-acroform" "form-fill" "--values" (out "bad-values.json") "--out" (out "x.pdf") @cweb))
 
 (deftest timing-mode-reports-warm-median-and-allocations
@@ -314,8 +328,115 @@
     (is (= 4 (:exit bad)))
     (is (= "invalid-password" (get-in (parse (:out bad)) ["error" "code"])))))
 
+;; ---------------------------------------------------------------------------
+;; Focused checks of the contract's finer rules.
+
+(deftest canonical-json-encoding-follows-the-contract
+  (is (= (str "{\"s\":\"q\\\"\\\\/\\u0001\\n\\té\u007f\","
+              "\"f\":[612,595.276,0.1,0,null,null,10000000000,0.000015,1.4,-12.5],"
+              "\"m\":[1.235,0.5,0],"
+              "\"k\":{\"B\":3,\"a\":2,\"b\":1},"
+              "\"n\":null,\"t\":true,\"i\":[-7,4294967296],"
+              "\"u\":\"" (char 0xFFFD) "x😀" (char 0xFFFD) "\"}")
+         (json/write-str
+          (json/obj "s" (str "q\"\\/" (char 1) "\n\té\u007f")
+                    "f" [(float 612) (float 595.276) (float 0.1) (float -0.0) Float/NaN
+                         Float/POSITIVE_INFINITY (float 1e10) (float 1.5e-5) (float 1.4) (float -12.5)]
+                    "m" [(json/millis 1234567) (json/millis 500000) (json/millis 0)]
+                    "k" (json/sorted-obj {"b" 1 "a" 2 "B" 3})
+                    "n" nil
+                    "t" true
+                    "i" [(int -7) 4294967296]
+                    "u" (str (char 0xD800) "x😀" (char 0xDC00)))))))
+
+(defn- nested-resources-pdf
+  "A page whose forms nest, share a stream and refer back to their parent."
+  [path]
+  (with-open [doc (PDDocument.)]
+    (let [page (PDPage. PDRectangle/LETTER)
+          image (LosslessFactory/createFromImage doc (BufferedImage. 2 2 BufferedImage/TYPE_INT_RGB))
+          font (PDType1Font. Standard14Fonts$FontName/HELVETICA)
+          form (fn [] (doto (PDFormXObject. doc)
+                        (.setBBox (PDRectangle. 10 10))
+                        (.setResources (PDResources.))))
+          ^PDFormXObject fm1 (form)
+          ^PDFormXObject fm2 (form)
+          page-resources (PDResources.)]
+      (doto (.getResources fm1)
+        (.put (COSName/getPDFName "F2") font)
+        (.put (COSName/getPDFName "ImA") image)
+        (.put (COSName/getPDFName "Fm2") fm2))
+      (doto (.getResources fm2)
+        (.put (COSName/getPDFName "ImB") image)
+        (.put (COSName/getPDFName "Back") fm1))
+      (doto page-resources
+        (.put (COSName/getPDFName "F1") font)
+        (.put (COSName/getPDFName "Im9") image)
+        (.put (COSName/getPDFName "Fm1") fm1)
+        (.put (COSName/getPDFName "Fm3") fm2))
+      (.setResources page page-resources)
+      (.addPage doc page)
+      (.save doc (io/file path)))))
+
+(deftest resource-walk-descends-forms-and-stops-cycles
+  (nested-resources-pdf (out "nested.pdf"))
+  (let [{images :result} (ok! ["images"] "images" (out "nested.pdf"))
+        {fonts :result} (ok! ["fonts"] "fonts" (out "nested.pdf"))]
+    (is (= ["Fm1/Fm2/ImB" "Fm1/ImA" "Fm3/Back/ImA" "Fm3/ImB" "Im9"]
+           (mapv (fn [^Map i] (get i "name")) (get images "images"))))
+    (is (= ["F1" "Fm1/F2" "Fm3/Back/F2"]
+           (mapv (fn [^Map f] (get f "name")) (get fonts "fonts"))))))
+
+(defn- permission-bytes [granted]
+  (let [ap (AccessPermission.)]
+    (when granted
+      (.setCanPrint ap (contains? granted "print"))
+      (.setCanModify ap (contains? granted "modify"))
+      (.setCanExtractContent ap (contains? granted "extract"))
+      (.setCanModifyAnnotations ap (contains? granted "annotate"))
+      (.setCanFillInForm ap (contains? granted "fill-in"))
+      (.setCanExtractForAccessibility ap (contains? granted "extract-for-accessibility"))
+      (.setCanAssembleDocument ap (contains? granted "assemble"))
+      (.setCanPrintFaithful ap (contains? granted "print-faithful")))
+    (.getPermissionBytes ap)))
+
+(def ^:private info-keys
+  ["version" "headerVersion" "pageCount" "encrypted" "encryption" "info" "xmp" "pages"])
+
+(deftest encrypt-honours-passwords-and-permissions
+  (doseq [[key-length permissions] [["40" nil] ["128" ""] ["256" "print,extract,assemble"]]]
+    (testing (str key-length " " (pr-str permissions))
+      (let [file (out (str "encrypted-" key-length ".pdf"))
+            expected (permission-bytes
+                      (when permissions (set (remove str/blank? (str/split permissions #",")))))]
+        (apply ok! (conj written-keys "encryption")
+               (concat ["encrypt" "--owner-password" "own" "--user-password" "usr"
+                        "--key-length" key-length]
+                       (when permissions ["--permissions" permissions])
+                       ["--out" file @hello]))
+        (let [{user :result} (ok! info-keys "info" "--password" "usr" file)
+              {owner :result} (ok! info-keys "info" "--password" "own" file)]
+          ;; AccessPermission.isOwnerPermission() is true whenever every permission is granted.
+          (is (= [(Integer/parseInt key-length) expected (= expected (permission-bytes nil))]
+                 (mapv (fn [k] (get-in user ["encryption" k]))
+                       ["keyLength" "permissions" "ownerPermission"])))
+          (is (= true (get-in owner ["encryption" "ownerPermission"]))))
+        (error! 4 "invalid-password" "info" "--password" "wrong" file)))))
+
+(deftest numbered-file-names-use-ascii-digits-in-any-locale
+  (let [saved (Locale/getDefault Locale$Category/FORMAT)]
+    (try
+      (Locale/setDefault Locale$Category/FORMAT (Locale/forLanguageTag "ar-EG-u-nu-arab"))
+      (let [{:keys [result]} (ok! ["outDir" "parts"] "split" "--ranges" "1" "--out-dir"
+                                  (out "split-locale") @hello)]
+        (is (= "part-001.pdf" (get (first (get result "parts")) "file"))))
+      (let [{:keys [result]} (ok! ["dpi" "imageType" "outDir" "pages"] "render" "--dpi" "9"
+                                  "--out-dir" (out "render-locale") @hello)]
+        (is (= "page-0001.png" (get (first (get result "pages")) "file"))))
+      (finally (Locale/setDefault Locale$Category/FORMAT saved)))))
+
 (defn- delete-tree! [^java.io.File f]
-  (when (.isDirectory f) (run! delete-tree! (.listFiles f)))
+  (when (.isDirectory f) (doseq [child (.listFiles f)] (delete-tree! child)))
   (.delete f))
 
 (defn -main [& _]

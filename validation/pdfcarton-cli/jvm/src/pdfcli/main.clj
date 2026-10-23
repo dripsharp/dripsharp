@@ -7,14 +7,14 @@
   (:require [clojure.string :as str]
             [pdfcli.json :as json :refer [obj]])
   (:import (com.fasterxml.jackson.core JsonParser$Feature)
-           (com.fasterxml.jackson.databind JsonNode ObjectMapper)
+           (com.fasterxml.jackson.databind DeserializationFeature JsonNode ObjectMapper)
            (java.awt.image BufferedImage)
            (java.io File OutputStreamWriter)
            (java.lang.management ManagementFactory)
            (java.nio.charset StandardCharsets)
            (java.nio.file Files)
            (java.security MessageDigest)
-           (java.util List)
+           (java.util List Locale)
            (javax.imageio ImageIO)
            (org.apache.pdfbox Loader)
            (org.apache.pdfbox.cos COSArray COSBase COSDictionary COSName COSStream COSString)
@@ -212,9 +212,14 @@
 ;; ---------------------------------------------------------------------------
 ;; Helpers
 
+(defn- fmt
+  "String formatting with ASCII digits whatever the default locale."
+  ^String [^String pattern & args]
+  (String/format Locale/ROOT pattern (to-array args)))
+
 (defn- sha256-hex [^bytes data]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256") data)]
-    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
+    (apply str (map #(fmt "%02x" (bit-and (int %) 0xff)) digest))))
 
 (defn- file-sha256 [^String path]
   (sha256-hex (Files/readAllBytes (.toPath (File. path)))))
@@ -237,7 +242,7 @@
           (aset out (+ o 2) (unchecked-byte argb))
           (aset out (+ o 3) (unchecked-byte (unsigned-bit-shift-right argb 24)))))
       (.update md out))
-    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) (.digest md)))))
+    (apply str (map #(fmt "%02x" (bit-and (int %) 0xff)) (.digest md)))))
 
 (defn- child-file ^File [^String dir ^String name] (File. dir name))
 
@@ -411,7 +416,7 @@
        :out-dir out-dir
        :pages (vec (for [p pages]
                      (let [image (.renderImageWithDPI renderer (int (dec p)) dpi type)
-                           name (format "page-%04d.png" p)]
+                           name (fmt "page-%04d.png" p)]
                        (when out-dir
                          (ImageIO/write image "png" (child-file out-dir name)))
                        {:page p :width (.getWidth image) :height (.getHeight image)
@@ -481,7 +486,7 @@
                     ^PDImageXObject image (safe #(.getXObject resources (pdf-name name)))
                     s ^COSStream (dict-get (xobject-dict resources) name)
                     decoded (when image (safe #(.getImage image)))
-                    file (when (and decoded out-dir) (format "page-%04d-%03d.png" p seq-no))]
+                    file (when (and decoded out-dir) (fmt "page-%04d-%03d.png" p seq-no))]
                 (when file (ImageIO/write ^BufferedImage decoded "png" (child-file out-dir file)))
                 (conj! result
                        (obj "page" p
@@ -634,7 +639,9 @@
   (let [f (File. path)]
     (when-not (and (.isFile f) (.canRead f))
       (fail! "io" (str "Cannot read values file: " path)))
-    (let [mapper (doto (ObjectMapper.) (.configure JsonParser$Feature/STRICT_DUPLICATE_DETECTION true))
+    (let [mapper (doto (ObjectMapper.)
+                   (.configure JsonParser$Feature/STRICT_DUPLICATE_DETECTION true)
+                   (.configure DeserializationFeature/FAIL_ON_TRAILING_TOKENS true))
           ^JsonNode node (try (.readTree mapper f)
                               (catch Exception e (fail! "usage" (str "Invalid values JSON: " (.getMessage e)))))]
       (when-not (and node (.isObject node))
@@ -719,8 +726,8 @@
                          data (when ef (.toByteArray ef))
                          params (when ef (.getCOSDictionary (.getCOSObject ef) COSName/PARAMS))
                          file (when (and data out-dir)
-                                (format "%03d-%s" (inc i)
-                                        (sanitize-file-name (or file-name k "attachment"))))]
+                                (fmt "%03d-%s" (inc i)
+                                     (sanitize-file-name (or file-name k "attachment"))))]
                      (when file
                        (Files/write (.toPath (child-file out-dir file)) ^bytes data
                                     ^"[Ljava.nio.file.OpenOption;" (make-array java.nio.file.OpenOption 0)))
@@ -755,7 +762,7 @@
       (doseq [[s e] ranges]
         (when (> s e) (fail! "page-range" (str "Range selects no page of " n))))
       (vec (for [[i [s e]] (map-indexed vector ranges)]
-             (let [file (format "part-%03d.pdf" (inc i))
+             (let [file (fmt "part-%03d.pdf" (inc i))
                    parts (.split (doto (Splitter.)
                                    (.setStartPage (int s))
                                    (.setEndPage (int e))
@@ -915,18 +922,21 @@
 
 (defn- run-timed [command ctx warmup repeat]
   (dotimes [_ warmup] (execute command ctx))
-  (let [runs (vec (for [_ (range repeat)]
-                    (let [a0 (allocated-bytes)
+  (let [last-value (volatile! nil)
+        runs (vec (for [_ (range repeat)]
+                    (let [_ (vreset! last-value nil)
+                          a0 (allocated-bytes)
                           t0 (System/nanoTime)
                           value (execute command ctx)
                           t1 (System/nanoTime)
                           a1 (allocated-bytes)]
-                      {:value value :nanos (- t1 t0) :bytes (- a1 a0)})))
+                      (vreset! last-value value)
+                      {:nanos (- t1 t0) :bytes (- a1 a0)})))
         nanos (map :nanos runs)
         bytes (map :bytes runs)
         mn (median nanos)
         mb (median bytes)]
-    {:value (:value (peek runs))
+    {:value @last-value
      :timing (obj "warmup" warmup
                   "repeat" repeat
                   "iterationsMs" (mapv json/millis nanos)

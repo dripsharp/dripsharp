@@ -232,7 +232,8 @@ to bottom, each pixel left to right as four bytes R, G, B, A taken from the
 32-bit ARGB value `BufferedImage.getRGB(x, y)` returns.
 
 **Output file names** inside `--out-dir` are fixed by each command; numbers
-are 1-based and zero-padded to the stated width (wider when needed).
+are 1-based, written in ASCII digits whatever the locale, and zero-padded to
+the stated width (wider when needed).
 
 ## Timing mode
 
@@ -458,7 +459,8 @@ Each field:
 
 `VALUES.json` is a UTF-8 JSON object mapping fully qualified field names to a
 string or an array of strings. Anything else (not an object, another value
-type, duplicate keys, invalid JSON) is a `usage` error. The fields are set in
+type, duplicate keys, invalid JSON, anything but whitespace after the object)
+is a `usage` error. The fields are set in
 ordinal order of their names: `getAcroForm().getField(name)` (`no-acroform`
 without an AcroForm, `field-not-found` when it returns null); a string calls
 `PDField.setValue(String)`; an array calls `PDChoice.setValue(List)` on a
