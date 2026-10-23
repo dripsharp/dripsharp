@@ -573,6 +573,40 @@ public sealed class PdfConsumerTests
             $"ICC LUT toRGB: [{string.Join(", ", lutRgb)}], Java [0, 0.57972074, 0.6523995].");
     }
 
+    // dripsharp-117: test.unc.pdf fills its pages with gray 1 through a v2
+    // gray profile whose media white point is D65, inside a transparency
+    // group of the HP sRGB profile (also with a D65 wtpt). Java maps gray to
+    // D50 whatever the wtpt, so its white is sRGB white; scaling D50 by the
+    // D65 wtpt painted #EBFFFF. The fixtures carry the document profiles'
+    // white points, kTRC gamma, primaries and 1024-sample sRGB curve; the
+    // expected values are Java 25 / PDFBox 3.0.8 PDICCBased.toRGB (and
+    // ICC_ColorSpace.toCIEXYZ) of both these fixtures and the document's own
+    // profiles (objects 111 and 79), which agree.
+    [Fact]
+    public void GrayConvertsThroughD65WhitePointProfilesAsJavaDoes()
+    {
+        using var document = new PDDocument();
+        var gray = IccRenderFixtures.IccSpace(
+            document, IccRenderFixtures.GrayProfile(0x0000F353, 0x000116CF), 1);
+        var rgb = IccRenderFixtures.IccSpace(document, IccRenderFixtures.SrgbCurveProfile(), 3);
+        static void Check(string name, float[] expected, float[] actual) =>
+            Assert.True(expected.Length == actual.Length &&
+                        expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= 0.0005f),
+                $"{name}: expected [{string.Join(", ", expected)}], got [{string.Join(", ", actual)}].");
+
+        Check("gray 0", [0f, 0f, 0f], gray.ToRGB([0f]));
+        Check("gray 0.5", [0.50399023f, 0.50399023f, 0.50399023f], gray.ToRGB([0.5f]));
+        Check("gray 1", [1f, 0.99998474f, 1f], gray.ToRGB([1f]));
+        Check("rgb 0", [0f, 0f, 0f], rgb.ToRGB([0f, 0f, 0f]));
+        Check("rgb 0.5", [0.5000534f, 0.4999771f, 0.50006866f], rgb.ToRGB([0.5f, 0.5f, 0.5f]));
+        Check("rgb 1", [1f, 0.99993896f, 1f], rgb.ToRGB([1f, 1f, 1f]));
+
+        var grayIcc = new Compat.JavaIccColorSpace(new Compat.JavaIccProfile(
+            IccRenderFixtures.Signed(IccRenderFixtures.GrayProfile(0x0000F353, 0x000116CF))));
+        Check("gray 0.5 toCIEXYZ", [0.20996094f, 0.21777344f, 0.17962646f], grayIcc.ToCieXyz([0.5f]));
+        Check("gray 1 toCIEXYZ", [0.9642029f, 1f, 0.82489014f], grayIcc.ToCieXyz([1f]));
+    }
+
     // Java's ColorConvertOp renders relative colorimetric when the first
     // profile of its transform (the source's) is an output profile and
     // perceptually otherwise; toRGB and fromRGB are perceptual. Neither looks
@@ -1321,7 +1355,10 @@ internal static class IccRenderFixtures
 
     // A minimal v2 display profile: GRAY data, XYZ PCS, D50 wtpt and a
     // gamma 2.2 kTRC.
-    internal static byte[] GrayProfile()
+    internal static byte[] GrayProfile() => GrayProfile(0x0000F6D6, 0x0000D32D);
+
+    // GrayProfile with the given s15Fixed16 wtpt X and Z (Y is 1).
+    internal static byte[] GrayProfile(uint whiteX, uint whiteZ)
     {
         var data = new byte[192];
         void U32(int at, uint value)
@@ -1353,9 +1390,9 @@ internal static class IccRenderFixtures
         U32(148, 176);
         U32(152, 14);
         Ascii(156, "XYZ ");
-        U32(164, 0x0000F6D6);
+        U32(164, whiteX);
         U32(168, 0x00010000);
-        U32(172, 0x0000D32D);
+        U32(172, whiteZ);
         Ascii(176, "curv");
         U32(184, 1);
         data[188] = 2;
@@ -1422,6 +1459,68 @@ internal static class IccRenderFixtures
         U32(304, 1);
         data[308] = 1;
         data[309] = 0xCD; // gamma 1.8
+        return data;
+    }
+
+    // A v2 display profile with the HP sRGB IEC61966-2.1 profile's
+    // s15Fixed16 primaries and D65 wtpt, and the sRGB curve sampled at 1024
+    // points (as that profile samples it) shared by all three channels.
+    internal static byte[] SrgbCurveProfile()
+    {
+        const int samples = 1024;
+        var data = new byte[308 + samples * 2];
+        void U32(int at, uint value)
+        {
+            data[at] = (byte)(value >> 24);
+            data[at + 1] = (byte)(value >> 16);
+            data[at + 2] = (byte)(value >> 8);
+            data[at + 3] = (byte)value;
+        }
+        void Ascii(int at, string text)
+        {
+            for (var index = 0; index < text.Length; index++)
+                data[at + index] = (byte)text[index];
+        }
+        void Xyz(int at, uint x, uint y, uint z)
+        {
+            Ascii(at, "XYZ ");
+            U32(at + 8, x);
+            U32(at + 12, y);
+            U32(at + 16, z);
+        }
+        U32(0, (uint)data.Length);
+        U32(8, 0x02100000);
+        Ascii(12, "mntr");
+        Ascii(16, "RGB ");
+        Ascii(20, "XYZ ");
+        Ascii(36, "acsp");
+        U32(68, 0x0000F6D6);
+        U32(72, 0x00010000);
+        U32(76, 0x0000D32D);
+        uint[] signatures =
+            [0x7258595a, 0x6758595a, 0x6258595a, 0x77747074, 0x72545243, 0x67545243, 0x62545243];
+        U32(128, (uint)signatures.Length);
+        for (var tag = 0; tag < signatures.Length; tag++)
+        {
+            var entry = 132 + tag * 12;
+            U32(entry, signatures[tag]);
+            U32(entry + 4, tag < 4 ? (uint)(216 + tag * 20) : 296u);
+            U32(entry + 8, tag < 4 ? 20u : 12u + samples * 2);
+        }
+        Xyz(216, 0x6FA2, 0x38F5, 0x0390);
+        Xyz(236, 0x6299, 0xB785, 0x18DA);
+        Xyz(256, 0x24A0, 0x0F84, 0xB6CF);
+        Xyz(276, 0xF351, 0x10000, 0x116CC);
+        Ascii(296, "curv");
+        U32(304, samples);
+        for (var index = 0; index < samples; index++)
+        {
+            var value = index / (double)(samples - 1);
+            var linear = value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+            var sample = (int)Math.Round(linear * 65535, MidpointRounding.AwayFromZero);
+            data[308 + index * 2] = (byte)(sample >> 8);
+            data[309 + index * 2] = (byte)sample;
+        }
         return data;
     }
 

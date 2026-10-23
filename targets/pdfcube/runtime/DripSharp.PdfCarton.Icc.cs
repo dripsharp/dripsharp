@@ -25,6 +25,8 @@ internal sealed class PdfCartonIccProfileData
     private const uint CurveType = 0x63757276; // curv
     private const uint ParametricCurveType = 0x70617261; // para
     private const uint XyzType = 0x58595a20; // XYZ
+    // The ICC PCS illuminant as its s15Fixed16 encoding decodes.
+    private static readonly float[] D50White = { 0x0000F6D6 / 65536f, 1f, 0x0000D32D / 65536f };
 
     private readonly byte[] data;
     private readonly Dictionary<uint, TagRecord> tags;
@@ -297,9 +299,12 @@ internal sealed class PdfCartonIccProfileData
     {
         if (NumberOfComponents == 1)
         {
+            // Java maps gray to the D50 PCS white scaled by the kTRC, for
+            // both its perceptual and relative colorimetric transforms,
+            // whatever the profile's media white point: a v2 profile whose
+            // wtpt is D65 still converts gray 1 to D50 white and sRGB white.
             var curve = ReadCurve(0x6b545243); // kTRC
-            var white = ReadXyz(0x77747074); // wtpt
-            return MatrixTransform.Gray(curve, white);
+            return MatrixTransform.Gray(curve, D50White);
         }
         if (NumberOfComponents == 3)
         {
