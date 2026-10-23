@@ -1725,21 +1725,65 @@ public
 #endif
 sealed class JavaCrc32
 {
+    // Reflected CRC-32 (polynomial 0xEDB88320, the zlib/PNG/ZIP checksum)
+    // computed by slicing-by-8: eight 256-entry tables, where table k maps a
+    // byte to its CRC contribution after k further zero bytes.
+    private const uint Polynomial = 0xedb88320u;
+    private static readonly uint[] Tables = BuildTables();
     private uint crc = uint.MaxValue;
+
+    private static uint[] BuildTables()
+    {
+        var tables = new uint[8 * 256];
+        for (uint value = 0; value < 256; value++)
+        {
+            var entry = value;
+            for (var bit = 0; bit < 8; bit++)
+                entry = (entry >> 1) ^ ((entry & 1) == 0 ? 0u : Polynomial);
+            tables[value] = entry;
+        }
+        for (var table = 1; table < 8; table++)
+        {
+            for (var value = 0; value < 256; value++)
+            {
+                var previous = tables[((table - 1) * 256) + value];
+                tables[(table * 256) + value] = (previous >> 8) ^ tables[previous & 0xff];
+            }
+        }
+        return tables;
+    }
 
     public void Update(sbyte[] values, int offset, int length)
     {
         ArgumentNullException.ThrowIfNull(values);
         if (offset < 0 || length < 0 || offset > values.Length - length)
             throw new IndexOutOfRangeException();
-        for (var index = offset; index < offset + length; index++)
+        var tables = Tables;
+        var current = crc;
+        var index = offset;
+        var end = offset + length;
+        for (; end - index >= 8; index += 8)
         {
-            crc ^= unchecked((byte)values[index]);
-            for (var bit = 0; bit < 8; bit++)
-            {
-                crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0u : 0xedb88320u);
-            }
+            var low = current ^ (unchecked((byte)values[index])
+                | ((uint)unchecked((byte)values[index + 1]) << 8)
+                | ((uint)unchecked((byte)values[index + 2]) << 16)
+                | ((uint)unchecked((byte)values[index + 3]) << 24));
+            var high = unchecked((byte)values[index + 4])
+                | ((uint)unchecked((byte)values[index + 5]) << 8)
+                | ((uint)unchecked((byte)values[index + 6]) << 16)
+                | ((uint)unchecked((byte)values[index + 7]) << 24);
+            current = tables[(7 * 256) + (low & 0xff)]
+                ^ tables[(6 * 256) + ((low >> 8) & 0xff)]
+                ^ tables[(5 * 256) + ((low >> 16) & 0xff)]
+                ^ tables[(4 * 256) + (low >> 24)]
+                ^ tables[(3 * 256) + (high & 0xff)]
+                ^ tables[(2 * 256) + ((high >> 8) & 0xff)]
+                ^ tables[256 + ((high >> 16) & 0xff)]
+                ^ tables[high >> 24];
         }
+        for (; index < end; index++)
+            current = (current >> 8) ^ tables[(current ^ unchecked((byte)values[index])) & 0xff];
+        crc = current;
     }
 
     public long GetValue() => crc ^ uint.MaxValue;

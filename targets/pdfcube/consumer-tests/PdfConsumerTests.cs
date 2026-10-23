@@ -5990,6 +5990,92 @@ public sealed class JavaByteArrayInputStreamMarkConsumerTests
     }
 }
 
+// java.util.zip.CRC32 behind FileSystemFontProvider.computeHash, which checksums
+// every system font file when the font cache is built. A bit-at-a-time loop
+// made the first font scan of /System/Library/Fonts take about 35 s.
+// Expected values were taken from java.util.zip.CRC32 on the JVM.
+public sealed class JavaCrc32ConsumerTests
+{
+    private static long Crc(sbyte[] values, params int[] splits)
+    {
+        var crc = new Compat.JavaCrc32();
+        var offset = 0;
+        foreach (var split in splits)
+        {
+            crc.Update(values, offset, split - offset);
+            offset = split;
+        }
+        crc.Update(values, offset, values.Length - offset);
+        return crc.GetValue();
+    }
+
+    private static sbyte[] Latin1(string text) =>
+        Array.ConvertAll(System.Text.Encoding.Latin1.GetBytes(text), value => unchecked((sbyte)value));
+
+    private static sbyte[] Pattern(int length)
+    {
+        var values = new sbyte[length];
+        for (var index = 0; index < length; index++)
+            values[index] = unchecked((sbyte)((index * 31) ^ (index >>> 11)));
+        return values;
+    }
+
+    [Theory]
+    [InlineData("", 0x00000000L)]
+    [InlineData("a", 0xe8b7be43L)]
+    [InlineData("abc", 0x352441c2L)]
+    [InlineData("123456789", 0xcbf43926L)]
+    [InlineData("The quick brown fox jumps over the lazy dog", 0x414fa339L)]
+    public void ShortInputsMatchJava(string text, long expected)
+    {
+        Assert.Equal(expected, Crc(Latin1(text)));
+        if (text.Length > 1) Assert.Equal(expected, Crc(Latin1(text), 1, text.Length - 1));
+    }
+
+    [Fact]
+    public void LargeAndSplitInputsMatchJava()
+    {
+        var values = Pattern(4 * 1024 * 1024);
+        Assert.Equal(0x80e3b3c4L, Crc(values));
+        Assert.Equal(0x80e3b3c4L, Crc(values, 3, 4096, values.Length - 5));
+        var ones = new sbyte[1000];
+        Array.Fill(ones, (sbyte)-1);
+        Assert.Equal(0xe0533230L, Crc(ones));
+    }
+
+    [Fact]
+    public void UpdateHonoursTheRangeAndRejectsBadBounds()
+    {
+        var crc = new Compat.JavaCrc32();
+        var padded = Latin1("xx123456789yy");
+        crc.Update(padded, 2, 9);
+        crc.Update(padded, 13, 0);
+        Assert.Equal(0xcbf43926L, crc.GetValue());
+        Assert.Throws<IndexOutOfRangeException>(() => crc.Update(padded, -1, 2));
+        Assert.Throws<IndexOutOfRangeException>(() => crc.Update(padded, 12, 2));
+        Assert.Throws<IndexOutOfRangeException>(() => crc.Update(padded, 0, -1));
+        Assert.Equal(0xcbf43926L, crc.GetValue());
+    }
+
+    [Fact]
+    public void ChecksumsSixtyFourMebibytesQuickly()
+    {
+        var values = Pattern(4 * 1024 * 1024);
+        var crc = new Compat.JavaCrc32();
+        crc.Update(values, 0, values.Length);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        for (var round = 0; round < 16; round++)
+        {
+            for (var offset = 0; offset < values.Length; offset += 4096)
+                crc.Update(values, offset, 4096);
+        }
+        watch.Stop();
+        Assert.NotEqual(0L, crc.GetValue());
+        Assert.True(watch.ElapsedMilliseconds < 1000,
+            $"CRC-32 of 64 MiB in 4 KiB updates took {watch.ElapsedMilliseconds} ms.");
+    }
+}
+
 // java.util.WeakHashMap behind LegacyPDFStreamEngine.fontHeightMap (one lookup
 // per glyph of PDFTextStripper output) and TilingPaintFactory. It was a list
 // that every operation swept for collected keys and then scanned with equals.
