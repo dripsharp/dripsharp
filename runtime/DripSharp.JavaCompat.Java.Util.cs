@@ -2114,11 +2114,18 @@ sealed class JavaListIterator<T> : JavaIterator<T>
             return list[cursor++];
         }
         prepared = false;
+        if (iterator is JavaRemovableIterator removable) removable.MarkReturned();
         return iterator!.Current;
     }
 
     public void Remove()
     {
+        // Map views (entrySet() among them) enumerate with removable iterators.
+        if (list is null && iterator is JavaRemovableIterator removable)
+        {
+            removable.Remove();
+            return;
+        }
         if (list is null)
             throw new NotSupportedException(
                 "This Java iterator does not expose mutable removal semantics.");
@@ -3189,27 +3196,57 @@ class JavaLinkedHashMap<K, V> :
     JavaMapValueUpdater<K, V>
     where K : notnull
 {
-    private readonly struct StorageKey(K value)
+    // Keys whose Java equals and hashCode reduce to .NET Equals and
+    // GetHashCode: integral primitives, char, bool and enums (compared
+    // without boxing), and sealed classes that JavaCompat.Equals does not
+    // treat specially (not collections, arrays, URIs or read-only adapters).
+    // float and double are excluded because Java compares their bits. Hash
+    // values only place entries in buckets and are never observable.
+    private static readonly bool PlainKeys = HasPlainEquality(typeof(K));
+
+    private static bool HasPlainEquality(Type type)
     {
-        internal K Value { get; } = value;
-        public static implicit operator StorageKey(K value) => new(value);
+        if (type.IsEnum) return true;
+        if (type.IsValueType)
+            return type == typeof(int) || type == typeof(long) || type == typeof(short) ||
+                   type == typeof(sbyte) || type == typeof(byte) || type == typeof(char) ||
+                   type == typeof(bool) || type == typeof(ushort) || type == typeof(uint) ||
+                   type == typeof(ulong);
+        return type.IsSealed &&
+               !typeof(IEnumerable).IsAssignableFrom(type) &&
+               !typeof(JavaReadOnlyAdapter).IsAssignableFrom(type) &&
+               !typeof(Uri).IsAssignableFrom(type);
     }
 
-    private sealed class StorageKeyComparer : IEqualityComparer<StorageKey>
+    private static int HashOf(K key)
     {
-        public bool Equals(StorageKey left, StorageKey right) =>
-            JavaCompat.Equals(left.Value, right.Value);
-        public int GetHashCode(StorageKey value) => JavaCompat.HashCode(value.Value);
+        if (key is null) return 0;
+        return PlainKeys ? key.GetHashCode() : JavaCompat.HashCode(key);
+    }
+
+    // As in Java, the probe key's equals receives the stored key.
+    private static bool KeysEqual(K probe, K stored)
+    {
+        if (!PlainKeys) return JavaCompat.Equals(probe, stored);
+        if (typeof(K).IsValueType) return EqualityComparer<K>.Default.Equals(probe, stored);
+        return ReferenceEquals(probe, stored) || (probe is not null && probe.Equals(stored));
     }
 
     // Each entry is both the map's storage and the Map.Entry that entrySet()
     // and removeEldestEntry hand out, as in Java. Entries form an intrusive
     // doubly linked list in iteration order; a removed entry is unlinked.
+    // Each entry is also chained into its hash bucket by NextInBucket.
     private sealed class Entry : JavaMapEntry<K, V>
     {
-        internal Entry(K key, V value, long stamp)
-            : base(key, value, mutable: true) => Stamp = stamp;
+        internal Entry(K key, V value, long stamp, int hash)
+            : base(key, value, mutable: true)
+        {
+            Stamp = stamp;
+            Hash = hash;
+        }
 
+        internal readonly int Hash;
+        internal Entry? NextInBucket;
         internal Entry? Before;
         internal Entry? After;
         // Insertion sequence number, or -1 once the entry has left the map.
@@ -3226,11 +3263,21 @@ class JavaLinkedHashMap<K, V> :
 
     private sealed class KeyComparer : IEqualityComparer<K>
     {
-        public bool Equals(K? left, K? right) => JavaCompat.Equals(left, right);
-        public int GetHashCode(K value) => JavaCompat.HashCode(value);
+        public bool Equals(K? left, K? right) => KeysEqual(left!, right!);
+        public int GetHashCode(K value) => HashOf(value);
     }
 
-    private readonly Dictionary<StorageKey, Entry> entries;
+    private const int DefaultBuckets = 8;
+    private const int MaximumBuckets = 1 << 30;
+    private static readonly Entry?[] NoBuckets = new Entry?[0];
+
+    // A chained hash table with a power-of-two bucket count, allocated on the
+    // first insertion and doubled when it is three quarters full. Entries
+    // keep their hash, so growing relinks them without rehashing keys.
+    private Entry?[] buckets = NoBuckets;
+    private int bucketShift;
+    private int count;
+    private readonly int initialBuckets;
     private Entry? head;
     private Entry? tail;
     private long nextStamp;
@@ -3248,9 +3295,82 @@ class JavaLinkedHashMap<K, V> :
         if (initialCapacity < 0) throw new ArgumentOutOfRangeException(nameof(initialCapacity));
         if (!(loadFactor > 0) || float.IsNaN(loadFactor))
             throw new ArgumentOutOfRangeException(nameof(loadFactor));
-        entries = new Dictionary<StorageKey, Entry>(initialCapacity, new StorageKeyComparer());
+        var size = DefaultBuckets;
+        if (initialCapacity > 0)
+        {
+            // Room for initialCapacity entries at three quarters full.
+            var wanted = initialCapacity >= MaximumBuckets / 4 * 3
+                ? MaximumBuckets
+                : (int)Math.Min(MaximumBuckets, (initialCapacity * 4L + 2) / 3);
+            size = 2;
+            while (size < wanted) size <<= 1;
+        }
+        initialBuckets = size;
         this.accessOrder = accessOrder;
     }
+
+    private int BucketOf(int hash) =>
+        (int)(unchecked((uint)hash * 2654435769u) >> bucketShift);
+
+    private Entry? Find(K key) => count == 0 ? null : Find(key, HashOf(key));
+
+    private Entry? Find(K key, int hash)
+    {
+        if (count == 0) return null;
+        for (var entry = buckets[BucketOf(hash)]; entry is not null; entry = entry.NextInBucket)
+            if (entry.Hash == hash && KeysEqual(key, entry.Key)) return entry;
+        return null;
+    }
+
+    private void AddToBuckets(Entry entry)
+    {
+        if (buckets.Length == 0) Allocate(initialBuckets);
+        else if (count >= buckets.Length - (buckets.Length >> 2) && buckets.Length < MaximumBuckets)
+            Allocate(buckets.Length << 1);
+        var index = BucketOf(entry.Hash);
+        entry.NextInBucket = buckets[index];
+        buckets[index] = entry;
+        count++;
+    }
+
+    private void Allocate(int size)
+    {
+        var shift = 32;
+        for (var length = size; length > 1; length >>= 1) shift--;
+        buckets = new Entry?[size];
+        bucketShift = shift;
+        for (var entry = head; entry is not null; entry = entry.After)
+        {
+            var index = BucketOf(entry.Hash);
+            entry.NextInBucket = buckets[index];
+            buckets[index] = entry;
+        }
+    }
+
+    private void RemoveFromBuckets(Entry entry)
+    {
+        var index = BucketOf(entry.Hash);
+        Entry? previous = null;
+        for (var current = buckets[index]; current is not null; current = current.NextInBucket)
+        {
+            if (ReferenceEquals(current, entry))
+            {
+                if (previous is null) buckets[index] = current.NextInBucket;
+                else previous.NextInBucket = current.NextInBucket;
+                current.NextInBucket = null;
+                count--;
+                return;
+            }
+            previous = current;
+        }
+    }
+
+    private void RemoveEntry(Entry entry)
+    {
+        RemoveFromBuckets(entry);
+        Detach(entry);
+    }
+
     public JavaLinkedHashMap(IEnumerable<KeyValuePair<K, V>> values) : this()
     {
         PutAll(values);
@@ -3258,7 +3378,7 @@ class JavaLinkedHashMap<K, V> :
 
     protected internal virtual bool RemoveEldestEntry(JavaMapEntry<K, V> eldest) => false;
 
-    public int Count => entries.Count;
+    public int Count => count;
     public bool IsReadOnly => false;
     bool IDictionary.IsFixedSize => false;
     bool IDictionary.IsReadOnly => false;
@@ -3272,7 +3392,7 @@ class JavaLinkedHashMap<K, V> :
     {
         get
         {
-            if (!entries.TryGetValue(key, out var entry)) throw new KeyNotFoundException();
+            var entry = Find(key) ?? throw new KeyNotFoundException();
             RecordAccess(entry);
             return entry.Stored;
         }
@@ -3289,35 +3409,42 @@ class JavaLinkedHashMap<K, V> :
 
     internal V Get(K key)
     {
-        if (!entries.TryGetValue(key, out var entry)) return default!;
+        var entry = Find(key);
+        if (entry is null) return default!;
         RecordAccess(entry);
         return entry.Stored;
     }
 
     internal V GetOrDefault(K key, V fallback)
     {
-        if (!entries.TryGetValue(key, out var entry)) return fallback;
+        var entry = Find(key);
+        if (entry is null) return fallback;
         RecordAccess(entry);
         return entry.Stored;
     }
 
     internal V PutIfAbsent(K key, V value)
     {
-        if (entries.TryGetValue(key, out var entry))
+        var hash = HashOf(key);
+        var entry = Find(key, hash);
+        if (entry is not null)
         {
             var previous = entry.Stored;
             RecordAccess(entry);
             if (previous is not null) return previous;
+            entry.Stored = value;
+            return previous;
         }
-        return Put(key, value);
+        Insert(key, value, hash);
+        return default!;
     }
 
     internal V ComputeIfAbsent(K key, Func<K, V> factory)
     {
-        var present = entries.TryGetValue(key, out var entry);
-        if (present)
+        var entry = Find(key);
+        if (entry is not null)
         {
-            var current = entry!.Stored;
+            var current = entry.Stored;
             RecordAccess(entry);
             if (current is not null) return current;
         }
@@ -3329,23 +3456,31 @@ class JavaLinkedHashMap<K, V> :
 
     internal V Put(K key, V value)
     {
-        if (entries.TryGetValue(key, out var existing))
+        var hash = HashOf(key);
+        var existing = Find(key, hash);
+        if (existing is not null)
         {
             var previous = existing.Stored;
             existing.Stored = value;
             RecordAccess(existing);
             return previous;
         }
+        Insert(key, value, hash);
+        return default!;
+    }
 
-        // Two key hashes per insertion: the miss above and this Add.
-        var entry = new Entry(key, value, nextStamp++);
-        entries.Add(key, entry);
+    // Adds a mapping for a key known to be absent, then offers the eldest
+    // entry to removeEldestEntry, which (as in Java) receives the entry itself.
+    private void Insert(K key, V value, int hash)
+    {
+        var entry = new Entry(key, value, nextStamp, hash);
+        // Bucket first: growing the table relinks the entries already in the list.
+        AddToBuckets(entry);
+        nextStamp++;
         Link(entry);
-        // Like Java, removeEldestEntry receives the eldest entry itself.
         var eldest = head!;
         if (RemoveEldestEntry(eldest))
             Remove(eldest.Key);
-        return default!;
     }
 
     internal void PutAll(IEnumerable<KeyValuePair<K, V>> values)
@@ -3355,7 +3490,7 @@ class JavaLinkedHashMap<K, V> :
 
     internal void ReplaceValueWithoutAccess(K key, V value)
     {
-        if (!entries.TryGetValue(key, out var entry)) throw new KeyNotFoundException();
+        var entry = Find(key) ?? throw new KeyNotFoundException();
         entry.Stored = value;
     }
 
@@ -3431,36 +3566,37 @@ class JavaLinkedHashMap<K, V> :
 
     public void Add(K key, V value)
     {
-        if (entries.ContainsKey(key)) throw new ArgumentException("An item with the same key has already been added.");
+        if (Find(key) is not null) throw new ArgumentException("An item with the same key has already been added.");
         Put(key, value);
     }
 
-    public bool ContainsKey(K key) => entries.ContainsKey(key);
+    public bool ContainsKey(K key) => Find(key) is not null;
 
     public bool Remove(K key)
     {
-        if (!entries.TryGetValue(key, out var entry)) return false;
-        entries.Remove(key);
-        Detach(entry);
+        var entry = Find(key);
+        if (entry is null) return false;
+        RemoveEntry(entry);
         return true;
     }
 
     public bool Remove(K key, out V value)
     {
-        if (!entries.TryGetValue(key, out var entry))
+        var entry = Find(key);
+        if (entry is null)
         {
             value = default!;
             return false;
         }
         value = entry.Stored;
-        entries.Remove(key);
-        Detach(entry);
+        RemoveEntry(entry);
         return true;
     }
 
     public bool TryGetValue(K key, out V value)
     {
-        if (entries.TryGetValue(key, out var entry))
+        var entry = Find(key);
+        if (entry is not null)
         {
             value = entry.Stored;
             return true;
@@ -3473,11 +3609,14 @@ class JavaLinkedHashMap<K, V> :
     void IDictionary.Add(object key, object? value) => Add(RequireKey(key), RequireValue(value));
     public void Clear()
     {
-        entries.Clear();
+        if (count != 0) Array.Clear(buckets, 0, buckets.Length);
+        count = 0;
         var entry = head;
         while (entry is not null)
         {
             var after = entry.After;
+            // An escaped Map.Entry must not keep the cleared entries alive.
+            entry.NextInBucket = null;
             entry.Before = null;
             entry.After = null;
             entry.Stamp = -1;
@@ -3489,7 +3628,7 @@ class JavaLinkedHashMap<K, V> :
     }
 
     public bool Contains(KeyValuePair<K, V> item) =>
-        entries.TryGetValue(item.Key, out var entry) && JavaCompat.Equals(entry.Stored, item.Value);
+        Find(item.Key) is { } entry && JavaCompat.Equals(entry.Stored, item.Value);
     bool IDictionary.Contains(object key) =>
         JavaCompat.TryMapKey(key, out K typed) && ContainsKey(typed);
 
@@ -3655,7 +3794,7 @@ class JavaLinkedHashMap<K, V> :
             if (!returned!.Removed)
             {
                 if (ReferenceEquals(returned, prepared)) resume = returned.After;
-                source.Remove(returned.Key);
+                source.RemoveEntry(returned);
             }
             canRemove = false;
         }
@@ -4013,6 +4152,10 @@ internal static partial class JavaCompat
 
     internal static T[] ArrayCopy<T>(T[] source, int length, Type? _) => CopyOf(source, length);
 
+    // Byte arrays (COSName keys among them) compare as spans, without LINQ.
+    internal static bool ArrayEquals(sbyte[]? left, sbyte[]? right) =>
+        ReferenceEquals(left, right) ||
+        (left is not null && right is not null && left.AsSpan().SequenceEqual(right));
     internal static bool ArrayEquals<T>(T[]? left, T[]? right) =>
         ReferenceEquals(left, right) ||
         (left is not null && right is not null && left.SequenceEqual(right));

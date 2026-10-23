@@ -33,8 +33,9 @@ FileSystemFontProvider loading the installed system fonts from an on-disk cache
 in a temporary `pdfbox.fontcache` directory, and one String.split(";") and
 String.matches("g\\d+") call), or `--filter '*COSDictionaryBenchmarks*'`
 (one COSName hash, one lookup in and one build of a 12-entry COSDictionary, one
-EntrySet() walk, and loading a 500-page in-memory PDF and reading every page's
-/Resources and /MediaBox), or `--filter '*WeakHashMapBenchmarks*'` (one hit in a
+EntrySet() walk, loading a 500-page in-memory PDF whose pages live in object
+streams and reading every page's /Resources and /MediaBox, and getPage(i) for
+every page of that document's flat page tree), or `--filter '*WeakHashMapBenchmarks*'` (one hit in a
 translated java.util.WeakHashMap of 10 or 10,000 live keys), or
 `--filter '*TextExtractionFontCountBenchmarks*'` (PDFTextStripper over 4,000 text
 runs of 10 or 40 glyphs cycling through 10 or 2,000 distinct font dictionaries;

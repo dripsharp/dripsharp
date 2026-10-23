@@ -14,8 +14,13 @@ namespace PdfCarton.Benchmarks;
 /// and inserts 12 entries. IterateEntries walks EntrySet() of a 12-entry
 /// dictionary, as COSWriter and SecurityHandler do. LoadDocument parses an
 /// in-memory PDF of Pages pages, each with its own font resources, and reads
-/// every page's /MediaBox and /Resources entries; building and saving the
-/// input is setup and is not timed.
+/// every page's /MediaBox and /Resources entries; the PDF is saved with
+/// PDFBox's default compression, so its page and font dictionaries live in
+/// object streams (setup checks this). GetEveryPage calls getPage(i) for every
+/// page of that document, loaded once in setup: its page tree is one flat
+/// /Kids array, as after a merge, so each lookup walks the kids up to the page
+/// as PDFBox does. Building, saving and loading the input is setup and is not
+/// timed.
 /// </summary>
 [MemoryDiagnoser]
 public class COSDictionaryBenchmarks
@@ -24,6 +29,7 @@ public class COSDictionaryBenchmarks
     private readonly COSName[] names = new COSName[12];
     private COSDictionary dictionary = null!;
     private sbyte[] pdf = null!;
+    private PDDocument loaded = null!;
 
     [Params(500)]
     public int Pages { get; set; }
@@ -60,6 +66,14 @@ public class COSDictionaryBenchmarks
         }
         if (LoadDocument() != Pages)
             throw new InvalidOperationException("Document lost pages.");
+        loaded = Loader.LoadPDF(pdf);
+        var compressed = 0;
+        foreach (var offset in loaded.GetDocument().GetXrefTable().Values)
+            if (offset < 0) compressed++;
+        if (compressed < Pages)
+            throw new InvalidOperationException("Pages are not stored in object streams.");
+        if (GetEveryPage() != Pages)
+            throw new InvalidOperationException("getPage lost pages.");
         Console.WriteLine($"COSDictionary: pages={Pages} pdf-bytes={pdf.Length}");
     }
 
@@ -97,6 +111,9 @@ public class COSDictionaryBenchmarks
         return count;
     }
 
+    [GlobalCleanup]
+    public void Cleanup() => loaded.Dispose();
+
     [Benchmark]
     public int LoadDocument()
     {
@@ -109,6 +126,16 @@ public class COSDictionaryBenchmarks
                 page.GetMediaBox() is not null)
                 count++;
         }
+        return count;
+    }
+
+    [Benchmark]
+    public int GetEveryPage()
+    {
+        var count = 0;
+        var pages = loaded.GetNumberOfPages();
+        for (var index = 0; index < pages; index++)
+            if (loaded.GetPage(index).GetCOSObject() is not null) count++;
         return count;
     }
 }

@@ -2,6 +2,7 @@ package fixture.linkedhashmap;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -220,6 +221,68 @@ public final class LinkedHashMapFixture {
         + !cache.httpClients.containsKey("B");
   }
 
+  private static final class CollidingKey {
+    private final int id;
+
+    private CollidingKey(int id) {
+      this.id = id;
+    }
+
+    @Override
+    public int hashCode() {
+      return id % 3;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof CollidingKey && ((CollidingKey) other).id == id;
+    }
+  }
+
+  private static String resizeAndCollisions() {
+    Map<CollidingKey, Integer> map = new LinkedHashMap<>();
+    for (int id = 0; id < 100; id++) map.put(new CollidingKey(id), id);
+    int found = 0;
+    for (int id = 0; id < 100; id++) {
+      Integer value = map.get(new CollidingKey(id));
+      if (value != null && value == id) found++;
+    }
+    map.put(new CollidingKey(0), -1);
+    map.remove(new CollidingKey(99));
+    map.remove(new CollidingKey(3));
+    map.remove(new CollidingKey(1));
+    Iterator<Entry<CollidingKey, Integer>> iterator = map.entrySet().iterator();
+    while (iterator.hasNext()) {
+      if (iterator.next().getKey().id % 7 == 0) iterator.remove();
+    }
+    map.put(null, 1000);
+    map.put(new CollidingKey(3), 3);
+    int signature = 0;
+    var order = new StringBuilder();
+    for (var entry : map.entrySet()) {
+      int id = entry.getKey() == null ? -9 : entry.getKey().id;
+      signature = 31 * signature + id * 1000 + entry.getValue();
+      if (order.length() < 30) order.append(id).append(',');
+    }
+    Map<Integer, String> numbers = new HashMap<>();
+    for (int i = 0; i < 50; i++) numbers.put(i * 1000003, "n" + i);
+    numbers.remove(7 * 1000003);
+    return "found="
+        + found
+        + ",size="
+        + map.size()
+        + ",head="
+        + order
+        + "signature="
+        + signature
+        + ",gone="
+        + map.containsKey(new CollidingKey(14))
+        + ",numbers="
+        + numbers.size()
+        + numbers.get(49 * 1000003)
+        + numbers.get(7 * 1000003);
+  }
+
   public static String observeAll() {
     return insertionOrder()
         + "|"
@@ -231,7 +294,9 @@ public final class LinkedHashMapFixture {
         + "|"
         + evictionTiming()
         + "|"
-        + executorSpiCache();
+        + executorSpiCache()
+        + "|"
+        + resizeAndCollisions();
   }
 
   public static void main(String[] args) {

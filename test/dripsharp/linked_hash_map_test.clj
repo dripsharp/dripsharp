@@ -18,7 +18,9 @@
        "|genericFactories=3,genericMissing=false,genericN=N,genericP=P,"
        "linkedFactories=3,linked=a=A,b=B,n=N,x=X"
        "|checks=3,entries=b=2,c=C"
-       "|same=true,order=C,A,D,disposed=true,evicted=true"))
+       "|same=true,order=C,A,D,disposed=true,evicted=true"
+       "|found=100,size=84,head=2,4,5,6,8,9,10,11,12,13,15,16,"
+       "signature=171509525,gone=false,numbers=49n49null"))
 
 (defn- fixture-path []
   (paths/resolve-path (paths/workspace-root)
@@ -239,5 +241,5 @@
       (is (str/includes? executor-source
                          "new LinkedHashMap<HttpClientKey, HttpClient>(8, 0.75f, true)"))
       (is (str/includes? executor-source "httpClients.computeIfAbsent("))
-      (is (str/ends-with? package-output
-                          "same=true,order=C,A,D,disposed=true,evicted=true")))))
+      (is (str/includes? package-output
+                         "same=true,order=C,A,D,disposed=true,evicted=true|")))))

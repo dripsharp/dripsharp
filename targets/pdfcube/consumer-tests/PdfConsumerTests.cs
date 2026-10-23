@@ -5497,31 +5497,122 @@ public sealed class JavaArrayHashAndLinkedMapConsumerTests
     }
 
     [Fact]
-    public void InsertionHashesTheKeyTwiceAndAllocatesNoEldestEntry()
+    public void InsertionHashesTheKeyOnceAndAllocatesNoEldestEntry()
     {
         var map = new Compat.JavaLinkedHashMap<CountingKey, int>(Calls * 2);
         var keys = new CountingKey[Calls];
         for (int index = 0; index < keys.Length; index++) keys[index] = new CountingKey(index);
 
+        // The miss and the insertion share one hash, as in Java's HashMap.put.
         CountingKey.Reset();
         Compat.JavaCompat.MapPut(map, keys[0], 0);
-        Assert.Equal(2, CountingKey.Hashes);
+        Assert.Equal(1, CountingKey.Hashes);
         CountingKey.Reset();
         Compat.JavaCompat.MapPut(map, keys[0], 1);
         Assert.Equal(1, CountingKey.Hashes);
 
         // One entry object per insertion: no separate list node and no eldest
         // entry for the RemoveEldestEntry check (both were allocated before).
+        // The entry also holds its hash and bucket link (72 bytes on 64-bit),
+        // which used to live in the presized Dictionary's slots.
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int index = 1; index < keys.Length; index++) Compat.JavaCompat.MapPut(map, keys[index], index);
         long perInsertion = (GC.GetAllocatedBytesForCurrentThread() - before) / (keys.Length - 1);
-        Assert.InRange(perInsertion, 1, 64);
+        Assert.InRange(perInsertion, 1, 72);
 
         var dictionary = new COSDictionary();
         dictionary.SetItem(COSName.Type, COSName.Page);
         long putBefore = GC.GetAllocatedBytesForCurrentThread();
         for (int index = 0; index < Calls; index++) dictionary.SetItem(COSName.Type, COSName.Page);
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - putBefore);
+    }
+
+    [Fact]
+    public void IntegralKeysAreFoundWithoutBoxing()
+    {
+        var map = new Compat.JavaLinkedHashMap<long, string>();
+        for (long key = 0; key < 64; key++) Compat.JavaCompat.MapPut(map, key << 32, "v" + key);
+        Assert.Equal("v5", Compat.JavaCompat.MapGet(map, 5L << 32));
+        Assert.False(map.ContainsKey(5));
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var found = 0;
+        for (int index = 0; index < Calls; index++)
+            if (map.TryGetValue((index % 64L) << 32, out _)) found++;
+        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(Calls, found);
+    }
+
+    [Fact]
+    public void ClearedEntriesAreNotKeptAliveByAnEscapedEntry()
+    {
+        var (escaped, cleared) = ClearMapKeepingLastEntry();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.Equal(100, escaped.Value.Length);
+        Assert.False(cleared.TryGetTarget(out _));
+    }
+
+    // Every key lands in one hash bucket, so the last entry used to head the
+    // chain through all the others.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (Compat.JavaMapEntry<CollidingKey, string> Escaped, WeakReference<string> Cleared)
+        ClearMapKeepingLastEntry()
+    {
+        var map = new Compat.JavaLinkedHashMap<CollidingKey, string>();
+        WeakReference<string>? first = null;
+        for (int id = 0; id < 100; id++)
+        {
+            var value = new string('v', id + 1);
+            first ??= new WeakReference<string>(value);
+            Compat.JavaCompat.MapPut(map, new CollidingKey(id), value);
+        }
+        Compat.JavaMapEntry<CollidingKey, string>? last = null;
+        foreach (var entry in Compat.JavaCompat.MapEntrySet(map)) last = entry;
+        map.Clear();
+        return (last!, first!);
+    }
+
+    private sealed class CollidingKey(int id)
+    {
+        internal int Id { get; } = id;
+        public override int GetHashCode() => 1;
+        public override bool Equals(object? other) => other is CollidingKey key && key.Id == Id;
+    }
+
+    [Fact]
+    public void GetPageFindsEveryPageOfAFlatTreeStoredInObjectStreams()
+    {
+        const int pages = 300;
+        sbyte[] pdf;
+        using (var document = new PDDocument())
+        {
+            for (int index = 0; index < pages; index++)
+            {
+                var page = new PDPage();
+                page.GetCOSObject().SetInt(COSName.GetPDFName("Marker"), index);
+                document.AddPage(page);
+            }
+            using var output = new MemoryStream();
+            document.Save(output);
+            pdf = (sbyte[])(Array)output.ToArray();
+        }
+
+        using var loaded = Loader.LoadPDF(pdf);
+        var compressed = 0;
+        foreach (var offset in loaded.GetDocument().GetXrefTable().Values)
+            if (offset < 0) compressed++;
+        Assert.True(compressed >= pages, $"{compressed} objects in object streams");
+        Assert.Equal(pages, loaded.GetPages().GetCOSObject().GetCOSArray(COSName.Kids).Size());
+        Assert.Equal(pages, loaded.GetNumberOfPages());
+        for (int index = pages - 1; index >= 0; index--)
+        {
+            var page = loaded.GetPage(index);
+            Assert.Equal(index, page.GetCOSObject().GetInt(COSName.GetPDFName("Marker")));
+            Assert.Equal(index, loaded.GetPages().IndexOf(page));
+        }
+        Assert.Throws<ArgumentOutOfRangeException>(() => loaded.GetPage(pages));
     }
 
     [Fact]
