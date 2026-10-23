@@ -2459,6 +2459,51 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // A tiling cell that draws a small image: survey.pdf's scroll-bar
+    // pattern (a white unit cell under an 8x8 checker stencil, 2.28 points
+    // wide) and a 4x4 red/blue RGB checker in a 1.5-point cell. Each image
+    // shrinks below half a pixel per sample, so PageDrawer area-averages it
+    // (getScaledInstance SCALE_SMOOTH) into the 3x3 or 2x2 tile. Apache
+    // PDFBox 3.0.8 renders every filled pixel as the 50% mix, #E9E7E3 and
+    // #800080; PdfCarton once drew the checker cell as #B4B3B1.
+    [Fact]
+    public void TilingPatternCellsWithSmallImagesRenderLikePdfBox()
+    {
+        static string Cell(string image) => $"0 0 1 1 re W n 1 1 1 rg 0 0 1 1 re f q 1 0 0 -1 0 1 cm {image} Q";
+        var rgb = string.Concat(Enumerable.Range(0, 16).Select(i => (i % 4 + i / 4) % 2 == 0 ? "FF0000" : "0000FF"));
+        var rgba = IccRenderFixtures.Render(SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Pattern << /P1 5 0 R " +
+            "/P2 6 0 R >> >> /Contents 4 0 R >>",
+            PdfStream("", "/Pattern cs /P1 scn 10 10 80 180 re f /P2 scn 110 10 80 180 re f"),
+            PdfStream("/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 1 1] /XStep 1 /YStep 1 " +
+                "/Matrix [2.28 0 0 -2.28 4.59 -9.09] /Resources << >>",
+                Cell("0.832031 0.816406 0.785156 rg BI /IM true /W 8 /H 8 /BPC 1 /F /AHx " +
+                     "ID 55AA55AA55AA55AA> EI")),
+            PdfStream("/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 1 1] /XStep 1 /YStep 1 " +
+                "/Matrix [1.5 0 0 1.5 0.3 0.7] /Resources << >>",
+                Cell($"BI /W 4 /H 4 /BPC 8 /CS /RGB /F /AHx ID {rgb}> EI")),
+        ]));
+        var differing = new List<string>();
+        for (var y = 0; y < 200; y++)
+        {
+            for (var x = 0; x < 200; x++)
+            {
+                int[] expected = y is < 10 or >= 190 ? [255, 255, 255]
+                    : x is >= 10 and < 90 ? [233, 231, 227]
+                    : x is >= 110 and < 190 ? [128, 0, 128]
+                    : [255, 255, 255];
+                var offset = (y * 200 + x) * 4;
+                if (Enumerable.Range(0, 3).Any(channel => Math.Abs(rgba[offset + channel] - expected[channel]) > 2))
+                    differing.Add($"({x},{y}) [{rgba[offset]}, {rgba[offset + 1]}, {rgba[offset + 2]}]");
+            }
+        }
+        Assert.True(differing.Count == 0,
+            $"{differing.Count} pixels differ from PDFBox: {string.Join(" ", differing.Take(8))}");
+    }
+
     // Graphics.fillArc and drawArc draw Arc2D.PIE and Arc2D.OPEN shapes, whose
     // angles run counter-clockwise on screen, as ceil(|extent| / 90) equal
     // cubic segments with the extent limited to one turn. The expected paths
