@@ -11443,23 +11443,65 @@ internal static class PdfCartonFontCompat
         matrix.TransY += matrix.SkewY * (float)x + matrix.ScaleY * (float)y;
     }
 
+    // Swaps and negates the transform's columns, as Java does (probed), so
+    // no entry picks up rounding or a 0 * infinity NaN.
     internal static void QuadrantRotateInPlace(ref SKMatrix matrix, int quadrants)
     {
         var normalized = ((quadrants % 4) + 4) % 4;
-        var rotation = normalized switch
+        float scaleX = matrix.ScaleX, skewX = matrix.SkewX, skewY = matrix.SkewY, scaleY = matrix.ScaleY;
+        switch (normalized)
         {
-            0 => Identity(),
-            1 => AffineTransform(0, 1, -1, 0, 0, 0),
-            2 => AffineTransform(-1, 0, 0, -1, 0, 0),
-            _ => AffineTransform(0, -1, 1, 0, 0, 0)
-        };
-        ConcatenateInPlace(ref matrix, rotation);
+            case 1:
+                matrix.ScaleX = skewX;
+                matrix.SkewY = scaleY;
+                matrix.SkewX = -scaleX;
+                matrix.ScaleY = -skewY;
+                break;
+            case 2:
+                matrix.ScaleX = -scaleX;
+                matrix.SkewY = -skewY;
+                matrix.SkewX = -skewX;
+                matrix.ScaleY = -scaleY;
+                break;
+            case 3:
+                matrix.ScaleX = -skewX;
+                matrix.SkewY = -scaleY;
+                matrix.SkewX = scaleX;
+                matrix.ScaleY = skewY;
+                break;
+        }
     }
 
+    // Java's AffineTransform.rotate gives an exact quadrant rotation when the
+    // angle's sine or cosine is exactly 1 or -1 (black-box probes of Java 25:
+    // rotate(toRadians(90)) yields m00 = 0, not cos(pi/2) = 6.1e-17, and so do
+    // 89.99999999 and 270.0000001 degrees, whose sines round to 1 and -1, and
+    // 180.0000001 degrees, whose cosine rounds to -1; 90.00001 degrees does
+    // not). Strokes on /Rotate 90 and 270 pages depend on it: the residue
+    // would move device points that lie on a pixel edge across it.
     internal static void RotateInPlace(ref SKMatrix matrix, double radians)
     {
-        var cosine = (float)Math.Cos(radians);
-        var sine = (float)Math.Sin(radians);
+        var exactSine = Math.Sin(radians);
+        var exactCosine = Math.Cos(radians);
+        if (exactSine == 1.0)
+        {
+            QuadrantRotateInPlace(ref matrix, 1);
+            return;
+        }
+        if (exactSine == -1.0)
+        {
+            QuadrantRotateInPlace(ref matrix, 3);
+            return;
+        }
+        if (exactCosine == -1.0)
+        {
+            QuadrantRotateInPlace(ref matrix, 2);
+            return;
+        }
+        if (exactCosine == 1.0)
+            return;
+        var cosine = (float)exactCosine;
+        var sine = (float)exactSine;
         var scaleX = matrix.ScaleX;
         var skewX = matrix.SkewX;
         var skewY = matrix.SkewY;

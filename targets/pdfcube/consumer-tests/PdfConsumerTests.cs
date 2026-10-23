@@ -10797,6 +10797,75 @@ public sealed class PathIteratorTests
         Assert.Equal(java, rows);
     }
 
+    // Java's AffineTransform.rotate is an exact quadrant rotation when the
+    // angle's sine or cosine is exactly 1 or -1 (probed: rotate(toRadians(90))
+    // gives m00 0, not cos(pi/2) = 6.1e-17). PDFRenderer rotates /Rotate 90
+    // and 270 pages that way, and a residue would move the stroke points that
+    // lie on pixel edges across them. The page strokes multipdf/rot90.pdf's
+    // drawing (a 2 pt border and both diagonals of a 200 x 400 box); the
+    // expected pixels are Java PDFBox 3.0.8's render at scale 1, the same at
+    // both angles.
+    [Theory]
+    [InlineData(90)]
+    [InlineData(270)]
+    public void QuadrantRotatedPagesPlaceStrokesAsInJavaPdfBox(int rotation)
+    {
+        static double Radians(double degrees) => degrees * (Math.PI / 180);
+        static SKMatrix Rotated(SKMatrix start, double degrees)
+        {
+            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+                1, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using var graphics = new Compat.PdfCartonGraphics2D(bitmap);
+            graphics.SetTransform(start);
+            graphics.Rotate(Radians(degrees));
+            return graphics.GetTransform();
+        }
+        static float[] Linear(SKMatrix m) => [m.ScaleX, m.SkewY, m.SkewX, m.ScaleY, m.TransX, m.TransY];
+
+        // Java's matrices [m00 m10 m01 m11 m02 m12]; 89.99999999 degrees has
+        // a sine of exactly 1 and 180.0000001 a cosine of exactly -1, while
+        // 90.00001 degrees is an ordinary rotation.
+        Assert.Equal([0f, 1f, -1f, 0f, 0f, 0f], Linear(Rotated(SKMatrix.Identity, 90)));
+        Assert.Equal([0f, 1f, -1f, 0f, 0f, 0f], Linear(Rotated(SKMatrix.Identity, 89.99999999)));
+        Assert.Equal([-1f, 0f, 0f, -1f, 0f, 0f], Linear(Rotated(SKMatrix.Identity, 180.0000001)));
+        Assert.Equal([0f, -1f, 1f, 0f, 0f, 0f], Linear(Rotated(SKMatrix.Identity, 270)));
+        Assert.Equal([1f, 0f, 0f, 1f, 0f, 0f], Linear(Rotated(SKMatrix.Identity, 1e-9)));
+        Assert.Equal(-1.7453292516216968E-7, Rotated(SKMatrix.Identity, 90.00001).ScaleX, 1e-12);
+        var general = new SKMatrix(0.3f, -1.1f, 10.25f, 0.7f, 2.5f, -3.5f, 0, 0, 1);
+        Assert.Equal([-1.1f, 2.5f, -0.3f, -0.7f, 10.25f, -3.5f], Linear(Rotated(general, 90)));
+        Assert.Equal([1.1f, -2.5f, 0.3f, 0.7f, 10.25f, -3.5f], Linear(Rotated(general, 270)));
+
+        using var document = Loader.LoadPDF((sbyte[])(Array)RasterConversionConsumerTests.SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 400] /Rotate {rotation} /Contents 4 0 R >>",
+            RasterConversionConsumerTests.PdfStream("",
+                "2 w 0 0 200 400 re 0 0 m 200 400 l 0 400 m 200 0 l S"),
+        ]));
+        using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
+        Assert.Equal((400, 200), (image.Width, image.Height));
+        int Gray(int x, int y) => image.GetPixel(x, y).Red;
+
+        // The border: half of its 2 px lies on the page, and stays straight.
+        foreach (var x in Enumerable.Range(20, 360))
+            Assert.Equal((0, 128, 255, 128), (Gray(x, 0), Gray(x, 1), Gray(x, 2), Gray(x, 199)));
+        foreach (var y in Enumerable.Range(20, 160))
+            Assert.Equal((0, 128, 255, 128), (Gray(0, y), Gray(1, y), Gray(2, y), Gray(399, y)));
+        // Where the diagonals cross, x 194..205, y 97..102.
+        int[][] java =
+        [
+            [0, 5, 98, 221, 255, 255, 255, 255, 255, 221, 98, 5],
+            [98, 5, 0, 5, 98, 221, 255, 221, 98, 5, 0, 5],
+            [255, 221, 98, 5, 0, 5, 66, 5, 0, 5, 98, 221],
+            [255, 255, 255, 187, 9, 0, 0, 0, 9, 187, 255, 255],
+            [255, 221, 98, 5, 0, 5, 66, 5, 0, 5, 98, 221],
+            [98, 5, 0, 5, 98, 221, 255, 221, 98, 5, 0, 5],
+        ];
+        Assert.Equal(java, Enumerable.Range(97, 6)
+            .Select(y => Enumerable.Range(194, 12).Select(x => Gray(x, y)).ToArray()).ToArray());
+    }
+
     // Unless KEY_STROKE_CONTROL is VALUE_STROKE_PURE, Java 2D moves an
     // antialiased stroke's device points to pixel centres first; fills keep
     // their exact edges. Expected alpha values are Java 25's (BufferedImage
