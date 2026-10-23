@@ -98,6 +98,17 @@ abstract class JavaReference<T> where T : class
     public abstract void Clear();
 }
 
+// Java keeps a softly reachable referent until the collector needs the memory,
+// whereas a .NET WeakReference is cleared by the next collection of any
+// generation, which made every translated soft cache (FontCache,
+// DefaultResourceCache, PDResources, PDImageXObject) forget its entries
+// constantly. A soft reference therefore holds its referent strongly through a
+// JavaSoftReferenceSlot, whose clock demotes it to a weak hold once two full
+// collections have passed without a use. Full collections are rare while memory is plentiful and frequent under
+// memory pressure, so used entries survive ordinary gen0/gen1 collections while
+// unused ones become collectible as the heap fills. A demoted referent that is
+// still reachable elsewhere is promoted again by Get, like a Java soft
+// reference whose referent was never cleared.
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT
 internal
 #else
@@ -105,21 +116,207 @@ public
 #endif
 sealed class JavaSoftReference<T> : JavaReference<T> where T : class
 {
-    private WeakReference<T>? reference;
+    private JavaSoftReferenceSlot? slot;
 
     public JavaSoftReference(T? value)
     {
         if (value is not null)
-            reference = new WeakReference<T>(value);
+            slot = new JavaSoftReferenceSlot(value);
     }
 
-    public override T? Get()
+    public override T? Get() => (T?)Volatile.Read(ref slot)?.Get();
+
+    public override void Clear() => Volatile.Write(ref slot, null);
+}
+
+internal sealed class JavaSoftReferenceSlot
+{
+    private readonly WeakReference<object> reference;
+    private object? strong;
+    private int usedEpoch;
+
+    internal JavaSoftReferenceSlot(object value)
     {
-        var current = reference;
-        return current is not null && current.TryGetTarget(out var value) ? value : null;
+        strong = value;
+        reference = new WeakReference<object>(value);
+        usedEpoch = Clock.Register(this);
     }
 
-    public override void Clear() => reference = null;
+    internal object? Get()
+    {
+        var value = Volatile.Read(ref strong);
+        if (value is null)
+        {
+            if (!reference.TryGetTarget(out value))
+                return null;
+            Volatile.Write(ref strong, value);
+        }
+        else if (Volatile.Read(ref usedEpoch) == Clock.Epoch)
+            return value;
+        Volatile.Write(ref usedEpoch, Clock.Register(this));
+        return value;
+    }
+
+    internal void Expire(int throughEpoch)
+    {
+        if (Volatile.Read(ref usedEpoch) <= throughEpoch)
+            Volatile.Write(ref strong, null);
+    }
+
+    // Counts full (max-generation) collections with a self-reregistering
+    // finalizable sentinel and remembers the slots used in the current and the
+    // previous epoch. Each full collection expires the slots whose last use is
+    // older than the previous epoch. Every slot is demoted, however recently
+    // used, when the heap is under pressure: several full collections happened
+    // before the sentinel's finalizer could run, or the runtime reports a
+    // memory load at its high-load threshold. The sentinel stops rearming when
+    // its collectible load context unloads, so it never keeps that alive.
+    private static class Clock
+    {
+        private const int MinimumPrune = 1024;
+        private static readonly object Gate = new();
+        private static List<WeakReference<JavaSoftReferenceSlot>> current = new();
+        private static List<WeakReference<JavaSoftReferenceSlot>> previous = new();
+        private static int pruneAt = MinimumPrune;
+        private static int epoch;
+        private static int observedFullCollections = GC.CollectionCount(GC.MaxGeneration);
+        private static volatile bool stopped;
+        private static readonly MethodInfo? MemoryInfo =
+            typeof(GC).GetMethod("GetGCMemoryInfo", Type.EmptyTypes);
+
+        static Clock()
+        {
+            StopWhenTheLoadContextUnloads();
+            _ = new Sentinel();
+        }
+
+        internal static int Epoch => Volatile.Read(ref epoch);
+
+        internal static int Register(JavaSoftReferenceSlot slot)
+        {
+            lock (Gate)
+            {
+                if (current.Count >= pruneAt)
+                {
+                    current.RemoveAll(entry => !entry.TryGetTarget(out _));
+                    pruneAt = Math.Max(MinimumPrune, current.Count * 2);
+                }
+                current.Add(new WeakReference<JavaSoftReferenceSlot>(slot));
+                return epoch;
+            }
+        }
+
+        private static void Advance(bool underPressure)
+        {
+            // Allocate before rotating, so an OutOfMemoryException leaves
+            // every bucket in place for the next attempt.
+            var fresh = new List<WeakReference<JavaSoftReferenceSlot>>();
+            var freshPrevious = underPressure ? new List<WeakReference<JavaSoftReferenceSlot>>() : null;
+            List<WeakReference<JavaSoftReferenceSlot>> expired;
+            List<WeakReference<JavaSoftReferenceSlot>>? alsoExpired = null;
+            int throughEpoch;
+            lock (Gate)
+            {
+                expired = previous;
+                if (freshPrevious is not null)
+                {
+                    alsoExpired = current;
+                    previous = freshPrevious;
+                    throughEpoch = epoch;
+                }
+                else
+                {
+                    previous = current;
+                    throughEpoch = epoch - 1;
+                }
+                current = fresh;
+                pruneAt = MinimumPrune;
+                Volatile.Write(ref epoch, epoch + 1);
+            }
+            Expire(expired, throughEpoch);
+            if (alsoExpired is not null)
+                Expire(alsoExpired, throughEpoch);
+        }
+
+        private static void Expire(List<WeakReference<JavaSoftReferenceSlot>> entries, int throughEpoch)
+        {
+            foreach (var entry in entries)
+                if (entry.TryGetTarget(out var slot))
+                    slot.Expire(throughEpoch);
+        }
+
+        private static bool MemoryLoadIsHigh()
+        {
+            if (MemoryInfo is null)
+                return false;
+            try
+            {
+                object info = MemoryInfo.Invoke(null, null)!;
+                Type type = info.GetType();
+                long load = (long)type.GetProperty("MemoryLoadBytes")!.GetValue(info)!;
+                long high = (long)type.GetProperty("HighMemoryLoadThresholdBytes")!.GetValue(info)!;
+                return high > 0 && load >= high;
+            }
+            catch (Exception)
+            {
+                // A runtime without the memory-load contract, or no memory to
+                // ask: count full collections only.
+                return false;
+            }
+        }
+
+        // netstandard2.0 has no AssemblyLoadContext, so its Unloading event is
+        // found by name; a runtime without it cannot unload this assembly.
+        private static void StopWhenTheLoadContextUnloads()
+        {
+            try
+            {
+                Type? loadContextType = Type.GetType(
+                    "System.Runtime.Loader.AssemblyLoadContext, System.Runtime.Loader", false);
+                EventInfo? unloading = loadContextType?.GetEvent("Unloading");
+                object? context = loadContextType
+                    ?.GetMethod("GetLoadContext", new[] { typeof(Assembly) })
+                    ?.Invoke(null, new object[] { typeof(Clock).Assembly });
+                MethodInfo stop = typeof(Clock).GetMethod(
+                    nameof(Stop), BindingFlags.NonPublic | BindingFlags.Static)!;
+                if (context is not null && unloading?.EventHandlerType is { } handlerType)
+                    unloading.AddEventHandler(context, Delegate.CreateDelegate(handlerType, stop));
+            }
+            catch (Exception)
+            {
+                // Without the event the sentinel rearms until process shutdown.
+            }
+        }
+
+        private static void Stop(object? context) => stopped = true;
+
+        private sealed class Sentinel
+        {
+            ~Sentinel()
+            {
+                if (stopped || Environment.HasShutdownStarted)
+                    return;
+                try
+                {
+                    int full = GC.CollectionCount(GC.MaxGeneration);
+                    int passed = full - observedFullCollections;
+                    if (passed > 0)
+                    {
+                        Advance(passed > 1 || MemoryLoadIsHigh());
+                        observedFullCollections = full;
+                    }
+                }
+                catch (OutOfMemoryException)
+                {
+                    // Retry at the next collection; the epoch did not advance.
+                }
+                finally
+                {
+                    GC.ReRegisterForFinalize(this);
+                }
+            }
+        }
+    }
 }
 
 #if DRIPSHARP_INTERNAL_JAVA_COMPAT

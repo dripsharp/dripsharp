@@ -139,6 +139,7 @@ JavaSimpleEntry	java.util.AbstractMap$SimpleEntry	pdfcube,pkl,rawhttp,sqltrellis
 JavaSimpleImmutableEntry	java.util.AbstractMap$SimpleImmutableEntry	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSimpleImmutableEntry
 JavaSocketFactory	javax.net.SocketFactory	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSocketFactory
 JavaSoftReference	java.lang.ref.SoftReference	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSoftReference
+JavaSoftReferenceSlot	java.lang.ref.SoftReference	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSoftReferenceSlot
 JavaSqlDate	java.sql.Date	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSqlDate
 JavaSqlTime	java.sql.Time	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSqlTime
 JavaSqlTimestamp	java.sql.Timestamp	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaSqlTimestamp

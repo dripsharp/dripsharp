@@ -4969,6 +4969,143 @@ public sealed class JavaEqualityConsumerTests
         return new WeakReference(type);
     }
 
+    // Java keeps softly reachable cache entries (FontCache, DefaultResourceCache,
+    // PDResources, PDImageXObject) until memory is short. Young collections
+    // must not drop them; full collections without further use release them.
+    [Fact]
+    public void SoftReferencesSurviveYoungCollectionsAndFullOnesReleaseThem()
+    {
+        bool survived = false;
+        for (int attempt = 0; attempt < 10 && !survived; attempt++)
+        {
+            GC.WaitForPendingFinalizers();
+            int full = GC.CollectionCount(GC.MaxGeneration);
+            var reference = NewSoftReference(out WeakReference probe);
+            GC.Collect(0, GCCollectionMode.Forced, blocking: true);
+            GC.Collect(1, GCCollectionMode.Forced, blocking: true);
+            GC.WaitForPendingFinalizers();
+            // A test running in parallel may force full collections meanwhile.
+            if (GC.CollectionCount(GC.MaxGeneration) != full)
+                continue;
+            Assert.True(probe.IsAlive);
+            Assert.NotNull(reference.Get());
+            survived = true;
+        }
+        Assert.True(survived);
+
+        var released = NewSoftReference(out WeakReference releasedProbe);
+        for (int attempt = 0; attempt < 20 && releasedProbe.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        Assert.False(releasedProbe.IsAlive);
+        Assert.Null(released.Get());
+    }
+
+    // Under memory pressure Java clears soft references however recently they
+    // were read. Full collections that outpace finalization (simulated by
+    // holding the finalizer thread) are such pressure: the clock then advances
+    // once, yet must release the entry read just before.
+    [Fact]
+    public void SoftReferencesReadJustBeforeMemoryPressureAreReleased()
+    {
+        var reference = NewSoftReference(out WeakReference probe);
+        var hold = FinalizerHold.Start();
+        try
+        {
+            Assert.NotNull(reference.Get());
+            GC.Collect();
+            GC.Collect();
+        }
+        finally
+        {
+            hold.Release();
+        }
+        GC.WaitForPendingFinalizers();
+        // Collect again with the finalizer thread held, so the clock cannot
+        // advance a second time before the referent is checked.
+        hold = FinalizerHold.Start();
+        try
+        {
+            Assert.False(probe.IsAlive);
+        }
+        finally
+        {
+            hold.Release();
+        }
+        Assert.Null(reference.Get());
+    }
+
+    // The collection clock's finalizable sentinel must not keep a collectible
+    // load context (and so the whole product) alive after Unload.
+    [Fact]
+    public void SoftReferencesDoNotKeepACollectibleLoadContextAlive()
+    {
+        WeakReference context = UseSoftReferenceInCollectibleContext();
+        for (int attempt = 0; attempt < 20 && context.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        Assert.False(context.IsAlive);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference UseSoftReferenceInCollectibleContext()
+    {
+        var context = new System.Runtime.Loader.AssemblyLoadContext("soft-reference", isCollectible: true);
+        var assembly = context.LoadFromAssemblyPath(
+            typeof(Compat.JavaSoftReference<object>).Assembly.Location);
+        var definition = typeof(Compat.JavaSoftReference<object>).GetGenericTypeDefinition();
+        var type = assembly.GetType(definition.FullName!, true)!.MakeGenericType(typeof(object));
+        object reference = Activator.CreateInstance(type, new object())!;
+        Assert.NotNull(type.GetMethod("Get")!.Invoke(reference, null));
+        context.Unload();
+        return new WeakReference(context);
+    }
+
+    // Blocks the finalizer thread inside a finalizer, after one full collection.
+    private sealed class FinalizerHold
+    {
+        private readonly ManualResetEventSlim entered = new();
+        private readonly ManualResetEventSlim release = new();
+
+        internal static FinalizerHold Start()
+        {
+            var hold = new FinalizerHold();
+            hold.Block();
+            GC.Collect();
+            Assert.True(hold.entered.Wait(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+            return hold;
+        }
+
+        internal void Release() => release.Set();
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private void Block() => _ = new Blocker(entered, release);
+
+        private sealed class Blocker(ManualResetEventSlim entered, ManualResetEventSlim release)
+        {
+            ~Blocker()
+            {
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(30));
+            }
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static Compat.JavaSoftReference<object> NewSoftReference(out WeakReference probe)
+    {
+        var referent = new object();
+        probe = new WeakReference(referent);
+        return new Compat.JavaSoftReference<object>(referent);
+    }
+
     private static string? Lookup(DripSharp.Runtime.JavaLinkedHashMap<object, string> map, object key) =>
         map.TryGetValue(key, out string? value) ? value : null;
 
