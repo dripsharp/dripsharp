@@ -20,10 +20,28 @@ The JVM implementation uses `org.apache.pdfbox:pdfbox:3.0.8` and
 `org.apache.pdfbox:xmpbox:3.0.8` from Maven Central (the upstream version the
 repository pins in `targets/pdfcube/baseline.edn`), plus
 `org.apache.pdfbox:jbig2-imageio:3.0.5`, the JBIG2 decoder version PDFBox 3.0.8
-itself tests with. All three are Apache-2.0. No JPEG 2000 ImageIO plugin is on
-its classpath, so it reports JPX images as `decode-failed` (see `images`). Its
-test is `clojure -M:pdfcli-test`, run from the repository root with
-`research/pdfbox` checked out at its gitlink.
+itself tests with. All three are Apache-2.0. For JPEG 2000 (`JPXDecode`) it
+adds the ImageIO plugin `com.github.jai-imageio:jai-imageio-jpeg2000:1.4.0`
+and, through it, `com.github.jai-imageio:jai-imageio-core:1.4.0`, the
+version PDFBox 3.0.8 documents and tests with (`jai.version` in its parent
+POM), so JPX images decode as they do for a PDFBox user who installs it.
+Both jai-imageio artifacts are under a BSD-3-Clause licence with an added
+disclaimer that the software is not designed for use in nuclear facilities
+(approved by the user on 2026-10-22); the jpeg2000 artifact's `META-INF/LICENSE`
+also carries the JJ2000 notice for its codec, which grants use in products
+claiming JPEG 2000 conformance. The dependency is resolved from Maven Central
+for the oracle only; nothing from it is vendored, translated or shipped. Its test is `clojure -M:pdfcli-test`,
+run from the repository root with `research/pdfbox` checked out at its
+gitlink.
+
+| JVM dependency                                    | Version | Licence                                    |
+|---------------------------------------------------|---------|--------------------------------------------|
+| `org.apache.pdfbox:pdfbox`                        | 3.0.8   | Apache-2.0                                 |
+| `org.apache.pdfbox:xmpbox`                        | 3.0.8   | Apache-2.0                                 |
+| `org.apache.pdfbox:jbig2-imageio`                 | 3.0.5   | Apache-2.0                                 |
+| `com.github.jai-imageio:jai-imageio-jpeg2000`     | 1.4.0   | BSD-3-Clause with nuclear-use disclaimer; JJ2000 notice |
+| `com.github.jai-imageio:jai-imageio-core`         | 1.4.0   | BSD-3-Clause with nuclear-use disclaimer   |
+| `com.fasterxml.jackson.core:jackson-databind`     | 2.22.0  | Apache-2.0                                 |
 
 The .NET implementation is a net10.0 console app over the generated PdfCarton
 family (`DripSharp.PdfCarton` and `DripSharp.PdfCarton.Xmp`), referenced as
