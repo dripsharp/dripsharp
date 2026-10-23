@@ -1971,6 +1971,56 @@ internal ref struct PdfCartonPixels
         for (var x = 0; x < colors.Length; x++) Set(x, y, colors[x]);
     }
 
+    // Writes the packed ARGB of width pixels of row y from x into
+    // values[start...], each as getRGB derives it from Get: a Gray8 sample
+    // through grayTable (TYPE_BYTE_GRAY) or as opaque gray, unpremultiplied
+    // BGRA as stored. False, writing nothing, for other formats and for any
+    // region outside the pixels or the array; the caller then converts
+    // pixel by pixel, keeping Get's bounds checks. A short-lived process reads
+    // few images, so this loop is optimized from its first call (512 is
+    // MethodImplOptions.AggressiveOptimization, which netstandard2.0 lacks).
+    [MethodImpl((MethodImplOptions)512)]
+    internal bool TryGetArgbRow(int x, int y, int width, int[] values, int start, int[]? grayTable)
+    {
+        if (width <= 0 || (uint)y >= (uint)info.Height || x < 0 || x > info.Width - width ||
+            start < 0 || start > values.Length - width ||
+            (long)y * rowBytes + (long)(x + width) * info.BytesPerPixel > bytes.Length)
+            return false;
+        var output = values.AsSpan(start, width);
+        if (info.ColorType == SKColorType.Gray8)
+        {
+            var samples = bytes.Slice(y * rowBytes + x, width);
+            if (grayTable is not null)
+                for (var column = 0; column < width; column++) output[column] = grayTable[samples[column]];
+            else
+                for (var column = 0; column < width; column++)
+                    output[column] = unchecked((int)0xff000000) | samples[column] * 0x010101;
+            return true;
+        }
+        if (info.ColorType != SKColorType.Bgra8888 || info.AlphaType == SKAlphaType.Premul ||
+            !BitConverter.IsLittleEndian)
+            return false;
+        // Little-endian BGRA bytes are the packed 0xAARRGGBB value.
+        var input = MemoryMarshal.Cast<byte, int>(bytes.Slice(y * rowBytes + x * 4, width * 4));
+        if (info.AlphaType != SKAlphaType.Opaque)
+        {
+            input.CopyTo(output);
+            return true;
+        }
+        var opaque = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var alpha = new Vector<int>(unchecked((int)0xff000000));
+            var inputVectors = MemoryMarshal.Cast<int, Vector<int>>(input);
+            var outputVectors = MemoryMarshal.Cast<int, Vector<int>>(output);
+            for (var vector = 0; vector < inputVectors.Length; vector++)
+                outputVectors[vector] = inputVectors[vector] | alpha;
+            opaque = inputVectors.Length * Vector<int>.Count;
+        }
+        for (; opaque < width; opaque++) output[opaque] = input[opaque] | unchecked((int)0xff000000);
+        return true;
+    }
+
     // The caller validates the region and sample array before entering these bulk
     // paths. Other formats and alpha modes retain the per-pixel conversion above.
     internal bool TryGetPixels(int x, int y, int width, int height, int[] pixels)
@@ -10604,12 +10654,24 @@ internal static class PdfCartonFontCompat
             return metadata.ColorModel.GetRgb(raster.GetDataElements(x, y, RgbScratch.Element(raster)));
         }
         var color = PdfCartonPixels.Read(bitmap, x, y);
-        return IsByteGray(bitmap) ? ByteGrayRgb(color.Red) : ToArgb(color);
+        return IsByteGray(bitmap) ? ByteGrayRgbTable[color.Red] : ToArgb(color);
     }
 
     // A TYPE_BYTE_GRAY bitmap whose native pixels are its samples.
     private static bool IsByteGray(SKBitmap bitmap) =>
         bitmap.ColorType == SKColorType.Gray8 && GetImageType(bitmap) == TYPE_BYTE_GRAY;
+
+    // getRGB of each TYPE_BYTE_GRAY sample value, built on first use.
+    private static int[]? byteGrayRgbTable;
+
+    private static int[] ByteGrayRgbTable => byteGrayRgbTable ??= BuildByteGrayRgbTable();
+
+    private static int[] BuildByteGrayRgbTable()
+    {
+        var table = new int[256];
+        for (var sample = 0; sample < table.Length; sample++) table[sample] = ByteGrayRgb((byte)sample);
+        return table;
+    }
 
     // getRGB of a TYPE_BYTE_GRAY sample: Java's linear CS_GRAY colour model.
     private static int ByteGrayRgb(byte sample)
@@ -10651,12 +10713,20 @@ internal static class PdfCartonFontCompat
             }
             return values;
         }
+        // The native pixels: resolve their format, stride and address once for
+        // the region, then convert each pixel exactly as GetRgb(bitmap, x, y).
+        var byteGray = bitmap.ColorType == SKColorType.Gray8 &&
+                       (metadata?.Type ?? InferImageType(bitmap)) == TYPE_BYTE_GRAY;
+        var grayTable = byteGray ? ByteGrayRgbTable : null;
+        using var pixels = new PdfCartonPixels(bitmap);
         for (var row = 0; row < height; row++)
         {
+            var start = offset + row * scansize;
+            if (pixels.TryGetArgbRow(x, y + row, width, values, start, grayTable)) continue;
             for (var column = 0; column < width; column++)
             {
-                values[offset + row * scansize + column] =
-                    GetRgb(bitmap, x + column, y + row);
+                var color = pixels.Get(x + column, y + row);
+                values[start + column] = grayTable is not null ? grayTable[color.Red] : ToArgb(color);
             }
         }
         return values;

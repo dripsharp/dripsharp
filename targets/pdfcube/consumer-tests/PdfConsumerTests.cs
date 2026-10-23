@@ -4260,6 +4260,148 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // getRGB(x, y, w, h, rgbArray, offset, scansize) returns, for every image
+    // kind, what getRGB(x, y) returns for each pixel, and reads native pixels
+    // a row at a time: it used to re-read the bitmap's format, stride and
+    // address (native calls) for every pixel.
+    [Fact]
+    public void BulkGetRgbMatchesOnePixelGetRgbForEveryImageKind()
+    {
+        var images = new List<(string Name, SKBitmap Image)>();
+        try
+        {
+            foreach (var (type, name) in new[]
+                     {
+                         (Compat.PdfCartonFontCompat.TYPE_INT_RGB, "INT_RGB"),
+                         (Compat.PdfCartonFontCompat.TYPE_INT_ARGB, "INT_ARGB"),
+                         (Compat.PdfCartonFontCompat.TYPE_INT_BGR, "INT_BGR"),
+                         (Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR, "3BYTE_BGR"),
+                         (Compat.PdfCartonFontCompat.TYPE_4BYTE_ABGR, "4BYTE_ABGR"),
+                         (Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY, "BYTE_GRAY"),
+                         (Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY, "BYTE_BINARY"),
+                     })
+            {
+                foreach (var withRaster in new[] { false, true })
+                {
+                    var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+                    images.Add(($"{name}{(withRaster ? " with raster" : "")}", image));
+                    if (withRaster) _ = Compat.PdfCartonFontCompat.GetRaster(image);
+                    var random = new Random(type);
+                    for (var y = 0; y < Height; y++)
+                        for (var x = 0; x < Width; x++)
+                            Compat.PdfCartonFontCompat.SetRgb(image, x, y, random.Next());
+                }
+            }
+            foreach (var transparency in new[]
+                     {
+                         Compat.PdfCartonTransparency.OPAQUE, Compat.PdfCartonTransparency.BITMASK,
+                         Compat.PdfCartonTransparency.TRANSLUCENT,
+                     })
+            {
+                var image = Compat.PdfCartonFontCompat.CreateCompatibleImage(Width, Height, transparency);
+                images.Add(($"compatible, transparency {transparency}", image));
+                var random = new Random(transparency);
+                for (var y = 0; y < Height; y++)
+                    for (var x = 0; x < Width; x++)
+                        Compat.PdfCartonFontCompat.SetRgb(image, x, y, random.Next());
+            }
+            var indexed = new Compat.JavaColorModel(
+                4, 16,
+                Enumerable.Range(0, 16).Select(i => (sbyte)(i * 37)).ToArray(),
+                Enumerable.Range(0, 16).Select(i => (sbyte)(i * 91 + 5)).ToArray(),
+                Enumerable.Range(0, 16).Select(i => (sbyte)(250 - i * 13)).ToArray());
+            images.Add(("indexed 4-bit", Compat.PdfCartonFontCompat.CreateImage(
+                indexed, Fill(indexed.CreateCompatibleWritableRaster(Width, Height), 15, 4), false, null)));
+            var grayAlpha = GrayAlphaImage(Width, Height);
+            images.Add(("gray + alpha", grayAlpha));
+            Fill(Compat.PdfCartonFontCompat.GetRaster(grayAlpha), 255, 2);
+            // Bitmaps PdfCarton did not create have no image metadata.
+            foreach (var (colorType, alphaType) in new[]
+                     {
+                         (SKColorType.Gray8, SKAlphaType.Opaque), (SKColorType.Bgra8888, SKAlphaType.Opaque),
+                         (SKColorType.Bgra8888, SKAlphaType.Unpremul), (SKColorType.Bgra8888, SKAlphaType.Premul),
+                         (SKColorType.Rgba8888, SKAlphaType.Unpremul), (SKColorType.Rgba8888, SKAlphaType.Premul),
+                     })
+            {
+                var image = new SKBitmap(new SKImageInfo(Width, Height, colorType, alphaType));
+                images.Add(($"plain {colorType} {alphaType}", image));
+                new Random((int)colorType * 10 + (int)alphaType).NextBytes(image.GetPixelSpan());
+                image.NotifyPixelsChanged();
+            }
+
+            const int Offset = 5, Sentinel = 0x5a5a5a5a;
+            foreach (var (name, image) in images)
+            {
+                foreach (var (x, y, w, h) in new[] { (0, 0, Width, Height), (3, 2, Width - 7, Height - 5), (4, 6, 1, 1) })
+                {
+                    var scansize = w + 3;
+                    var values = Enumerable.Repeat(Sentinel, Offset + (h - 1) * scansize + w + 2).ToArray();
+                    Assert.Same(values, Compat.PdfCartonFontCompat.GetRgb(image, x, y, w, h, values, Offset, scansize));
+                    for (var index = 0; index < values.Length; index++)
+                    {
+                        var row = (index - Offset) / scansize;
+                        var column = (index - Offset) % scansize;
+                        var inside = index >= Offset && row < h && column < w;
+                        var expected = inside
+                            ? Compat.PdfCartonFontCompat.GetRgb(image, x + column, y + row)
+                            : Sentinel;
+                        if (values[index] != expected)
+                            Assert.Fail($"{name}, region ({x}, {y}, {w}, {h}), index {index}: " +
+                                        $"{values[index]:x8}, expected {expected:x8}");
+                    }
+                }
+                var allocated = Compat.PdfCartonFontCompat.GetRgb(image, 1, 1, 2, 2, null, 0, 2);
+                Assert.Equal(Compat.PdfCartonFontCompat.GetRgb(image, 2, 2), allocated[3]);
+                // A region past the image fails as reading its first outside pixel does.
+                var outside = Record.Exception(() => Compat.PdfCartonFontCompat.GetRgb(image, Width, 0));
+                var region = Record.Exception(
+                    () => Compat.PdfCartonFontCompat.GetRgb(image, Width - 1, 0, 2, 1, null, 0, 2));
+                Assert.NotNull(outside);
+                Assert.Equal(outside.GetType(), region?.GetType());
+            }
+        }
+        finally
+        {
+            foreach (var (_, image) in images) image.Dispose();
+        }
+
+        // A full read of a large image without a raster costs about a copy of
+        // its pixels, not native calls per pixel: ten bulk reads take about a
+        // tenth of one pass of one-pixel reads (they took about ten passes).
+        const int Size = 1024;
+        foreach (var type in new[]
+                 {
+                     Compat.PdfCartonFontCompat.TYPE_INT_RGB, Compat.PdfCartonFontCompat.TYPE_INT_ARGB,
+                     Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY,
+                 })
+        {
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, type);
+            var values = new int[Size * Size];
+            _ = Compat.PdfCartonFontCompat.GetRgb(image, 0, 0, Size, Size, values, 0, Size);
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            var elapsed = TimeSpan.MaxValue;
+            for (var round = 0; round < 3; round++)
+            {
+                var roundStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                for (var repeat = 0; repeat < 10; repeat++)
+                    _ = Compat.PdfCartonFontCompat.GetRgb(image, 0, 0, Size, Size, values, 0, Size);
+                var roundElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(roundStarted);
+                if (roundElapsed < elapsed) elapsed = roundElapsed;
+            }
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Assert.True(allocated < 1024, $"type {type}: 30 bulk reads allocated {allocated} bytes.");
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var sum = 0L;
+            for (var y = 0; y < Size; y++)
+                for (var x = 0; x < Size; x++)
+                    sum += Compat.PdfCartonFontCompat.GetRgb(image, x, y);
+            var onePixelPass = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+            Assert.True(elapsed < onePixelPass,
+                $"type {type}: 10 bulk reads of {Size}x{Size} pixels took {elapsed}; " +
+                $"one pass of one-pixel reads took {onePixelPass} ({sum}).");
+        }
+    }
+
     // In Java an image's raster is its only storage, so Graphics2D drawing
     // shows in getRGB and survives setRGB. A CreateImage image keeps a
     // managed raster beside its native pixels: it used to miss Skia's drawing,
