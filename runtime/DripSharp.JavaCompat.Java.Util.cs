@@ -4339,10 +4339,16 @@ internal static partial class JavaCompat
     // Java generic casts may legally carry null even when the declaration is
     // not annotated. Keep that runtime behavior while presenting the helper's
     // declared result as the Java target type; generated nullable APIs still
-    // surface their own explicit `?` contract.
-    internal static IList<T> CastList<T>(object? values) => values is null
-        ? null!
-        : ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList();
+    // surface their own explicit `?` contract. Like a Java cast, a list that
+    // already has the target element type is returned as is, not copied
+    // (callers such as PDFont.getWidths cast a cached list on every call);
+    // an array, or a list of another element type, is converted.
+    internal static IList<T> CastList<T>(object? values) => values switch
+    {
+        null => null!,
+        IList<T> typed and not Array => typed,
+        _ => ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList(),
+    };
     internal static ICollection<T> CastCollection<T>(object? values)
     {
         if (values is null) return null!;

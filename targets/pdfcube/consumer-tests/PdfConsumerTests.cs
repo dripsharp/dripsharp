@@ -131,6 +131,111 @@ public sealed class PdfConsumerTests
         Assert.Equal(first, second);
     }
 
+    // dripsharp-114: every glyph of a non-embedded simple font asks
+    // hasExplicitWidth, whose getWidths cast used to copy (and box) the whole
+    // /Widths list, kilobytes per glyph; AcroFormsBasicFields.pdf allocated
+    // 1.26 GB per render. The glyph cost is the difference between pages of
+    // n and 2n glyphs, so the per-page work cancels out (about 4.9 KB per
+    // glyph with the copy, 1.7 KB without).
+    [Fact]
+    public void GlyphsOfANonEmbeddedFontRenderWithBoundedAllocation()
+    {
+        const int lines = 50;
+        const int perLine = 100;
+        var pdf = NonEmbeddedTextPdf(lines, perLine);
+        using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
+        var renderer = new PDFRenderer(document);
+        long Allocated(int page)
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            renderer.RenderImage(page).Dispose();
+            return GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+
+        Allocated(0);
+        var single = Allocated(1);
+        var twice = Allocated(2);
+        var perGlyph = (twice - single) / (lines * perLine);
+        Assert.True(perGlyph < 2560, $"A glyph allocated {perGlyph} bytes.");
+
+        var widths = new List<float?> { 1f, 2f };
+        Assert.Same(widths, Compat.JavaCompat.CastList<float?>(widths));
+        var array = new float?[] { 1f, 2f };
+        var copy = Compat.JavaCompat.CastList<float?>(array);
+        Assert.NotSame(array, copy);
+        copy.Add(3f);
+        Assert.Equal(new float?[] { 1f, 2f, 3f }, copy);
+    }
+
+    // A glyph path is transformed into a new path, keeping its winding rule
+    // and leaving the cached glyph as it was.
+    [Fact]
+    public void TransformedShapesAreNewPathsWithTheSourceWindingRule()
+    {
+        using var glyph = new SKPath { FillType = SKPathFillType.EvenOdd };
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        glyph.AddRect(new SKRect(0, 0, 10, 20));
+        glyph.AddCircle(5, 5, 2);
+#pragma warning restore CS0618
+        var transform = SKMatrix.CreateScale(2, 3).PostConcat(SKMatrix.CreateTranslation(7, 11));
+        using var shape = (SKPath)Compat.PdfCartonFontCompat.CreateTransformedShape(transform, glyph);
+        Assert.NotSame(glyph, shape);
+        Assert.Equal(SKPathFillType.EvenOdd, shape.FillType);
+        Assert.Equal(new SKRect(7, 11, 27, 71), shape.Bounds);
+        Assert.Equal(new SKRect(0, 0, 10, 20), glyph.Bounds);
+        Assert.Equal(glyph.PointCount, shape.PointCount);
+    }
+
+    // Three pages of one non-embedded TrueType font with /Widths: every
+    // character code once (to warm the glyph cache), then lines x perLine
+    // glyphs, then twice that many.
+    private static byte[] NonEmbeddedTextPdf(int lines, int perLine)
+    {
+        using var document = new PDDocument();
+        var widths = new COSArray();
+        for (var code = 32; code <= 126; code++)
+            widths.Add(COSInteger.Get(500));
+        var descriptor = new COSDictionary();
+        descriptor.SetItem(COSName.Type, COSName.FontDesc);
+        descriptor.SetName(COSName.FontName, "DripSharpUnembedded");
+        descriptor.SetInt(COSName.Flags, 32);
+        var font = new COSDictionary();
+        font.SetItem(COSName.Type, COSName.Font);
+        font.SetItem(COSName.Subtype, COSName.TrueType);
+        font.SetName(COSName.BaseFont, "DripSharpUnembedded");
+        font.SetInt(COSName.FirstChar, 32);
+        font.SetInt(COSName.LastChar, 126);
+        font.SetItem(COSName.Widths, widths);
+        font.SetItem(COSName.Encoding, COSName.WinAnsiEncoding);
+        font.SetItem(COSName.FontDesc, descriptor);
+        var fonts = new COSDictionary();
+        fonts.SetItem(COSName.GetPDFName("F1"), font);
+        var resources = new COSDictionary();
+        resources.SetItem(COSName.Font, fonts);
+
+        static string Literal(string text) =>
+            "(" + text.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)") + ")";
+        var all = new string(Enumerable.Range(33, 94).Select(code => (char)code).ToArray());
+        var line = Literal(string.Concat(Enumerable.Repeat(all, perLine / all.Length + 1))[..perLine]);
+        foreach (var count in new[] { 1, lines, 2 * lines })
+        {
+            var text = new System.Text.StringBuilder("BT /F1 5 Tf 6 TL 10 780 Td\n");
+            for (var index = 0; index < count; index++)
+                text.Append(count == 1 ? Literal(all) : line).Append(" '\n");
+            text.Append("ET\n");
+            var page = new PDPage(PDRectangle.Letter);
+            page.GetCOSObject().SetItem(COSName.Resources, resources);
+            var contents = document.GetDocument().CreateCOSStream();
+            using (var output = contents.CreateOutputStream())
+                output.Write(System.Text.Encoding.ASCII.GetBytes(text.ToString()));
+            page.GetCOSObject().SetItem(COSName.Contents, contents);
+            document.AddPage(page);
+        }
+        using var saved = new MemoryStream();
+        document.Save(saved);
+        return saved.ToArray();
+    }
+
     // Expected colors were rendered by Apache PDFBox 3.0.8 (Java, LCMS) from
     // these fixtures; the tolerance absorbs CMM interpolation differences.
     [Fact]

@@ -5977,6 +5977,8 @@ public class PdfCartonGraphics2D : IDisposable
     // The device pixels the clip keeps; canvases clip to it without
     // antialiasing.
     private SKPath? clipRegion;
+    // FillAntialiased's reusable device path (never shared with a copy).
+    private SKPath? scratchDevicePath;
 
     protected PdfCartonGraphics2D()
     {
@@ -6652,6 +6654,8 @@ public class PdfCartonGraphics2D : IDisposable
             return;
         disposed = true;
         ClearClip();
+        scratchDevicePath?.Dispose();
+        scratchDevicePath = null;
         if (canvas is null)
             return;
         canvas.RestoreToCount(restoreCount);
@@ -7305,10 +7309,24 @@ public class PdfCartonGraphics2D : IDisposable
         if (lease.Path.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd)
             return false;
         using var outline = stroked ? StrokeOutline(lease.Path) : null;
-        using var devicePath = new SKPath(outline ?? lease.Path);
-        devicePath.Transform(transform);
-        var bounds = DrawingBounds(devicePath.Bounds, stroked: false, deviceSpace: true);
-        using var mask = PdfCartonAntialiasedFill.Mask(devicePath, bounds);
+        // The device path only feeds the mask, so one path is reused from
+        // fill to fill (one per glyph shown), the shape transformed into it.
+        var devicePath = scratchDevicePath ?? new SKPath();
+        scratchDevicePath = null;
+        SKBitmap? mask;
+        SKRectI bounds;
+        try
+        {
+            (outline ?? lease.Path).Transform(in transform, devicePath);
+            bounds = DrawingBounds(devicePath.Bounds, stroked: false, deviceSpace: true);
+            mask = PdfCartonAntialiasedFill.Mask(devicePath, bounds);
+        }
+        finally
+        {
+            if (disposed || scratchDevicePath is not null) devicePath.Dispose();
+            else scratchDevicePath = devicePath;
+        }
+        using var maskScope = mask;
         if (mask is null) return true;
         var coverage = (mask, bounds);
         var deviceBounds = new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
@@ -11428,10 +11446,20 @@ internal static class PdfCartonFontCompat
         ForgetCursor(path);
     }
 
+    // A path (a glyph from the glyph cache, once per glyph shown) is
+    // transformed straight into the new path rather than copied first and
+    // then transformed in place.
     internal static object CreateTransformedShape(
         SKMatrix transform,
         object shape)
     {
+        var source = shape as SKPath ?? (shape as JavaArea)?.Path;
+        if (source is not null)
+        {
+            var transformed = new SKPath();
+            source.Transform(in transform, transformed);
+            return transformed;
+        }
         var path = CreatePath(shape);
         path.Transform(transform);
         return path;
