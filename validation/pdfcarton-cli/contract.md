@@ -14,7 +14,7 @@ product goal, exclusions or shipped tests.
 | `implementation.name` | Location                            | Run from the repository root               |
 |-----------------------|-------------------------------------|--------------------------------------------|
 | `pdfbox-jvm`          | `validation/pdfcarton-cli/jvm/`     | `clojure -M:pdfcli <command> [options] <input.pdf> [...]` |
-| `pdfcarton-dotnet`    | `validation/pdfcarton-cli/dotnet/`  | defined by that implementation             |
+| `pdfcarton-dotnet`    | `validation/pdfcarton-cli/dotnet/`  | `dotnet validation/pdfcarton-cli/dotnet/bin/Release/net10.0/DripSharp.PdfCarton.Tests.dll <command> [options] <input.pdf> [...]` |
 
 The JVM implementation uses `org.apache.pdfbox:pdfbox:3.0.8` and
 `org.apache.pdfbox:xmpbox:3.0.8` from Maven Central (the upstream version the
@@ -25,10 +25,43 @@ its classpath, so it reports JPX images as `decode-failed` (see `images`). Its
 test is `clojure -M:pdfcli-test`, run from the repository root with
 `research/pdfbox` checked out at its gitlink.
 
+The .NET implementation is a net10.0 console app over the generated PdfCarton
+family (`DripSharp.PdfCarton` and `DripSharp.PdfCarton.Xmp`), referenced as
+projects under `PdfCartonRoot` as `validation/pdfcube-benchmarks` does. Its
+assembly is named `DripSharp.PdfCarton.Tests`, the name PdfCarton grants
+`InternalsVisibleTo`, because PdfCarton's `BufferedImage` `getRGB`/`setRGB`
+bridge (`DripSharp.Runtime.PdfCartonFontCompat`) is not public API. It writes
+PNGs with SkiaSharp from the image's stored samples, as ImageIO writes a
+raster. Its test, `clojure -M:pdfcli-dotnet-test`, builds it and runs the JVM
+implementation's contract tests against it, one process per invocation.
+
 Where this contract names a PDFBox 3.0.8 API, that API's behaviour defines the
 field or operation. PdfCarton is a translation of that API, so its
 implementation calls the corresponding members; any other implementation must
 reproduce the behaviour.
+
+## README
+
+Run from the repository root, with `research/pdfbox` checked out at its
+gitlink for the test-resource PDFs.
+
+| Implementation     | Build (one line)                                                                                                     | Run (one line)                                                                                          |
+|--------------------|----------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| `pdfbox-jvm`       | none; the first `clojure -M:pdfcli` run fetches the Maven dependencies                                               | `clojure -M:pdfcli <command> [options] <input.pdf> [...]`                                               |
+| `pdfcarton-dotnet` | `dotnet build validation/pdfcarton-cli/dotnet -c Release -warnaserror -p:PdfCartonRoot=$PWD/target/generated/pdfcarton` | `dotnet validation/pdfcarton-cli/dotnet/bin/Release/net10.0/DripSharp.PdfCarton.Tests.dll <command> [options] <input.pdf> [...]` |
+
+- The .NET build needs a generated PdfCarton: `DRIPSHARP_WORKERS=22 clojure
+  -J-Xmx28g -M:run generate pdfcube pdfcube-preflight` writes it to
+  `target/generated/pdfcarton`. Without `-p:PdfCartonRoot` the build uses the
+  `products/pdfcarton` checkout. Add `-p:NuGetAudit=false` when building
+  offline.
+- Tests: `clojure -M:pdfcli-test` (JVM) and `clojure -M:pdfcli-dotnet-test`
+  (.NET; builds first against `PDFCARTON_ROOT`, default
+  `target/generated/pdfcarton`).
+- In timing mode the .NET implementation reports allocations with
+  `GC.GetAllocatedBytesForCurrentThread()`, as above, and says so in a stderr
+  line that also gives each iteration's process-wide
+  `GC.GetTotalAllocatedBytes()` delta, so work on other threads is visible.
 
 ## Invocation
 

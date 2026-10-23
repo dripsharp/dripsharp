@@ -66,6 +66,10 @@
 (def error-keys ["ok" "command" "implementation" "error"])
 (def written-keys ["output" "bytes" "pageCount"])
 
+(def ^:dynamic *library-version*
+  "implementation.libraryVersion the implementation under test reports."
+  "3.0.8")
+
 (defn- ok! [expected-result-keys & args]
   (let [{:keys [exit json] :as r} (apply run! args)]
     (is (= 0 exit) (str args " -> " (get json "error")))
@@ -73,7 +77,7 @@
     (is (= true (get json "ok")))
     (is (= (first args) (get json "command")))
     (is (= ["name" "library" "libraryVersion" "runtime"] (key-order (get json "implementation"))))
-    (is (= "3.0.8" (get-in json ["implementation" "libraryVersion"])))
+    (is (= *library-version* (get-in json ["implementation" "libraryVersion"])))
     (is (nil? (get json "timing")))
     (is (= expected-result-keys (key-order (get json "result"))))
     (assoc r :result (get json "result"))))

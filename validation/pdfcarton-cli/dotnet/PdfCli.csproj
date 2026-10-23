@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- pdfcli over PdfCarton; see ../contract.md. The assembly name is the one
+       PdfCarton grants InternalsVisibleTo, as in validation/pdfcube-benchmarks:
+       the CLI calls PdfCarton's BufferedImage getRGB/setRGB bridge
+       (DripSharp.Runtime.PdfCartonFontCompat), which is not public API. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>DripSharp.PdfCarton.Tests</AssemblyName>
+    <RootNamespace>PdfCli</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <PdfCartonRoot Condition="'$(PdfCartonRoot)' == ''">../../../products/pdfcarton</PdfCartonRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(PdfCartonRoot)/src/DripSharp.PdfCarton/DripSharp.PdfCarton.csproj" />
+    <ProjectReference Include="$(PdfCartonRoot)/src/DripSharp.PdfCarton.Xmp/DripSharp.PdfCarton.Xmp.csproj" />
+    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="4.150.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.150.1" />
+  </ItemGroup>
+</Project>
