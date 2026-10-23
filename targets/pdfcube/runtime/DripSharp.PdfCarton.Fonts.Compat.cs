@@ -6044,8 +6044,19 @@ public class PdfCartonGraphics2D : IDisposable
         return copy;
     }
 
+    // A BufferedImage's device reports the bit depth of its image type
+    // (black-box probes of Java 25: 1 for TYPE_BYTE_BINARY, 8 for
+    // TYPE_BYTE_GRAY, 24 for TYPE_INT_RGB and TYPE_3BYTE_BGR, 32 for
+    // TYPE_INT_ARGB), so PDFRenderer draws a BINARY page aliased.
     public virtual JavaGraphicsConfiguration GetDeviceConfiguration() =>
-        new(32);
+        new(bitmap is null ? 32 : PdfCartonFontCompat.GetImageType(bitmap) switch
+        {
+            PdfCartonFontCompat.TYPE_BYTE_BINARY => 1,
+            PdfCartonFontCompat.TYPE_BYTE_GRAY => 8,
+            PdfCartonFontCompat.TYPE_INT_RGB or PdfCartonFontCompat.TYPE_INT_BGR or
+                PdfCartonFontCompat.TYPE_3BYTE_BGR => 24,
+            _ => 32
+        });
 
     public virtual void SetRenderingHint(object key, object value)
     {
@@ -6290,6 +6301,7 @@ public class PdfCartonGraphics2D : IDisposable
         var rectangle = new SKRect(x, y, x + width, y + height);
         using (BeginDrawing(rectangle))
             RequireCanvas().DrawRect(rectangle, clearPaint);
+        QuantizeBinaryDestination(DrawingBounds(rectangle, stroked: false));
     }
 
     public virtual void ClipRect(int x, int y, int width, int height) =>
@@ -6875,6 +6887,11 @@ public class PdfCartonGraphics2D : IDisposable
                 ? CreateImagePaint()
                 : CreateDrawingPaint(stroked, shader);
             ApplyFallbackComposite(directPaint);
+            if ((imagePaint || shader is not null) && IsBinaryDestination())
+            {
+                DrawSampledIntoBinary(bounds, deviceSpace, draw, directPaint);
+                return;
+            }
             ApplyDestinationLuma(directPaint);
             using (BeginDrawing(bounds))
             {
@@ -7017,11 +7034,64 @@ public class PdfCartonGraphics2D : IDisposable
         activeCanvas.ResetMatrix();
         using var drawingPaint = CreateImagePaint();
         ApplyFallbackComposite(drawingPaint);
+        if (IsBinaryDestination())
+        {
+            // The layer holds a Java paint's raster, which Java 2D maps like an image.
+            activeCanvas.RestoreToCount(restore);
+            DrawSampledIntoBinary(bounds, deviceSpace: true, (target, targetBitmap, paint) =>
+            {
+                using var layerImage = PdfCartonFontCompat.DrawableImage(source, targetBitmap);
+                target.DrawImage(layerImage!, bounds.Left, bounds.Top, paint);
+            }, drawingPaint);
+            return;
+        }
         ApplyDestinationLuma(drawingPaint);
         using (BeginDrawing(bounds))
         using (var image = PdfCartonFontCompat.DrawableImage(source, bitmap))
             activeCanvas.DrawImage(image!, bounds.Left, bounds.Top, drawingPaint);
         activeCanvas.RestoreToCount(restore);
+    }
+
+    private bool IsBinaryDestination() =>
+        bitmap is { ColorType: SKColorType.Gray8 } &&
+        PdfCartonFontCompat.GetImageType(bitmap) == PdfCartonFontCompat.TYPE_BYTE_BINARY;
+
+    // Java 2D composites a sampled colour (an image's, a texture's or a
+    // gradient's) with a TYPE_BYTE_BINARY destination in RGB, rounding, and
+    // only then picks black or white by PdfCartonFontCompat.IsJavaBinarySampledBlack
+    // (black-box probes of Java 25: 20,000 random translucent ARGB pixels
+    // drawn over black and over white all match). So the drawing goes to an
+    // RGB copy of the destination's bounds, which is then mapped back.
+    private void DrawSampledIntoBinary(
+        SKRectI bounds, bool deviceSpace, Action<SKCanvas, SKBitmap?, SKPaint> draw, SKPaint paint)
+    {
+        var destination = bitmap!;
+        using var copy = PdfCartonFontCompat.CreateNativeBitmap(
+            bounds.Width, bounds.Height, PdfCartonFontCompat.TYPE_INT_RGB);
+        using (var copyCanvas = new SKCanvas(copy))
+        {
+            using (var replacePaint = new SKPaint { BlendMode = SKBlendMode.Src })
+                copyCanvas.DrawBitmap(
+                    destination,
+                    new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),
+                    new SKRect(0, 0, bounds.Width, bounds.Height),
+                    replacePaint);
+            ConfigureLayerCanvas(copyCanvas, bounds, deviceSpace);
+            draw(copyCanvas, copy, paint);
+        }
+        using var source = new PdfCartonPixels(copy);
+        using var target = new PdfCartonPixels(destination);
+        for (var y = bounds.Top; y < bounds.Bottom; y++)
+        {
+            for (var x = bounds.Left; x < bounds.Right; x++)
+            {
+                var value = PdfCartonFontCompat.IsJavaBinarySampledBlack(
+                    source.Get(x - bounds.Left, y - bounds.Top))
+                    ? byte.MinValue
+                    : byte.MaxValue;
+                target.Set(x, y, new SKColor(value, value, value));
+            }
+        }
     }
 
     private void CompositeLayer(SKBitmap source, SKRectI bounds)
@@ -7310,11 +7380,17 @@ public class PdfCartonGraphics2D : IDisposable
         }
     }
 
-    // A colour drawn into TYPE_BYTE_GRAY becomes Java2D's luma of it.
+    // A colour drawn into TYPE_BYTE_GRAY becomes Java2D's luma of it. Into
+    // TYPE_BYTE_BINARY (stored as Gray8 and quantized at 128 after each
+    // draw) a solid colour, the background included, goes by the same luma:
+    // black exactly when (77 R + 150 G + 29 B + 128) >> 8 < 128 (black-box
+    // probes of Java 25: 0 of 140,608 colours differ, translucent grays over
+    // black and white included). Sampled colours go by DrawSampledIntoBinary.
     private void ApplyDestinationLuma(SKPaint drawingPaint)
     {
-        if (bitmap is { ColorType: SKColorType.Gray8 } &&
-            PdfCartonFontCompat.GetImageType(bitmap) == PdfCartonFontCompat.TYPE_BYTE_GRAY)
+        if (bitmap is not { ColorType: SKColorType.Gray8 }) return;
+        var imageType = PdfCartonFontCompat.GetImageType(bitmap);
+        if (imageType is PdfCartonFontCompat.TYPE_BYTE_GRAY or PdfCartonFontCompat.TYPE_BYTE_BINARY)
             drawingPaint.ColorFilter = PdfCartonFontCompat.JavaGrayLumaFilter;
     }
 
@@ -10772,6 +10848,14 @@ internal static class PdfCartonFontCompat
         77f / 256f, 150f / 256f, 29f / 256f, 0f, 0f,
         0f, 0f, 0f, 1f, 0f
     ]);
+
+    // Java 2D maps a sampled colour (r, g, b) drawn into TYPE_BYTE_BINARY to
+    // black exactly when (r >> 3) + (g >> 3) + (b >> 3) <= 46 (black-box
+    // probes of Java 25 over all 5-bit cells, for drawImage at any scale,
+    // TexturePaint and GradientPaint).
+    internal static bool IsJavaBinarySampledBlack(SKColor color) =>
+        (color.Red >> 3) + (color.Green >> 3) + (color.Blue >> 3) <= 46;
+
     private static readonly JavaColorSpace CieXyzColorSpace =
         new(JavaColorSpace.CS_CIEXYZ);
 

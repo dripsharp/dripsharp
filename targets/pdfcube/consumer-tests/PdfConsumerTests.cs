@@ -4525,6 +4525,180 @@ public sealed class RasterConversionConsumerTests
         Assert.Equal(JavaSetRgbGraySamples, string.Join(",", samples));
     }
 
+    // ImageType.BINARY renders as Java PDFBox 3.0.8 renders them. A
+    // TYPE_BYTE_BINARY image's device reports a 1-bit display mode, so
+    // PDFRenderer turns antialiasing off and draws the page aliased. A solid
+    // colour then goes black or white by Java2D's (77 R + 150 G + 29 B) / 256
+    // luma, and an image pixel by the sum of its 5-bit channels: the magenta
+    // and the (0, 0.8, 0) green fill are black (Skia's luma would make the
+    // green white), the image's (0, 170, 245) pixel is white and its
+    // (0, 255, 0) one black. Expected pixels are Java's for the same page
+    // (glyphs in the bundled LiberationSans, a 0.5 pt stroked box, two fills
+    // and a 2x1 image) at scale 2; rows 0-7 and 36-39 are white. The fills
+    // and the image (x >= 90) match exactly. Of the glyphs' and the box's
+    // pixels a few on curve edges and at the box's corner may still differ
+    // (aliased curve edges and thin aliased strokes are not yet exact).
+    [Fact]
+    public void BinaryPageRendersAsJavaPdfBox()
+    {
+        string[] javaRows =
+        [
+            "............................................................................................########............................",
+            "............................................................................................########............................",
+            "............................................................................................########............................",
+            "......########..........................##..................................................########............................",
+            "......############...................########.......................#####################...########..............##########....",
+            "......##......#####..................##....###......................#...................#...########..............##########....",
+            "......##........###..................##.....##......................#...................#...########..............##########....",
+            "......##.........##.......###..##...##......##......................#...................#...########..............##########....",
+            "......##.........##....####.##.##....##.....##......................#...................#...########..............##########....",
+            "......##.........##....###...####....##.....##......................#...................#...########..............##########....",
+            "......##.......###.....##.....###.....#######.......................#...................#...########..............##########....",
+            "......############.....##.....###.....######........................#...................#...########..............##########....",
+            "......##########......##.......##...#####.####......................#...................#.........................##########....",
+            "......##.....##.......##.......##...###.....###.....................#...................#.........................##########....",
+            "......##......##......###......##...###......##.....................#...................#.........................##########....",
+            "......##.......##......##.....###..###.......##.....................#...................#.........................##########....",
+            "......##.......###.....##.....###...###......##.....................#...................#...########..............##########....",
+            "......##........##.....###....###...###......##.....................#...................#...########..............##########....",
+            "......##........###.....######.##....#########......................#...................#...########..............##########....",
+            "......##.........###......###..##.....######........................#...................#...########..............##########....",
+            "...............................##...................................#...................#...########..............##########....",
+            "...............................#....................................#...................#...########..............##########....",
+            ".......................###....##....................................#...................#...########..............##########....",
+            "........................########....................................#...................#...########..............##########....",
+            ".........................####.......................................#####################...########............................",
+            "............................................................................................########............................",
+            "............................................................................................########............................",
+            "............................................................................................########............................"
+        ];
+        using var document = new PDDocument();
+        var page = new PDPage(new PDRectangle(64, 20));
+        document.AddPage(page);
+        using var fontStream = typeof(PDDocument).Assembly.GetManifestResourceStream(
+            "org.apache.pdfbox.resources.ttf.LiberationSans-Regular.ttf")!;
+        var font = PDType0Font.Load(document, fontStream, false);
+        var image = new PDImageXObject(document, new MemoryStream([0, 170, 245, 0, 255, 0]),
+            null!, 2, 1, 8, PDDeviceRGB.Instance);
+        using (var content = new PDPageContentStream(document, page))
+        {
+            content.BeginText();
+            content.SetFont(font, 12);
+            content.NewLineAtOffset(2, 6);
+            content.ShowText("Rg8");
+            content.EndText();
+            content.SetLineWidth(0.5f);
+            content.AddRect(34, 4, 10, 10);
+            content.Stroke();
+            content.SetNonStrokingColor(1f, 0f, 1f);
+            content.AddRect(46, 2, 4, 6);
+            content.Fill();
+            content.SetNonStrokingColor(0f, 0.8f, 0f);
+            content.AddRect(46, 10, 4, 6);
+            content.Fill();
+            content.DrawImage(image, 52, 4, 10, 10);
+        }
+
+        var renderer = new PDFRenderer(document);
+        using var rendered = renderer.RenderImage(0, 2, ImageType.Binary);
+        Assert.Equal(Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY, Compat.PdfCartonFontCompat.GetImageType(rendered));
+        Assert.Equal(128, rendered.Width);
+        Assert.Equal(40, rendered.Height);
+        var outlineMismatches = new List<string>();
+        var fillMismatches = new List<string>();
+        for (var y = 0; y < rendered.Height; y++)
+        {
+            var expected = y is >= 8 and <= 35 ? javaRows[y - 8] : new string('.', rendered.Width);
+            for (var x = 0; x < rendered.Width; x++)
+            {
+                var black = (Compat.PdfCartonFontCompat.GetRgb(rendered, x, y) & 0xffffff) == 0;
+                if (black == (expected[x] == '#')) continue;
+                var mismatch = $"({x}, {y}) Java {(expected[x] == '#' ? "black" : "white")}";
+                if (x < 90)
+                    outlineMismatches.Add(mismatch);
+                else
+                    fillMismatches.Add(mismatch);
+            }
+        }
+        Assert.True(fillMismatches.Count == 0, "Fills and image differ: " + string.Join(", ", fillMismatches));
+        Assert.True(outlineMismatches.Count <= 8,
+            $"{outlineMismatches.Count} glyph and box pixels differ: " + string.Join(", ", outlineMismatches.Take(40)));
+    }
+
+    // In ImageType.BINARY renders Java2D composites sampled colours with the
+    // black-and-white page in RGB before it picks black or white by their
+    // 5-bit channels. Java PDFBox 3.0.8 renders this page (scale 2) as: an
+    // axial shading from (0, 1, 1) to (1, 0, 0.25) black from x = 65 on (the
+    // luma would switch near x = 52; the shading's colours near the switch
+    // are not yet exact, so x = 60-64 may go either way); a white image with
+    // a soft mask of
+    // alphas 120, 126, 127 | 128, 129, 135 over a black fill black on its
+    // left half; the same mask on a black image over white black on its right
+    // half (alpha 127 leaves 128, white; 128 leaves 127, black).
+    [Fact]
+    public void BinaryShadingsAndSoftMasksRenderAsJavaPdfBox()
+    {
+        using var document = new PDDocument();
+        var page = new PDPage(new PDRectangle(48, 20));
+        document.AddPage(page);
+        static COSArray Floats(params float[] values)
+        {
+            var array = new COSArray();
+            foreach (var value in values)
+                array.Add(new COSFloat(value));
+            return array;
+        }
+        var function = new COSDictionary();
+        function.SetInt(COSName.FunctionType, 2);
+        function.SetItem(COSName.Domain, Floats(0, 1));
+        function.SetItem(COSName.C0, Floats(0, 1, 1));
+        function.SetItem(COSName.C1, Floats(1, 0, 0.25f));
+        function.SetInt(COSName.N, 1);
+        var shading = new Pdmodel.Graphics.Shading.PDShadingType2(new COSDictionary());
+        shading.SetShadingType(Pdmodel.Graphics.Shading.PDShading.ShadingType2);
+        shading.SetColorSpace(PDDeviceRGB.Instance);
+        shading.SetCoords(Floats(0, 0, 48, 0));
+        shading.SetFunction(new Pdmodel.Common.Function.PDFunctionType2(function));
+        PDImageXObject Masked(byte value)
+        {
+            var image = new PDImageXObject(document, new MemoryStream(Enumerable.Repeat(value, 18).ToArray()),
+                null!, 6, 1, 8, PDDeviceRGB.Instance);
+            var mask = new PDImageXObject(document, new MemoryStream([120, 126, 127, 128, 129, 135]),
+                null!, 6, 1, 8, PDDeviceGray.Instance);
+            image.GetCOSObject().SetItem(COSName.Smask, mask);
+            return image;
+        }
+        using (var content = new PDPageContentStream(document, page))
+        {
+            content.SaveGraphicsState();
+            content.AddRect(0, 10, 48, 10);
+            content.Clip();
+            content.ShadingFill(shading);
+            content.RestoreGraphicsState();
+            content.DrawImage(Masked(0), 0, 0, 24, 5);
+            content.AddRect(0, 5, 24, 5);
+            content.Fill();
+            content.DrawImage(Masked(255), 0, 5, 24, 5);
+        }
+
+        using var rendered = new PDFRenderer(document).RenderImage(0, 2, ImageType.Binary);
+        Assert.Equal(96, rendered.Width);
+        Assert.Equal(40, rendered.Height);
+        var mismatches = new List<string>();
+        for (var y = 0; y < rendered.Height; y++)
+        {
+            for (var x = 0; x < rendered.Width; x++)
+            {
+                var javaBlack = y < 20 ? x >= 65 : y < 30 ? x < 24 : x is >= 24 and < 48;
+                var argb = Compat.PdfCartonFontCompat.GetRgb(rendered, x, y) & 0xffffff;
+                Assert.True(argb is 0 or 0xffffff, $"({x}, {y}) is 0x{argb:x6}, neither black nor white.");
+                if ((argb == 0) != javaBlack && !(y < 20 && x is >= 60 and < 65))
+                    mismatches.Add($"({x}, {y}) Java {(javaBlack ? "black" : "white")}");
+            }
+        }
+        Assert.True(mismatches.Count == 0, $"{mismatches.Count} pixels differ: " + string.Join(", ", mismatches.Take(40)));
+    }
+
     // getRGB after setRGB of an opaque gray on Java's CS_GRAY image: the
     // ComponentColorModel conversions (sRGB to 16-bit linear, the gray
     // weights, then linear to sRGB) in Java's float arithmetic. It equals
