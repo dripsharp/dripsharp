@@ -1752,10 +1752,16 @@ internal static partial class JavaCompat
     internal static bool InputStreamMarkSupported(Stream stream) => stream.CanSeek;
     internal static void InputStreamMark(Stream stream, int _)
     {
-        if (stream.CanSeek) StreamMarks.GetOrCreateValue(stream).Position = stream.Position;
+        if (stream is JavaByteArrayInputStream byteArray) byteArray.MarkPosition = byteArray.Position;
+        else if (stream.CanSeek) StreamMarks.GetOrCreateValue(stream).Position = stream.Position;
     }
     internal static void InputStreamReset(Stream stream)
     {
+        if (stream is JavaByteArrayInputStream byteArray)
+        {
+            byteArray.Position = byteArray.MarkPosition;
+            return;
+        }
         if (!stream.CanSeek || !StreamMarks.TryGetValue(stream, out var mark))
             throw new IOException("Stream mark is not available.");
         stream.Position = mark.Position;

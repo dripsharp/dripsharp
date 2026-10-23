@@ -5736,6 +5736,86 @@ public sealed class JavaSortedRangeConsumerTests
     }
 }
 
+// new ByteArrayInputStream(byte[]) becomes JavaCompat.NewMemoryStream, and
+// PDFStreamEngine.showText creates one per text-showing operator. Its mark
+// used to live in a process-wide ConditionalWeakTable, so every string added
+// a dependent handle whose container finalization contended for the table
+// lock with the main thread.
+public sealed class JavaByteArrayInputStreamMarkConsumerTests
+{
+    private static readonly sbyte[] Bytes = { 10, 20, 30, 40, 50 };
+
+    [Fact]
+    public void ResetWithoutMarkReturnsToTheInitialPosition()
+    {
+        var whole = Compat.JavaCompat.NewMemoryStream(Bytes);
+        Assert.Equal(10, Compat.JavaCompat.InputStreamRead(whole));
+        Assert.Equal(20, Compat.JavaCompat.InputStreamRead(whole));
+        Compat.JavaCompat.InputStreamReset(whole);
+        Assert.Equal(10, Compat.JavaCompat.InputStreamRead(whole));
+
+        var range = Compat.JavaCompat.NewMemoryStream(Bytes, 1, 3);
+        Compat.JavaCompat.InputStreamSkip(range, 2);
+        Compat.JavaCompat.InputStreamReset(range);
+        Assert.Equal(20, Compat.JavaCompat.InputStreamRead(range));
+    }
+
+    [Fact]
+    public void MarkAndResetSurviveCloseAndRepeat()
+    {
+        var stream = Compat.JavaCompat.NewMemoryStream(Bytes);
+        Assert.True(Compat.JavaCompat.InputStreamMarkSupported(stream));
+        Compat.JavaCompat.InputStreamRead(stream);
+        Compat.JavaCompat.InputStreamMark(stream, 0);
+        Compat.JavaCompat.InputStreamSkip(stream, 3);
+        Compat.JavaCompat.InputStreamReset(stream);
+        Assert.Equal(20, Compat.JavaCompat.InputStreamRead(stream));
+        Compat.JavaCompat.InputStreamSkip(stream, 10);
+        // ByteArrayInputStream.close() has no effect; the mark stays usable.
+        stream.Dispose();
+        Compat.JavaCompat.InputStreamReset(stream);
+        Assert.Equal(20, Compat.JavaCompat.InputStreamRead(stream));
+    }
+
+    [Fact]
+    public void ForeignSeekableStreamsKeepTheirMarks()
+    {
+        var stream = new MemoryStream(new byte[] { 1, 2, 3 });
+        Assert.Throws<IOException>(() => Compat.JavaCompat.InputStreamReset(stream));
+        stream.Position = 1;
+        Compat.JavaCompat.InputStreamMark(stream, 0);
+        stream.Position = 3;
+        Compat.JavaCompat.InputStreamReset(stream);
+        Assert.Equal(1, stream.Position);
+    }
+
+    [Fact]
+    public void ByteArrayStreamsAddNoSideTableEntries()
+    {
+        var streams = new List<Stream>();
+        for (int index = 0; index < 1000; index++)
+        {
+            var stream = Compat.JavaCompat.NewMemoryStream(Bytes);
+            Compat.JavaCompat.InputStreamRead(stream);
+            Compat.JavaCompat.InputStreamMark(stream, 1);
+            Compat.JavaCompat.InputStreamReset(stream);
+            streams.Add(stream);
+        }
+        var table = (System.Collections.IEnumerable)typeof(Compat.JavaCompat)
+            .GetField("StreamMarks", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .GetValue(null)!;
+        var live = new HashSet<object>(streams, ReferenceEqualityComparer.Instance);
+        int entries = 0;
+        foreach (object entry in table)
+        {
+            object key = entry.GetType().GetProperty("Key")!.GetValue(entry)!;
+            if (live.Contains(key)) entries++;
+        }
+        Assert.Equal(0, entries);
+        GC.KeepAlive(streams);
+    }
+}
+
 // java.util.WeakHashMap behind LegacyPDFStreamEngine.fontHeightMap (one lookup
 // per glyph of PDFTextStripper output) and TilingPaintFactory. It was a list
 // that every operation swept for collected keys and then scanned with equals.

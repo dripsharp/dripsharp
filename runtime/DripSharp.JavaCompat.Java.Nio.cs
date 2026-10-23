@@ -1158,6 +1158,10 @@ internal static partial class JavaCompat
         {
         }
 
+        // java.io.ByteArrayInputStream keeps its mark in the stream and starts
+        // it at the initial position, so no side table entry is needed.
+        internal long MarkPosition;
+
         internal int ReadJava(byte[] buffer, int offset, int count)
         {
             if (Position >= Length) return -1;
@@ -1170,12 +1174,8 @@ internal static partial class JavaCompat
             // available, skip, mark, and reset remain usable after close.
         }
     }
-    internal static MemoryStream NewMemoryStream(sbyte[] bytes)
-    {
-        var stream = new JavaByteArrayInputStream(ToUnsignedBytes(bytes));
-        InputStreamMark(stream, int.MaxValue);
-        return stream;
-    }
+    internal static MemoryStream NewMemoryStream(sbyte[] bytes) =>
+        new JavaByteArrayInputStream(ToUnsignedBytes(bytes));
     internal static StringBuilder StringBuilderAppendInvariant(
         StringBuilder builder,
         object value)
@@ -1188,9 +1188,7 @@ internal static partial class JavaCompat
         ArgumentNullException.ThrowIfNull(bytes);
         if (offset < 0 || length < 0 || offset > bytes.Length - length)
             throw new IndexOutOfRangeException();
-        var stream = new JavaByteArrayInputStream(ToUnsignedBytes(bytes, offset, length));
-        InputStreamMark(stream, int.MaxValue);
-        return stream;
+        return new JavaByteArrayInputStream(ToUnsignedBytes(bytes, offset, length));
     }
     internal static sbyte[] ToSignedBytes(MemoryStream stream)
     {
