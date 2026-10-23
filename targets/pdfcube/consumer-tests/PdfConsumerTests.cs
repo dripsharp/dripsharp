@@ -10834,6 +10834,23 @@ public sealed class PathIteratorTests
         var general = new SKMatrix(0.3f, -1.1f, 10.25f, 0.7f, 2.5f, -3.5f, 0, 0, 1);
         Assert.Equal([-1.1f, 2.5f, -0.3f, -0.7f, 10.25f, -3.5f], Linear(Rotated(general, 90)));
         Assert.Equal([1.1f, -2.5f, 0.3f, 0.7f, 10.25f, -3.5f], Linear(Rotated(general, 270)));
+        // Java swaps the columns, so an infinite entry makes no NaN.
+        var infinite = new SKMatrix(float.PositiveInfinity, 0, 1, 0, 2, 1, 0, 0, 1);
+        Assert.Equal([0f, 2f, float.NegativeInfinity, 0f, 1f, 1f], Linear(Rotated(infinite, 90)));
+        Assert.Equal([float.NegativeInfinity, 0f, 0f, -2f, 1f, 1f], Linear(Rotated(infinite, 180)));
+        Assert.Equal([0f, -2f, float.PositiveInfinity, 0f, 1f, 1f], Linear(Rotated(infinite, 270)));
+        foreach (var (quadrants, expected) in new (int, float[])[]
+        {
+            (1, [0f, 2f, float.NegativeInfinity, 0f, 1f, 1f]),
+            (-2, [float.NegativeInfinity, 0f, 0f, -2f, 1f, 1f]),
+            (7, [0f, -2f, float.PositiveInfinity, 0f, 1f, 1f]),
+            (4, [float.PositiveInfinity, 0f, 0f, 2f, 1f, 1f]),
+        })
+        {
+            var quadrantRotated = infinite;
+            Compat.PdfCartonFontCompat.QuadrantRotateInPlace(ref quadrantRotated, quadrants);
+            Assert.Equal(expected, Linear(quadrantRotated));
+        }
 
         using var document = Loader.LoadPDF((sbyte[])(Array)RasterConversionConsumerTests.SequentialPdf(
         [
