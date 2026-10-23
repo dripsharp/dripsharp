@@ -106,11 +106,15 @@ problems, and every performance case). Results are never committed. Options:
 3), `--out DIR`. Its self-check is `clojure -M:pdfcli-compare-test`.
 
 - **Corpus:** every PDF under `research/pdfbox/*/src/test/resources` (the
-  PDFBox test resources; the pdfcube differentials and the Preflight corpus
-  draw their PDFs from the same directories), plus two large documents the
-  PDFBox CLI's `merge` builds at the start (`large-cweb-x12.pdf`,
-  `large-mixed.pdf`). Encrypted files whose upstream tests name a password are
-  opened with it.
+  PDFBox test resources, from which the pdfcube differentials and the
+  Preflight corpus also take their files); the two malformed documents that
+  `validation/pdfcube-preflight-corpus/corpus.edn` derives from them
+  (truncated to half, and the first 64 bytes), staged with its
+  transformations and checked against its payload hashes; and two large
+  documents the PDFBox CLI's `merge` builds at the start
+  (`large-cweb-x12.pdf`, `large-mixed.pdf`). Encrypted files whose upstream
+  tests name a password are opened with it. `results.json` lists every
+  document with its size.
 - **Read commands** run on every document: `info`, `text` (plain and
   `--sort`), `render` (pages 1-10, 72 dpi, RGB), `images` (pages 1-10, with
   `--out-dir`), `fonts`, `outline`, `annotations`, `form-fields`,
@@ -132,9 +136,11 @@ problems, and every performance case). Results are never committed. Options:
   allocations come from one timing-mode run (`render` uses `--no-write` and
   pages 1-3, `images` no `--out-dir`). The first row is the font-cache build:
   each implementation gets its own empty font cache directory
-  (`-Dpdfbox.fontcache` on the JVM, `HOME` for PdfCarton, which takes
-  `user.home` from it) and the first `text` run that scans the system fonts is
-  timed. An important regression is a warm or cold ratio of 5 or more where
+  (`-Dpdfbox.fontcache` on the JVM; for PdfCarton, which takes `user.home`
+  from it, `HOME`, whose `Library/Fonts` links to the real `~/Library/Fonts`
+  so both search the same fonts) and the first `text` run that scans the
+  system fonts is timed. Shared, the two rewrite each other's
+  `~/.pdfbox.cache`. An important regression is a warm or cold ratio of 5 or more where
   both succeed.
 - Cold timings are sensitive to other load on the machine; run it alone.
 

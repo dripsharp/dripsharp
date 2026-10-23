@@ -439,6 +439,19 @@
         (is (= "page-0001.png" (get (first (get result "pages")) "file"))))
       (finally (Locale/setDefault Locale$Category/FORMAT saved)))))
 
+(deftest jpx-images-decode-through-the-oracle
+  ;; The JVM classpath carries jai-imageio-jpeg2000, as PDFBox documents.
+  (when (= "3.0.8" *library-version*)
+    (doseq [name ["JPXTestRGB.pdf" "JPXTestGrey.pdf" "JPXTestCMYK.pdf"]]
+      (let [doc (str "research/pdfbox/tools/src/test/resources/input/ImageIOUtil/" name)
+            dir (out (str "jpx-" name))
+            {:keys [result]} (ok! ["images"] "images" "--out-dir" dir doc)
+            image (first-entry result "images")]
+        (is (= ["JPXDecode"] (vec (get image "filters"))) name)
+        (is (nil? (get image "error")) name)
+        (is (string? (get image "decodedSha256")) name)
+        (is (some? (javax.imageio.ImageIO/read (io/file dir (get image "file")))) name)))))
+
 (defn- delete-tree! [^java.io.File f]
   (when (.isDirectory f) (doseq [child (.listFiles f)] (delete-tree! child)))
   (.delete f))

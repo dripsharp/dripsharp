@@ -7,7 +7,8 @@
   generating PdfCarton: clojure -M:pdfcli-compare [--subset] [options].
   Writes results.json and summary.md to validation-output/pdfcarton-cli/.
   See validation/pdfcarton-cli/contract.md, section Comparison."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str])
   (:import (com.fasterxml.jackson.databind ObjectMapper SerializationFeature)
@@ -223,10 +224,20 @@
   (and size-match (<= mean-abs (:mean-abs tolerance))
        (<= fraction-over-32 (:fraction-over-32 tolerance))))
 
+(defn- read-png
+  "[image nil] or [nil problem] for a PNG that is missing or cannot be decoded."
+  [^File f]
+  (if-not (.isFile f)
+    [nil "missing"]
+    (try (if-let [img (ImageIO/read f)] [img nil] [nil "not decodable"])
+         (catch Exception e [nil (clip (str "decode error: " e) 200)]))))
+
 (defn- png-metrics [^File fa ^File fb]
-  (let [a (when (.isFile fa) (ImageIO/read fa))
-        b (when (.isFile fb) (ImageIO/read fb))]
-    (if (and a b) (image-metrics a b) {:size-match false :missing [(some? a) (some? b)]})))
+  (let [[a pa] (read-png fa)
+        [b pb] (read-png fb)]
+    (if (and a b)
+      (image-metrics a b)
+      {:size-match false :unreadable {:pdfbox pa :pdfcarton pb}})))
 
 (defn- worst-metrics [ms]
   {:pages (count ms)
@@ -481,10 +492,17 @@
 (defn- resolve-args [args {:keys [out out-dir values]}]
   (mapv #(case % :out out :out-dir out-dir :values values %) args))
 
-(defn- repro [impl args dir]
-  (let [outs {:out (str dir "/out.pdf") :out-dir (str dir "/out") :values (str dir "/values.json")}
-        resolved (resolve-args args outs)]
-    (str "mkdir -p " dir " && " (:repro impl) " " (str/join " " (map shell-quote resolved)))))
+(defn- repro
+  "A shell command reproducing one invocation; values is the form-fill
+  values JSON, written first when the arguments name it."
+  ([impl args dir] (repro impl args dir nil))
+  ([impl args dir values]
+   (let [outs {:out (str dir "/out.pdf") :out-dir (str dir "/out") :values (str dir "/values.json")}
+         resolved (resolve-args args outs)]
+     (str "mkdir -p " dir " && "
+          (when (and values (some #{:values} args))
+            (str "printf '%s' " (shell-quote values) " > " (:values outs) " && "))
+          (:repro impl) " " (str/join " " (map shell-quote resolved))))))
 
 ;; ---------------------------------------------------------------- running cases
 
@@ -552,9 +570,13 @@
 
 (def class-order [:equal :fairly-close :different :pdfcarton-fails :pdfbox-fails :both-fail])
 
-(defn- worst-class [classes]
+(defn- worst-class
+  "Worst of a write case's classes. A reopen check that fails on both sides
+  counts as different: the written output could not be checked."
+  [classes]
   (let [rank (zipmap [:equal :fairly-close :different :pdfcarton-fails] (range))]
-    (reduce (fn [a b] (if (> (rank b -1) (rank a -1)) b a)) :equal classes)))
+    (reduce (fn [a b] (if (> (rank b -1) (rank a -1)) b a))
+            :equal (map #(if (#{:both-fail :pdfbox-fails} %) :different %) classes))))
 
 (defn run-case
   "Runs one case on both implementations and classifies it."
@@ -587,15 +609,15 @@
      :severity (+ (or (:severity base) 0) (* 10 (count bad-reopen)))
      :detail (cond-> (or (:detail base) {})
                (seq bad-reopen) (assoc :reopen (vec (take 6 bad-reopen)))
-               values (assoc :values (clip values 300)))
+               values (assoc :values values))
      :pdfbox (run-summary a)
      :pdfcarton (run-summary b)
-     :repro {:pdfbox (repro jvm (:args c) "/tmp/pdfcli-repro/pdfbox")
-             :pdfcarton (repro dotnet (:args c) "/tmp/pdfcli-repro/pdfcarton")}}))
+     :repro {:pdfbox (repro jvm (:args c) "/tmp/pdfcli-repro/pdfbox" values)
+             :pdfcarton (repro dotnet (:args c) "/tmp/pdfcli-repro/pdfcarton" values)}}))
 
 ;; ---------------------------------------------------------------- performance
 
-(defn perf-docs [subset? docs]
+(defn perf-docs [subset? docs large-paths]
   (let [want (if subset?
                subset-docs
                (concat subset-docs
@@ -608,14 +630,13 @@
                         (str r "org/apache/pdfbox/pdmodel/common/testPDF_multiFormatEmbFiles.pdf")
                         (str r "org/apache/pdfbox/pdmodel/interactive/form/PDFBOX-5784.pdf")
                         (str r "org/apache/pdfbox/pdmodel/graphics/image/ccittg4.pdf")
-                        "research/pdfbox/tools/src/test/resources/input/ImageIOUtil/JPXTestRGB.pdf"
-                        "validation-output/pdfcarton-cli/corpus/large-cweb-x12.pdf"
-                        "validation-output/pdfcarton-cli/corpus/large-mixed.pdf"]))]
+                        "research/pdfbox/tools/src/test/resources/input/ImageIOUtil/JPXTestRGB.pdf"]
+                       large-paths))]
     (filterv (set docs) want)))
 
-(defn perf-cases [subset? docs writes]
+(defn perf-cases [subset? docs large-paths writes]
   (concat
-   (for [doc (perf-docs subset? docs)
+   (for [doc (perf-docs subset? docs large-paths)
          :let [pw (pw-args doc)
                c (fn [command variant args] {:command command :variant variant :docs [doc]
                                              :args (into [command] (concat args pw [doc]))})]
@@ -652,14 +673,15 @@
         warm-args ["--warmup" (str warmup) "--repeat" (str repeat)]
         wa (timing-of (invoke-case jvm c popts case-dir warm-args))
         wb (timing-of (invoke-case dotnet c popts case-dir warm-args))
+        values (when-let [f (:values-file c)] (slurp f))
         result {:id (:id c) :command (:command c) :variant (:variant c) :docs (mapv doc-label (:docs c))
                 :cold-ms [(round3 cold-a) (round3 cold-b)] :cold-ratio (ratio cold-a cold-b)
                 :warm-ms [(:median-ms wa) (:median-ms wb)] :warm-ratio (ratio (:median-ms wa) (:median-ms wb))
                 :alloc-bytes [(:median-alloc wa) (:median-alloc wb)]
                 :alloc-ratio (ratio (:median-alloc wa) (:median-alloc wb))
                 :both-succeed (boolean (and cold-a cold-b wa wb))
-                :repro {:pdfbox (repro jvm (into (:args c) warm-args) "/tmp/pdfcli-repro/pdfbox")
-                        :pdfcarton (repro dotnet (into (:args c) warm-args) "/tmp/pdfcli-repro/pdfcarton")}}]
+                :repro {:pdfbox (repro jvm (into (:args c) warm-args) "/tmp/pdfcli-repro/pdfbox" values)
+                        :pdfcarton (repro dotnet (into (:args c) warm-args) "/tmp/pdfcli-repro/pdfcarton" values)}}]
     (delete-tree! (io/file case-dir))
     (assoc result :important (boolean (and (:both-succeed result)
                                            (some #(and % (>= % 5.0)) [(:cold-ratio result) (:warm-ratio result)]))))))
@@ -677,6 +699,22 @@
   (let [d (io/file out "font-cache" impl-name)]
     (.mkdirs d)
     (.getAbsolutePath d)))
+
+(defn- pdfcarton-home
+  "PdfCarton's font cache directory, used as its HOME. Its Library/Fonts links
+  to the real ~/Library/Fonts, so PdfCarton's macOS font search
+  (user.home/Library/Fonts plus the system directories) sees the same fonts
+  as PDFBox."
+  [out]
+  (let [home (font-cache-dir out "pdfcarton-dotnet")
+        user-fonts (io/file (System/getProperty "user.home") "Library" "Fonts")
+        link (.toPath (io/file home "Library" "Fonts"))]
+    (when (and (.isDirectory user-fonts)
+               (not (java.nio.file.Files/exists link (make-array java.nio.file.LinkOption 0))))
+      (.mkdirs (io/file home "Library"))
+      (java.nio.file.Files/createSymbolicLink link (.toPath user-fonts)
+                                              (make-array java.nio.file.attribute.FileAttribute 0)))
+    home))
 
 (defn jvm-impl!
   "The PDFBox CLI, AOT-compiled once so that cold time measures PDFBox, not
@@ -705,7 +743,7 @@
        "-p:NuGetAudit=false" (str "-p:PdfCartonRoot=" (.getAbsolutePath (io/file pdfcarton-root))))
   {:name "pdfcarton-dotnet"
    :cmd ["dotnet" dotnet-dll]
-   :env {"HOME" (font-cache-dir out "pdfcarton-dotnet")}
+   :env {"HOME" (pdfcarton-home out)}
    :repro (str "dotnet " dotnet-dll)})
 
 (def font-cache-primer
@@ -717,7 +755,7 @@
   the cold run as a performance row (the cache build dominates it)."
   [{:keys [jvm dotnet]} out opts]
   (let [run (fn [impl]
-              (doseq [^File f (.listFiles (io/file (font-cache-dir out (:name impl))))] (.delete f))
+              (.delete (io/file (font-cache-dir out (:name impl)) ".pdfbox.cache"))
               (invoke impl ["text" font-cache-primer] (assoc opts :timeout-s 900)
                       (str out "/work/prime-" (:name impl))))
         a (run jvm) b (run dotnet)
@@ -742,6 +780,34 @@
              {:path file :generated (str "PDFBox merge of " (count inputs) " corpus files")
               :pages (get-in r [:env "result" "pageCount"])}
              (do (println "Could not build" name (:status r) (:code r)) nil))))))
+
+(def preflight-corpus "validation/pdfcube-preflight-corpus/corpus.edn")
+
+(defn- sha256-hex [^bytes data]
+  (apply str (map #(format "%02x" %) (.digest (java.security.MessageDigest/getInstance "SHA-256") data))))
+
+(defn stage-derived-corpus!
+  "The pdfcube Preflight corpus's derived documents (truncated and
+  header-only copies of an upstream fixture), staged under out/corpus with
+  the corpus file's transformations and checked against its payload hashes.
+  Its other documents are upstream test resources, already in the corpus."
+  [out]
+  (let [{:keys [sources cases]} (edn/read-string (slurp preflight-corpus))
+        dir (io/file out "corpus")]
+    (.mkdirs dir)
+    (vec (for [{:keys [source staged-file transform payload-sha256 id]} cases
+               :when (#{:truncate-half :prefix} (:kind transform))
+               :let [src (java.nio.file.Files/readAllBytes (.toPath (io/file (get-in sources [source :path]))))
+                     data (case (:kind transform)
+                            :truncate-half (java.util.Arrays/copyOf src (quot (alength src) 2))
+                            :prefix (java.util.Arrays/copyOf src (int (min (:bytes transform) (alength src)))))
+                     file (io/file dir staged-file)]]
+           (do (when (not= payload-sha256 (sha256-hex data))
+                 (throw (ex-info "Preflight corpus derived payload changed" {:id id})))
+               (io/copy data file)
+               {:path (.getPath file)
+                :generated (str "pdfcube Preflight corpus case " id " (" (name (:kind transform))
+                                " of " (get-in sources [source :path]) ")")})))))
 
 (defn- git-head []
   (str/trim (:out (shell/sh "git" "rev-parse" "HEAD"))))
@@ -916,10 +982,11 @@
         impls (or impls {:jvm (jvm-impl! out) :dotnet (dotnet-impl! opts)})
         primer (prime-font-caches! impls out opts)
         large (when-not (or subset docs) (filterv some? (build-large-docs! (:jvm impls) out opts)))
-        doc-list (vec (or docs (concat (if subset subset-docs (upstream-corpus)) (map :path large))))
+        generated (concat large (when-not (or subset docs) (stage-derived-corpus! out)))
+        doc-list (vec (or docs (concat (if subset subset-docs (upstream-corpus)) (map :path generated))))
         corpus (vec (for [d doc-list]
                       (merge {:path (doc-label d) :bytes (.length (io/file d))}
-                             (when-let [l (first (filter #(= d (:path %)) large))] (dissoc l :path)))))
+                             (when-let [l (first (filter #(= d (:path %)) generated))] (dissoc l :path)))))
         reads (mapcat #(read-cases % (contains? render-variant-docs %)) doc-list)
         writes (write-cases (boolean (or subset docs)))
         cases (with-ids "c" (concat reads writes))
@@ -936,7 +1003,7 @@
                                   (when (zero? (mod n 100)) (println (format "  %d/%d cases" n (count cases))))
                                   res))
                               cases)
-        pcases (when perf (with-ids "p" (perf-cases subset doc-list (if docs writes (write-cases subset)))))
+        pcases (when perf (with-ids "p" (perf-cases subset doc-list (map :path large) (if docs writes (write-cases subset)))))
         _ (when perf (println (format "pdfcli compare: %d performance cases, serial" (count pcases))))
         perf-results (vec (for [c pcases]
                             (try (run-perf-case impls c opts (str work "/" (:n c)))
