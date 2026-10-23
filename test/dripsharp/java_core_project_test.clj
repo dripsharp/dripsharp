@@ -457,7 +457,7 @@
                       "global::System.IComparable<global::DripSharp.Brine.Runtime."
                       "MemberLookupSuggestions.Candidate>")))
             (is (str/includes? java-compat
-                               "values.OrderBy(value => value, Comparer<T>.Create(JavaCompare))"))
+                               "MergeSorted(values, Comparer<T>.Create(JavaCompare))"))
             (is (str/includes? java-compat
                                "internal static IComparer<T> NaturalOrder<T>() =>"))
             (is (str/includes? java-compat

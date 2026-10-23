@@ -10831,3 +10831,127 @@ public sealed class GlyphPathLifetimeTests
         Assert.Throws<Compat.ArgumentException>(() => Compat.JavaCompat.EnumOrdinal(unregistered));
     }
 }
+
+public sealed class JavaSortConsumerTests
+{
+    private static int[] JavaOrder(string order) => order.Split(',').Select(int.Parse).ToArray();
+
+    // An arbitrary antisymmetric comparator.
+    private static int Arbitrary(int a, int b)
+    {
+        long low = Math.Min(a, b), high = Math.Max(a, b);
+        var sign = (int)((low * 2654435761L + high * 40503L) % 1000003 % 3) - 1;
+        return a == b ? 0 : a < b ? sign : -sign;
+    }
+
+    // Java's order of 0..63 under Arbitrary.
+    private const string Arbitrary64 =
+        "32,0,2,4,6,8,10,12,14,15,13,11,9,7,5,3,1,16,18,19,20,21,22,29,30,23,24,25,26,27,28,31,"
+        + "33,35,34,37,39,41,17,43,45,47,46,44,42,40,38,36,49,51,53,55,57,59,61,63,62,60,58,56,"
+        + "54,52,50,48";
+
+    // Java's state of 0..199 when sorting them under Arbitrary throws.
+    private const string ArbitraryViolated200 =
+        "0,51,2,4,6,8,10,12,14,16,18,19,20,21,22,23,24,17,15,13,11,9,7,5,3,1,25,26,27,28,29,30,"
+        + "31,32,33,35,34,37,39,41,43,45,47,49,48,46,42,40,38,36,53,44,55,57,59,61,63,65,66,67,"
+        + "68,69,70,71,72,73,74,64,62,60,58,56,54,52,50,75,76,77,78,79,80,82,81,84,86,88,90,92,"
+        + "94,96,98,99,97,95,93,91,89,85,83,87,100,102,104,106,108,110,112,119,120,124,113,114,"
+        + "122,115,116,123,117,118,121,111,109,107,105,103,101,125,126,127,129,128,131,133,135,"
+        + "137,139,141,143,145,147,149,148,146,144,142,140,151,153,155,157,159,170,174,160,161,"
+        + "169,162,163,172,164,165,166,167,168,171,173,158,156,154,152,150,176,175,178,182,184,"
+        + "186,188,190,192,194,196,198,199,197,138,195,136,193,191,134,189,187,132,185,183,130,"
+        + "181,179,177,180";
+
+    // Collections.sort with a comparator that is not transitive orders as
+    // Java's merge sort does, or throws its contract violation where Java
+    // does, leaving an ArrayList in Java's partially merged order (from which
+    // PDFTextStripper falls back to IterativeMergeSort). Every expected
+    // order was printed by Collections.sort on JDK 25 with PDFBox 3.0.8.
+    [Fact]
+    public void SortListOrdersLikeJavaWhenTheComparatorIsNotTransitive()
+    {
+        static List<int> Sorted(int count, Comparison<int> comparison)
+        {
+            var values = Enumerable.Range(0, count).ToList();
+            Compat.JavaCompat.SortList(values, comparison);
+            return values;
+        }
+
+        // Rows within 2 of each other order by column.
+        var byRowWithTolerance = Sorted(100, (a, b) =>
+        {
+            int rowA = a * 37 % 23, rowB = b * 37 % 23;
+            return Math.Abs(rowA - rowB) <= 2
+                ? (a * 53 % 101).CompareTo(b * 53 % 101)
+                : rowA.CompareTo(rowB);
+        });
+        Assert.Equal(JavaOrder(
+            "0,23,46,69,10,92,61,84,33,56,79,5,28,51,74,97,2,25,48,71,94,20,43,66,89,15,38,63,86,12,"
+            + "35,58,81,7,30,53,76,99,4,27,50,73,96,22,45,68,91,17,40,42,65,88,14,37,60,83,9,32,55,78,"
+            + "6,29,52,75,98,1,24,47,70,93,19,21,44,67,90,16,39,62,85,11,34,57,80,82,8,31,54,77,3,26,"
+            + "49,72,95,18,41,64,87,13,36,59"), byRowWithTolerance);
+
+        Assert.Equal(JavaOrder(Arbitrary64), Sorted(64, Arbitrary));
+
+        var violated = Enumerable.Range(0, 200).ToList();
+        var violation = Assert.ThrowsAny<ArgumentException>(
+            () => Compat.JavaCompat.SortList(violated, Arbitrary));
+        Assert.Equal("Comparison method violates its general contract!", violation.Message);
+        Assert.Equal(JavaOrder(ArbitraryViolated200), violated);
+
+        // A transitive comparator with ties keeps equal elements in order.
+        Assert.Equal(Enumerable.Range(0, 500).OrderBy(value => value % 7),
+            Sorted(500, (a, b) => (a % 7).CompareTo(b % 7)));
+        Assert.Equal(new[] { 2, 1, 0, 3 },
+            Compat.JavaCompat.StreamSorted(new[] { 0, 1, 2, 3 }, (int a, int b) => (b % 3).CompareTo(a % 3)));
+    }
+
+    // Arrays.asList sorts its array in place and keeps Java's partial order
+    // when the comparator breaks the contract; a LinkedList sorts a copy and
+    // stays unchanged. Stream.sorted orders like Collections.sort and throws
+    // when the stream is consumed. Expected behaviour from JDK 25.
+    [Fact]
+    public void OtherSortEntryPointsFollowJavaOrderAndFailureState()
+    {
+        var array = Enumerable.Range(0, 200).ToArray();
+        Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortList(array, Arbitrary));
+        Assert.Equal(JavaOrder(ArbitraryViolated200), array);
+
+        var linked = new Compat.JavaLinkedList<int>();
+        for (var value = 0; value < 200; value++) linked.Add(value);
+        Assert.ThrowsAny<ArgumentException>(() => Compat.JavaCompat.SortList(linked, Arbitrary));
+        Assert.Equal(Enumerable.Range(0, 200), linked);
+
+        var source = Enumerable.Range(0, 64).ToList();
+        Assert.Equal(JavaOrder(Arbitrary64), Compat.JavaCompat.StreamSorted(source, Arbitrary));
+        Assert.Equal(JavaOrder(Arbitrary64), Compat.JavaCompat.Sorted(source, Arbitrary));
+        Assert.Equal(Enumerable.Range(0, 64), source);
+        var unsorted = Compat.JavaCompat.StreamSorted(Enumerable.Range(0, 200), Arbitrary);
+        var streamViolation = Assert.ThrowsAny<ArgumentException>(() => unsorted.ToList());
+        Assert.Equal("Comparison method violates its general contract!", streamViolation.Message);
+    }
+
+    // PDFTextStripper's sort by position: TextPositionComparator treats
+    // glyphs whose baselines fall within each other's height as one line,
+    // which is not transitive. Java's Collections.sort does not throw here.
+    [Fact]
+    public void TextPositionsSortByPositionInJavaOrder()
+    {
+        var positions = new List<DripSharp.PdfCarton.Text.TextPosition>();
+        for (var index = 0; index < 120; index++)
+        {
+            float x = index * 37 % 101, y = 100 + index * 13 % 50 / 2f, height = 2 + index % 5 * 3;
+            positions.Add(new DripSharp.PdfCarton.Text.TextPosition(0, 600, 800,
+                new DripSharp.PdfCarton.Util.Matrix(1, 0, 0, 1, x, y), x + 5, y, height, 5, 2,
+                $"{index}", new[] { index }, null!, 1, 1));
+        }
+        Compat.JavaCompat.SortList(positions, new DripSharp.PdfCarton.Text.TextPositionComparator());
+        Assert.Equal(JavaOrder(
+            "115,96,41,11,22,33,3,44,14,107,118,88,99,69,61,42,53,23,34,15,26,7,119,92,73,46,71,63,"
+            + "80,91,72,64,37,111,65,57,38,19,52,74,103,6,17,9,18,95,76,49,30,10,25,101,82,93,104,"
+            + "110,102,55,36,28,39,113,83,94,84,45,56,47,67,29,114,87,68,79,60,58,75,48,59,2,106,112,"
+            + "40,20,1,85,66,12,86,51,32,117,0,77,105,31,4,21,116,97,108,78,89,43,13,24,98,5,70,81,"
+            + "62,109,90,35,16,50,100,54,27,8"),
+            positions.Select(position => int.Parse(position.GetUnicode())));
+    }
+}

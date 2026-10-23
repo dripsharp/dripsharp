@@ -4688,13 +4688,502 @@ internal static partial class JavaCompat
             if (Equals(values[index], value)) return index;
         return -1;
     }
+    // Collections.sort and List.sort. ArrayList and Arrays.asList sort their
+    // backing array in place, so a comparator that throws (including the
+    // contract-violation IllegalArgumentException) leaves the list in the
+    // partially merged order Java leaves; other lists are written back only
+    // after a successful sort.
     internal static void SortList<T>(IList<T> values, IComparer<T>? comparer = null)
     {
-        var sorted = values.OrderBy(value => value, comparer ?? Comparer<T>.Create(JavaCompare)).ToArray();
-        for (var index = 0; index < sorted.Length; index++) values[index] = sorted[index];
+        var order = comparer ?? Comparer<T>.Create(JavaCompare);
+        if (values is T[] array)
+        {
+            JavaMergeSort<T>.Sort(array, order);
+            return;
+        }
+        var copy = new T[values.Count];
+        values.CopyTo(copy, 0);
+        try
+        {
+            JavaMergeSort<T>.Sort(copy, order);
+        }
+        catch when (values is List<T>)
+        {
+            for (var index = 0; index < copy.Length; index++) values[index] = copy[index];
+            throw;
+        }
+        for (var index = 0; index < copy.Length; index++) values[index] = copy[index];
     }
     internal static void SortList<T>(IList<T> values, Comparison<T> comparison) =>
         SortList(values, Comparer<T>.Create(comparison));
+
+    // The sorted copy behind Stream.sorted, ordered like Arrays.sort.
+    private static IEnumerable<T> MergeSorted<T>(IEnumerable<T> values, IComparer<T> comparer)
+    {
+        var copy = values.ToArray();
+        JavaMergeSort<T>.Sort(copy, comparer);
+        foreach (var value in copy) yield return value;
+    }
+
+    // Java sorts objects with a stable, adaptive merge sort (TimSort). With a
+    // comparator that is not transitive (PDFBox's TextPositionComparator)
+    // the result depends on exactly which pairs are compared, so this follows
+    // the published algorithm, Tim Peters's description of Python's list sort
+    // (Objects/listsort.txt), with the parameters and checks the JVM shows in
+    // black-box comparison traces: arrays shorter than 32 are one binary
+    // insertion sort, shorter runs are extended to the minimum run length by
+    // binary insertion, the run stack keeps the four-run invariant, merges
+    // trim with galloping searches and start galloping after 7 consecutive
+    // wins, and a merge whose run runs out early throws
+    // IllegalArgumentException ("Comparison method violates its general
+    // contract!"). For comparators that define a total preorder the result
+    // is the unique stable order.
+    private sealed class JavaMergeSort<T>
+    {
+        private const int MinMerge = 32;
+        private const int MinGallop = 7;
+        private readonly T[] a;
+        private readonly IComparer<T> comparer;
+        private readonly int[] runBase = new int[64];
+        private readonly int[] runLength = new int[64];
+        private int stackSize;
+        private int minGallop = MinGallop;
+        private T[] temp = Array.Empty<T>();
+
+        private JavaMergeSort(T[] a, IComparer<T> comparer)
+        {
+            this.a = a;
+            this.comparer = comparer;
+        }
+
+        internal static void Sort(T[] a, IComparer<T> comparer)
+        {
+            var remaining = a.Length;
+            if (remaining < 2) return;
+            var sorter = new JavaMergeSort<T>(a, comparer);
+            if (remaining < MinMerge)
+            {
+                sorter.BinaryInsertionSort(0, remaining, sorter.CountRunAndMakeAscending(0, remaining));
+                return;
+            }
+            var minimumRun = MinimumRunLength(remaining);
+            var low = 0;
+            do
+            {
+                var run = sorter.CountRunAndMakeAscending(low, a.Length);
+                if (run < minimumRun)
+                {
+                    var forced = Math.Min(remaining, minimumRun);
+                    sorter.BinaryInsertionSort(low, low + forced, low + run);
+                    run = forced;
+                }
+                sorter.PushRun(low, run);
+                sorter.MergeCollapse();
+                low += run;
+                remaining -= run;
+            }
+            while (remaining != 0);
+            sorter.MergeForceCollapse();
+        }
+
+        // The top bits of n that are below MinMerge, plus one when any lower
+        // bit is set.
+        private static int MinimumRunLength(int n)
+        {
+            var lowBits = 0;
+            while (n >= MinMerge)
+            {
+                lowBits |= n & 1;
+                n >>= 1;
+            }
+            return n + lowBits;
+        }
+
+        private static ArgumentException ContractViolation() =>
+            new("Comparison method violates its general contract!");
+
+        // a[low..high) where a[low..sorted) is already in order.
+        private void BinaryInsertionSort(int low, int high, int sorted)
+        {
+            if (sorted == low) sorted++;
+            for (; sorted < high; sorted++)
+            {
+                var pivot = a[sorted];
+                var left = low;
+                var right = sorted;
+                while (left < right)
+                {
+                    var middle = (int)((uint)(left + right) >> 1);
+                    if (comparer.Compare(pivot, a[middle]) < 0) right = middle;
+                    else left = middle + 1;
+                }
+                Array.Copy(a, left, a, left + 1, sorted - left);
+                a[left] = pivot;
+            }
+        }
+
+        // The length of the run at low: non-descending, or strictly
+        // descending and then reversed.
+        private int CountRunAndMakeAscending(int low, int high)
+        {
+            var end = low + 1;
+            if (end == high) return 1;
+            if (comparer.Compare(a[end++], a[low]) < 0)
+            {
+                while (end < high && comparer.Compare(a[end], a[end - 1]) < 0) end++;
+                Array.Reverse(a, low, end - low);
+            }
+            else
+            {
+                while (end < high && comparer.Compare(a[end], a[end - 1]) >= 0) end++;
+            }
+            return end - low;
+        }
+
+        private void PushRun(int start, int length)
+        {
+            runBase[stackSize] = start;
+            runLength[stackSize] = length;
+            stackSize++;
+        }
+
+        // With runs ..., W, X, Y, Z on top of the stack, merge until
+        // X > Y + Z, W > X + Y and Y > Z; Y merges with the shorter of X
+        // and Z, preferring Z.
+        private void MergeCollapse()
+        {
+            while (stackSize > 1)
+            {
+                var n = stackSize - 2;
+                if ((n > 0 && runLength[n - 1] <= runLength[n] + runLength[n + 1])
+                    || (n > 1 && runLength[n - 2] <= runLength[n] + runLength[n - 1]))
+                {
+                    if (runLength[n - 1] < runLength[n + 1]) n--;
+                }
+                else if (runLength[n] > runLength[n + 1])
+                {
+                    break;
+                }
+                MergeAt(n);
+            }
+        }
+
+        private void MergeForceCollapse()
+        {
+            while (stackSize > 1)
+            {
+                var n = stackSize - 2;
+                if (n > 0 && runLength[n - 1] < runLength[n + 1]) n--;
+                MergeAt(n);
+            }
+        }
+
+        // Merges stack runs i and i + 1.
+        private void MergeAt(int i)
+        {
+            var baseA = runBase[i];
+            var lengthA = runLength[i];
+            var baseB = runBase[i + 1];
+            var lengthB = runLength[i + 1];
+            runLength[i] = lengthA + lengthB;
+            if (i == stackSize - 3)
+            {
+                runBase[i + 1] = runBase[i + 2];
+                runLength[i + 1] = runLength[i + 2];
+            }
+            stackSize--;
+
+            // Elements of A not greater than B's first are already in place,
+            // and so are elements of B not less than A's last.
+            var skipped = GallopRight(a[baseB], a, baseA, lengthA, 0);
+            baseA += skipped;
+            lengthA -= skipped;
+            if (lengthA == 0) return;
+            lengthB = GallopLeft(a[baseA + lengthA - 1], a, baseB, lengthB, lengthB - 1);
+            if (lengthB == 0) return;
+            if (lengthA <= lengthB) MergeLow(baseA, lengthA, baseB, lengthB);
+            else MergeHigh(baseA, lengthA, baseB, lengthB);
+        }
+
+        // The first index k in run[start..start+length) with key <= run[k],
+        // searched exponentially outwards from start + hint.
+        private int GallopLeft(T key, T[] run, int start, int length, int hint)
+        {
+            var previous = 0;
+            var offset = 1;
+            if (comparer.Compare(key, run[start + hint]) > 0)
+            {
+                var maximum = length - hint;
+                while (offset < maximum && comparer.Compare(key, run[start + hint + offset]) > 0)
+                {
+                    previous = offset;
+                    offset = (offset << 1) + 1;
+                    if (offset <= 0) offset = maximum;
+                }
+                if (offset > maximum) offset = maximum;
+                previous += hint;
+                offset += hint;
+            }
+            else
+            {
+                var maximum = hint + 1;
+                while (offset < maximum && comparer.Compare(key, run[start + hint - offset]) <= 0)
+                {
+                    previous = offset;
+                    offset = (offset << 1) + 1;
+                    if (offset <= 0) offset = maximum;
+                }
+                if (offset > maximum) offset = maximum;
+                var swap = previous;
+                previous = hint - offset;
+                offset = hint - swap;
+            }
+            previous++;
+            while (previous < offset)
+            {
+                var middle = previous + ((offset - previous) >> 1);
+                if (comparer.Compare(key, run[start + middle]) > 0) previous = middle + 1;
+                else offset = middle;
+            }
+            return offset;
+        }
+
+        // The first index k in run[start..start+length) with key < run[k].
+        private int GallopRight(T key, T[] run, int start, int length, int hint)
+        {
+            var previous = 0;
+            var offset = 1;
+            if (comparer.Compare(key, run[start + hint]) < 0)
+            {
+                var maximum = hint + 1;
+                while (offset < maximum && comparer.Compare(key, run[start + hint - offset]) < 0)
+                {
+                    previous = offset;
+                    offset = (offset << 1) + 1;
+                    if (offset <= 0) offset = maximum;
+                }
+                if (offset > maximum) offset = maximum;
+                var swap = previous;
+                previous = hint - offset;
+                offset = hint - swap;
+            }
+            else
+            {
+                var maximum = length - hint;
+                while (offset < maximum && comparer.Compare(key, run[start + hint + offset]) >= 0)
+                {
+                    previous = offset;
+                    offset = (offset << 1) + 1;
+                    if (offset <= 0) offset = maximum;
+                }
+                if (offset > maximum) offset = maximum;
+                previous += hint;
+                offset += hint;
+            }
+            previous++;
+            while (previous < offset)
+            {
+                var middle = previous + ((offset - previous) >> 1);
+                if (comparer.Compare(key, run[start + middle]) < 0) offset = middle;
+                else previous = middle + 1;
+            }
+            return offset;
+        }
+
+        private T[] Temp(int length)
+        {
+            if (temp.Length < length) temp = new T[Math.Max(length, Math.Min(a.Length >> 1, 256))];
+            return temp;
+        }
+
+        // Merges adjacent runs A = a[baseA..) and B = a[baseB..) through a
+        // copy of A, front to back. A's first element is greater than B's
+        // first and A's last is greater than every element of B.
+        private void MergeLow(int baseA, int lengthA, int baseB, int lengthB)
+        {
+            var left = Temp(lengthA);
+            Array.Copy(a, baseA, left, 0, lengthA);
+            var cursorA = 0;
+            var cursorB = baseB;
+            var destination = baseA;
+            a[destination++] = a[cursorB++];
+            if (--lengthB == 0)
+            {
+                Array.Copy(left, cursorA, a, destination, lengthA);
+                return;
+            }
+            if (lengthA == 1)
+            {
+                Array.Copy(a, cursorB, a, destination, lengthB);
+                a[destination + lengthB] = left[cursorA];
+                return;
+            }
+            var gallop = minGallop;
+            while (true)
+            {
+                var winsA = 0;
+                var winsB = 0;
+                do
+                {
+                    if (comparer.Compare(a[cursorB], left[cursorA]) < 0)
+                    {
+                        a[destination++] = a[cursorB++];
+                        winsB++;
+                        winsA = 0;
+                        if (--lengthB == 0) goto Done;
+                    }
+                    else
+                    {
+                        a[destination++] = left[cursorA++];
+                        winsA++;
+                        winsB = 0;
+                        if (--lengthA == 1) goto Done;
+                    }
+                }
+                while ((winsA | winsB) < gallop);
+
+                do
+                {
+                    winsA = GallopRight(a[cursorB], left, cursorA, lengthA, 0);
+                    if (winsA != 0)
+                    {
+                        Array.Copy(left, cursorA, a, destination, winsA);
+                        destination += winsA;
+                        cursorA += winsA;
+                        lengthA -= winsA;
+                        if (lengthA <= 1) goto Done;
+                    }
+                    a[destination++] = a[cursorB++];
+                    if (--lengthB == 0) goto Done;
+                    winsB = GallopLeft(left[cursorA], a, cursorB, lengthB, 0);
+                    if (winsB != 0)
+                    {
+                        Array.Copy(a, cursorB, a, destination, winsB);
+                        destination += winsB;
+                        cursorB += winsB;
+                        lengthB -= winsB;
+                        if (lengthB == 0) goto Done;
+                    }
+                    a[destination++] = left[cursorA++];
+                    if (--lengthA == 1) goto Done;
+                    gallop--;
+                }
+                while (winsA >= MinGallop || winsB >= MinGallop);
+                if (gallop < 0) gallop = 0;
+                gallop += 2;
+            }
+        Done:
+            minGallop = gallop < 1 ? 1 : gallop;
+            if (lengthA == 1)
+            {
+                Array.Copy(a, cursorB, a, destination, lengthB);
+                a[destination + lengthB] = left[cursorA];
+            }
+            else if (lengthA == 0)
+            {
+                throw ContractViolation();
+            }
+            else
+            {
+                Array.Copy(left, cursorA, a, destination, lengthA);
+            }
+        }
+
+        // The mirror image of MergeLow through a copy of B, back to front.
+        private void MergeHigh(int baseA, int lengthA, int baseB, int lengthB)
+        {
+            var right = Temp(lengthB);
+            Array.Copy(a, baseB, right, 0, lengthB);
+            var cursorA = baseA + lengthA - 1;
+            var cursorB = lengthB - 1;
+            var destination = baseB + lengthB - 1;
+            a[destination--] = a[cursorA--];
+            if (--lengthA == 0)
+            {
+                Array.Copy(right, 0, a, destination - (lengthB - 1), lengthB);
+                return;
+            }
+            if (lengthB == 1)
+            {
+                destination -= lengthA;
+                cursorA -= lengthA;
+                Array.Copy(a, cursorA + 1, a, destination + 1, lengthA);
+                a[destination] = right[cursorB];
+                return;
+            }
+            var gallop = minGallop;
+            while (true)
+            {
+                var winsA = 0;
+                var winsB = 0;
+                do
+                {
+                    if (comparer.Compare(right[cursorB], a[cursorA]) < 0)
+                    {
+                        a[destination--] = a[cursorA--];
+                        winsA++;
+                        winsB = 0;
+                        if (--lengthA == 0) goto Done;
+                    }
+                    else
+                    {
+                        a[destination--] = right[cursorB--];
+                        winsB++;
+                        winsA = 0;
+                        if (--lengthB == 1) goto Done;
+                    }
+                }
+                while ((winsA | winsB) < gallop);
+
+                do
+                {
+                    winsA = lengthA - GallopRight(right[cursorB], a, baseA, lengthA, lengthA - 1);
+                    if (winsA != 0)
+                    {
+                        destination -= winsA;
+                        cursorA -= winsA;
+                        lengthA -= winsA;
+                        Array.Copy(a, cursorA + 1, a, destination + 1, winsA);
+                        if (lengthA == 0) goto Done;
+                    }
+                    a[destination--] = right[cursorB--];
+                    if (--lengthB == 1) goto Done;
+                    winsB = lengthB - GallopLeft(a[cursorA], right, 0, lengthB, lengthB - 1);
+                    if (winsB != 0)
+                    {
+                        destination -= winsB;
+                        cursorB -= winsB;
+                        lengthB -= winsB;
+                        Array.Copy(right, cursorB + 1, a, destination + 1, winsB);
+                        if (lengthB <= 1) goto Done;
+                    }
+                    a[destination--] = a[cursorA--];
+                    if (--lengthA == 0) goto Done;
+                    gallop--;
+                }
+                while (winsA >= MinGallop || winsB >= MinGallop);
+                if (gallop < 0) gallop = 0;
+                gallop += 2;
+            }
+        Done:
+            minGallop = gallop < 1 ? 1 : gallop;
+            if (lengthB == 1)
+            {
+                destination -= lengthA;
+                cursorA -= lengthA;
+                Array.Copy(a, cursorA + 1, a, destination + 1, lengthA);
+                a[destination] = right[cursorB];
+            }
+            else if (lengthB == 0)
+            {
+                throw ContractViolation();
+            }
+            else
+            {
+                Array.Copy(right, 0, a, destination - (lengthB - 1), lengthB);
+            }
+        }
+    }
     internal static int ListLastIndexOf<T>(IList<T> values, object? value)
     {
         for (var index = values.Count - 1; index >= 0; index--)
@@ -5178,10 +5667,10 @@ internal static partial class JavaCompat
     internal static long Sum(IEnumerable<long> values) => values.Sum();
     internal static IEnumerable<T> Filter<T>(IEnumerable<T> values, Func<T, bool> predicate) => values.Where(predicate);
     internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values) =>
-        values.OrderBy(value => value, Comparer<T>.Create(JavaCompare));
-    internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values, IComparer<T> comparer) => values.OrderBy(value => value, comparer);
+        MergeSorted(values, Comparer<T>.Create(JavaCompare));
+    internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values, IComparer<T> comparer) => MergeSorted(values, comparer);
     internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values, Comparison<T> comparison) =>
-        values.OrderBy(value => value, Comparer<T>.Create(comparison));
+        MergeSorted(values, Comparer<T>.Create(comparison));
     internal static IComparer<T> NaturalOrder<T>() =>
         Comparer<T>.Create(JavaCompare);
     internal static Comparison<T> ToComparison<T>(IComparer<T> comparer) =>
@@ -5536,13 +6025,13 @@ internal static partial class JavaCompat
         IEnumerable<T> values, Func<T, bool> predicate) =>
         new(values.Where(predicate));
     internal static JavaStream<T> StreamSorted<T>(IEnumerable<T> values) =>
-        new(values.OrderBy(value => value, Comparer<T>.Create(JavaCompare)));
+        new(MergeSorted(values, Comparer<T>.Create(JavaCompare)));
     internal static JavaStream<T> StreamSorted<T>(
         IEnumerable<T> values, IComparer<T> comparer) =>
-        new(values.OrderBy(value => value, comparer));
+        new(MergeSorted(values, comparer));
     internal static JavaStream<T> StreamSorted<T>(
         IEnumerable<T> values, Comparison<T> comparison) =>
-        new(values.OrderBy(value => value, Comparer<T>.Create(comparison)));
+        new(MergeSorted(values, Comparer<T>.Create(comparison)));
 
     internal static bool EconomicMapEquals<K, V>(
         IJavaEconomicMap<K, V> left,
