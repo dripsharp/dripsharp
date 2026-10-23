@@ -68,4 +68,22 @@
    :replace-paths ["validation/pdfcarton-cli/jvm/src" "validation/pdfcarton-cli/jvm/test"
                    "validation/pdfcarton-cli/dotnet/test"]
    :jvm-opts ["-Djava.awt.headless=true" "-Xmx4g"]
-   :main-opts ["-m" "pdfcli.dotnet-test"]}}}
+   :main-opts ["-m" "pdfcli.dotnet-test"]}
+
+  ;; Compares the two pdfcli implementations over a corpus; results go to
+  ;; validation-output/pdfcarton-cli/ (see contract.md, Comparison).
+  :pdfcli-compare
+  {:replace-deps
+   {org.clojure/clojure {:mvn/version "1.12.5"}
+    com.fasterxml.jackson.core/jackson-databind {:mvn/version "2.22.0"}}
+   :replace-paths ["validation/pdfcarton-cli/compare/src"]
+   :jvm-opts ["-Djava.awt.headless=true" "-Xmx4g"]
+   :main-opts ["-m" "pdfcli.compare"]}
+
+  :pdfcli-compare-test
+  {:replace-deps
+   {org.clojure/clojure {:mvn/version "1.12.5"}
+    com.fasterxml.jackson.core/jackson-databind {:mvn/version "2.22.0"}}
+   :replace-paths ["validation/pdfcarton-cli/compare/src" "validation/pdfcarton-cli/compare/test"]
+   :jvm-opts ["-Djava.awt.headless=true" "-Xmx4g"]
+   :main-opts ["-m" "pdfcli.compare-test"]}}}

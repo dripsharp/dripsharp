@@ -81,6 +81,63 @@ gitlink for the test-resource PDFs.
   line that also gives each iteration's process-wide
   `GC.GetTotalAllocatedBytes()` delta, so work on other threads is visible.
 
+## Comparison
+
+`validation/pdfcarton-cli/compare/` runs both implementations over a corpus
+and compares them. From a fresh checkout, with `research/pdfbox` checked out
+at its gitlink and PdfCarton generated as above, the full run is one command
+from the repository root:
+
+```
+clojure -M:pdfcli-compare
+```
+
+It builds the .NET CLI against `target/generated/pdfcarton` (option
+`--pdfcarton-root DIR`), AOT-compiles the JVM CLI from the `:pdfcli` classpath
+(so cold time is PDFBox's, not Clojure source loading), and writes
+`validation-output/pdfcarton-cli/results.json` (every case, with run
+statuses, metrics, diff excerpts and reproduction commands) and `summary.md`
+(totals per command, the ranked important regressions, the ranked correctness
+problems, and every performance case). Results are never committed. Options:
+`--subset` (three documents and a few write cases, for iteration),
+`--no-perf`, `--jobs N` (parallel correctness invocations, default 12),
+`--timeout S` (per invocation, default 120), `--perf-timeout S` (default
+300), `--warmup N` / `--repeat M` (default 3 / 10), `--cold-runs N` (default
+3), `--out DIR`. Its self-check is `clojure -M:pdfcli-compare-test`.
+
+- **Corpus:** every PDF under `research/pdfbox/*/src/test/resources` (the
+  PDFBox test resources; the pdfcube differentials and the Preflight corpus
+  draw their PDFs from the same directories), plus two large documents the
+  PDFBox CLI's `merge` builds at the start (`large-cweb-x12.pdf`,
+  `large-mixed.pdf`). Encrypted files whose upstream tests name a password are
+  opened with it.
+- **Read commands** run on every document: `info`, `text` (plain and
+  `--sort`), `render` (pages 1-10, 72 dpi, RGB), `images` (pages 1-10, with
+  `--out-dir`), `fonts`, `outline`, `annotations`, `form-fields`,
+  `attachments`; on a few documents also `render` as ARGB, gray and binary at
+  50 dpi and RGB at 150 dpi.
+- **Write commands** run on a representative subset. Each tool then reopens
+  the other's output with `info`, `text` and `render` (pages 1-3): PDFBox
+  reading PdfCarton's output and PdfCarton reading PDFBox's output are both
+  compared with PDFBox reading its own output.
+- **Classes:** `equal` (normalised JSON equal; rendered and decoded pixels
+  identical), `fairly-close` (text equal after collapsing whitespace, or
+  every rendered page or differing decoded image within the group's
+  tolerance), `different`, `pdfcarton-fails` (timeout, crash, or error where
+  PDFBox succeeds), `pdfbox-fails`, `both-fail`. A write case takes the worst
+  class of its own result and its reopen checks.
+- **Performance** runs serially after the correctness pass, on a subset that
+  covers every command and includes the large documents: cold time is the
+  median wall time of `--cold-runs` plain processes, warm time and
+  allocations come from one timing-mode run (`render` uses `--no-write` and
+  pages 1-3, `images` no `--out-dir`). The first row is the font-cache build:
+  each implementation gets its own empty font cache directory
+  (`-Dpdfbox.fontcache` on the JVM, `HOME` for PdfCarton, which takes
+  `user.home` from it) and the first `text` run that scans the system fonts is
+  timed. An important regression is a warm or cold ratio of 5 or more where
+  both succeed.
+- Cold timings are sensitive to other load on the machine; run it alone.
+
 ## Invocation
 
 ```
