@@ -1100,13 +1100,15 @@
    (fn [target arguments]
      (call-node target "GetAsTree" arguments))
 
+   ;; Not SKBitmap.Width/Height, native calls that render an image built
+   ;; from a raster (PdfCartonFontCompat.CreateImage) before its first use.
    "executable:java.awt.image.BufferedImage#getWidth()"
    (fn [target _arguments]
-     (sequence-node [target (raw ".Width")]))
+     (font-compat-call "GetImageWidth" [target]))
 
    "executable:java.awt.image.BufferedImage#getHeight()"
    (fn [target _arguments]
-     (sequence-node [target (raw ".Height")]))
+     (font-compat-call "GetImageHeight" [target]))
 
    "executable:java.awt.image.BufferedImage#getType()"
    (fn [target _arguments]
@@ -3632,49 +3634,6 @@
           (csharp/raw annotation-transform-quantization))
          declaration)))))
 
-(def ^:private sampled-image-raster-return
-  "return bim!;")
-
-(def ^:private sampled-image-raster-sync
-  (str "global::DripSharp.Runtime.PdfCartonFontCompat."
-       "SetImageData(bim!, raster);"))
-
-(defn- preserve-sampled-image-raster-synchronization
-  [configuration node]
-  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
-    node
-    (update-declaration
-     node
-     :method
-     "org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader"
-     (fn [declaration]
-       (if (= "from1Bit" (get-in declaration [:data :source-name]))
-         (let [found? (volatile! false)
-               transformed
-               (update
-                declaration
-                :body
-                csharp/transform
-                (fn [current]
-                  (if (and (not @found?)
-                           (contains? #{:raw :sequence} (:kind current))
-                           (= sampled-image-raster-return
-                              (:text (csharp/render-raw current))))
-                    (do
-                      (vreset! found? true)
-                      (csharp/sequence-node
-                       [(csharp/raw sampled-image-raster-sync)
-                        (csharp/raw "\n")
-                        current]))
-                    current)))]
-           (when-not @found?
-             (fail! "Sampled-image translation is missing its bitmap return"
-                    {:kind :missing-pdfcube-structured-statement
-                     :expected sampled-image-raster-return
-                     :declaration-data (:data declaration)}))
-           transformed)
-         declaration)))))
-
 (defn- replace-rendered-statement
   [declaration rendered-statement replacement-statement {:keys [every?]}]
   (let [found? (volatile! false)
@@ -3750,117 +3709,13 @@
   and an owned result is disposed when the method fails before returning it.
   Compat-allocated bitmaps also report GC memory pressure as a backstop (see
   PdfCartonNativeBitmap in the PdfCarton Fonts.Compat runtime). Keys are
-  [declaring type, method] or [declaring type, method, parameter count or
-  vector of qualified Java parameter types], where method :constructor names
-  the type's constructors; a rewrite's
+  [declaring type, method] or [declaring type, method, parameter count],
+  where method :constructor names the type's constructors; a rewrite's
   optional third element {:every? true} replaces every matching statement
   instead of the first, and [:prepend statement] or [:append statement]
   adds a statement at the start or end of the body. Fields the rewrites
   need are declared in owned-bitmap-members."
-  {["org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace" "toRGBImageAWT"]
-   ;; `src` only feeds ColorConvertOp.filter, which reads its retained
-   ;; raster, or the 1-pixel drawImage branch, which renders it on demand.
-   [[(str "global::SkiaSharp.SKBitmap src = "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateImage("
-          "colorModel, raster, false, "
-          "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")
-     (str "using global::SkiaSharp.SKBitmap src = "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateDeferredImage("
-          "colorModel, raster, false, "
-          "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")]
-    ;; Drawing renders the deferred `src`, so a conversion failure surfaces
-    ;; here too; the graphics context and `dest` never reach the caller.
-    ["g2d.DrawImage(src, 0, 0, (object)default!);"
-     (str "try {\n"
-          "g2d.DrawImage(src, 0, 0, (object)default!);\n"
-          "} catch {\n"
-          "g2d.Dispose();\n"
-          "dest.Dispose();\n"
-          "throw;\n"
-          "}")]
-    ["this.colorConvertOp.Filter(src, dest);"
-     (str "try {\n"
-          "this.colorConvertOp.Filter(src, dest);\n"
-          "} catch {\n"
-          "dest.Dispose();\n"
-          "throw;\n"
-          "}")]]
-   ;; The decoded image is read only through its raster. Raster.getData's
-   ;; array copy outlives the image, which is disposed on every exit,
-   ;; including the CMYK throw that falls back to readRaster.
-   ["org.apache.pdfbox.filter.DCTFilter" "readImageRaster"]
-   [["global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"
-     "using global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"]
-    ["raster = global::DripSharp.Runtime.PdfCartonFontCompat.GetRaster(image);"
-     "raster = global::DripSharp.Runtime.PdfCartonFontCompat.GetImageData(image);"]]
-   ;; readJPX's image only feeds the decoded bytes. Its soft mask reaches
-   ;; the caller only through the returned result, so it is disposed when
-   ;; writing the decoded bytes fails.
-   ["org.apache.pdfbox.filter.JPXFilter" "decode" 5]
-   [["global::SkiaSharp.SKBitmap image = this.readJPX(encoded, options, result);"
-     (str "using global::SkiaSharp.SKBitmap image = "
-          "this.readJPX(encoded, options, result);\n"
-          owned-resources-declaration "\n"
-          "__dripsharpOwned.Own(result.GetJPXSMask());")]
-    ["return result;"
-     "__dripsharpOwned.Release(result.GetJPXSMask());\nreturn result;"
-     {:every? true}]]
-   ;; The SMaskInData path replaces the decoded image with `bim`; the image
-   ;; returned and the soft mask stored in the result are released to the
-   ;; caller, the rest (everything on failure) is disposed. ReadDeferred skips
-   ;; the native render: the image is read through its raster, and drawing
-   ;; it into `bim` renders it.
-   ["org.apache.pdfbox.filter.JPXFilter" "readJPX"]
-   [["global::SkiaSharp.SKBitmap image;"
-     (str owned-resources-declaration "\nglobal::SkiaSharp.SKBitmap image;")]
-    ["image = reader.Read(0, irp);"
-     "image = __dripsharpOwned.Own(reader.ReadDeferred(0, irp));"]
-    [(str "global::SkiaSharp.SKBitmap smask = "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-          "image.Width, image.Height, "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY);")
-     (str "global::SkiaSharp.SKBitmap smask = __dripsharpOwned.Own("
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-          "image.Width, image.Height, "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY));")]
-    [(str "global::SkiaSharp.SKBitmap bim = "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-          "image.Width, image.Height, "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_RGB);")
-     (str "global::SkiaSharp.SKBitmap bim = __dripsharpOwned.Own("
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-          "image.Width, image.Height, "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_RGB));")]
-    [(str "global::DripSharp.Runtime.PdfCartonGraphics2D g2d = "
-          "(global::DripSharp.Runtime.PdfCartonGraphics2D)("
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(bim)!);")
-     (str "global::DripSharp.Runtime.PdfCartonGraphics2D g2d = __dripsharpOwned.Own("
-          "(global::DripSharp.Runtime.PdfCartonGraphics2D)("
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(bim)!));")]
-    ["return image;"
-     (str "__dripsharpOwned.Release(result.GetJPXSMask());\n"
-          "return __dripsharpOwned.Release(image);")]]
-   ;; Neither the decoded image nor its 1-bit repacking escapes. ReadDeferred
-   ;; skips the native render unless the repacking draws the image.
-   ["org.apache.pdfbox.filter.JBIG2Filter" "decode" 5]
-   [["global::SkiaSharp.SKBitmap image;"
-     (str owned-resources-declaration "\nglobal::SkiaSharp.SKBitmap image;")]
-    ["image = reader.Read(0, irp);"
-     "image = __dripsharpOwned.Own(reader.ReadDeferred(0, irp));"]
-    [(str "global::SkiaSharp.SKBitmap packedImage = "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-          "image.Width, image.Height, "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_BINARY);")
-     (str "global::SkiaSharp.SKBitmap packedImage = __dripsharpOwned.Own("
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-          "image.Width, image.Height, "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_BINARY));")]
-    [(str "global::DripSharp.Runtime.PdfCartonGraphics2D graphics = "
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage);")
-     (str "global::DripSharp.Runtime.PdfCartonGraphics2D graphics = __dripsharpOwned.Own("
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage));")]]
-
-   ;; Glyph and fill shapes. Java leaves temporary Shapes to its collector;
+  {;; Glyph and fill shapes. Java leaves temporary Shapes to its collector;
    ;; their SKPath translations own native memory and would otherwise wait
    ;; for the finalizer, one per glyph shown. A glyph's transformed path is
    ;; disposed once drawn; a text clip keeps a copy of it (clipping text
@@ -3936,7 +3791,7 @@
      (str owned-resources-declaration "\n"
           skia-bitmap " image = __dripsharpOwned.Own(transparencyGroup.getImage());")]
     (owned-assignment (str skia-bitmap " gray")
-                      (compat-bitmap "image.Width" "image.Height"
+                      (compat-bitmap (str compat-call "GetImageWidth(image)") (str compat-call "GetImageHeight(image)")
                                      (compat-type "TYPE_BYTE_GRAY")))
     (owned-assignment (str compat-graphics " g")
                       (str compat-call "CreateGraphics(gray)"))
@@ -4041,7 +3896,7 @@
                       (str compat-call "ScaleImage(image, w, h, "
                            (compat-type "SCALE_SMOOTH") ")"))
     (owned-assignment (str skia-bitmap " bim")
-                      (compat-bitmap "image.Width" "image.Height"
+                      (compat-bitmap (str compat-call "GetImageWidth(image)") (str compat-call "GetImageHeight(image)")
                                      (compat-type "TYPE_4BYTE_ABGR")))
     (owned-assignment (str compat-graphics " g") (str compat-call "CreateGraphics(bim)"))]
    ["org.apache.pdfbox.rendering.PageDrawer" "applyTransferFunction"]
@@ -4066,7 +3921,7 @@
           "__dripsharpOwned.Own(global::DripSharp.Runtime.PdfCartonDisposalScope.Deferred("
           "() => this.pageImage = default!));")]
     (owned-assignment (str skia-bitmap " newImage")
-                      (compat-bitmap "image.Width" "image.Height"
+                      (compat-bitmap (str compat-call "GetImageWidth(image)") (str compat-call "GetImageHeight(image)")
                                      "imageType.toBufferedImageType()"))
     (owned-assignment (str compat-graphics " dstGraphics")
                       (str compat-call "CreateGraphics(newImage)"))
@@ -4126,17 +3981,7 @@
    [(owned-assignment (str skia-bitmap " masked")
                       (compat-bitmap "width" "height" (compat-type "TYPE_INT_ARGB"))
                       {:declare? true})
-    (releasing-return "masked")]
-   ;; DeviceN with attributes converts every colorant to its own RGB image
-   ;; and multiplies it into the result.
-   ["org.apache.pdfbox.pdmodel.graphics.color.PDDeviceN" "toRGBWithAttributes"
-    ["java.awt.image.WritableRaster"]]
-   [(owned-assignment (str skia-bitmap " rgbImage")
-                      (compat-bitmap "width" "height" (compat-type "TYPE_INT_RGB"))
-                      {:declare? true})
-    (using-local (str skia-bitmap " rgbComponentImage = "
-                      "componentColorSpace.ToRGBImage(componentRaster);"))
-    (releasing-return "rgbImage")]})
+    (releasing-return "masked")]})
 
 (def ^:private owned-bitmap-members
   "Fields and helpers the owned-bitmap statement rewrites rely on, prepended
@@ -4197,9 +4042,6 @@
                          (= method-name (get-in declaration [:data :source-name])))
                      (cond
                        (nil? parameter-count) true
-                       (vector? parameter-count)
-                       (= parameter-count
-                          (get-in declaration [:data :parameter-types]))
                        :else
                        (= parameter-count
                           (get-in declaration [:data :parameter-count]))))
@@ -4363,7 +4205,6 @@
          (preserve-calendar-value-semantics configuration)
          (preserve-cos-update-dispatch configuration)
          (preserve-skia-annotation-rasterization configuration)
-         (preserve-sampled-image-raster-synchronization configuration)
          (own-intermediate-bitmaps configuration)
          (preserve-pdfbox-text-normalization configuration)
          (preserve-preflight-generic-contracts configuration))))

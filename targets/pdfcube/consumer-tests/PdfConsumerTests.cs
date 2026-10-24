@@ -2022,8 +2022,13 @@ public sealed class RasterConversionConsumerTests
         var model = new Compat.JavaColorModel(8, 3, [1, 2, 3], [4, 5, 6], [7, 8, 9]);
         var raster = model.CreateCompatibleWritableRaster(4, 2);
         raster.SetPixel(3, 1, [200]);
+        // CreateImage renders on the image's first native use (a draw, or a
+        // Skia call such as GetPixel), so that is where rendering fails.
+        using var image = Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
         var error = Assert.ThrowsAny<ArgumentException>(
-            () => Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null).Dispose());
+            () => Compat.PdfCartonFontCompat.EnsureNativePixels(image));
+        Assert.Contains("Palette index 200", error.Message);
+        error = Assert.ThrowsAny<ArgumentException>(() => image.GetPixel(3, 1));
         Assert.Contains("Palette index 200", error.Message);
     }
 
@@ -3909,6 +3914,110 @@ public sealed class RasterConversionConsumerTests
             using (var graphics = new Compat.PdfCartonGraphics2D(target))
                 graphics.DrawImage(image, 0, 0, null);
             Assert.Equal(new SKColor(0x11, 0x22, 0x33), target.GetPixel(7, 5));
+        }
+    }
+
+    // DataBufferByte.getData() returns a TYPE_BYTE_GRAY image's storage, as
+    // a black-box probe of Java shows: the same width * height array on every
+    // call, which Skia, compat drawing and raster writes share with it, so
+    // SampledImageReader.from1Bit's writes need no synchronization.
+    [Fact]
+    public void ByteGrayDataBufferIsTheLiveImageStorage()
+    {
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+            Width, Height, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+        var data = ((Compat.JavaDataBufferByte)raster.GetDataBuffer()).GetData();
+        Assert.Same(data,
+            ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData());
+        Assert.Equal(Width * Height, data.Length);
+
+        // Writes into the array are what Skia reads, with no draw in between.
+        data[5 * Width + 7] = unchecked((sbyte)200);
+        Assert.Equal(new SKColor(200, 200, 200), image.GetPixel(7, 5));
+        Assert.Equal(new[] { 200 }, raster.GetPixel(7, 5, (int[]?)null));
+
+        // Compat drawing into the image and raster writes reach the array.
+        using (var graphics = new Compat.PdfCartonGraphics2D(image))
+        {
+            graphics.SetColor(SKColors.White);
+            graphics.FillRect(1, 0, 1, 1);
+        }
+        Assert.Equal(-1, data[1]);
+        raster.SetPixel(2, 1, [77]);
+        Assert.Equal(77, data[Width + 2]);
+
+        // Array writes made after a draw reach the next draw.
+        using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+            Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        using (var graphics = new Compat.PdfCartonGraphics2D(target))
+            graphics.DrawImage(image, 0, 0, null);
+        Assert.Equal(new SKColor(200, 200, 200), target.GetPixel(7, 5));
+        data[5 * Width + 7] = 40;
+        using (var graphics = new Compat.PdfCartonGraphics2D(target))
+            graphics.DrawImage(image, 0, 0, null);
+        Assert.Equal(new SKColor(40, 40, 40), target.GetPixel(7, 5));
+
+        // A raster built over the image's data buffer shares that storage.
+        var shared = Compat.PdfCartonFontCompat.CreateInterleavedRaster(
+            raster.GetDataBuffer(), Width, Height, Width, 1, [0], new Compat.JavaPoint(0, 0));
+        shared.SetPixel(4, 3, [99]);
+        Assert.Equal(99, data[3 * Width + 4]);
+        Assert.Equal(new SKColor(99, 99, 99), image.GetPixel(4, 3));
+        Assert.Equal(new[] { 99 }, raster.GetPixel(4, 3, (int[]?)null));
+    }
+
+    // CreateImage (new BufferedImage(ColorModel, WritableRaster, ...))
+    // renders its native pixels on the image's first native use: converting
+    // it with ColorConvertOp reads only its raster, while a Skia read, a
+    // canvas or an SKImage outside compat, even on several threads at once,
+    // sees the rendered pixels.
+    [Fact]
+    public void RasterBuiltImagesRenderOnFirstNativeUse()
+    {
+        var model = new Compat.JavaColorModel(
+            Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB),
+            false,
+            Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
+        SKBitmap Image()
+        {
+            var raster = model.CreateCompatibleWritableRaster(Width, Height);
+            for (var y = 0; y < Height; y++)
+                for (var x = 0; x < Width; x++)
+                    raster.SetPixel(x, y, [x * 6, y * 10, 200]);
+            return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
+        }
+        static SKColor Expected(int x, int y) => new((byte)(x * 6), (byte)(y * 10), 200);
+
+        using (var converted = Image())
+        {
+            using var destination = Compat.PdfCartonFontCompat.CreateBitmap(
+                Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+            new Compat.JavaColorConvertOp().Filter(converted, destination);
+            Assert.Equal(Expected(7, 5), destination.GetPixel(7, 5));
+            Assert.True(Compat.PdfCartonFontCompat.IsNativePending(converted));
+            Assert.Equal(Expected(7, 5), converted.GetPixel(7, 5));
+            Assert.False(Compat.PdfCartonFontCompat.IsNativePending(converted));
+        }
+        using (var drawn = Image())
+        using (var target = new SKBitmap(Width, Height))
+        {
+            using (var canvas = new SKCanvas(target))
+                canvas.DrawBitmap(drawn, 0, 0, SKSamplingOptions.Default, null);
+            Assert.Equal(Expected(Width - 1, Height - 1), target.GetPixel(Width - 1, Height - 1));
+        }
+        using (var encoded = Image())
+        using (var snapshot = SKImage.FromBitmap(encoded))
+        using (var copy = SKBitmap.FromImage(snapshot))
+            Assert.Equal(Expected(3, 4), copy.GetPixel(3, 4));
+        for (var round = 0; round < 20; round++)
+        {
+            using var shared = Image();
+            var colors = new SKColor[8];
+            Parallel.For(0, colors.Length, new ParallelOptions { MaxDegreeOfParallelism = 8 },
+                index => colors[index] = shared.GetPixel(index, index % Height));
+            for (var index = 0; index < colors.Length; index++)
+                Assert.Equal(Expected(index, index % Height), colors[index]);
         }
     }
 
@@ -7713,8 +7822,11 @@ public sealed class DecodeFilterBitmapLifetimeTests
         ];
     }
 
+    // Java's decode filters drop their intermediate images to the collector,
+    // and so do the translated filters: decoding keeps the output identical
+    // and leaves no compat bitmap behind once collected.
     [Fact]
-    public void DecodeFiltersDisposeTheirIntermediateBitmaps()
+    public void DecodeFiltersLeaveNoBitmapsOnceCollected()
     {
         var cases = Cases();
         // The soft mask escapes through the decode result, so that case is
@@ -7733,28 +7845,28 @@ public sealed class DecodeFilterBitmapLifetimeTests
         Settle();
         var live = Compat.PdfCartonNativeBitmap.LiveCount;
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
-        for (var round = 0; round < 10; round++)
+        foreach (var (test, index) in cases.Select((test, index) => (test, index)))
         {
-            foreach (var (test, index) in cases.Select((test, index) => (test, index)))
-            {
+            for (var round = 0; round < 10; round++)
                 Assert.Equal(expected[index], DecodeCase(index));
-                // No collection ran in between, so the decode disposed its bitmaps.
-                AssertUnchanged(live, bytes, test.Name);
-            }
+            Settle();
+            AssertUnchanged(live, bytes, $"{test.Name} after 10 decodes and a collection");
         }
 
         // Malformed data fails without leaving a bitmap behind.
         foreach (var filter in new[] { COSName.DctDecode, COSName.JpxDecode, COSName.Jbig2Decode })
         {
             Assert.ThrowsAny<IOException>(() => Decode(Encoded([0xff, 0xd8, 1, 2, 3], filter)));
+            Settle();
             AssertUnchanged(live, bytes, $"malformed {filter.GetName()}");
         }
     }
 
     // A failure after the bitmaps exist, here writing the decoded bytes,
-    // disposes them too; the JPX soft mask never reaches a caller then.
+    // leaves nothing reachable either; the JPX soft mask never reaches a
+    // caller then.
     [Fact]
-    public void DecodeFiltersDisposeTheirBitmapsWhenWritingTheOutputFails()
+    public void DecodeFiltersLeaveNoBitmapsWhenWritingTheOutputFails()
     {
         var cases = Cases();
         Settle();
@@ -7763,9 +7875,79 @@ public sealed class DecodeFilterBitmapLifetimeTests
         foreach (var (name, filterName, stream) in cases)
         {
             var filter = FilterFactory.Instance.GetFilter(filterName);
-            using var encoded = stream.CreateRawInputStream();
-            Assert.ThrowsAny<IOException>(() => filter.Decode(encoded, new FailingOutput(), stream, 0));
+            using (var encoded = stream.CreateRawInputStream())
+                Assert.ThrowsAny<IOException>(() => filter.Decode(encoded, new FailingOutput(), stream, 0));
+            Settle();
             AssertUnchanged(live, bytes, name);
+        }
+    }
+
+    // A page-sized decoded image keeps its pixels in managed memory (see
+    // PdfCartonNativeBitmap.Allocate), so the collector frees the images a
+    // decode loop drops, as Java's does: the compat bytes outstanding stay
+    // within a few images however many are decoded, and return to the
+    // baseline once collected. (With the disposing filter rewrites this
+    // replaced, the peak was one image.)
+    [Fact]
+    public void LargeDecodedImagesStayBoundedWithoutDisposal()
+    {
+        const int width = 1240, height = 1754, rounds = 24;
+        var jpeg = IccRenderFixtures.SkiaJpeg(width, height);
+        var reader = DripSharp.PdfCarton.Filter.Filter.FindImageReader("JPEG", "codec missing");
+        reader.SetInput(Compat.PdfCartonImageIO.CreateImageInputStream(new MemoryStream(jpeg)));
+        using (var image = reader.Read(0, null))
+            Assert.True(((Compat.PdfCartonNativeBitmap)image).HoldsManagedPixels);
+
+        var stream = Encoded(jpeg, COSName.DctDecode);
+        Assert.Equal(width * height * 3, Decode(stream).Length);
+        Settle();
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        long peak = 0;
+        for (var round = 0; round < rounds; round++)
+        {
+            Assert.Equal(width * height * 3, Decode(stream).Length);
+            peak = Math.Max(peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes);
+        }
+        Assert.True(peak <= rounds / 3 * 4L * width * height, $"{peak} compat bytes outstanding");
+        Settle();
+        Assert.Equal(bytes, Compat.PdfCartonNativeBitmap.OutstandingBytes);
+    }
+
+    // JBIG2Filter and JPXFilter read the decoded image only through its
+    // raster, so however many page-sized images they decode and drop, no
+    // native pixels are rendered or held for them (with the disposing filter
+    // rewrites this replaced, ReadDeferred skipped the render the same way),
+    // and nothing is left once collected.
+    [Fact]
+    public void LargeJbig2AndJpxFilterDecodesHoldNoPixelMemory()
+    {
+        var page = Convert.FromBase64String(Jbig2Page);
+        foreach (var (offset, value) in new[] { (11, 2480), (15, 3508) })
+        {
+            page[offset] = (byte)(value >> 24);
+            page[offset + 1] = (byte)(value >> 16);
+            page[offset + 2] = (byte)(value >> 8);
+            page[offset + 3] = (byte)value;
+        }
+        foreach (var (name, stream, length) in new[]
+                 {
+                     ("JBIG2 2480x3508", Encoded(page, COSName.Jbig2Decode), 310 * 3508),
+                     ("JPX 600x400", Encoded(Jpx(600, 400, alpha: false), COSName.JpxDecode), 600 * 400 * 3),
+                 })
+        {
+            Assert.Equal(length, Decode(stream).Length);
+            Settle();
+            var live = Compat.PdfCartonNativeBitmap.LiveCount;
+            var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+            long peak = 0;
+            for (var round = 0; round < 10; round++)
+            {
+                Assert.Equal(length, Decode(stream).Length);
+                peak = Math.Max(peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes);
+            }
+            Assert.True(peak == 0, $"{name}: {peak} compat pixel bytes outstanding");
+            Settle();
+            AssertUnchanged(live, bytes, $"{name} after 10 decodes and a collection");
         }
     }
 
@@ -8379,8 +8561,8 @@ public sealed class ImageCodecAdapterTests
     }
 
     // JBIG2Filter and JPXFilter read without rendering native pixels; only a
-    // draw renders them. Transparency is the colour model's, before and
-    // after.
+    // draw (or another native use) renders them. Transparency is the colour
+    // model's, before and after.
     [Fact]
     public void FilterReadsRenderNativePixelsOnlyWhenDrawn()
     {
@@ -8395,13 +8577,19 @@ public sealed class ImageCodecAdapterTests
         {
             foreach (var subsampling in new[] { 1, 2 })
             {
-                using var image = Reader(format, data).ReadDeferred(0, Subsampled(subsampling));
+                // The filters call the public Read, then read the raster and size.
+                using var image = Reader(format, data).Read(0, Subsampled(subsampling));
                 Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
                 Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
+                var raster = Compat.PdfCartonFontCompat.GetRaster(image);
+                _ = raster.GetPixels(0, 0, raster.Width, raster.Height, (int[]?)null);
+                var (width, height) = (Compat.PdfCartonFontCompat.GetImageWidth(image),
+                    Compat.PdfCartonFontCompat.GetImageHeight(image));
+                Assert.Equal((raster.Width, raster.Height), (width, height));
                 Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
 
                 using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
-                    image.Width, image.Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+                    width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
                 using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
                     graphics.DrawImage(image, 0, 0, (object)null!);
                 Assert.False(Compat.PdfCartonFontCompat.IsNativePending(image));
@@ -9107,8 +9295,9 @@ public sealed class ImageCodecAdapterTests
         return (data, samples);
     }
 
-    // The public reader returns images whose native pixels are rendered, so
-    // Skia reads and raw canvas draws see the decoded pixels.
+    // The public reader returns images whose native pixels are rendered on
+    // their first native use, so Skia reads and raw canvas draws see the
+    // decoded pixels.
     [Fact]
     public void PublicCodecReadersReturnRenderedPixels()
     {
@@ -9122,8 +9311,9 @@ public sealed class ImageCodecAdapterTests
             {
                 using var expected = Reader(format, data).ReadDeferred(0, Subsampled(subsampling));
                 using var image = Reader(format, data).Read(0, Subsampled(subsampling));
-                Assert.False(Compat.PdfCartonFontCompat.IsNativePending(image));
+                Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
                 using var target = new SKBitmap(image.Width, image.Height);
+                Assert.False(Compat.PdfCartonFontCompat.IsNativePending(image));
                 using (var canvas = new SKCanvas(target))
                 using (var skImage = SKImage.FromBitmap(image))
                     canvas.DrawImage(skImage, 0, 0, SKSamplingOptions.Default, null);
@@ -9763,6 +9953,9 @@ public sealed class RenderingBitmapLifetimeTests
         // Keep the image XObjects and the images they cache alive, so later
         // renders reuse them instead of decoding (and caching) new ones.
         var pinned = PinImages(document.GetPage(Images));
+        // Decoding them leaves garbage (DeviceN's per-colorant images) to
+        // the collector, which must not run during the counted renders.
+        Settle();
         var live = Compat.PdfCartonNativeBitmap.LiveCount;
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
         for (var round = 0; round < 3; round++)
@@ -9820,6 +10013,9 @@ public sealed class RenderingBitmapLifetimeTests
             {
                 using (var image = Fresh(name).GetImage())
                     Assert.Equal(expected[name], Hash(image));
+                // DeviceN conversion leaves its per-colorant images, whose
+                // pixels are managed, to the collector, as Java does.
+                if (name == "ImN") Settle();
                 AssertUnchanged(live, bytes, name);
             }
             // The soft mask fails to decode after the image itself decoded.

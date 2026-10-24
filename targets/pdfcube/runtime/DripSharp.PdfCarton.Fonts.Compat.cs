@@ -1235,12 +1235,16 @@ public sealed class JavaImageReader : IDisposable
         return new SKSizeI(codec.Info.Width, codec.Info.Height);
     }
 
+    // A decoded JBIG2 or JPX image keeps its native pixels unrendered until
+    // its first native use (PdfCartonFontCompat.RenderOnFirstNativeUse), so
+    // JBIG2Filter and JPXFilter, which read only its raster, never render
+    // them, while a caller drawing or reading it through Skia sees them.
     public SKBitmap Read(int imageIndex, JavaImageReadParam? parameters)
     {
         var bitmap = ReadDeferred(imageIndex, parameters);
         try
         {
-            PdfCartonFontCompat.EnsureNativePixels(bitmap);
+            PdfCartonFontCompat.RenderOnFirstNativeUse(bitmap);
         }
         catch
         {
@@ -1250,9 +1254,8 @@ public sealed class JavaImageReader : IDisposable
         return bitmap;
     }
 
-    // Read without rendering a JBIG2 or JPX image's native pixels, for callers
-    // that read its raster or draw it through compat graphics (JBIG2Filter
-    // and JPXFilter, via java_project.clj).
+    // Read leaving the native pixels to EnsureNativePixels alone, for compat
+    // callers that read its raster or draw it through compat graphics.
     internal SKBitmap ReadDeferred(int imageIndex, JavaImageReadParam? parameters)
     {
         RequireImageIndex(imageIndex);
@@ -1469,7 +1472,7 @@ public sealed class JavaImageReader : IDisposable
         // Native pixels are copied as bytes, so the copy keeps the source's
         // colour type: a Gray8 image stays a one-band image.
         var info = source.Info;
-        var destination = new PdfCartonNativeBitmap(
+        var destination = PdfCartonNativeBitmap.Allocate(
             info.WithSize(outputWidth, outputHeight));
         var imageType = PdfCartonFontCompat.GetImageType(source);
         var pixelBytes = info.BytesPerPixel;
@@ -1824,6 +1827,8 @@ internal ref struct PdfCartonPixels
     internal PdfCartonPixels(SKBitmap bitmap)
     {
         this.bitmap = bitmap;
+        // Pixels written or read directly need memory to live in.
+        (bitmap as PdfCartonNativeBitmap)?.AllocatePendingPixels();
         info = bitmap.Info;
         rowBytes = bitmap.RowBytes;
         bytes = bitmap.GetPixelSpan();
@@ -2202,6 +2207,7 @@ internal sealed class PdfCartonBitmapView
     internal PdfCartonBitmapView(SKBitmap bitmap)
     {
         this.bitmap = bitmap;
+        (bitmap as PdfCartonNativeBitmap)?.AllocatePendingPixels();
         var info = bitmap.Info;
         width = info.Width;
         height = info.Height;
@@ -2299,7 +2305,7 @@ internal sealed class PdfCartonBitmapView
     }
 
     // Bumps Skia's pixel generation once if a view wrote since the last call.
-    // Writes into an int-backed bitmap's exposed pixel array are not tracked,
+    // Writes into an array-backed bitmap's exposed pixel array are not tracked,
     // so such a bitmap is published on every call. Writes into an exposed
     // byte sample array are rendered into the native pixels first.
     internal static void Publish(SKBitmap bitmap)
@@ -2307,7 +2313,7 @@ internal sealed class PdfCartonBitmapView
         var tracked = PendingByBitmap.TryGetValue(bitmap, out var pending);
         if (tracked) pending!.Refresh?.Invoke();
         var written = tracked && Interlocked.Exchange(ref pending!.Dirty, 0) != 0;
-        if (written || bitmap is PdfCartonNativeBitmap { IntPixelsExposed: true })
+        if (written || bitmap is PdfCartonNativeBitmap { PixelsExposed: true })
             bitmap.NotifyPixelsChanged();
     }
 
@@ -2523,7 +2529,7 @@ public sealed class JavaRaster
             scanlineStride <= 0 || pixelStride <= 0 ||
             bandOffsets.Length == 0 || bandOffsets.Any(offset => offset < 0))
             throw new ArgumentException("Invalid interleaved raster layout.");
-        storage = buffer.Raster.storage ??
+        storage = buffer.Raster.storage ?? buffer.Raster.ExposedPixelArray() ??
             throw new ArgumentException(
                 "Interleaved raster construction requires an array-backed data buffer.",
                 nameof(buffer));
@@ -3197,11 +3203,31 @@ public sealed class JavaRaster
         }
     }
 
-    // DataBufferByte.getData(). A bitmap view's samples move into a managed
-    // array once; for an image's retained raster that array becomes the
-    // image's storage, as in Java (PdfCartonFontCompat.ExposeSamples).
+    // The pinned array holding a live view's bitmap pixels when it is what
+    // getData() returns (int- and byte-backed bitmaps), marked as handed out.
+    private Array? ExposedPixelArray()
+    {
+        if (storage is not null || bitmap is not PdfCartonNativeBitmap native || view!.IsReallocated())
+            return null;
+        Array? pixels = TransferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_INT
+            ? native.CurrentIntPixels()
+            : TransferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE && NumberOfBands == 1
+                ? native.CurrentBytePixels()
+                : null;
+        if (pixels is not null) native.ExposePixels();
+        return pixels;
+    }
+
+    // DataBufferByte.getData(). A view of a byte-backed bitmap (Java's
+    // TYPE_BYTE_GRAY images) returns the bitmap's pixels. Any other bitmap
+    // view's samples move into a managed array once; for an image's retained
+    // raster that array becomes the image's storage, as in Java
+    // (PdfCartonFontCompat.ExposeSamples).
     internal sbyte[] GetByteData()
     {
+        if (TransferType == PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE &&
+            ExposedPixelArray() is sbyte[] pixels)
+            return pixels;
         if (storage is null)
         {
             MaterializeStorage(PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
@@ -3229,7 +3255,7 @@ public sealed class JavaRaster
         if (bitmap is PdfCartonNativeBitmap intBacked &&
             intBacked.CurrentIntPixels() is { } pixels)
         {
-            intBacked.ExposeIntPixels();
+            intBacked.ExposePixels();
             return pixels;
         }
         var elements = new int[StorageSize];
@@ -3424,19 +3450,21 @@ public sealed class JavaColorConvertOp
         }
     }
 
+    // The source is read only through its raster, so a CreateImage source
+    // is never rendered natively.
     private SKBitmap Convert(SKBitmap source, SKBitmap destination)
     {
-        if (source.Width != destination.Width ||
-            source.Height != destination.Height)
+        var sourceRaster = PdfCartonFontCompat.GetRaster(source);
+        var width = sourceRaster.Width;
+        var height = sourceRaster.Height;
+        if (width != destination.Width || height != destination.Height)
         {
             throw new ArgumentException(
                 "Source and destination image dimensions must match.");
         }
         var sourceColorModel = PdfCartonFontCompat.GetColorModel(source);
         var destinationColorModel = PdfCartonFontCompat.GetColorModel(destination);
-        var sourceRaster = PdfCartonFontCompat.GetRaster(source);
         var destinationRaster = PdfCartonFontCompat.GetRaster(destination);
-        var width = source.Width;
         var sourceCount = sourceColorModel.NumberOfComponents;
         var sourceAlphaIndex = sourceColorModel.NumberOfColorComponents;
         var sourceColorSpace = sourceColorModel.ColorSpace;
@@ -3493,7 +3521,7 @@ public sealed class JavaColorConvertOp
         var output = direct ? new PdfCartonPixels(destination) : default;
         try
         {
-            for (var y = 0; y < source.Height; y++)
+            for (var y = 0; y < height; y++)
             {
                 sourceColorModel.GetNormalizedRow(
                     sourceRaster,
@@ -9193,21 +9221,25 @@ internal enum PathCursor : byte { Empty, Open, Closed, Unknown }
 
 // Native-bitmap lifetime. Java leaves BufferedImages to the garbage collector,
 // but SKBitmap pixels are native memory the GC cannot see. Two parts:
-// - Backstop: every compat-allocated bitmap is a PdfCartonNativeBitmap, which
-//   reports its pixel bytes as GC memory pressure and removes exactly that
-//   amount once, when it is disposed or finalized, so undisposed bitmaps still
-//   pace collections. Int-backed bitmaps (CreateIntBacked) hold their pixels
-//   in a managed array, which the GC already sees.
-// - Ownership: a translated intermediate that never escapes its method is
-//   disposed deterministically. The translator's owned-bitmap statement
-//   rewrites (src/dripsharp/pdfcube/java_project.clj) make it a `using` local
-//   or Own it in a PdfCartonDisposalScope, and CreateDeferredImage skips the
-//   native render for images that are only read through their raster.
+// - Managed pixels: int- and byte-backed bitmaps (CreateIntBacked,
+//   CreateByteBacked) and large Java-visible images (Allocate: decoded images, raster-backed images, new
+//   BufferedImages) hold their pixels in a pinned managed array, which the GC
+//   sees and frees with the image, so translated code may drop them as Java
+//   code does.
+// - Backstop: every other compat-allocated bitmap is a PdfCartonNativeBitmap,
+//   which reports its pixel bytes as GC memory pressure and removes exactly
+//   that amount once, when it is disposed or finalized, so undisposed bitmaps
+//   still pace collections.
+// The translator's remaining owned-bitmap statement rewrites
+// (src/dripsharp/pdfcube/java_project.clj) still dispose some rendering
+// intermediates deterministically. Images built from a raster (CreateImage,
+// CreateDeferredImage) render their native pixels only when first used
+// natively, so one only read through its raster never holds any.
 internal sealed class PdfCartonNativeBitmap : SKBitmap
 {
     // Frees the pin once Skia releases the pixels, which may outlive the
     // bitmap while a canvas or image still shares them.
-    private sealed class PinnedPixels(int[] pixels)
+    private sealed class PinnedPixels(Array pixels)
     {
         private GCHandle handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
         private int released;
@@ -9226,12 +9258,15 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     private static long liveCount;
     private static long outstandingBytes;
     private readonly long pixelBytes;
-    private readonly long pressure;
+    private long pressure;
+    // Set by CreatePending until AllocatePendingPixels installs the pixels.
+    private int pixelsPending;
     private int registered;
-    private volatile bool intPixelsExposed;
+    private volatile bool pixelsExposed;
     // Cleared on disposal, so a retained disposed wrapper keeps no pixels.
     private int[]? intPixels;
-    private IntPtr intPixelsAddress;
+    private sbyte[]? bytePixels;
+    private IntPtr arrayPixelsAddress;
 
     internal PdfCartonNativeBitmap(SKImageInfo info)
         : base(info)
@@ -9246,6 +9281,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         intPixels = pixels;
         pixelBytes = (long)pixels.Length * sizeof(int);
+        HoldsManagedPixels = true;
         Register();
     }
 
@@ -9264,7 +9300,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
         var pixels = new int[checked(info.Width * info.Height)];
         var bitmap = new PdfCartonNativeBitmap(pixels);
         var pinned = new PinnedPixels(pixels);
-        bitmap.intPixelsAddress = pinned.Address;
+        bitmap.arrayPixelsAddress = pinned.Address;
         // Skia calls the release delegate on failure too.
         if (!bitmap.InstallPixels(info, pinned.Address, info.RowBytes, ReleasePinnedPixels, pinned))
         {
@@ -9272,6 +9308,181 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
             throw new InvalidOperationException("Unable to install managed bitmap pixels.");
         }
         return bitmap;
+    }
+
+    // Java's TYPE_BYTE_GRAY image stores one byte per pixel, which is the
+    // memory of a Gray8 pixel, so its pixels are a pinned managed array and
+    // DataBufferByte.getData() returns that storage itself, as in Java: writes
+    // through the array, Skia and raster views all see each other.
+    internal static PdfCartonNativeBitmap CreateByteBacked(SKImageInfo info)
+    {
+        if (info.ColorType != SKColorType.Gray8)
+            throw new ArgumentException("Byte-backed bitmaps hold Gray8 pixels.", nameof(info));
+        var pixels = new sbyte[checked(info.Width * info.Height)];
+        var bitmap = new PdfCartonNativeBitmap(pixels.LongLength) { bytePixels = pixels };
+        var pinned = new PinnedPixels(pixels);
+        bitmap.arrayPixelsAddress = pinned.Address;
+        // Skia calls the release delegate on failure too.
+        if (!bitmap.InstallPixels(info, pinned.Address, info.Width, ReleasePinnedPixels, pinned))
+        {
+            bitmap.Dispose();
+            throw new InvalidOperationException("Unable to install managed bitmap pixels.");
+        }
+        return bitmap;
+    }
+
+    private PdfCartonNativeBitmap(long managedPixelBytes)
+    {
+        pixelBytes = managedPixelBytes;
+        HoldsManagedPixels = true;
+        Register();
+    }
+
+    // True when the pixels are a pinned managed array (Allocate,
+    // CreateIntBacked), which the GC sees.
+    internal bool HoldsManagedPixels { get; private set; }
+
+    // Pixel memory for a Java-visible image. Java keeps a BufferedImage's
+    // pixels on its heap, where its collector sees and frees them, so Java
+    // code drops decoded and intermediate images without disposing them. A
+    // large image's pixels therefore go in a pinned managed array (on the
+    // large object heap, where pinning costs no compaction): the GC sees
+    // them, collects them with the image, and Skia's release callback unpins
+    // the array once no canvas or image shares the pixels. Small images stay
+    // native; the memory pressure their wrapper reports paces collections.
+    internal static PdfCartonNativeBitmap Allocate(SKImageInfo info)
+    {
+        var bytes = (long)info.RowBytes * info.Height;
+        if (bytes < ManagedPixelThreshold) return new PdfCartonNativeBitmap(info);
+        var bitmap = new PdfCartonNativeBitmap(bytes);
+        try
+        {
+            bitmap.InstallManagedPixels(info);
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
+        return bitmap;
+    }
+
+    private void InstallManagedPixels(SKImageInfo info)
+    {
+        var bytes = (long)info.RowBytes * info.Height;
+        var pixels = new int[checked((int)((bytes + sizeof(int) - 1) / sizeof(int)))];
+        var pinned = new PinnedPixels(pixels);
+        // Skia calls the release delegate on failure too.
+        if (!InstallPixels(info, pinned.Address, info.RowBytes, ReleasePinnedPixels, pinned))
+            throw new InvalidOperationException("Unable to install managed bitmap pixels.");
+        HoldsManagedPixels = true;
+    }
+
+    // The runtime's large object heap threshold.
+    private const long ManagedPixelThreshold = 85_000;
+
+    // An image whose pixels are rendered on first use (CreateDeferredImage):
+    // Skia knows its size and colour type, but no pixel memory exists until
+    // AllocatePendingPixels, so an image only read through its raster never
+    // holds any.
+    internal static PdfCartonNativeBitmap CreatePending(SKImageInfo info)
+    {
+        var bitmap = new PdfCartonNativeBitmap((long)info.RowBytes * info.Height)
+        {
+            HoldsManagedPixels = false,
+            pixelsPending = 1
+        };
+        Interlocked.Add(ref outstandingBytes, -Interlocked.Exchange(ref bitmap.countedBytes, 0));
+        if (!bitmap.InstallPixels(info, IntPtr.Zero, info.RowBytes))
+        {
+            bitmap.Dispose();
+            throw new InvalidOperationException("Unable to describe the bitmap's pixels.");
+        }
+        return bitmap;
+    }
+
+    // Set by RenderOnFirstNativeUse until the render ran, with the lock it
+    // runs under and the thread running it.
+    private volatile Action<SKBitmap>? pendingRender;
+    private object? pendingRenderGate;
+    private int pendingRenderThread;
+
+    // Every SkiaSharp call on a bitmap reads Handle, so a CreatePending image
+    // that may leave compat (CreateImage) renders its pixels the first time
+    // anything uses it natively: a canvas, an SKImage, a pixel accessor or a
+    // caller outside PdfCarton. Compat code that only reads its raster never
+    // does. Calls made by the render itself see the bitmap as it is.
+    public override IntPtr Handle
+    {
+        get
+        {
+            if (pendingRender is not null) RunPendingRender();
+            return base.Handle;
+        }
+    }
+
+    // Defers render (run under a lock on gate, which callers holding it
+    // while touching the bitmap share) to the bitmap's first native use.
+    internal void RenderOnFirstNativeUse(object gate, SKSizeI size, Action<SKBitmap> render)
+    {
+        pendingRenderGate = gate;
+        pendingRenderSize = size;
+        pendingRender = render;
+    }
+
+    private SKSizeI pendingRenderSize;
+
+    // The size while the deferred render is due, which reading Width or
+    // Height (native calls) would run.
+    internal SKSizeI? PendingRenderSize => pendingRender is null ? null : pendingRenderSize;
+
+    // Runs the deferred render now; false when none is due, or when called
+    // from inside the render.
+    internal bool RunPendingRender()
+    {
+        if (pendingRender is null ||
+            Volatile.Read(ref pendingRenderThread) == Environment.CurrentManagedThreadId)
+            return false;
+        lock (pendingRenderGate!)
+        {
+            var render = pendingRender;
+            if (render is null) return true;
+            Volatile.Write(ref pendingRenderThread, Environment.CurrentManagedThreadId);
+            try
+            {
+                render(this);
+                pendingRender = null;
+            }
+            finally
+            {
+                Volatile.Write(ref pendingRenderThread, 0);
+            }
+            return true;
+        }
+    }
+
+    // Allocates a CreatePending bitmap's pixels (as Allocate would), once.
+    // Callers render them next, under the image's metadata lock. A deferred
+    // render (RenderOnFirstNativeUse) runs first, and allocates them itself.
+    internal void AllocatePendingPixels()
+    {
+        RunPendingRender();
+        if (Interlocked.Exchange(ref pixelsPending, 0) == 0) return;
+        if (Volatile.Read(ref registered) == 1)
+        {
+            Interlocked.Add(ref countedBytes, pixelBytes);
+            Interlocked.Add(ref outstandingBytes, pixelBytes);
+        }
+        var info = Info;
+        if (pixelBytes >= ManagedPixelThreshold)
+        {
+            InstallManagedPixels(info);
+            return;
+        }
+        if (!TryAllocPixels(info))
+            throw new OutOfMemoryException("Unable to allocate bitmap pixels.");
+        pressure = pixelBytes;
+        if (pressure > 0) GC.AddMemoryPressure(pressure);
     }
 
     // The pinned array holding this bitmap's pixels: null unless the bitmap is
@@ -9282,7 +9493,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
         var pixels = Volatile.Read(ref intPixels);
         if (pixels is null || Handle == IntPtr.Zero) return null;
         var info = Info;
-        var current = GetPixels() == intPixelsAddress &&
+        var current = GetPixels() == arrayPixelsAddress &&
                       info.ColorType == SKColorType.Bgra8888 &&
                       info.AlphaType != SKAlphaType.Premul &&
                       RowBytes == checked(info.Width * 4) &&
@@ -9291,20 +9502,41 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
         return current ? pixels : null;
     }
 
-    // True once the int pixels were handed out: writes into them bypass the
-    // raster views' change tracking, so every Publish then notifies Skia.
-    internal bool IntPixelsExposed => intPixelsExposed;
+    // The pinned array holding a byte-backed bitmap's pixels, under the same
+    // conditions as CurrentIntPixels.
+    internal sbyte[]? CurrentBytePixels()
+    {
+        var pixels = Volatile.Read(ref bytePixels);
+        if (pixels is null || Handle == IntPtr.Zero) return null;
+        var info = Info;
+        var current = GetPixels() == arrayPixelsAddress &&
+                      info.ColorType == SKColorType.Gray8 &&
+                      RowBytes == info.Width &&
+                      (long)info.Width * info.Height == pixels.Length;
+        GC.KeepAlive(this);
+        return current ? pixels : null;
+    }
 
-    internal void ExposeIntPixels() => intPixelsExposed = true;
+    // True once the array pixels were handed out: writes into them bypass the
+    // raster views' change tracking, so every Publish then notifies Skia.
+    internal bool PixelsExposed => pixelsExposed;
+
+    internal void ExposePixels() => pixelsExposed = true;
 
     private void Register()
     {
+        countedBytes = pixelBytes;
         Interlocked.Add(ref outstandingBytes, pixelBytes);
         Interlocked.Increment(ref liveCount);
         registered = 1;
     }
 
-    // Compat bitmaps not yet disposed or finalized, and their pixel bytes.
+    // The pixel bytes this bitmap counts in OutstandingBytes: none while a
+    // CreatePending bitmap has no pixel memory.
+    private long countedBytes;
+
+    // Compat bitmaps not yet disposed or finalized, and the bytes of the
+    // pixel memory they hold.
     internal static long LiveCount => Interlocked.Read(ref liveCount);
     internal static long OutstandingBytes => Interlocked.Read(ref outstandingBytes);
 
@@ -9316,7 +9548,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
         var info = codec.Info;
         if (info.AlphaType == SKAlphaType.Unpremul)
             info.AlphaType = SKAlphaType.Premul;
-        var bitmap = new PdfCartonNativeBitmap(info);
+        var bitmap = Allocate(info);
         var result = codec.GetPixels(info, bitmap.GetPixels(out _));
         if (result is SKCodecResult.Success or SKCodecResult.IncompleteInput)
             return bitmap;
@@ -9326,13 +9558,17 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
 
     protected override void Dispose(bool disposing)
     {
+        // Disposal reads Handle too: an image never used natively is
+        // released without rendering it.
+        pendingRender = null;
         base.Dispose(disposing);
         // Skia's release callback unpins the array once no native owner
         // shares the pixels; the wrapper itself no longer references them.
         Volatile.Write(ref intPixels, null);
+        Volatile.Write(ref bytePixels, null);
         if (Interlocked.Exchange(ref registered, 0) != 1) return;
         if (pressure > 0) GC.RemoveMemoryPressure(pressure);
-        Interlocked.Add(ref outstandingBytes, -pixelBytes);
+        Interlocked.Add(ref outstandingBytes, -Interlocked.Exchange(ref countedBytes, 0));
         Interlocked.Decrement(ref liveCount);
     }
 }
@@ -10321,7 +10557,8 @@ internal static class PdfCartonFontCompat
 
     // new BufferedImage(width, height, type). TYPE_INT_RGB and TYPE_INT_ARGB
     // images keep their pixels in the int array DataBufferInt.getData()
-    // returns, as in Java.
+    // returns, and TYPE_BYTE_GRAY images in the byte array
+    // DataBufferByte.getData() returns, as in Java.
     internal static SKBitmap CreateBitmap(int width, int height, int type) =>
         CreateBitmap(width, height, type, intBacked: true);
 
@@ -10341,9 +10578,13 @@ internal static class PdfCartonFontCompat
             ? SKAlphaType.Unpremul
             : SKAlphaType.Opaque;
         var info = new SKImageInfo(width, height, colorType, alphaType);
-        var bitmap = intBacked && type is (TYPE_INT_RGB or TYPE_INT_ARGB) && BitConverter.IsLittleEndian
-            ? PdfCartonNativeBitmap.CreateIntBacked(info)
-            : new PdfCartonNativeBitmap(info);
+        var bitmap = !intBacked
+            ? new PdfCartonNativeBitmap(info)
+            : type is (TYPE_INT_RGB or TYPE_INT_ARGB) && BitConverter.IsLittleEndian
+                ? PdfCartonNativeBitmap.CreateIntBacked(info)
+                : type == TYPE_BYTE_GRAY
+                    ? PdfCartonNativeBitmap.CreateByteBacked(info)
+                    : PdfCartonNativeBitmap.Allocate(info);
         bitmap.Erase(
             alphaType == SKAlphaType.Opaque
                 ? SKColors.Black
@@ -10560,6 +10801,8 @@ internal static class PdfCartonFontCompat
     // pixels under its image-type model already holds the rendered result.
     private static void RenderRetainedRaster(SKBitmap bitmap, ImageMetadata metadata)
     {
+        // A deferred render draws the same raster.
+        if ((bitmap as PdfCartonNativeBitmap)?.RunPendingRender() == true) return;
         lock (metadata)
         {
             if (!RendersAsStored(bitmap, metadata.ColorModel!, metadata.Raster!))
@@ -10660,27 +10903,52 @@ internal static class PdfCartonFontCompat
         bool isRasterPremultiplied,
         object? properties)
     {
+        // The image may leave compat, so its pixels are rendered on its first
+        // native use, by whoever makes it; an image only read through its
+        // raster (a ColorConvertOp source) is never rendered.
         var bitmap = CreateDeferredImage(
             colorModel,
             raster,
             isRasterPremultiplied,
             properties);
-        try
-        {
-            EnsureNativePixels(bitmap);
-        }
-        catch
-        {
-            bitmap.Dispose();
-            throw;
-        }
+        RenderOnFirstNativeUse(bitmap);
         return bitmap;
     }
 
-    // CreateImage without the eager native render, for an image the caller
-    // owns and consumes through its retained raster. The native pixels are
-    // rendered on first draw (EnsureNativePixels). Only pass such an image to
-    // compat paths that read its raster or call EnsureNativePixels.
+    // Leaves a deferred image's render (CreateDeferredImage, a codec's
+    // deferred read) to its first native use, by compat or by a caller
+    // outside PdfCarton; any other image's pending raster writes are
+    // rendered now, as EnsureNativePixels does.
+    internal static void RenderOnFirstNativeUse(SKBitmap bitmap)
+    {
+        if (bitmap is PdfCartonNativeBitmap native &&
+            ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Raster is { } raster)
+        {
+            lock (metadata)
+            {
+                if (metadata.NativePending)
+                {
+                    native.RenderOnFirstNativeUse(
+                        metadata, new SKSizeI(raster.Width, raster.Height), RenderPendingPixels);
+                    return;
+                }
+            }
+        }
+        EnsureNativePixels(bitmap);
+    }
+
+    // BufferedImage.getWidth() and getHeight(), which do not render a
+    // CreateImage image (SKBitmap.Width and Height are native calls).
+    internal static int GetImageWidth(SKBitmap image) =>
+        image is PdfCartonNativeBitmap { PendingRenderSize: { } size } ? size.Width : image.Width;
+
+    internal static int GetImageHeight(SKBitmap image) =>
+        image is PdfCartonNativeBitmap { PendingRenderSize: { } size } ? size.Height : image.Height;
+
+    // CreateImage for an image only compat code uses, through its retained
+    // raster or after EnsureNativePixels: its native pixels are rendered
+    // only by EnsureNativePixels.
     internal static SKBitmap CreateDeferredImage(
         JavaColorModel colorModel,
         JavaRaster raster,
@@ -10694,7 +10962,7 @@ internal static class PdfCartonFontCompat
             throw new ArgumentException(
                 "Raster band count does not match the color model.",
                 nameof(raster));
-        var bitmap = new PdfCartonNativeBitmap(
+        var bitmap = PdfCartonNativeBitmap.CreatePending(
             new SKImageInfo(
                 raster.Width,
                 raster.Height,
@@ -10765,7 +11033,10 @@ internal static class PdfCartonFontCompat
             return;
         lock (metadata)
         {
-            if (metadata.ExposedSamples is not { } samples || metadata.RenderedSamples is not { } published)
+            // Pixels not rendered yet (nor, for CreatePending, allocated)
+            // are rendered from the raster, samples included, on first use.
+            if (metadata.NativePending ||
+                metadata.ExposedSamples is not { } samples || metadata.RenderedSamples is not { } published)
                 return;
             var colorModel = metadata.ColorModel!;
             var bands = raster.NumberOfBands;
@@ -10915,11 +11186,20 @@ internal static class PdfCartonFontCompat
     internal static void EnsureNativePixels(SKBitmap bitmap)
     {
         PdfCartonBitmapView.Publish(bitmap);
+        if ((bitmap as PdfCartonNativeBitmap)?.RunPendingRender() == true) return;
+        RenderPendingPixels(bitmap);
+    }
+
+    private static void RenderPendingPixels(SKBitmap bitmap)
+    {
         if (!ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata)) return;
         lock (metadata)
         {
             if (!metadata.NativePending) return;
+            (bitmap as PdfCartonNativeBitmap)?.AllocatePendingPixels();
             RenderRaster(bitmap, metadata.ColorModel!, metadata.Raster!);
+            if (metadata.ExposedSamples is { } exposed)
+                Array.Copy(exposed, metadata.RenderedSamples!, exposed.Length);
             metadata.NativePending = false;
         }
     }

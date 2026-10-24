@@ -452,160 +452,36 @@
          transformed
          "global::System.MidpointRounding.AwayFromZero"))))
 
-(deftest sampled-one-bit-images-synchronize-managed-raster-before-return
-  (let [declaration
-        (csharp/declaration
-         (csharp/raw "private static object from1Bit()")
-         (csharp/block [(csharp/raw "return bim!;")])
-         {:declaration-kind :method
-          :source-name "from1Bit"
-          :source-qualified-name
-          "org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader"})
-        transformed
-        (:text
-         (render-transformed
-          {:package {:id "DripSharp.PdfCarton"}}
-          declaration))]
-    (is (str/includes?
-         transformed
-         "PdfCartonFontCompat.SetImageData(bim!, raster);"))
-    (is (< (.indexOf transformed "SetImageData(bim!, raster)")
-           (.indexOf transformed "return bim!;")))))
-
-(deftest color-space-conversion-owns-its-intermediate-bitmap
-  (let [source-declaration
-        (str "global::SkiaSharp.SKBitmap src = "
-             "global::DripSharp.Runtime.PdfCartonFontCompat.CreateImage("
-             "colorModel, raster, false, "
-             "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")
-        filter-call "this.colorConvertOp.Filter(src, dest);"
-        draw-call "g2d.DrawImage(src, 0, 0, (object)default!);"
-        declaration
-        (csharp/declaration
-         (csharp/raw "protected internal virtual object ToRGBImageAWT()")
-         (csharp/block [(csharp/raw source-declaration)
-                        (csharp/raw draw-call)
-                        (csharp/raw "g2d.Dispose();")
-                        (csharp/raw filter-call)
-                        (csharp/raw "return dest;")])
-         {:declaration-kind :method
-          :source-name "toRGBImageAWT"
-          :source-qualified-name
-          "org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace"})
-        transformed
-        (:text
-         (render-transformed
-          {:package {:id "DripSharp.PdfCarton"}}
-          declaration))]
-    (is (str/includes? transformed "using global::SkiaSharp.SKBitmap src"))
-    (is (str/includes? transformed "PdfCartonFontCompat.CreateDeferredImage("))
-    (is (not (str/includes? transformed "PdfCartonFontCompat.CreateImage(")))
-    (testing "the one-pixel drawing branch disposes its owned objects on failure"
-      (let [draw (.indexOf transformed draw-call)
-            cleanup (.indexOf transformed "g2d.Dispose();\n" draw)]
-        (is (< draw cleanup (.indexOf transformed "dest.Dispose();" cleanup)))))
-    (testing "the conversion branch disposes the owned result on failure"
-      (let [filter (.indexOf transformed filter-call)]
-        (is (< filter
-               (.indexOf transformed "dest.Dispose();" filter)
-               (.indexOf transformed "return dest;")))))
-    (testing "an upstream change to the rewritten statements fails generation"
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           #"missing the expected statement"
-           (render-transformed
-            {:package {:id "DripSharp.PdfCarton"}}
-            (csharp/declaration
-             (csharp/raw "protected internal virtual object ToRGBImageAWT()")
-             (csharp/block [(csharp/raw filter-call)])
-             {:declaration-kind :method
-              :source-name "toRGBImageAWT"
-              :source-qualified-name
-              "org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace"})))))))
-
-(deftest decode-filters-own-their-intermediate-bitmaps
-  (let [method (fn [type-name source-name parameter-count statements]
-                 (csharp/declaration
-                  (csharp/raw (str "private object " source-name "()"))
-                  (csharp/block (mapv csharp/raw statements))
-                  {:declaration-kind :method
-                   :source-name source-name
-                   :parameter-count parameter-count
-                   :source-qualified-name type-name}))
-        render (fn [declaration]
-                 (:text (render-transformed
-                         {:package {:id "DripSharp.PdfCarton"}}
-                         declaration)))
-        read-statement "image = reader.Read(0, irp);"
-        jbig2 (render
-               (method
-                "org.apache.pdfbox.filter.JBIG2Filter" "decode" 5
-                ["global::SkiaSharp.SKBitmap image;"
-                 read-statement
-                 (str "global::SkiaSharp.SKBitmap packedImage = "
-                      "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-                      "image.Width, image.Height, "
-                      "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_BINARY);")
-                 (str "global::DripSharp.Runtime.PdfCartonGraphics2D graphics = "
-                      "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(packedImage);")
-                 "image = packedImage;"]))
-        jpx (render
-             (method
-              "org.apache.pdfbox.filter.JPXFilter" "readJPX" 3
-              ["global::SkiaSharp.SKBitmap image;"
-               read-statement
-               (str "global::SkiaSharp.SKBitmap smask = "
-                    "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-                    "image.Width, image.Height, "
-                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY);")
-               "result.setJPXSMask(smask);"
-               (str "global::SkiaSharp.SKBitmap bim = "
-                    "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap("
-                    "image.Width, image.Height, "
-                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_RGB);")
-               (str "global::DripSharp.Runtime.PdfCartonGraphics2D g2d = "
-                    "(global::DripSharp.Runtime.PdfCartonGraphics2D)("
-                    "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(bim)!);")
-               "image = bim;"
-               "return image;"]))]
-    (testing "the JBIG2 image, its repacking and graphics are owned by one scope"
-      (is (str/includes? jbig2 "using global::DripSharp.Runtime.PdfCartonDisposalScope __dripsharpOwned"))
-      (is (= 3 (count (re-seq #"__dripsharpOwned\.Own\(" jbig2))))
-      (is (str/includes? jbig2 "__dripsharpOwned.Own(reader.ReadDeferred(0, irp))")))
-    (testing "readJPX releases only the image it returns"
-      (is (str/includes? jpx "__dripsharpOwned.Own(reader.ReadDeferred(0, irp))"))
-      (is (= 4 (count (re-seq #"__dripsharpOwned\.Own\(" jpx))))
-      (is (< (.indexOf jpx "__dripsharpOwned.Release(result.GetJPXSMask());")
-             (.indexOf jpx "return __dripsharpOwned.Release(image);"))))
-    (testing "DCT keeps an array copy of the raster and disposes the image"
-      (let [dct (render
-                 (method
-                  "org.apache.pdfbox.filter.DCTFilter" "readImageRaster" 2
-                  ["global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"
-                   "raster = global::DripSharp.Runtime.PdfCartonFontCompat.GetRaster(image);"]))]
-        (is (str/includes? dct "using global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"))
-        (is (str/includes? dct "PdfCartonFontCompat.GetImageData(image);"))))
-    (testing "only the JPX decode overload with the readJPX call is rewritten"
-      (let [overload (method "org.apache.pdfbox.filter.JPXFilter" "decode" 4
-                             ["return this.Decode(encoded, decoded, parameters, index, options);"])]
-        (is (= (render overload)
-               (:text (csharp/render overload)))))
-      (let [decode (render (method "org.apache.pdfbox.filter.JPXFilter" "decode" 5
-                                   [(str "global::SkiaSharp.SKBitmap image = "
-                                         "this.readJPX(encoded, options, result);")
-                                    "return result;"
-                                    "return result;"]))]
-        (is (str/includes? decode "using global::SkiaSharp.SKBitmap image = this.readJPX("))
-        (is (str/includes? decode "__dripsharpOwned.Own(result.GetJPXSMask());"))
-        (testing "every successful exit hands the soft mask to the caller"
-          (is (= 2 (count (re-seq #"__dripsharpOwned\.Release\(result\.GetJPXSMask\(\)\);\s*return result;"
-                                  decode)))))))
-    (testing "an upstream change to a rewritten statement fails generation"
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           #"missing the expected statement"
-           (render (method "org.apache.pdfbox.filter.JBIG2Filter" "decode" 5
-                           ["global::SkiaSharp.SKBitmap image;"])))))))
+(deftest decode-filters-and-colour-conversions-are-emitted-unchanged
+  (doseq [[type-name source-name parameter-count statement]
+          [["org.apache.pdfbox.pdmodel.graphics.color.PDDeviceN" "toRGBWithAttributes" 1
+            "return rgbImage;"]
+           ["org.apache.pdfbox.filter.DCTFilter" "readImageRaster" 2
+            "global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"]
+           ["org.apache.pdfbox.filter.JPXFilter" "decode" 5
+            "return result;"]
+           ["org.apache.pdfbox.filter.JPXFilter" "readJPX" 3
+            "image = reader.Read(0, irp);"]
+           ["org.apache.pdfbox.filter.JBIG2Filter" "decode" 5
+            "image = reader.Read(0, irp);"]
+           ["org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace" "toRGBImageAWT" 2
+            (str "global::SkiaSharp.SKBitmap src = "
+                 "global::DripSharp.Runtime.PdfCartonFontCompat.CreateImage("
+                 "colorModel, raster, false, "
+                 "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")]
+           ["org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader" "from1Bit" 5
+            "return bim!;"]]]
+    (let [declaration (csharp/declaration
+                       (csharp/raw (str "private object " source-name "()"))
+                       (csharp/block [(csharp/raw statement)])
+                       {:declaration-kind :method
+                        :source-name source-name
+                        :parameter-count parameter-count
+                        :source-qualified-name type-name})]
+      (is (= (:text (csharp/render declaration))
+             (:text (render-transformed {:package {:id "DripSharp.PdfCarton"}}
+                                        declaration)))
+          (str type-name "#" source-name)))))
 
 (deftest rendering-intermediates-are-owned
   (let [config {:package {:id "DripSharp.PdfCarton"}}
@@ -643,19 +519,6 @@
                             "__dripsharpOwned.Release(this.image);")))
       (let [other (group-ctor 3)]
         (is (= (:text (csharp/render other)) (render other)))))
-    (testing "parameter types select one of two overloads with the same arity"
-      (let [device-n (fn [types statements]
-                       (declaration :method
-                                    "org.apache.pdfbox.pdmodel.graphics.color.PDDeviceN"
-                                    {:source-name "toRGBWithAttributes"
-                                     :parameter-count 1
-                                     :parameter-types types}
-                                    statements))
-            values (device-n ["float[]"] ["return value;"])]
-        (is (= (:text (csharp/render values)) (render values)))
-        (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"missing the expected statement"
-             (render (device-n ["java.awt.image.WritableRaster"] ["return value;"]))))))
     (testing "applyMask declares its scope first and releases every returned image"
       (let [rendered (render (declaration
                               :method "org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject"
