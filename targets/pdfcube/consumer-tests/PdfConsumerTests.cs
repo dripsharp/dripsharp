@@ -7884,12 +7884,12 @@ public sealed class DecodeFilterBitmapLifetimeTests
 
     // A page-sized decoded image keeps its pixels in managed memory (see
     // PdfCartonNativeBitmap.Allocate), so the collector frees the images a
-    // decode loop drops, as Java's does: the compat bytes outstanding stay
-    // within a few images however many are decoded, and return to the
-    // baseline once collected. (With the disposing filter rewrites this
-    // replaced, the peak was one image.)
+    // decode loop drops, as Java's does: however many are decoded, they hold
+    // no native pixel memory, and the compat bytes return to the baseline
+    // once collected. How many dropped images await the collector meanwhile
+    // is the runtime's policy, not the library's.
     [Fact]
-    public void LargeDecodedImagesStayBoundedWithoutDisposal()
+    public void LargeDecodedImagesAreReclaimedWithoutDisposal()
     {
         const int width = 1240, height = 1754, rounds = 24;
         var jpeg = IccRenderFixtures.SkiaJpeg(width, height);
@@ -7902,13 +7902,12 @@ public sealed class DecodeFilterBitmapLifetimeTests
         Assert.Equal(width * height * 3, Decode(stream).Length);
         Settle();
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
-        long peak = 0;
+        var native = Compat.PdfCartonNativeBitmap.NativeBytes;
         for (var round = 0; round < rounds; round++)
         {
             Assert.Equal(width * height * 3, Decode(stream).Length);
-            peak = Math.Max(peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes);
+            Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
         }
-        Assert.True(peak <= rounds / 3 * 4L * width * height, $"{peak} compat bytes outstanding");
         Settle();
         Assert.Equal(bytes, Compat.PdfCartonNativeBitmap.OutstandingBytes);
     }
@@ -8156,24 +8155,28 @@ public sealed class IntBitmapPixelLifetimeTests
     }
 
     // Java code drops large intermediate images without disposing them, and
-    // its collector reclaims them. Compat collects dropped bitmaps before
-    // their bytes exceed half of the live ones: with a 4 MiB image live, 100
-    // dropped 1 MiB images never leave more than 2 MiB (plus the one being
-    // allocated) outstanding beside it.
+    // its collector reclaims them. Compat never forces a collection: a
+    // dropped image's pixels are a managed array, reclaimed whenever the
+    // runtime collects (how much garbage it lets accumulate first is its own
+    // policy), and use no native memory meanwhile. With a 4 MiB image live,
+    // a collection after 100 dropped 1 MiB images leaves only the live one.
     [Fact]
-    public void DroppedLargeImagesStayWithinHalfTheLiveBytes()
+    public void DroppedLargeImagesLeaveOnlyTheLiveImageOnceCollected()
     {
         const long MiB = 1024 * 1024;
         Collect();
         var baseline = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var liveBaseline = Compat.PdfCartonNativeBitmap.LiveCount;
+        var native = Compat.PdfCartonNativeBitmap.NativeBytes;
         using var live = Compat.PdfCartonFontCompat.CreateBitmap(1024, 1024, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        long peak = 0;
         for (var dropped = 0; dropped < 100; dropped++)
         {
             Abandon(512, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-            peak = Math.Max(peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - baseline);
+            Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
         }
-        Assert.True(peak <= 4 * MiB + 2 * MiB + MiB, $"100 dropped 1 MiB images peaked at {peak} bytes.");
+        Collect();
+        Assert.Equal(baseline + 4 * MiB, Compat.PdfCartonNativeBitmap.OutstandingBytes);
+        Assert.Equal(liveBaseline + 1, Compat.PdfCartonNativeBitmap.LiveCount);
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -10234,27 +10237,48 @@ public sealed class RenderingBitmapLifetimeTests
         return Hash(canvas);
     }
 
-    // Each fill under an ExtGState soft mask renders the mask anew; the
-    // previous mask is disposed, so 200 masked fills peak like one.
+    // Each fill under an ExtGState soft mask renders the mask anew and drops
+    // the previous one, as PDFBox does. Compat leaves the dropped masks to the
+    // collector and never forces a collection, so how many await it is the
+    // runtime's policy; what the render keeps reachable is not. Collecting
+    // around every fill (test code may; product code may not), the compat
+    // bytes still reachable do not grow with the fills: past the first tenth
+    // of them they never exceed what they reached by then (about one mask
+    // beside the page image), and stay within twice what a single masked
+    // fill retains. The native pixel
+    // memory the fills hold, which the collector sees only as memory
+    // pressure, stays flat without any collection by the test.
     [Fact]
-    public void SoftMaskedFillsKeepOneMaskLive()
+    public void SoftMaskedFillsRetainOneMask()
     {
         using var document = Loader.LoadPDF(Signed(Fixture()));
-        long Peak(int page)
+        SamplingRenderer Rendered(int page, bool collecting)
         {
             Settle();
             var renderer = new SamplingRenderer(document, int.MaxValue, null)
             {
-                Baseline = Compat.PdfCartonNativeBitmap.OutstandingBytes
+                Baseline = Compat.PdfCartonNativeBitmap.OutstandingBytes,
+                NativeBaseline = Compat.PdfCartonNativeBitmap.NativeBytes,
+                Collecting = collecting
             };
             using (renderer.RenderImage(page, 2, ImageType.Rgb)) { }
-            return renderer.Peak;
+            return renderer;
         }
-        var single = Peak(OneMaskedFill);
-        var many = Peak(ManyMaskedFills);
+        var single = Rendered(OneMaskedFill, collecting: true).Peak;
+        var retained = Rendered(ManyMaskedFills, collecting: true).Retained;
+        // Sampled before and after each fill, the masks' own fills included.
+        Assert.True(retained.Count >= 2 * MaskedFills, $"{retained.Count} samples.");
+        var early = retained.Take(retained.Count / 10).Max();
+        var many = retained.Max();
         Assert.True(single > 0);
+        Assert.True(many == early,
+            $"{MaskedFills} masked fills retained up to {many} compat bytes, {early} in the first tenth.");
         Assert.True(many <= 2 * single,
-            $"{MaskedFills} masked fills peaked at {many} native bytes, one at {single}.");
+            $"{MaskedFills} masked fills retained {many} compat bytes, one {single}.");
+        var singleNative = Rendered(OneMaskedFill, collecting: false).NativePeak;
+        var manyNative = Rendered(ManyMaskedFills, collecting: false).NativePeak;
+        Assert.True(manyNative <= singleNative,
+            $"{MaskedFills} masked fills held {manyNative} native pixel bytes, one {singleNative}.");
     }
 
     private static object[] PinImages(PDPage page)
@@ -10279,6 +10303,13 @@ public sealed class RenderingBitmapLifetimeTests
         internal int Fills { get; private set; }
         internal long Baseline { get; init; }
         internal long Peak { get; private set; }
+        internal long NativeBaseline { get; init; }
+        internal long NativePeak { get; private set; }
+        // Collects before every sample, so Peak counts only the bytes the
+        // render keeps reachable.
+        internal bool Collecting { get; init; }
+        // Each sample's reachable bytes, while Collecting.
+        internal List<long> Retained { get; } = new();
         internal PageDrawer? Drawn { get; set; }
 
         protected internal override PageDrawer CreatePageDrawer(PageDrawerParameters parameters) =>
@@ -10292,8 +10323,16 @@ public sealed class RenderingBitmapLifetimeTests
             Sample();
         }
 
-        private void Sample() =>
+        private void Sample()
+        {
+            if (Collecting)
+            {
+                Settle();
+                Retained.Add(Compat.PdfCartonNativeBitmap.OutstandingBytes - Baseline);
+            }
             Peak = Math.Max(Peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - Baseline);
+            NativePeak = Math.Max(NativePeak, Compat.PdfCartonNativeBitmap.NativeBytes - NativeBaseline);
+        }
 
         private sealed class Drawer(PageDrawerParameters parameters, SamplingRenderer owner)
             : PageDrawer(parameters)
@@ -10357,7 +10396,7 @@ public sealed class RenderingBitmapLifetimeTests
     // previous page image the renderer kept. Garbage kept across renders
     // would exceed this. The page with 200 masked fills leaves as many masks
     // as the collector has not reclaimed yet, which
-    // SoftMaskedFillsKeepOneMaskLive bounds instead.
+    // SoftMaskedFillsRetainOneMask bounds instead.
     private const long RenderGarbageBound = 12 * OnePageImage;
 
     private static void AssertRenderGarbageBounded(long left, int page, string name) =>

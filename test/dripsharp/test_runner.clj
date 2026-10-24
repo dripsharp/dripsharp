@@ -17,6 +17,7 @@
     dripsharp.project-xml-test
     dripsharp.tree-cleanup-test
     dripsharp.source-accountability-test
+    dripsharp.authored-runtime-test
     dripsharp.authorship-report-test
     dripsharp.bundle-contract-test
     dripsharp.differential-registry-test

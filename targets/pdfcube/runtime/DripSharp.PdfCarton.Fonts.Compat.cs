@@ -9274,6 +9274,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
 
     private static long liveCount;
     private static long outstandingBytes;
+    private static long nativeBytes;
     private readonly long pixelBytes;
     private long pressure;
     // Set by CreatePending until AllocatePendingPixels installs the pixels.
@@ -9286,7 +9287,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     private IntPtr arrayPixelsAddress;
 
     internal PdfCartonNativeBitmap(SKImageInfo info)
-        : base(MakeRoomFor(info))
+        : base(info)
     {
         pixelBytes = (long)RowBytes * Height;
         pressure = pixelBytes;
@@ -9314,7 +9315,6 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
             !BitConverter.IsLittleEndian)
             throw new ArgumentException("Int-backed bitmaps hold little-endian straight BGRA pixels.",
                 nameof(info));
-        MakeRoomFor(info);
         var pixels = new int[checked(info.Width * info.Height)];
         var bitmap = new PdfCartonNativeBitmap(pixels);
         var pinned = new PinnedPixels(pixels);
@@ -9336,7 +9336,6 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         if (info.ColorType != SKColorType.Gray8)
             throw new ArgumentException("Byte-backed bitmaps hold Gray8 pixels.", nameof(info));
-        MakeRoomFor(info);
         var pixels = new sbyte[checked(info.Width * info.Height)];
         var bitmap = new PdfCartonNativeBitmap(pixels.LongLength) { bytePixels = pixels };
         var pinned = new PinnedPixels(pixels);
@@ -9373,7 +9372,6 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         var bytes = (long)info.RowBytes * info.Height;
         if (bytes < ManagedPixelThreshold) return new PdfCartonNativeBitmap(info);
-        MakeRoomFor(info);
         var bitmap = new PdfCartonNativeBitmap(bytes);
         try
         {
@@ -9401,64 +9399,6 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     // The runtime's large object heap threshold.
     private const long ManagedPixelThreshold = 85_000;
 
-    // Java code drops intermediate images (a soft mask's group image, a
-    // transparency group's alpha image) without disposing them, and Java's
-    // collector reclaims them promptly. Here an image's pixels are released
-    // only when its wrapper is finalized, and a large pinned array waits for
-    // a full collection, which the runtime may defer for hundreds of
-    // megabytes. So the compat bitmaps pace collections themselves: the
-    // large-bitmap bytes allocated since the last full collection and not
-    // disposed since (possible garbage) may reach half of the other bytes
-    // outstanding (the live bitmaps), or CollectionFloor; a large allocation
-    // beyond that, after earlier undisposed ones, first collects and
-    // finalizes the unreachable bitmaps.
-    // Undisposed garbage therefore stays within about half of the live
-    // bitmaps, while code that disposes its bitmaps causes no collections.
-    private const long CollectionFloor = 256 * 1024;
-    private static long undisposedSinceCollection;
-    private static int observedCollections = GC.CollectionCount(GC.MaxGeneration);
-    private static int collecting;
-
-    // Called before allocating pixels for info; returns info.
-    private static SKImageInfo MakeRoomFor(SKImageInfo info)
-    {
-        var bytes = (long)info.RowBytes * info.Height;
-        if (bytes < ManagedPixelThreshold) return info;
-        var collections = GC.CollectionCount(GC.MaxGeneration);
-        if (Interlocked.Exchange(ref observedCollections, collections) != collections)
-            Interlocked.Exchange(ref undisposedSinceCollection, 0);
-        var undisposed = Interlocked.Add(ref undisposedSinceCollection, bytes);
-        var earlier = undisposed - bytes;
-        var live = Math.Max(0, Interlocked.Read(ref outstandingBytes) - earlier);
-        if (earlier <= 0 || undisposed <= Math.Max(CollectionFloor, live / 2) ||
-            Interlocked.Exchange(ref collecting, 1) != 0)
-            return info;
-        try
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            Volatile.Write(ref observedCollections, GC.CollectionCount(GC.MaxGeneration));
-            Interlocked.Exchange(ref undisposedSinceCollection, bytes);
-        }
-        finally
-        {
-            Volatile.Write(ref collecting, 0);
-        }
-        return info;
-    }
-
-    // A disposed large bitmap is not garbage awaiting collection.
-    private static void Disposed(long bytes)
-    {
-        if (bytes < ManagedPixelThreshold) return;
-        long current, next;
-        do
-        {
-            current = Interlocked.Read(ref undisposedSinceCollection);
-            next = Math.Max(0, current - bytes);
-        } while (Interlocked.CompareExchange(ref undisposedSinceCollection, next, current) != current);
-    }
-
     // An image whose pixels are rendered on first use (CreateDeferredImage):
     // Skia knows its size and colour type, but no pixel memory exists until
     // AllocatePendingPixels, so an image only read through its raster never
@@ -9471,6 +9411,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
             pixelsPending = 1
         };
         Interlocked.Add(ref outstandingBytes, -Interlocked.Exchange(ref bitmap.countedBytes, 0));
+        Interlocked.Add(ref nativeBytes, -Interlocked.Exchange(ref bitmap.countedNativeBytes, 0));
         if (!bitmap.InstallPixels(info, IntPtr.Zero, info.RowBytes))
         {
             bitmap.Dispose();
@@ -9546,11 +9487,15 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         RunPendingRender();
         if (Interlocked.Exchange(ref pixelsPending, 0) == 0) return;
-        MakeRoomFor(Info);
         if (Volatile.Read(ref registered) == 1)
         {
             Interlocked.Add(ref countedBytes, pixelBytes);
             Interlocked.Add(ref outstandingBytes, pixelBytes);
+            if (pixelBytes < ManagedPixelThreshold)
+            {
+                Interlocked.Add(ref countedNativeBytes, pixelBytes);
+                Interlocked.Add(ref nativeBytes, pixelBytes);
+            }
         }
         var info = Info;
         if (pixelBytes >= ManagedPixelThreshold)
@@ -9606,6 +9551,11 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         countedBytes = pixelBytes;
         Interlocked.Add(ref outstandingBytes, pixelBytes);
+        if (!HoldsManagedPixels)
+        {
+            countedNativeBytes = pixelBytes;
+            Interlocked.Add(ref nativeBytes, pixelBytes);
+        }
         Interlocked.Increment(ref liveCount);
         registered = 1;
     }
@@ -9614,10 +9564,20 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     // CreatePending bitmap has no pixel memory.
     private long countedBytes;
 
+    // The part of countedBytes in pixel memory Skia allocated, which the GC
+    // sees only as the memory pressure the bitmap reports.
+    private long countedNativeBytes;
+
     // Compat bitmaps not yet disposed or finalized, and the bytes of the
     // pixel memory they hold.
     internal static long LiveCount => Interlocked.Read(ref liveCount);
     internal static long OutstandingBytes => Interlocked.Read(ref outstandingBytes);
+
+    // The part of OutstandingBytes in native pixel memory (not a pinned
+    // managed array). Like OutstandingBytes it counts per bitmap: pixels a
+    // canvas or image still shares after their bitmap was disposed or
+    // finalized are not counted.
+    internal static long NativeBytes => Interlocked.Read(ref nativeBytes);
 
     // SKBitmap.Decode(Stream), allocating the pixels as a compat bitmap.
     internal static SKBitmap? DecodeStream(Stream stream)
@@ -9655,8 +9615,8 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
         if (Interlocked.Exchange(ref registered, 0) != 1) return;
         if (pressure > 0) GC.RemoveMemoryPressure(pressure);
         var released = Interlocked.Exchange(ref countedBytes, 0);
-        if (disposing) Disposed(released);
         Interlocked.Add(ref outstandingBytes, -released);
+        Interlocked.Add(ref nativeBytes, -Interlocked.Exchange(ref countedNativeBytes, 0));
         Interlocked.Decrement(ref liveCount);
     }
 }
