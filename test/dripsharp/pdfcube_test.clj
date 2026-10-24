@@ -1107,6 +1107,82 @@
               "global::DripSharp.PdfCarton.IO.RandomAccessRead value)")))
     (is (not (str/includes? source "org.apache.pdfbox.io")))))
 
+(deftest translated-external-members-follow-their-java-language-shape
+  ;; A sibling project's types reach this project only as compiled classes.
+  ;; Their members must be named and dispatched as the sibling's declaration
+  ;; side emits them, for any member of the same Java shape. The fixture
+  ;; types are synthetic; only their package is the approved external one.
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-fontbox")
+        fixture
+        (model!
+         "org/apache/fontbox/SharedConsumer.java"
+         (str "package org.apache.fontbox; "
+              "import org.apache.pdfbox.io.*; "
+              "public final class SharedConsumer { "
+              "public int use(FixtureSource source, FixtureHandle handle, FixtureFlag flag, byte[] b) "
+              "throws java.io.IOException { "
+              "Object empty = FixtureSource.EMPTY; "
+              "Object viaInstance = source.EMPTY; "
+              "int count = source.read(b); "
+              "boolean cleared = !flag.getValue(); "
+              "handle.close(); source.close(); "
+              "java.io.Closeable lambda = () -> { }; lambda.close(); "
+              "return empty != viaInstance && cleared ? count : 0; } "
+              "public static final class Child extends FixtureBase { "
+              "@Override public int value() { return super.value() + 1; } } }")
+         {"org/apache/pdfbox/io/FixtureSource.java"
+          (str "package org.apache.pdfbox.io; "
+               "public interface FixtureSource extends java.io.Closeable { "
+               "Object EMPTY = new Object(); "
+               "int read(byte[] b, int offset, int length); "
+               "default int read(byte[] b) { return read(b, 0, b.length); } }")
+          "org/apache/pdfbox/io/FixtureDefaults.java"
+          (str "package org.apache.pdfbox.io; "
+               "public interface FixtureDefaults { default int value() { return 1; } }")
+          "org/apache/pdfbox/io/FixtureBase.java"
+          (str "package org.apache.pdfbox.io; "
+               "public class FixtureBase implements FixtureDefaults { }")
+          "org/apache/pdfbox/io/FixtureHandle.java"
+          (str "package org.apache.pdfbox.io; "
+               "public class FixtureHandle implements AutoCloseable { "
+               "public void close() { } }")
+          "org/apache/pdfbox/io/FixtureValue.java"
+          (str "package org.apache.pdfbox.io; "
+               "public abstract class FixtureValue { public abstract Object getValue(); }")
+          "org/apache/pdfbox/io/FixtureFlag.java"
+          (str "package org.apache.pdfbox.io; "
+               "public class FixtureFlag extends FixtureValue { "
+               "public Boolean getValue() { return Boolean.TRUE; } }")})
+        emission (emit! fixture destination)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/DripSharp/PdfCarton/Fonts/SharedConsumer.cs")))]
+    (testing "interface constants live on the Statics companion"
+      (is (str/includes?
+           source
+           "object empty = global::DripSharp.PdfCarton.IO.FixtureSourceStatics.Empty;"))
+      (is (str/includes?
+           source
+           "object viaInstance = global::DripSharp.PdfCarton.IO.FixtureSourceStatics.Empty;")))
+    (testing "default methods dispatch through their interface"
+      (is (str/includes?
+           source
+           "((global::DripSharp.PdfCarton.IO.FixtureSource)(source)).Read(b)"))
+      (is (str/includes? source "return unchecked((base.Value() + 1));")))
+    (testing "covariant boxed overrides of an Object return are cast back"
+      (is (str/includes? source "!((bool)(flag.GetValue()))")))
+    (testing "Closeable and AutoCloseable close() is Dispose"
+      (is (str/includes? source "handle.Dispose();"))
+      (is (str/includes? source "source.Dispose();"))
+      (is (not (str/includes? source ".Close()"))))
+    (testing "a Closeable lambda becomes a disposable"
+      ;; The product rewrites the shared runtime namespace per assembly.
+      (is (re-find #"global::System\.IDisposable lambda\s+= new global::[\w.]+\.JavaCloseableAdapter\(\(\) => \{\}\);"
+                   source)))))
+
 (deftest generated-otf-parser-preserves-the-public-covariant-return-contract
   (let [workspace (paths/workspace-root)
         source

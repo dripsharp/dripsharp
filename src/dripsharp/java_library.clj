@@ -275,6 +275,75 @@
                      (str/join "." (map pascal segments)))))))
         (sort-by (comp - count key) mappings))))))
 
+;; Members of translated external types (another project of the same product
+;; family, seen here only through its compiled Java classes) must be named and
+;; dispatched exactly as that project's declaration side emits them. These
+;; helpers restate the Java-language shapes involved through reflection, so
+;; they hold for every such member rather than for individually listed ones.
+
+(defn- translated-external-class
+  "Returns the loaded Java class behind a translated external type reference."
+  ^Class [ctx ^CtTypeReference reference]
+  (when (and reference (translated-external-type-base ctx reference))
+    (try (.getActualClass reference) (catch Throwable _ nil))))
+
+(defn- java-stream-class? [^Class klass]
+  (and (not (.isInterface klass))
+       (or (.isAssignableFrom java.io.InputStream klass)
+           (.isAssignableFrom java.io.OutputStream klass))))
+
+(defn- translated-external-close-name
+  "Java's zero-argument close() (the Closeable/AutoCloseable shape) is declared
+  as IDisposable.Dispose by the translator, except on java.io stream
+  subclasses, whose close stays a stream method (see `method-name`)."
+  [ctx reference]
+  (when (and (instance? spoon.reflect.reference.CtExecutableReference reference)
+             (= "close" (.getSimpleName ^CtElement reference))
+             (empty? (.getParameters
+                      ^spoon.reflect.reference.CtExecutableReference reference)))
+    (when-let [klass (translated-external-class
+                      ctx
+                      (.getDeclaringType
+                       ^spoon.reflect.reference.CtExecutableReference reference))]
+      (when-not (java-stream-class? klass)
+        "Dispose"))))
+
+(defn- translated-external-default-method?
+  "A Java default method of a translated external interface. netstandard2.0
+  cannot carry default interface bodies, so implementing classes receive
+  materialized copies and callers dispatch through the interface."
+  [ctx declaration ^CtTypeReference owner]
+  (and (instance? Method declaration)
+       (.isDefault ^Method declaration)
+       (.isInterface (.getDeclaringClass ^Method declaration))
+       (some? (translated-external-class ctx owner))))
+
+(defn- translated-external-object-override?
+  "A translated external method whose nearest superclass declaration returns
+  Object. The translator keeps the Object return on the C# override, so a
+  narrower Java return such as Boolean is recovered with a cast."
+  [ctx ^Method declaration ^CtTypeReference owner]
+  (when (some? (translated-external-class ctx owner))
+    (loop [klass (.getSuperclass (.getDeclaringClass declaration))]
+      (when klass
+        (let [candidate
+              (try
+                (.getDeclaredMethod klass (.getName declaration)
+                                    (.getParameterTypes declaration))
+                (catch NoSuchMethodException _ nil))]
+          (if (and candidate (not (.isBridge candidate)))
+            (= Object (.getGenericReturnType candidate))
+            (recur (.getSuperclass klass))))))))
+
+(defn- translated-external-interface-static-field?
+  "A static field declared by a translated external interface. Interfaces
+  cannot carry static fields on netstandard2.0, so their declaration side
+  emits them on the `<Interface>Statics` companion."
+  [ctx ^java.lang.reflect.Field declaration ^CtTypeReference owner]
+  (and (java.lang.reflect.Modifier/isStatic (.getModifiers declaration))
+       (.isInterface (.getDeclaringClass declaration))
+       (some? (translated-external-class ctx owner))))
+
 (def ^:dynamic *destination-type-parameter-overrides* nil)
 
 (defn- destination-type-parameter-name [^CtElement parameter]
@@ -749,7 +818,8 @@
     (raw " = ")
     value-node]))
 
-(declare covariant-value-override? netstandard-covariant-override?
+(declare covariant-value-override? clr-value-type-covariant-returns
+         netstandard-covariant-override?
          netstandard-public-covariant-hiding?
          wildcard-generic-covariant-override?
          interface-static-companion-member?
@@ -1793,6 +1863,8 @@
             (method-name ctx (.getDeclaringType declaration) declaration)
             :else
             (identifier (.getSimpleName reference)))))
+      (translated-external-close-name ctx reference)
+      (translated-external-close-name ctx reference)
       (contains? (:destination-invocation-adaptations ctx) (:key occurrence))
       (identifier (.getSimpleName reference))
       (contains? (:destination-field-adaptations ctx) (:key occurrence))
@@ -2733,8 +2805,13 @@
           (occurrence! ctx (.getExecutable ^CtInvocation expression)
                        :executable)]
       (or
-       (contains? (:destination-boxed-covariant-executables ctx)
-                  (:key occurrence))
+       (let [reflected (:declaration occurrence)]
+         (and (instance? Method reflected)
+              (contains? clr-value-type-covariant-returns
+                         (.getName (.getReturnType ^Method reflected)))
+              (translated-external-object-override?
+               ctx reflected
+               (.getDeclaringType (.getExecutable ^CtInvocation expression)))))
        (and
         (instance? CtMethod declaration)
         (boxed-primitive-reference? (.getType ^CtMethod declaration))
@@ -3628,9 +3705,14 @@
         (and (instance? CtMethod declaration)
              (.hasModifier ^CtMethod declaration ModifierKind/STATIC))
         default-interface-method?
-        (and (instance? CtMethod declaration)
-             (some? (.getBody ^CtMethod declaration))
-             (interface-type? (.getDeclaringType ^CtMethod declaration)))
+        (or
+         (and (instance? CtMethod declaration)
+              (some? (.getBody ^CtMethod declaration))
+              (interface-type? (.getDeclaringType ^CtMethod declaration)))
+         ;; super.m() stays C# base dispatch; base cannot be cast.
+         (and (not (instance? CtSuperAccess target))
+              (translated-external-default-method?
+               ctx declaration (.getDeclaringType executable-reference))))
         interface-self-target?
         (and default-interface-method?
              (instance? CtThisAccess target)
@@ -3638,9 +3720,13 @@
               (= :direct (:default-interface-self-dispatch ctx))
               (and (not (:inlined-default-interface-body? ctx))
                    (= (some-> target .getType .getQualifiedName)
-                      (some-> ^CtMethod declaration
-                              .getDeclaringType
-                              .getQualifiedName)))))
+                      (if (instance? CtMethod declaration)
+                        (some-> ^CtMethod declaration
+                                .getDeclaringType
+                                .getQualifiedName)
+                        (some-> executable-reference
+                                .getDeclaringType
+                                .getQualifiedName))))))
         node
         (cond
           static-declaration?
@@ -7102,6 +7188,13 @@
                               (or (instance? CtMethod declaration)
                                   (instance? CtRecordComponent declaration)
                                   (instance? CtConstructor declaration)))
+                         ;; A sibling project's methods are translated
+                         ;; members too, so they bind like project methods.
+                         (and (instance? Method declaration)
+                              (some? (translated-external-class
+                                      @ctx-holder
+                                      (.getDeclaringType
+                                       (.getExecutable element)))))
                          constructor?
                          (and destination-method-reference?
                               (destination-method-reference?
@@ -7786,8 +7879,25 @@
                           (interface-type?
                            (.getDeclaringType ^CtField field-declaration)))
                  (.getDeclaringType ^CtField field-declaration))
+               ;; Java also allows an instance-qualified access to a static
+               ;; field; the companion owns it either way.
+               external-interface-static-owner
+               (when (and target
+                          (instance? java.lang.reflect.Field field-declaration))
+                 (let [owner (.createReference
+                              (.Type (.getFactory element))
+                              (.getDeclaringClass
+                               ^java.lang.reflect.Field field-declaration))]
+                   (when (translated-external-interface-static-field?
+                          @ctx-holder field-declaration owner)
+                     owner)))
                target-node
                (cond
+                 external-interface-static-owner
+                 (raw (str (translated-external-type-base
+                            @ctx-holder external-interface-static-owner)
+                           "Statics"))
+
                  (and interface-static-owner
                       (interface-static-companion-member?
                        @ctx-holder field-declaration))
@@ -11010,6 +11120,20 @@
       (= "java.awt.Stroke" qualified-name)
       (sequence-node
        [(raw "new global::DripSharp.Runtime.JavaStrokeAdapter(")
+        expression-node (raw ")")])
+
+      ;; Closeable and AutoCloseable become IDisposable, which no delegate
+      ;; implements; a lambda or method reference for either is wrapped. The
+      ;; wrapper is rule-written C#, which the authorship ledger counts as
+      ;; authored.
+      (and (contains? #{"java.io.Closeable" "java.lang.AutoCloseable"}
+                      qualified-name)
+           (= "global::System.IDisposable"
+              (:text (csharp/render-raw (type-node ctx reference)))))
+      (sequence-node
+       [(csharp/with-source
+          (raw "new global::DripSharp.Runtime.JavaCloseableAdapter(")
+          {:rule :java-library.rule/closeable-lambda :authored-rule true})
         expression-node (raw ")")])
 
       functional-method

@@ -611,6 +611,20 @@ internal sealed class JavaFileNotFoundException : FileNotFoundException
     public override string Message => null!;
 }
 
+// A Java lambda or method reference implementing java.io.Closeable or
+// java.lang.AutoCloseable. Both interfaces translate to IDisposable, which a
+// delegate cannot implement, so close() runs the delegate on every Dispose call
+// exactly as each Java close() call runs the lambda body.
+internal sealed class JavaCloseableAdapter : IDisposable
+{
+    private readonly Action close;
+
+    internal JavaCloseableAdapter(Action close) =>
+        this.close = close ?? throw new ArgumentNullException(nameof(close));
+
+    public void Dispose() => close();
+}
+
 internal sealed class JavaRandomAccessFile : IDisposable
 {
     private readonly FileStream stream;

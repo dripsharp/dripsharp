@@ -1766,35 +1766,15 @@
 
    "executable:java.awt.geom.Point2D$Float#setLocation(float,float)"
    (fn [target arguments]
-     (call-node target "SetLocation" arguments))
-
-   "executable:org.apache.pdfbox.io.RandomAccessRead#read(byte[])"
-   (fn [target arguments]
-     (sequence-node
-      [(raw "((global::DripSharp.PdfCarton.IO.RandomAccessRead)")
-       target
-       (raw ").Read(")
-       (csharp/sequence-node arguments ", ")
-       (raw ")")]))})
+     (call-node target "SetLocation" arguments))})
 
 (defn- direct-instance-adaptation [member]
   (fn [target arguments]
     (call-node target member arguments)))
 
 (def ^:private translated-project-invocation-adaptations
-  {"executable:org.apache.fontbox.ttf.TrueTypeCollection#close()"
-   (direct-instance-adaptation "Dispose")
-   "executable:org.apache.fontbox.ttf.TrueTypeFont#close()"
-   (direct-instance-adaptation "Dispose")
-   "executable:org.apache.pdfbox.io.RandomAccessRead#close()"
-   (direct-instance-adaptation "Dispose")
-   "executable:org.apache.pdfbox.io.RandomAccessReadView#close()"
-   (direct-instance-adaptation "Dispose")
-   "executable:org.apache.pdfbox.preflight.PreflightPath#getClosestTypePosition(java.lang.Class)"
+  {"executable:org.apache.pdfbox.preflight.PreflightPath#getClosestTypePosition(java.lang.Class)"
    (direct-instance-adaptation "GetClosestTypePosition")})
-
-(def ^:private translated-project-boxed-covariant-executables
-  #{"executable:org.apache.xmpbox.type.BooleanType#getValue()"})
 
 (def ^:private graphics-invocation-adaptations
   {"executable:java.awt.Graphics#clearRect(int,int,int,int)"
@@ -2454,12 +2434,7 @@
        (raw ")")]))})
 
 (def ^:private commons-field-adaptations
-  {"field:org.apache.fontbox.ttf.model.GsubData#NO_DATA_FOUND"
-   (fn [_target]
-     (raw (str "global::DripSharp.PdfCarton.Fonts.Ttf.Model."
-               "GsubDataStatics.NoDataFound")))
-
-   "field:org.bouncycastle.asn1.ASN1Encoding#DER"
+  {"field:org.bouncycastle.asn1.ASN1Encoding#DER"
    (fn [_target]
      (raw "global::DripSharp.Runtime.JavaAsn1Encoding.DER"))
 
@@ -4205,9 +4180,7 @@
                      :destination-field-adaptations
                      commons-field-adaptations
                      :destination-invocation-adaptations
-                     invocation-adaptations
-                     :destination-boxed-covariant-executables
-                     translated-project-boxed-covariant-executables)))))
+                     invocation-adaptations)))))
         (assoc-in [:rules :destination-bridges :assets]
                   (fn [context]
                     (let [configuration (:configuration context)

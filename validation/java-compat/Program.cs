@@ -1057,6 +1057,7 @@ internal static class Program
         yield return Observe("charset-malformed", CharsetMalformedContract());
         yield return Observe("collections", CollectionsContract());
         yield return Observe("compression", CompressionContract());
+        yield return Observe("closeable-lambda", CloseableLambdaContract());
         yield return Observe("crc32", Crc32Contract());
         yield return Observe("data-output", DataOutputContract());
         yield return Observe("file-channel-read", FileChannelReadContract());
@@ -1453,6 +1454,27 @@ internal static class Program
         var format = new JavaMessageFormat(
             "{0}={1,number,000.00}", CultureInfo.GetCultureInfo("en-US"));
         return format.Format(new object?[] { "value", 12.5d });
+    }
+
+    private static string CloseableLambdaContract()
+    {
+        var calls = 0;
+        IDisposable counting = new JavaCloseableAdapter(() => calls++);
+        counting.Dispose();
+        counting.Dispose();
+        var failures = 0;
+        IDisposable failing = new JavaCloseableAdapter(() =>
+        {
+            failures++;
+            throw new IOException("close " + failures);
+        });
+        var messages = new List<string>();
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try { failing.Dispose(); }
+            catch (IOException error) { messages.Add(error.Message); }
+        }
+        return calls + "|" + failures + "|" + string.Join(",", messages);
     }
 
     private static string OptionalContract()

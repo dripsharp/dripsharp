@@ -1383,7 +1383,6 @@
    "Invoke"
    "executable:java.util.List#clear()" "Clear"
    "executable:java.lang.String#equals(java.lang.Object)" "Equals"
-   "executable:org.apache.pdfbox.pdmodel.PDDocument#close()" "Dispose"
    "executable:java.nio.charset.Charset#displayName()" "DisplayName"
    "executable:java.math.BigInteger#toString()" "ToString"
    "executable:java.math.BigDecimal#pow(int,java.math.MathContext)" "Pow"
@@ -1554,21 +1553,6 @@
         (csharp/invocation
          (csharp/raw "global::DripSharp.Runtime.JavaCompat.PathOf")
          arguments)])
-
-      (str/starts-with?
-       (or key "")
-       "executable:org.apache.pdfbox.io.IOUtils#closeQuietly(")
-      (csharp/invocation
-       (csharp/raw "global::DripSharp.PdfCarton.Tests.Support.CloseQuietly")
-       arguments)
-
-      (str/starts-with?
-       (or key "")
-       "executable:org.apache.pdfbox.io.IOUtils#closeAndLogException(")
-      (csharp/invocation
-       (csharp/raw
-        "global::DripSharp.PdfCarton.Tests.Support.CloseAndLogException")
-       arguments)
 
       (= key
          "executable:org.apache.commons.io.FileUtils#listFiles(java.io.File,java.lang.String[],boolean)")
@@ -2093,8 +2077,6 @@
               :pdfcarton.test/filename-filter]
              "java.nio.file.CopyOption"
              ["object" :pdfcarton.test/copy-option]
-             "java.io.Closeable"
-             ["global::System.Action" :pdfcarton.test/closeable]
              "java.util.stream.Stream"
              ["global::System.Collections.Generic.IEnumerable"
               :pdfcarton.test/stream]
@@ -2232,9 +2214,6 @@
               "executable:java.lang.String#equals(java.lang.Object)"}
             (:key occurrence))
            (nil? (:key occurrence))
-           (str/starts-with?
-            (or (:key occurrence) "")
-            "executable:org.apache.pdfbox.io.IOUtils#closeQuietly(")
            (when base-method-reference? (base-method-reference? event))))
      :destination-value-adapter
      (fn [{:keys [kind source target-reference node] :as event}]

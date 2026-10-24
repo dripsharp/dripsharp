@@ -869,6 +869,7 @@ public final class JavaCompatOracle {
         observe("charset-malformed", charsetMalformedContract()),
         observe("collections", collectionsContract()),
         observe("compression", compressionContract()),
+        observe("closeable-lambda", closeableLambdaContract()),
         observe("crc32", crc32Contract()),
         observe("data-output", dataOutputContract()),
         observe("file-channel-read", fileChannelReadContract()),
@@ -1229,6 +1230,31 @@ public final class JavaCompatOracle {
     var format =
         new MessageFormat("{0}={1,number,000.00}", Locale.US);
     return format.format(new Object[] {"value", 12.5d});
+  }
+
+  private static String closeableLambdaContract() {
+    int[] calls = {0};
+    java.io.Closeable counting = () -> calls[0]++;
+    try {
+      counting.close();
+      counting.close();
+    } catch (java.io.IOException error) {
+      throw new IllegalStateException(error);
+    }
+    int[] failures = {0};
+    java.io.Closeable failing = () -> {
+      failures[0]++;
+      throw new java.io.IOException("close " + failures[0]);
+    };
+    var messages = new StringJoiner(",");
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try {
+        failing.close();
+      } catch (java.io.IOException error) {
+        messages.add(error.getMessage());
+      }
+    }
+    return calls[0] + "|" + failures[0] + "|" + messages;
   }
 
   private static String optionalContract() {

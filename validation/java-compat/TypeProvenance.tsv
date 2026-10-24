@@ -29,6 +29,7 @@ JavaCharsetDecoder	java.nio.charset.CharsetDecoder	pdfcube,pkl,rawhttp,sqltrelli
 JavaCipher	javax.crypto.Cipher	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCipher
 JavaCipherInputStream	javax.crypto.CipherInputStream	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCipherInputStream
 JavaCloneable	java.lang.Cloneable	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCloneable
+JavaCloseableAdapter	java.io.Closeable	pdfcube,pkl,rawhttp,sqltrellis	behavior/closeable-lambda,type-contract/JavaCloseableAdapter
 JavaCodingErrorAction	java.nio.charset.CodingErrorAction	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCodingErrorAction
 JavaCollector	java.util.stream.Collector	pdfcube,pkl,rawhttp,sqltrellis	type-contract/JavaCollector
 JavaCompat	java.lang.System	pdfcube,pkl,rawhttp,sqltrellis	behavior/boxed-wrappers,behavior/collections,behavior/regex,behavior/signed-byte-or,behavior/string-identity,behavior/uri,type-contract/JavaCompat

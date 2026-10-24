@@ -66,51 +66,6 @@ internal static class Support
         }
     }
 
-    internal static void CloseQuietly(object? closeable)
-    {
-        try
-        {
-            switch (closeable)
-            {
-                case global::System.Action action:
-                    action();
-                    break;
-                case global::System.IDisposable disposable:
-                    disposable.Dispose();
-                    break;
-            }
-        }
-        catch
-        {
-            // This is the exact contract of Java IOUtils.closeQuietly.
-        }
-    }
-
-    internal static global::System.IO.IOException? CloseAndLogException(
-        object? closeable,
-        global::Microsoft.Extensions.Logging.ILogger _,
-        string __,
-        global::System.IO.IOException? initial)
-    {
-        try
-        {
-            switch (closeable)
-            {
-                case global::System.Action action:
-                    action();
-                    break;
-                case global::System.IDisposable disposable:
-                    disposable.Dispose();
-                    break;
-            }
-        }
-        catch (global::System.IO.IOException error)
-        {
-            return initial ?? error;
-        }
-        return initial;
-    }
-
     internal static global::System.IO.TextReader NewInputStreamReader(
         global::System.IO.Stream input, string encoding) =>
         new global::System.IO.StreamReader(
