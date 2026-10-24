@@ -3407,42 +3407,11 @@
   (str "using global::DripSharp.Runtime.PdfCartonDisposalScope __dripsharpOwned = "
        "new global::DripSharp.Runtime.PdfCartonDisposalScope();"))
 
-(def ^:private compat-call "global::DripSharp.Runtime.PdfCartonFontCompat.")
-
-(def ^:private skia-bitmap "global::SkiaSharp.SKBitmap")
-
-(def ^:private compat-graphics "global::DripSharp.Runtime.PdfCartonGraphics2D")
-
-(defn- owned-assignment
-  "Rewrites `target = expression;` so the method's scope owns the result;
-  with `:declare? true` the scope is declared just before it."
-  ([target expression] (owned-assignment target expression nil))
-  ([target expression {:keys [declare?]}]
-   [(str target " = " expression ";")
-    (str (when declare? (str owned-resources-declaration "\n"))
-         target " = __dripsharpOwned.Own(" expression ");")]))
-
 (defn- using-local
   "Rewrites a local declaration into a `using` local, disposed when its block
   exits."
   [statement]
   [statement (str "using " statement)])
-
-(defn- declaring-scope
-  "Declares the method's scope just before an unchanged statement."
-  [statement]
-  [statement (str owned-resources-declaration "\n" statement)])
-
-(defn- releasing-return
-  [value]
-  [(str "return " value ";")
-   (str "return __dripsharpOwned.Release(" value ");")])
-
-(defn- compat-bitmap
-  [& arguments]
-  (str compat-call "CreateBitmap(" (str/join ", " arguments) ")"))
-
-(defn- compat-type [name] (str compat-call name))
 
 (def ^:private owned-bitmap-statement-rewrites
   "Java leaves intermediate BufferedImages to the garbage collector, but their
@@ -3453,12 +3422,10 @@
   and an owned result is disposed when the method fails before returning it.
   Compat-allocated bitmaps also report GC memory pressure as a backstop (see
   PdfCartonNativeBitmap in the PdfCarton Fonts.Compat runtime). Keys are
-  [declaring type, method] or [declaring type, method, parameter count],
-  where method :constructor names the type's constructors; a rewrite's
-  optional third element {:every? true} replaces every matching statement
-  instead of the first, and [:prepend statement] or [:append statement]
-  adds a statement at the start or end of the body. Fields the rewrites
-  need are declared in owned-bitmap-members."
+  [declaring type, method] or [declaring type, method, parameter count]; a
+  rewrite's optional third element {:every? true} replaces every matching
+  statement instead of the first, and [:prepend statement] or [:append
+  statement] adds a statement at the start or end of the body."
   {;; Glyph and fill shapes. Java leaves temporary Shapes to its collector;
    ;; their SKPath translations own native memory and would otherwise wait
    ;; for the finalizer, one per glyph shown. A glyph's transformed path is
@@ -3521,134 +3488,7 @@
    ["org.apache.pdfbox.rendering.PageDrawer" "isRectangular"]
    [(using-local (str "global::DripSharp.Runtime.JavaPathIterator iter = "
                       "global::DripSharp.Runtime.PdfCartonFontCompat.PathIterator("
-                      "path, (global::SkiaSharp.SKMatrix)default!);"))]
-
-   ;; Rendering. Each ExtGState soft mask renders its group into `image`,
-   ;; converts it to `gray` and maybe transforms that again; only the final
-   ;; gray escapes, inside the SoftMask paint. That paint is consumed by the
-   ;; fill that requested it (every PageDrawer fill sets a fresh paint), so
-   ;; the drawer keeps just the newest mask and disposes it when the next one
-   ;; is made or the page ends: one mask is live however many fills share an
-   ;; SMask.
-   ["org.apache.pdfbox.rendering.PageDrawer" "applySoftMaskToPaint"]
-   [[(str skia-bitmap " image = transparencyGroup.getImage();")
-     (str owned-resources-declaration "\n"
-          skia-bitmap " image = __dripsharpOwned.Own(transparencyGroup.getImage());")]
-    (owned-assignment (str skia-bitmap " gray")
-                      (compat-bitmap (str compat-call "GetImageWidth(image)") (str compat-call "GetImageHeight(image)")
-                                     (compat-type "TYPE_BYTE_GRAY")))
-    (owned-assignment (str compat-graphics " g")
-                      (str compat-call "CreateGraphics(gray)"))
-    (owned-assignment "gray" "this.adjustImage(gray)")
-    [(str "return new global::DripSharp.PdfCarton.Rendering.SoftMask(parentPaint, "
-          "gray, tpgBounds, backdropColor!, softMask.GetTransferFunction());")
-     (str "global::DripSharp.PdfCarton.Rendering.SoftMask __dripsharpSoftMask = "
-          "new global::DripSharp.PdfCarton.Rendering.SoftMask(parentPaint, "
-          "gray, tpgBounds, backdropColor!, softMask.GetTransferFunction());\n"
-          "this.__dripsharpReplaceSoftMaskImage(__dripsharpOwned.Release(gray));\n"
-          "return __dripsharpSoftMask;")]]
-   ["org.apache.pdfbox.rendering.PageDrawer" "adjustImage"]
-   [(owned-assignment (str skia-bitmap " transformedGray")
-                      (compat-bitmap "width" "height" (compat-type "TYPE_BYTE_GRAY"))
-                      {:declare? true})
-    (owned-assignment (str compat-graphics " g2")
-                      (str "(" compat-graphics ")(" compat-call
-                           "CreateGraphics(transformedGray)!)"))
-    (releasing-return "transformedGray")]
-   ;; The page's graphics may be the caller's (renderPageToGraphics): if
-   ;; its last paint is a soft mask, whose mask or texture image is disposed
-   ;; now, the paint it had before the page is restored.
-   ["org.apache.pdfbox.rendering.PageDrawer" "drawPage"]
-   [["this.graphics = g;"
-     (str owned-resources-declaration "\n"
-          "global::DripSharp.Runtime.JavaPaint __dripsharpCallerPaint = g.GetPaint();\n"
-          "__dripsharpOwned.Own(global::DripSharp.Runtime.PdfCartonDisposalScope.Deferred(() => {\n"
-          "if (g.GetPaint() is global::DripSharp.PdfCarton.Rendering.SoftMask"
-          " && __dripsharpCallerPaint != null) {\n"
-          "g.SetPaint(__dripsharpCallerPaint);\n"
-          "}\n"
-          "this.__dripsharpReplaceSoftMaskImage(default!);\n"
-          "}));\n"
-          "this.graphics = g;")]]
-   ;; A drawn transparency group's image is garbage once drawn (or wrapped
-   ;; in the paint of the one fill that draws it).
-   ["org.apache.pdfbox.rendering.PageDrawer" "showTransparencyGroupOnGraphics"]
-   [(using-local (str skia-bitmap " image = group.getImage();"))]
-   ;; The group image reaches its owner (applySoftMaskToPaint or
-   ;; showTransparencyGroupOnGraphics) only when the group renders.
-   ["org.apache.pdfbox.rendering.PageDrawer$TransparencyGroup" :constructor 4]
-   [(declaring-scope
-     (str "global::DripSharp.PdfCarton.Pdmodel.Graphics.Form."
-          "PDTransparencyGroupAttributes group = form.GetGroup();"))
-    (owned-assignment "this.image" "this.create2ByteGrayAlphaImage(this.width, this.height)")
-    (owned-assignment "this.image"
-                      (compat-bitmap "this.width" "this.height"
-                                     (compat-type "TYPE_INT_ARGB")))
-    (owned-assignment (str compat-graphics " g")
-                      (str compat-call "CreateGraphics(this.image)"))
-    (owned-assignment "g" "new global::DripSharp.PdfCarton.Rendering.GroupGraphics(this.image, g)")
-    ;; A group failing in a Do operator is skipped and rendering goes on, so
-    ;; it leaves the backdrop stack before its image is disposed.
-    (let [stack "this.__outer.transparencyGroupStack"
-          push (str "global::DripSharp.Runtime.JavaCompat.DequePush(" stack ", this);")]
-      [push
-       (str push "\n"
-            "__dripsharpOwned.Own(global::DripSharp.Runtime.PdfCartonDisposalScope.Deferred(() => {\n"
-            "if (!global::DripSharp.Runtime.JavaCompat.CollectionIsEmpty(" stack ")"
-            " && global::System.Object.ReferenceEquals("
-            "global::DripSharp.Runtime.JavaCompat.DequePeek(" stack "), this)) {\n"
-            stack ".Pop();\n"
-            "}\n"
-            "}));")])
-    [:append "__dripsharpOwned.Release(this.image);"]]
-   ;; A backdrop group's alpha image belongs to the GroupGraphics that made
-   ;; it, not to the graphics it creates.
-   ["org.apache.pdfbox.rendering.GroupGraphics" :constructor 2]
-   [[(str "this.alphaG2D = " compat-call "CreateGraphics(this.groupAlphaImage);")
-     (str "this.__dripsharpOwnedAlphaImage = this.groupAlphaImage;\n"
-          "this.alphaG2D = " compat-call "CreateGraphics(this.groupAlphaImage);")]]
-   ["org.apache.pdfbox.rendering.GroupGraphics" "dispose" 0]
-   [["this.alphaG2D.Dispose();"
-     "this.alphaG2D.Dispose();\nthis.__dripsharpOwnedAlphaImage?.Dispose();"]]
-   ;; The page image is returned unless it was forced to ARGB for blending
-   ;; and converted, and is disposed when the render fails. pageImage is the
-   ;; backdrop of the render in progress; it is cleared when renderImage
-   ;; exits instead of outliving it as upstream, because the caller may
-   ;; dispose the returned image (upstream's stale reference only gave a
-   ;; later renderPageToGraphics another page as its backdrop).
-   ["org.apache.pdfbox.rendering.PDFRenderer" "renderImage" 4]
-   [(declaring-scope (str skia-bitmap " image;"))
-    (owned-assignment "image" (compat-bitmap "heightPx" "widthPx" "bimType"))
-    (owned-assignment "image" (compat-bitmap "widthPx" "heightPx" "bimType"))
-    ["this.pageImage = image;"
-     (str "this.pageImage = image;\n"
-          "__dripsharpOwned.Own(global::DripSharp.Runtime.PdfCartonDisposalScope.Deferred("
-          "() => this.pageImage = default!));")]
-    (owned-assignment (str skia-bitmap " newImage")
-                      (compat-bitmap (str compat-call "GetImageWidth(image)") (str compat-call "GetImageHeight(image)")
-                                     "imageType.toBufferedImageType()"))
-    (owned-assignment (str compat-graphics " dstGraphics")
-                      (str compat-call "CreateGraphics(newImage)"))
-    (releasing-return "image")]
-   ;; Printing rasterizes each page into `image` before drawing it.
-   ["org.apache.pdfbox.printing.PDFPrintable" "print" 3]
-   [(declaring-scope (str skia-bitmap " image = default!;"))
-    [(str "graphics2D = " compat-call "CreateGraphics(image!);")
-     (str "__dripsharpOwned.Own(image);\n"
-          "graphics2D = __dripsharpOwned.Own(" compat-call "CreateGraphics(image!));")]]})
-
-(def ^:private owned-bitmap-members
-  "Fields and helpers the owned-bitmap statement rewrites rely on, prepended
-  to the named translated types."
-  {"org.apache.pdfbox.rendering.PageDrawer"
-   [(str "private " skia-bitmap " __dripsharpSoftMaskImage;")
-    (str "private void __dripsharpReplaceSoftMaskImage(" skia-bitmap " image) {\n"
-         "  " skia-bitmap " previous = this.__dripsharpSoftMaskImage;\n"
-         "  this.__dripsharpSoftMaskImage = image;\n"
-         "  previous?.Dispose();\n"
-         "}")]
-   "org.apache.pdfbox.rendering.GroupGraphics"
-   [(str "private readonly " skia-bitmap " __dripsharpOwnedAlphaImage;")]})
+                      "path, (global::SkiaSharp.SKMatrix)default!);"))]})
 
 (defn- add-body-statement
   [declaration position statement]
@@ -3673,36 +3513,23 @@
   [configuration node]
   (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
     node
-    (as-> node node
-      (reduce-kv
-       (fn [node type-name members]
-         (update-declaration
-          node
-          :type
-          type-name
-          (fn [declaration]
-            (reduce prepend-member declaration
-                    (map csharp/raw (reverse members))))))
-       node
-       owned-bitmap-members)
-      (reduce-kv
-       (fn [node [type-name method-name parameter-count] rewrites]
-         (update-declaration
-          node
-          (if (= :constructor method-name) :constructor :method)
-          type-name
-          (fn [declaration]
-            (if (and (or (= :constructor method-name)
-                         (= method-name (get-in declaration [:data :source-name])))
-                     (cond
-                       (nil? parameter-count) true
-                       :else
-                       (= parameter-count
-                          (get-in declaration [:data :parameter-count]))))
-              (reduce apply-owned-bitmap-rewrite declaration rewrites)
-              declaration))))
-       node
-       owned-bitmap-statement-rewrites))))
+    (reduce-kv
+     (fn [node [type-name method-name parameter-count] rewrites]
+       (update-declaration
+        node
+        :method
+        type-name
+        (fn [declaration]
+          (if (and (= method-name (get-in declaration [:data :source-name]))
+                   (cond
+                     (nil? parameter-count) true
+                     :else
+                     (= parameter-count
+                        (get-in declaration [:data :parameter-count]))))
+            (reduce apply-owned-bitmap-rewrite declaration rewrites)
+            declaration))))
+     node
+     owned-bitmap-statement-rewrites)))
 
 (defn- transform-node [configuration node]
   (let [destination (compatibility-namespace configuration)

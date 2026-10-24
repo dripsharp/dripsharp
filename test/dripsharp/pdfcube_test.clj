@@ -202,6 +202,51 @@
                                         declaration)))
           (str type-name "#" source-name)))))
 
+(deftest soft-masks-groups-and-page-images-are-emitted-unchanged
+  (let [config {:package {:id "DripSharp.PdfCarton"}}
+        compat "global::DripSharp.Runtime.PdfCartonFontCompat."]
+    (doseq [[kind type-name source-name parameter-count statement]
+            [[:method "org.apache.pdfbox.rendering.PageDrawer" "applySoftMaskToPaint" 2
+              "global::SkiaSharp.SKBitmap image = transparencyGroup.getImage();"]
+             [:method "org.apache.pdfbox.rendering.PageDrawer" "adjustImage" 1
+              (str "global::SkiaSharp.SKBitmap transformedGray = " compat "CreateBitmap("
+                   "width, height, " compat "TYPE_BYTE_GRAY);")]
+             [:method "org.apache.pdfbox.rendering.PageDrawer" "drawPage" 2
+              "this.graphics = g;"]
+             [:method "org.apache.pdfbox.rendering.PageDrawer" "showTransparencyGroupOnGraphics" 2
+              "global::SkiaSharp.SKBitmap image = group.getImage();"]
+             [:constructor "org.apache.pdfbox.rendering.PageDrawer$TransparencyGroup" nil 4
+              "this.image = this.create2ByteGrayAlphaImage(this.width, this.height);"]
+             [:constructor "org.apache.pdfbox.rendering.GroupGraphics" nil 2
+              (str "this.alphaG2D = " compat "CreateGraphics(this.groupAlphaImage);")]
+             [:method "org.apache.pdfbox.rendering.GroupGraphics" "dispose" 0
+              "this.alphaG2D.Dispose();"]
+             [:method "org.apache.pdfbox.rendering.PDFRenderer" "renderImage" 4
+              "this.pageImage = image;"]
+             [:method "org.apache.pdfbox.printing.PDFPrintable" "print" 3
+              (str "graphics2D = " compat "CreateGraphics(image!);")]]]
+      (let [declaration (csharp/declaration
+                         (csharp/raw (str "private object " (or source-name "ctor") "()"))
+                         (csharp/block [(csharp/raw statement)])
+                         (cond-> {:declaration-kind kind
+                                  :parameter-count parameter-count
+                                  :source-qualified-name type-name}
+                           source-name (assoc :source-name source-name)))]
+        (is (= (:text (csharp/render declaration))
+               (:text (render-transformed config declaration)))
+            (str type-name "#" (or source-name "<init>")))))
+    (testing "the page drawer and group graphics declare no members of their own"
+      (doseq [type-name ["org.apache.pdfbox.rendering.PageDrawer"
+                         "org.apache.pdfbox.rendering.GroupGraphics"]]
+        (let [type (csharp/declaration
+                    (csharp/raw "public class Translated")
+                    (csharp/block [(csharp/raw "private int other;")])
+                    {:declaration-kind :type
+                     :source-qualified-name type-name})]
+          (is (= (:text (csharp/render type))
+                 (:text (render-transformed config type)))
+              type-name))))))
+
 (deftest rendering-intermediates-are-owned
   (let [config {:package {:id "DripSharp.PdfCarton"}}
         render (fn [node] (:text (render-transformed config node)))
@@ -211,43 +256,7 @@
                        (csharp/block (mapv csharp/raw statements))
                        (merge {:declaration-kind kind
                                :source-qualified-name type-name}
-                              data)))
-        group-image "this.image = this.create2ByteGrayAlphaImage(this.width, this.height);"
-        group-ctor (fn [parameter-count]
-                     (declaration
-                      :constructor "org.apache.pdfbox.rendering.PageDrawer$TransparencyGroup"
-                      {:parameter-count parameter-count}
-                      [(str "global::DripSharp.PdfCarton.Pdmodel.Graphics.Form."
-                            "PDTransparencyGroupAttributes group = form.GetGroup();")
-                       group-image
-                       (str "this.image = global::DripSharp.Runtime.PdfCartonFontCompat."
-                            "CreateBitmap(this.width, this.height, "
-                            "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB);")
-                       (str "global::DripSharp.Runtime.PdfCartonGraphics2D g = "
-                            "global::DripSharp.Runtime.PdfCartonFontCompat.CreateGraphics(this.image);")
-                       (str "g = new global::DripSharp.PdfCarton.Rendering.GroupGraphics("
-                            "this.image, g);")
-                       (str "global::DripSharp.Runtime.JavaCompat.DequePush("
-                            "this.__outer.transparencyGroupStack, this);")
-                       "try { } finally { }"]))]
-    (testing "a constructor key rewrites only constructors with that parameter count"
-      (let [rendered (render (group-ctor 4))]
-        (is (= 5 (count (re-seq #"__dripsharpOwned\.Own\(" rendered))))
-        (is (str/includes? rendered "this.__outer.transparencyGroupStack.Pop();"))
-        (is (str/ends-with? (str/trim (subs rendered 0 (str/last-index-of rendered "}")))
-                            "__dripsharpOwned.Release(this.image);")))
-      (let [other (group-ctor 3)]
-        (is (= (:text (csharp/render other)) (render other)))))
-    (testing "the page drawer keeps one soft-mask image in a field it declares"
-      (let [drawer (csharp/declaration
-                    (csharp/raw "public class PageDrawer")
-                    (csharp/block [(csharp/raw "private int other;")])
-                    {:declaration-kind :type
-                     :source-qualified-name "org.apache.pdfbox.rendering.PageDrawer"})
-            rendered (render drawer)]
-        (is (< (.indexOf rendered "__dripsharpSoftMaskImage;")
-               (.indexOf rendered "__dripsharpReplaceSoftMaskImage(")
-               (.indexOf rendered "private int other;")))))
+                              data)))]
     (testing "a pattern fill's area reads linePath in place and fills the clip copy"
       (let [area "global::DripSharp.Runtime.JavaArea"
             rendered (render (declaration

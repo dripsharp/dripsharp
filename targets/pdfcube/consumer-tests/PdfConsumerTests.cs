@@ -8155,10 +8155,34 @@ public sealed class IntBitmapPixelLifetimeTests
         Assert.All(current, value => Assert.Equal(unchecked((int)0xff00ff00), value));
     }
 
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static WeakReference Abandon(int type)
+    // Java code drops large intermediate images without disposing them, and
+    // its collector reclaims them. Compat collects dropped bitmaps before
+    // their bytes exceed half of the live ones: with a 4 MiB image live, 100
+    // dropped 1 MiB images never leave more than 2 MiB (plus the one being
+    // allocated) outstanding beside it.
+    [Fact]
+    public void DroppedLargeImagesStayWithinHalfTheLiveBytes()
     {
-        var image = Compat.PdfCartonFontCompat.CreateBitmap(64, 64, type);
+        const long MiB = 1024 * 1024;
+        Collect();
+        var baseline = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        using var live = Compat.PdfCartonFontCompat.CreateBitmap(1024, 1024, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        long peak = 0;
+        for (var dropped = 0; dropped < 100; dropped++)
+        {
+            Abandon(512, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            peak = Math.Max(peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - baseline);
+        }
+        Assert.True(peak <= 4 * MiB + 2 * MiB + MiB, $"100 dropped 1 MiB images peaked at {peak} bytes.");
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference Abandon(int type) => Abandon(64, type);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference Abandon(int size, int type)
+    {
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, type);
         using (var canvas = new SKCanvas(image))
             canvas.Clear(SKColors.Red);
         return PixelsOf(image);
@@ -9920,6 +9944,9 @@ public sealed class BitmapDrawCopyTests
     }
 }
 
+// Counts compat bitmaps process-wide, including the garbage other tests
+// leave to the collector, so it runs alone.
+[Collection(nameof(NativeBitmapLifetimeCollection))]
 public sealed class RenderingBitmapLifetimeTests
 {
     private const int OneMaskedFill = 0;
@@ -9956,9 +9983,7 @@ public sealed class RenderingBitmapLifetimeTests
         // Decoding them leaves garbage (DeviceN's per-colorant images) to
         // the collector, which must not run during the counted renders.
         Settle();
-        var live = Compat.PdfCartonNativeBitmap.LiveCount;
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
-        long imagesLeft = 0;
+        var (live, bytes) = CountersButPageImage(renderer);
         for (var round = 0; round < 3; round++)
         {
             foreach (var page in Pages)
@@ -9966,19 +9991,23 @@ public sealed class RenderingBitmapLifetimeTests
                 {
                     using (var image = renderer.RenderImage(page, 2, type))
                         Assert.Equal(expected[(page, name)], Hash(image));
-                    if (page == Images) imagesLeft = Math.Max(imagesLeft, CollectImageGarbage(bytes));
-                    // No collection ran in between (but for the image page), so
-                    // the render disposed its bitmaps.
-                    AssertUnchanged(live, bytes, $"page {page} as {name}");
+                    AssertRenderGarbageBounded(CollectImageGarbage(bytes), page, $"page {page} as {name}");
+                    // The renderer keeps the page image it drew into, as
+                    // PDFBox does; a collection releases everything else.
+                    AssertUnchangedButPageImage(live, bytes, renderer, $"page {page} as {name}");
                 }
         }
-        AssertImageGarbageBounded(imagesLeft, "the image page");
+        Assert.True(renderer.getPageImage() is { } kept && kept.Handle != IntPtr.Zero,
+            "the renderer no longer holds the page image of its last render.");
 
-        // Printing rasterizes each page into an image of its own first.
+        // Printing rasterizes each page into an image of its own first, at
+        // most the paper's size at 144 DPI, which it leaves to the collector.
         var printable = new DripSharp.PdfCarton.Printing.PDFPrintable(
             document, DripSharp.PdfCarton.Printing.Scaling.ActualSize, false, 144);
         using var paper = Compat.PdfCartonFontCompat.CreateBitmap(
             612, 792, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var format = new Compat.JavaPageFormat();
+        var printRaster = (long)(format.GetWidth() * 2) * (long)(format.GetHeight() * 2) * 4;
         live = Compat.PdfCartonNativeBitmap.LiveCount;
         bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
         foreach (var page in Pages)
@@ -9986,9 +10015,11 @@ public sealed class RenderingBitmapLifetimeTests
             using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(paper))
             {
                 Assert.Equal(Compat.JavaPrintConstants.PAGE_EXISTS,
-                    printable.Print(graphics, new Compat.JavaPageFormat(), page));
+                    printable.Print(graphics, format, page));
             }
-            if (page == Images) AssertImageGarbageBounded(CollectImageGarbage(bytes), "printing the image page");
+            var left = CollectImageGarbage(bytes);
+            Assert.True(page == ManyMaskedFills || left <= printRaster + RenderGarbageBound,
+                $"printing page {page} left {left} compat bytes before a collection.");
             AssertUnchanged(live, bytes, $"printing page {page}");
         }
         GC.KeepAlive(pinned);
@@ -10052,7 +10083,7 @@ public sealed class RenderingBitmapLifetimeTests
     }
 
     // A fill failing anywhere in the page, including inside a soft-mask or
-    // transparency group render, leaves no bitmap behind.
+    // transparency group render, leaves only collectable bitmaps behind.
     [Fact]
     public void FailedRendersDisposeTheirIntermediateBitmaps()
     {
@@ -10065,26 +10096,34 @@ public sealed class RenderingBitmapLifetimeTests
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
         foreach (var page in Pages)
         {
-            var counting = new SamplingRenderer(document, int.MaxValue, null);
-            using (counting.RenderImage(page, 2, ImageType.Rgb)) { }
-            if (page == Images) AssertImageGarbageBounded(CollectImageGarbage(bytes), $"page {page}");
+            var fills = CountFills(document, page);
+            AssertRenderGarbageBounded(CollectImageGarbage(bytes), page, $"page {page}");
             AssertUnchanged(live, bytes, $"page {page}");
-            Assert.True(counting.Fills > 1, $"page {page} has {counting.Fills} fills.");
-            foreach (var failAt in Enumerable.Range(1, 12).Where(fill => fill <= counting.Fills))
+            Assert.True(fills > 1, $"page {page} has {fills} fills.");
+            foreach (var failAt in Enumerable.Range(1, 12).Where(fill => fill <= fills))
             {
-                var failing = new SamplingRenderer(document, failAt, () => new InjectedFailure());
-                Assert.Throws<InjectedFailure>(() => failing.RenderImage(page, 2, ImageType.Rgb));
-                if (page == Images)
-                    AssertImageGarbageBounded(CollectImageGarbage(bytes), $"page {page} failing at fill {failAt}");
+                Assert.Throws<InjectedFailure>(() =>
+                    new SamplingRenderer(document, failAt, () => new InjectedFailure())
+                        .RenderImage(page, 2, ImageType.Rgb));
+                AssertRenderGarbageBounded(CollectImageGarbage(bytes), page, $"page {page} failing at fill {failAt}");
                 AssertUnchanged(live, bytes, $"page {page} failing at fill {failAt}");
             }
         }
         GC.KeepAlive(pinned);
     }
 
+    // Renders page with a renderer that is dropped afterwards (with the page
+    // image it keeps) and returns the page's fill count.
+    private static int CountFills(PDDocument document, int page)
+    {
+        var counting = new SamplingRenderer(document, int.MaxValue, null);
+        using (counting.RenderImage(page, 2, ImageType.Rgb)) { }
+        return counting.Fills;
+    }
+
     // A group whose content fails in its Do operator is skipped and the page
-    // goes on: the next group does not take the failed group's (disposed)
-    // image as its backdrop.
+    // goes on. As in PDFBox, the failed group stays on the backdrop stack and
+    // the next blended group takes its (live) image as its backdrop.
     [Fact]
     public void RecoverableGroupFailuresKeepRendering()
     {
@@ -10097,12 +10136,26 @@ public sealed class RenderingBitmapLifetimeTests
         using (var image = renderer.RenderImage(TwoBlendedGroups, 2, ImageType.Rgb))
             Assert.Equal((288, 288), (image.Width, image.Height));
         Assert.True(renderer.Fills > 3, $"rendered {renderer.Fills} fills.");
-        AssertUnchanged(live, bytes, "page with a failed group");
+        Assert.Equal(1, GroupsLeftOnTheBackdropStack(renderer));
+        AssertRenderGarbageBounded(CollectImageGarbage(bytes), TwoBlendedGroups, "page with a failed group");
+        AssertUnchangedButPageImage(live, bytes, renderer, "page with a failed group");
     }
 
-    // renderPageToGraphics draws into the caller's graphics; a soft-masked
-    // last paint is replaced by the caller's paint before its mask is
-    // disposed, so the graphics stays usable.
+    // The groups left on the transparency group stack of the renderer's last
+    // drawer, which is dropped.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static int GroupsLeftOnTheBackdropStack(SamplingRenderer renderer)
+    {
+        var stack = typeof(PageDrawer).GetField("transparencyGroupStack",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var groups = ((System.Collections.IEnumerable)stack.GetValue(renderer.Drawn!)!).Cast<object>().Count();
+        renderer.Drawn = null;
+        return groups;
+    }
+
+    // renderPageToGraphics draws into the caller's graphics and, as in PDFBox,
+    // leaves its last paint there: a soft mask whose mask image the paint
+    // keeps alive, so the graphics still fills with it after a collection.
     [Fact]
     public void RenderPageToGraphicsLeavesCallerGraphicsUsable()
     {
@@ -10115,17 +10168,70 @@ public sealed class RenderingBitmapLifetimeTests
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
         foreach (var page in new[] { OneMaskedFill, GroupsAndBlending, Images })
         {
-            using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
-            {
-                new PDFRenderer(document).RenderPageToGraphics(page, graphics);
-                Assert.IsNotType<SoftMask>(graphics.GetPaint());
-                graphics.FillRect(0, 0, 10, 10);
-            }
-            if (page == Images)
-                AssertImageGarbageBounded(CollectImageGarbage(bytes), $"page {page} drawn into caller graphics");
+            DrawIntoCallerGraphics(document, page, canvas);
+            AssertRenderGarbageBounded(CollectImageGarbage(bytes), page, $"page {page} drawn into caller graphics");
             AssertUnchanged(live, bytes, $"page {page} drawn into caller graphics");
         }
         GC.KeepAlive(pinned);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void DrawIntoCallerGraphics(PDDocument document, int page, SKBitmap canvas)
+    {
+        using var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas);
+        new PDFRenderer(document).RenderPageToGraphics(page, graphics);
+        if (page == OneMaskedFill) Assert.IsType<SoftMask>(graphics.GetPaint());
+        Settle();
+        // The graphics keeps the page's flipped transform, as in PDFBox: the
+        // fill covers device pixel (35, 109), blank after the masked page and
+        // inside the mask's 0.8 gray square, so the retained soft mask lets
+        // the red fill through.
+        var before = canvas.GetPixel(35, 109);
+        graphics.FillRect(30, 30, 10, 10);
+        if (page != OneMaskedFill) return;
+        Assert.Equal(0, before.Alpha);
+        var after = canvas.GetPixel(35, 109);
+        Assert.True(after.Alpha > 0 && after.Red > after.Green, $"masked fill drew {after}.");
+    }
+
+    // PDFRenderer keeps the image it rendered the page into after
+    // renderImage returns, as PDFBox does: the returned image, or the ARGB
+    // image a page-level blend mode (every fixture page has one, in the
+    // shared resources) renders into before it is converted. A later
+    // renderPageToGraphics takes it as the backdrop of a non-isolated blended
+    // group; once the caller disposed it, it has no pixels left and the
+    // group renders as over no backdrop (as with a fresh renderer).
+    [Fact]
+    public void RendererKeepsItsPageImage()
+    {
+        using var document = Loader.LoadPDF(Signed(Fixture()));
+        var renderer = new PDFRenderer(document);
+        using (var image = renderer.RenderImage(OneMaskedFill, 2, ImageType.Argb))
+            Assert.Same(image, renderer.getPageImage());
+        using (var blended = renderer.RenderImage(GroupsAndBlending, 2, ImageType.Rgb))
+        {
+            var pageImage = renderer.getPageImage();
+            Assert.NotSame(blended, pageImage);
+            Assert.Equal(Compat.PdfCartonFontCompat.TYPE_INT_ARGB,
+                Compat.PdfCartonFontCompat.GetImageType(pageImage));
+            Assert.NotEqual(IntPtr.Zero, pageImage.Handle);
+        }
+        foreach (var page in new[] { TwoBlendedGroups, GroupsAndBlending })
+        {
+            using (renderer.RenderImage(page, 1, ImageType.Argb)) { }
+            Assert.True(Compat.PdfCartonFontCompat.IsDisposedImage(renderer.getPageImage()));
+            Assert.Equal(DrawnIntoGraphics(new PDFRenderer(document), page),
+                DrawnIntoGraphics(renderer, page));
+        }
+    }
+
+    private static string DrawnIntoGraphics(PDFRenderer renderer, int page)
+    {
+        using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
+            144, 144, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
+            renderer.RenderPageToGraphics(page, graphics);
+        return Hash(canvas);
     }
 
     // Each fill under an ExtGState soft mask renders the mask anew; the
@@ -10173,9 +10279,10 @@ public sealed class RenderingBitmapLifetimeTests
         internal int Fills { get; private set; }
         internal long Baseline { get; init; }
         internal long Peak { get; private set; }
+        internal PageDrawer? Drawn { get; set; }
 
         protected internal override PageDrawer CreatePageDrawer(PageDrawerParameters parameters) =>
-            new Drawer(parameters, this);
+            Drawn = new Drawer(parameters, this);
 
         private void Fill(Action fill)
         {
@@ -10221,6 +10328,41 @@ public sealed class RenderingBitmapLifetimeTests
         Settle();
         return left;
     }
+
+    // The live compat bitmaps and their bytes, but for the page image the
+    // renderer keeps (PDFRenderer.getPageImage, unless already disposed).
+    private static (long Live, long Bytes) CountersButPageImage(PDFRenderer renderer)
+    {
+        var kept = renderer.getPageImage();
+        var held = kept is not null && kept.Handle != IntPtr.Zero;
+        return (Compat.PdfCartonNativeBitmap.LiveCount - (held ? 1 : 0),
+            Compat.PdfCartonNativeBitmap.OutstandingBytes - (held ? (long)kept!.RowBytes * kept.Height : 0));
+    }
+
+    // A collection releases every bitmap a render left but the page image
+    // the renderer keeps.
+    private static void AssertUnchangedButPageImage(long live, long bytes, PDFRenderer renderer, string name)
+    {
+        var (nowLive, nowBytes) = CountersButPageImage(renderer);
+        Assert.True(nowLive == live && nowBytes == bytes,
+            $"{name} left {nowLive - live} bitmaps ({nowBytes - bytes} bytes) besides the page image.");
+    }
+
+    // One 288x288 page image of four-byte pixels.
+    private const long OnePageImage = 288 * 288 * 4;
+
+    // What one render of a fixture page leaves to the collector: its soft-mask
+    // and group images (on the groups-and-blending page two masks, and a
+    // backdrop group drawn twice with its alpha image: about 2.8 MB) and the
+    // previous page image the renderer kept. Garbage kept across renders
+    // would exceed this. The page with 200 masked fills leaves as many masks
+    // as the collector has not reclaimed yet, which
+    // SoftMaskedFillsKeepOneMaskLive bounds instead.
+    private const long RenderGarbageBound = 12 * OnePageImage;
+
+    private static void AssertRenderGarbageBounded(long left, int page, string name) =>
+        Assert.True(page == ManyMaskedFills || left <= RenderGarbageBound,
+            $"{name} left {left} compat bytes before a collection.");
 
     // The fixture's images are at most 64x64 and its pages 288x288 pixels:
     // one image-page render leaves about 9 KB of intermediates, while a

@@ -2396,6 +2396,19 @@ public sealed class JavaRaster
     {
     }
 
+    // The raster of a disposed image (PdfCartonFontCompat.IsDisposedImage):
+    // 0x0, with an empty data buffer.
+    internal static JavaRaster Empty(int dataType) => new(dataType);
+
+    private JavaRaster(int dataType)
+    {
+        transferType = dataType;
+        numberOfBands = 1;
+        pixelStride = 1;
+        bandOffsets = [0];
+        storage = dataType == PdfCartonFontCompat.DATA_BUFFER_TYPE_INT ? Array.Empty<int>() : Array.Empty<sbyte>();
+    }
+
     private JavaRaster(
         int dataType,
         int width,
@@ -6200,6 +6213,7 @@ public class PdfCartonGraphics2D : IDisposable
     {
         ArgumentNullException.ThrowIfNull(image);
         _ = observer;
+        if (PdfCartonFontCompat.IsDisposedImage(image)) return true;
         PdfCartonFontCompat.EnsureNativePixels(image);
         RenderImageLayer(
             image,
@@ -6223,8 +6237,9 @@ public class PdfCartonGraphics2D : IDisposable
         int x,
         int y,
         object? observer) =>
-        DrawImage(image, x, y, x + image.Width, y + image.Height,
-            0, 0, image.Width, image.Height, observer);
+        DrawImage(image, x, y, x + PdfCartonFontCompat.GetImageWidth(image),
+            y + PdfCartonFontCompat.GetImageHeight(image), 0, 0,
+            PdfCartonFontCompat.GetImageWidth(image), PdfCartonFontCompat.GetImageHeight(image), observer);
 
     public virtual bool DrawImage(
         SKBitmap image,
@@ -6233,7 +6248,8 @@ public class PdfCartonGraphics2D : IDisposable
         JavaColor backgroundColor,
         object? observer)
     {
-        FillImageBackground(x, y, image.Width, image.Height, backgroundColor);
+        FillImageBackground(x, y, PdfCartonFontCompat.GetImageWidth(image),
+            PdfCartonFontCompat.GetImageHeight(image), backgroundColor);
         return DrawImage(image, x, y, observer);
     }
 
@@ -6244,8 +6260,8 @@ public class PdfCartonGraphics2D : IDisposable
         int width,
         int height,
         object? observer) =>
-        DrawImage(image, x, y, x + width, y + height,
-            0, 0, image.Width, image.Height, observer);
+        DrawImage(image, x, y, x + width, y + height, 0, 0,
+            PdfCartonFontCompat.GetImageWidth(image), PdfCartonFontCompat.GetImageHeight(image), observer);
 
     public virtual bool DrawImage(
         SKBitmap image,
@@ -6313,6 +6329,7 @@ public class PdfCartonGraphics2D : IDisposable
     {
         ArgumentNullException.ThrowIfNull(image);
         _ = observer;
+        if (PdfCartonFontCompat.IsDisposedImage(image)) return true;
         PdfCartonFontCompat.EnsureNativePixels(image);
         if (PdfCartonFontCompat.IsDefaultMatrix(imageTransform))
         {
@@ -9269,7 +9286,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     private IntPtr arrayPixelsAddress;
 
     internal PdfCartonNativeBitmap(SKImageInfo info)
-        : base(info)
+        : base(MakeRoomFor(info))
     {
         pixelBytes = (long)RowBytes * Height;
         pressure = pixelBytes;
@@ -9297,6 +9314,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
             !BitConverter.IsLittleEndian)
             throw new ArgumentException("Int-backed bitmaps hold little-endian straight BGRA pixels.",
                 nameof(info));
+        MakeRoomFor(info);
         var pixels = new int[checked(info.Width * info.Height)];
         var bitmap = new PdfCartonNativeBitmap(pixels);
         var pinned = new PinnedPixels(pixels);
@@ -9318,6 +9336,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         if (info.ColorType != SKColorType.Gray8)
             throw new ArgumentException("Byte-backed bitmaps hold Gray8 pixels.", nameof(info));
+        MakeRoomFor(info);
         var pixels = new sbyte[checked(info.Width * info.Height)];
         var bitmap = new PdfCartonNativeBitmap(pixels.LongLength) { bytePixels = pixels };
         var pinned = new PinnedPixels(pixels);
@@ -9354,6 +9373,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         var bytes = (long)info.RowBytes * info.Height;
         if (bytes < ManagedPixelThreshold) return new PdfCartonNativeBitmap(info);
+        MakeRoomFor(info);
         var bitmap = new PdfCartonNativeBitmap(bytes);
         try
         {
@@ -9380,6 +9400,64 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
 
     // The runtime's large object heap threshold.
     private const long ManagedPixelThreshold = 85_000;
+
+    // Java code drops intermediate images (a soft mask's group image, a
+    // transparency group's alpha image) without disposing them, and Java's
+    // collector reclaims them promptly. Here an image's pixels are released
+    // only when its wrapper is finalized, and a large pinned array waits for
+    // a full collection, which the runtime may defer for hundreds of
+    // megabytes. So the compat bitmaps pace collections themselves: the
+    // large-bitmap bytes allocated since the last full collection and not
+    // disposed since (possible garbage) may reach half of the other bytes
+    // outstanding (the live bitmaps), or CollectionFloor; a large allocation
+    // beyond that, after earlier undisposed ones, first collects and
+    // finalizes the unreachable bitmaps.
+    // Undisposed garbage therefore stays within about half of the live
+    // bitmaps, while code that disposes its bitmaps causes no collections.
+    private const long CollectionFloor = 256 * 1024;
+    private static long undisposedSinceCollection;
+    private static int observedCollections = GC.CollectionCount(GC.MaxGeneration);
+    private static int collecting;
+
+    // Called before allocating pixels for info; returns info.
+    private static SKImageInfo MakeRoomFor(SKImageInfo info)
+    {
+        var bytes = (long)info.RowBytes * info.Height;
+        if (bytes < ManagedPixelThreshold) return info;
+        var collections = GC.CollectionCount(GC.MaxGeneration);
+        if (Interlocked.Exchange(ref observedCollections, collections) != collections)
+            Interlocked.Exchange(ref undisposedSinceCollection, 0);
+        var undisposed = Interlocked.Add(ref undisposedSinceCollection, bytes);
+        var earlier = undisposed - bytes;
+        var live = Math.Max(0, Interlocked.Read(ref outstandingBytes) - earlier);
+        if (earlier <= 0 || undisposed <= Math.Max(CollectionFloor, live / 2) ||
+            Interlocked.Exchange(ref collecting, 1) != 0)
+            return info;
+        try
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            Volatile.Write(ref observedCollections, GC.CollectionCount(GC.MaxGeneration));
+            Interlocked.Exchange(ref undisposedSinceCollection, bytes);
+        }
+        finally
+        {
+            Volatile.Write(ref collecting, 0);
+        }
+        return info;
+    }
+
+    // A disposed large bitmap is not garbage awaiting collection.
+    private static void Disposed(long bytes)
+    {
+        if (bytes < ManagedPixelThreshold) return;
+        long current, next;
+        do
+        {
+            current = Interlocked.Read(ref undisposedSinceCollection);
+            next = Math.Max(0, current - bytes);
+        } while (Interlocked.CompareExchange(ref undisposedSinceCollection, next, current) != current);
+    }
 
     // An image whose pixels are rendered on first use (CreateDeferredImage):
     // Skia knows its size and colour type, but no pixel memory exists until
@@ -9468,6 +9546,7 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     {
         RunPendingRender();
         if (Interlocked.Exchange(ref pixelsPending, 0) == 0) return;
+        MakeRoomFor(Info);
         if (Volatile.Read(ref registered) == 1)
         {
             Interlocked.Add(ref countedBytes, pixelBytes);
@@ -9556,8 +9635,15 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
         return null;
     }
 
+    private int disposed;
+
+    // True once disposed: the bitmap has no pixels, and no native call may
+    // use it (PdfCartonFontCompat.IsDisposedImage).
+    internal bool WasDisposed => Volatile.Read(ref disposed) != 0;
+
     protected override void Dispose(bool disposing)
     {
+        Volatile.Write(ref disposed, 1);
         // Disposal reads Handle too: an image never used natively is
         // released without rendering it.
         pendingRender = null;
@@ -9568,7 +9654,9 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
         Volatile.Write(ref bytePixels, null);
         if (Interlocked.Exchange(ref registered, 0) != 1) return;
         if (pressure > 0) GC.RemoveMemoryPressure(pressure);
-        Interlocked.Add(ref outstandingBytes, -Interlocked.Exchange(ref countedBytes, 0));
+        var released = Interlocked.Exchange(ref countedBytes, 0);
+        if (disposing) Disposed(released);
+        Interlocked.Add(ref outstandingBytes, -released);
         Interlocked.Decrement(ref liveCount);
     }
 }
@@ -10608,6 +10696,10 @@ internal static class PdfCartonFontCompat
     internal static JavaRaster GetRaster(SKBitmap bitmap)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
+        if (IsDisposedImage(bitmap))
+            return JavaRaster.Empty(GetImageType(bitmap) is TYPE_INT_RGB or TYPE_INT_ARGB or TYPE_INT_BGR
+                ? DATA_BUFFER_TYPE_INT
+                : DATA_BUFFER_TYPE_BYTE);
         while (true)
         {
             ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata);
@@ -10943,10 +11035,21 @@ internal static class PdfCartonFontCompat
     // BufferedImage.getWidth() and getHeight(), which do not render a
     // CreateImage image (SKBitmap.Width and Height are native calls).
     internal static int GetImageWidth(SKBitmap image) =>
-        image is PdfCartonNativeBitmap { PendingRenderSize: { } size } ? size.Width : image.Width;
+        IsDisposedImage(image) ? 0
+        : image is PdfCartonNativeBitmap { PendingRenderSize: { } size } ? size.Width : image.Width;
 
     internal static int GetImageHeight(SKBitmap image) =>
-        image is PdfCartonNativeBitmap { PendingRenderSize: { } size } ? size.Height : image.Height;
+        IsDisposedImage(image) ? 0
+        : image is PdfCartonNativeBitmap { PendingRenderSize: { } size } ? size.Height : image.Height;
+
+    // Java images are never disposed, so Java code may still hold an image
+    // whose SKBitmap a caller disposed: PDFRenderer keeps the page image it
+    // returned, and takes it as the backdrop of a later
+    // renderPageToGraphics's blended groups. A disposed compat image has no
+    // pixels left: it reads as an empty (0x0) image without samples, and
+    // drawing it draws nothing, where any native call on it would crash.
+    internal static bool IsDisposedImage(SKBitmap image) =>
+        image is PdfCartonNativeBitmap { WasDisposed: true };
 
     // CreateImage for an image only compat code uses, through its retained
     // raster or after EnsureNativePixels: its native pixels are rendered
