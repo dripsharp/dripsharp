@@ -22,7 +22,7 @@
            [java.nio.file Files]
            [java.lang.reflect Method]
            [java.util Base64 IdentityHashMap WeakHashMap]
-           [spoon.reflect.code CtAbstractInvocation CtAbstractSwitch CtArrayRead CtArrayWrite CtAssert CtAssignment
+           [spoon.reflect.code BinaryOperatorKind CtAbstractInvocation CtAbstractSwitch CtArrayRead CtArrayWrite CtAssert CtAssignment
             CtBinaryOperator CtBlock CtBreak CtCase CtCatch CtCatchVariable CtComment
             CtConditional CtConstructorCall CtContinue CtDo CtExecutableReferenceExpression
             CtExpression CtFieldRead CtFieldWrite
@@ -35,9 +35,11 @@
             CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
             CtModifiable CtParameter CtRecordComponent CtType CtTypedElement
             CtTypeParameter ModifierKind]
+           [spoon.reflect.path CtRole]
            [spoon.reflect.reference CtArrayTypeReference CtCatchVariableReference
-            CtLocalVariableReference CtPackageReference CtParameterReference
-            CtTypeParameterReference CtTypeReference CtWildcardReference]
+            CtExecutableReference CtLocalVariableReference CtPackageReference
+            CtParameterReference CtTypeParameterReference CtTypeReference
+            CtWildcardReference]
            [spoon.reflect.visitor.filter TypeFilter]))
 
 (defn- fail! [message data]
@@ -166,7 +168,11 @@
 (declare type-node create-body-context functional-expression-node
          functional-interface-method method-name owner-type-node translated-node)
 
+(declare register-dependency-facts!)
+
 (defn- context [options]
+  (register-dependency-facts! (:resolved-model options)
+                              (:dependency-facts options))
   (let [template (:template options)
         ctx-holder (or (:ctx-holder template) (atom nil))
         ctx (assoc options
@@ -512,6 +518,237 @@
    (some wildcard-generic-reference?
          (.getActualTypeArguments reference))))
 
+;; Derived generic erasure. C# has no wildcard types: a Java value typed
+;; `X<?>`, `X<? extends B>` or raw `X` may hold any instantiation of the
+;; generic class X, which no single constructed CLR type can. For every project
+;; generic class that the model uses that way in a value position, the
+;; translator derives a non-generic erasure interface `IX` from X's own instance
+;; methods (class type parameters replaced by their Java erasure), X<T>
+;; implements it, and the erased references name it. The instantiation of X at
+;; its own bounds has exactly IX's member signatures, so it is erased as well:
+;; it is the carrier Java code fills through unchecked conversions from raw X.
+;; Destinations opt in with `:derived-generic-erasure?` in their context. The
+;; rule is keyed only on Java-language shape, and the C# it writes counts as
+;; authored.
+
+(declare model-all-types)
+
+(def ^:dynamic *erased-type-parameters*
+  "Class type parameters rendered as their Java erasure while a derived
+  erasure interface or its implementation members are emitted."
+  nil)
+
+(defn- instanceof-type?
+  "True for the type tested by a Java instanceof."
+  [^CtTypeReference reference]
+  (let [parent (when (.isParentInitialized reference) (.getParent reference))
+        operator (when (and (instance? CtTypeAccess parent)
+                            (.isParentInitialized ^CtTypeAccess parent))
+                   (.getParent ^CtTypeAccess parent))]
+    (and (instance? CtBinaryOperator operator)
+         (= BinaryOperatorKind/INSTANCEOF
+            (.getKind ^CtBinaryOperator operator)))))
+
+(defn- value-type-position?
+  "True when a type reference states the static type of a value: a variable,
+  parameter, return, cast, instanceof test, type argument, array component or
+  type-parameter bound. Created, statically accessed and member-declaring
+  types and supertypes name the class itself."
+  [^CtTypeReference reference]
+  (or
+   (not (.isParentInitialized reference))
+   (let [parent (.getParent reference)
+         role (.getRoleInParent reference)]
+     (cond
+       (= CtRole/DECLARING_TYPE role) false
+       (instance? CtTypeAccess parent) (instanceof-type? reference)
+       (and (instance? CtExecutableReference parent)
+            (.isConstructor ^CtExecutableReference parent))
+       false
+       (instance? CtTypeParameter parent) true
+       (instance? CtType parent)
+       (not (contains? #{CtRole/SUPER_TYPE CtRole/INTERFACE} role))
+       :else true))))
+
+(defn- erasable-generic-class? [declaration]
+  (and (instance? CtClass declaration)
+       (not (instance? CtEnum declaration))
+       (not (.isShadow ^CtType declaration))
+       (boolean (seq (.getFormalCtTypeParameters ^CtType declaration)))))
+
+(defn- raw-type-reference? [^CtTypeReference reference]
+  (and (not (instance? CtTypeParameterReference reference))
+       (not (instance? CtArrayTypeReference reference))
+       (empty? (.getActualTypeArguments reference))))
+
+(defn- wildcard-type-arguments? [^CtTypeReference reference]
+  (boolean (some #(instance? CtWildcardReference %)
+                 (.getActualTypeArguments reference))))
+
+(defn- outermost-type-reference [^CtTypeReference reference]
+  (loop [current reference]
+    (let [parent (when (.isParentInitialized current) (.getParent current))]
+      (if (and (instance? CtTypeReference parent)
+               (not= CtRole/DECLARING_TYPE (.getRoleInParent current)))
+        (recur parent)
+        current))))
+
+(defn- existential-generic-use?
+  "True for a source-written reference that holds a value through a wildcard
+  or raw type, other than a cast or an instanceof test."
+  [^CtTypeReference reference]
+  (and (.isValidPosition (.getPosition reference))
+       (or (raw-type-reference? reference)
+           (wildcard-type-arguments? reference))
+       (value-type-position? reference)
+       (not (instanceof-type? reference))
+       (not= CtRole/CAST
+             (.getRoleInParent
+              ^CtTypeReference (outermost-type-reference reference)))))
+
+(declare class-literal-only-type-parameter?
+         reference-mentions-type-parameter? type-parameter-declaration)
+
+(defn- erasure-representable?
+  "True when an erasure interface of the class's own instance methods can
+  stand for every wildcard or raw use: the class inherits no instance members
+  besides Object's, its accessible instance methods have no surviving method
+  type parameters, and class type parameters appear in their signatures only
+  as a whole parameter or return type (which an erased bridge can cast).
+  Other generic classes keep their constructed-class rendering."
+  [^CtType type]
+  (let [formals (vec (.getFormalCtTypeParameters type))
+        superclass (.getSuperclass type)
+        direct? (fn [^CtTypeReference reference]
+                  (and (instance? CtTypeParameterReference reference)
+                       (not (instance? CtWildcardReference reference))
+                       (some #(identical? % (type-parameter-declaration
+                                             ^CtTypeParameterReference
+                                             reference))
+                             formals)))
+        mentions? (fn [reference]
+                    (some #(reference-mentions-type-parameter? reference %)
+                          formals))]
+    (and (or (nil? superclass)
+             (= "java.lang.Object" (.getQualifiedName superclass)))
+         (empty? (.getSuperInterfaces type))
+         (every?
+          (fn [^CtMethod method]
+            (or (.hasModifier method ModifierKind/STATIC)
+                (.hasModifier method ModifierKind/PRIVATE)
+                (and (every? class-literal-only-type-parameter?
+                             (.getFormalCtTypeParameters method))
+                     (every? #(or (direct? %) (not (mentions? %)))
+                             (cons (.getType method)
+                                   (map #(.getType ^CtParameter %)
+                                        (.getParameters method)))))))
+          (.getMethods type)))))
+
+(def ^:private derived-erasure-types-cache (WeakHashMap.))
+
+(defn- derived-erasure-types
+  "Returns the project generic classes of a model that it uses through a
+  wildcard or raw type in a value position, as an identity map."
+  [model]
+  (locking derived-erasure-types-cache
+    (or (.get derived-erasure-types-cache model)
+        (let [generic (into {}
+                            (keep (fn [^CtType type]
+                                    (when (and (erasable-generic-class? type)
+                                               (erasure-representable? type))
+                                      [(.getQualifiedName type) type])))
+                            (model-all-types model))
+              result (IdentityHashMap.)]
+          (when (seq generic)
+            (doseq [^CtType type (.getAllTypes model)
+                    ^CtTypeReference reference
+                    (.getElements type (TypeFilter. CtTypeReference))]
+              (when-let [declaration (get generic (.getQualifiedName reference))]
+                (when (existential-generic-use? reference)
+                  (.put result declaration true)))))
+          (.put derived-erasure-types-cache model result)
+          result))))
+
+(defn- derived-erasure-type? [ctx declaration]
+  (boolean
+   (and (:derived-generic-erasure? ctx)
+        (erasable-generic-class? declaration)
+        (.containsKey
+         ^IdentityHashMap
+         (derived-erasure-types (.getModel (.getFactory ^CtType declaration)))
+         declaration))))
+
+(defn- derived-erasure-name [^CtType declaration]
+  (str "I" (pascal (.getSimpleName declaration))))
+
+(defn- derived-erasure-base [ctx ^CtType declaration]
+  (let [types (declaring-types declaration)]
+    (str "global::" (destination-namespace ctx declaration) "."
+         (str/join "."
+                   (concat (map #(pascal (.getSimpleName ^CtType %))
+                                (butlast types))
+                           [(derived-erasure-name declaration)])))))
+
+(defn- type-parameter-erasure-reference
+  "Java erases a type parameter to its leftmost bound."
+  ^CtTypeReference [^CtTypeParameter parameter]
+  (first
+   (remove #(= "java.lang.Object" (.getQualifiedName ^CtTypeReference %))
+           (remove nil?
+                   (concat [(.getSuperclass parameter)]
+                           (.getSuperInterfaces parameter))))))
+
+(defn- bound-instantiation?
+  "True when every type argument is its type parameter's Java erasure."
+  [^CtTypeReference reference ^CtType declaration]
+  (let [arguments (vec (.getActualTypeArguments reference))
+        formals (vec (.getFormalCtTypeParameters declaration))]
+    (and (seq arguments)
+         (= (count arguments) (count formals))
+         (every?
+          (fn [[^CtTypeReference argument ^CtTypeParameter formal]]
+            (let [erasure (type-parameter-erasure-reference formal)]
+              (and (raw-type-reference? argument)
+                   (= (.getQualifiedName argument)
+                      (if erasure
+                        (.getQualifiedName erasure)
+                        "java.lang.Object")))))
+          (map vector arguments formals)))))
+
+(defn- derived-generic-erasure-node
+  [ctx ^CtTypeReference reference occurrence]
+  (when (and (:derived-generic-erasure? ctx)
+             (= :project (:origin occurrence)))
+    (let [declaration (or (:declaration occurrence)
+                          (.getTypeDeclaration reference))]
+      (when (and (derived-erasure-type? ctx declaration)
+                 (value-type-position? reference)
+                 (or (raw-type-reference? reference)
+                     (wildcard-type-arguments? reference)
+                     (bound-instantiation? reference declaration)))
+        [(raw (derived-erasure-base ctx declaration))
+         :dotnet.type/derived-generic-erasure]))))
+
+(defn- erased-type-parameter-node
+  "Renders a class type parameter as its Java erasure, the raw leftmost bound."
+  [^CtTypeReference reference recur-node]
+  (when (and *erased-type-parameters*
+             (instance? CtTypeParameterReference reference)
+             (not (instance? CtWildcardReference reference)))
+    (let [declaration (try
+                        (.getDeclaration ^CtTypeParameterReference reference)
+                        (catch Throwable _ nil))]
+      (when (some #(identical? declaration %) *erased-type-parameters*)
+        (let [erasure (type-parameter-erasure-reference declaration)]
+          [(cond
+             (nil? erasure) (raw "object")
+             (empty? (.getActualTypeArguments erasure)) (recur-node erasure)
+             :else
+             (recur-node
+              (doto ^CtTypeReference (.clone erasure)
+                (.setActualTypeArguments []))))
+           :dotnet.type/erased-type-parameter])))))
+
 (defn- generic-erasure-node
   [ctx ^CtTypeReference reference occurrence]
   (when
@@ -568,7 +805,9 @@
 
     :else
     (or
+     (erased-type-parameter-node reference recur-node)
      (generic-erasure-node ctx reference occurrence)
+     (derived-generic-erasure-node ctx reference occurrence)
      (let [[target rule] (mapped-type-base ctx reference occurrence)
            declaration (when (= :project (:origin occurrence))
                          (or (:declaration occurrence)
@@ -1316,6 +1555,38 @@
       (sequence-node [(calendar-aliasing-node "ref ")
                       (assignment-target-node node)]))))
 
+(def ^:private dependency-nullable-boxed-returns (WeakHashMap.))
+
+(defn- executable-signature-key [^CtExecutableReference reference]
+  (str (some-> reference .getDeclaringType .getQualifiedName) "#"
+       (.getSignature reference)))
+
+(defn- register-dependency-facts!
+  "Records, for the Spoon model being translated, the sibling-project methods
+  whose declaration side returns a collection of nullable boxed primitives."
+  [resolved-model dependency-facts]
+  (when-let [keys (seq (:nullable-boxed-returns dependency-facts))]
+    (when-let [^CtType root (first (java/project-roots resolved-model))]
+      (let [model (.getModel (.getFactory root))]
+        (locking dependency-nullable-boxed-returns
+          (when-not (.containsKey dependency-nullable-boxed-returns model)
+            (.put dependency-nullable-boxed-returns model (set keys))))))))
+
+(defn- dependency-nullable-boxed-return?
+  "True for a call to a sibling-project method whose declaration side, which
+  sees the method body, returns a collection of nullable boxed primitives."
+  [^CtInvocation invocation]
+  (let [executable (.getExecutable invocation)
+        declaration (.getDeclaration executable)]
+    (and (or (nil? declaration)
+             (and (instance? CtMethod declaration)
+                  (.isShadow ^CtMethod declaration)))
+         (boolean
+          (when-let [keys (locking dependency-nullable-boxed-returns
+                            (.get dependency-nullable-boxed-returns
+                                  (.getModel (.getFactory invocation))))]
+            (contains? keys (executable-signature-key executable)))))))
+
 (defn- nullable-boxed-collection-expression?
   [^CtExpression expression seen]
   (cond
@@ -1334,6 +1605,7 @@
        (and (instance? CtMethod declaration)
             (nullable-boxed-collection-declaration?
              declaration (.getType ^CtMethod declaration) seen))
+       (dependency-nullable-boxed-return? expression)
        (nullable-boxed-collection-expression?
         (.getTarget ^CtInvocation expression) seen)
        (some #(nullable-boxed-collection-expression? % seen)
@@ -2581,6 +2853,8 @@
       bound (type-node ctx bound)
       :else (raw "object"))))
 
+(declare class-literal-type-parameter?)
+
 (defn- project-invocation-type-arguments-node
   [ctx ^CtInvocation invocation declaration]
   (when (instance? CtMethod declaration)
@@ -2626,7 +2900,17 @@
                    lifted))
             (if (and (seq formal-overrides) (not inferable?))
               actual-nodes
-              (mapv #(type-node ctx %) inferred)))]
+              (mapv #(type-node ctx %) inferred)))
+          dropped (set (keep-indexed
+                        (fn [index parameter]
+                          (when (class-literal-type-parameter? ctx parameter)
+                            index))
+                        formals))
+          emitted (if (and (seq dropped) (>= (count emitted) (count formals)))
+                    (keep-indexed
+                     (fn [index node] (when-not (contains? dropped index) node))
+                     emitted)
+                    emitted)]
       (when (seq emitted)
         (sequence-node
          [(raw "<")
@@ -9018,8 +9302,81 @@
                        ", ")
                       (raw ">")]))))
 
-(defn- executable-formals-node [^CtExecutable executable]
-  (let [parameters (vec (.getFormalCtTypeParameters executable))]
+(defn- reference-mentions-type-parameter?
+  [^CtTypeReference reference ^CtTypeParameter parameter]
+  (boolean
+   (when reference
+     (or
+      (and (instance? CtTypeParameterReference reference)
+           (identical? parameter
+                       (type-parameter-declaration
+                        ^CtTypeParameterReference reference)))
+      (and (instance? CtWildcardReference reference)
+           (reference-mentions-type-parameter?
+            (.getBoundingType ^CtWildcardReference reference) parameter))
+      (and (instance? CtArrayTypeReference reference)
+           (reference-mentions-type-parameter?
+            (.getComponentType ^CtArrayTypeReference reference) parameter))
+      (some #(reference-mentions-type-parameter? % parameter)
+            (.getActualTypeArguments reference))))))
+
+(defn- class-literal-only-type-parameter?
+  "True for a method type parameter that the method signature mentions only
+  as the argument of java.lang.Class parameters and that its body does not
+  name outside such a Class type. C# renders Class<T> as System.Type, so the
+  parameter can never be inferred and carries no type."
+  [^CtTypeParameter parameter]
+  (let [method (when (.isParentInitialized parameter) (.getParent parameter))]
+    (boolean
+     (and
+      (instance? CtMethod method)
+      (let [^CtMethod method method
+            mentions? #(reference-mentions-type-parameter? % parameter)
+            class-argument?
+            (fn [^CtTypeReference reference]
+              (and (= "java.lang.Class" (.getQualifiedName reference))
+                   (mentions? reference)))
+            parameter-types (mapv #(.getType ^CtParameter %)
+                                  (.getParameters method))
+            body (.getBody method)]
+        (and (not (mentions? (.getType method)))
+             (some class-argument? parameter-types)
+             (every? #(or (class-argument? %) (not (mentions? %)))
+                     parameter-types)
+             (not-any? (fn [^CtTypeParameter other]
+                         (and (not (identical? other parameter))
+                              (some mentions?
+                                    (type-parameter-bound-references other))))
+                       (.getFormalCtTypeParameters method))
+             (not-any?
+              (fn [^CtTypeReference reference]
+                (and (instance? CtTypeParameterReference reference)
+                     (not (instance? CtWildcardReference reference))
+                     (identical? parameter
+                                 (type-parameter-declaration
+                                  ^CtTypeParameterReference reference))
+                     (let [parent (when (.isParentInitialized reference)
+                                    (.getParent reference))]
+                       (not (and (instance? CtTypeReference parent)
+                                 (= "java.lang.Class"
+                                    (.getQualifiedName
+                                     ^CtTypeReference parent)))))))
+              (when body
+                (.getElements body (TypeFilter. CtTypeReference))))))))))
+
+(defn- class-literal-type-parameter?
+  "The derived generic erasure drops class-literal-only method type
+  parameters from declarations and invocations."
+  [ctx ^CtTypeParameter parameter]
+  (boolean (and (:derived-generic-erasure? ctx)
+                (class-literal-only-type-parameter? parameter))))
+
+(defn- emitted-method-type-parameters [ctx ^CtExecutable executable]
+  (vec (remove #(class-literal-type-parameter? ctx %)
+               (.getFormalCtTypeParameters executable))))
+
+(defn- executable-formals-node [ctx ^CtExecutable executable]
+  (let [parameters (emitted-method-type-parameters ctx executable)]
     (when (seq parameters)
       (sequence-node [(raw "<")
                       (sequence-node
@@ -9029,11 +9386,11 @@
                       (raw ">")]))))
 
 (defn- method-formals-node
-  [^CtMethod method lifted]
+  [ctx ^CtMethod method lifted]
   (let [parameters
         (concat
          (map destination-type-parameter-name
-              (.getFormalCtTypeParameters method))
+              (emitted-method-type-parameters ctx method))
          (map :name lifted))]
     (when (seq parameters)
       (sequence-node
@@ -9071,7 +9428,7 @@
                            (destination-type-parameter-name parameter)
                            " : "))
                  (sequence-node (mapv #(type-node ctx %) bounds) ", ")]))))
-         parameters)]
+         (remove #(class-literal-type-parameter? ctx %) parameters))]
     (when (seq clauses)
       (sequence-node clauses))))
 
@@ -10318,7 +10675,7 @@
                        (when (.hasModifier method ModifierKind/STATIC) "static ")))
              (method-return-type-node ctx owner method)
              (raw (str " " core-name))
-             (method-formals-node method lifted)
+             (method-formals-node ctx method lifted)
              (raw "(")
              (sequence-node (mapv #(parameter-node ctx % lifted) (.getParameters method)) ", ")
              (raw ")") (constraints-node ctx formals)
@@ -10329,7 +10686,7 @@
         (when core-node
           (let [call (sequence-node
                       [(raw core-name)
-                       (method-formals-node method lifted)
+                       (method-formals-node ctx method lifted)
                        (raw "(")
                        (sequence-node
                         (mapv #(java-file-conversion
@@ -10351,7 +10708,7 @@
              (raw (str (str/join " " words) " "))
              (method-return-type-node api-ctx owner method)
              (raw (str " " name))
-             (method-formals-node method lifted)
+             (method-formals-node ctx method lifted)
              (raw "(")
              (sequence-node
               (mapv #(parameter-node api-ctx % lifted) (.getParameters method)) ", ")
@@ -10451,7 +10808,7 @@
                       (raw " ")
                       (type-node ctx interface-reference)
                       (raw (str "." name))
-                      (executable-formals-node interface-method)
+                      (executable-formals-node ctx interface-method)
                       (raw "(")
                       (sequence-node (mapv #(parameter-node ctx %) parameters) ", ")
                       (raw ") => (")
@@ -10494,7 +10851,7 @@
                         (declaration-type-node
                          ctx interface-method interface-return-reference)
                         (raw (str " " name))
-                        (method-formals-node interface-method lifted)
+                        (method-formals-node ctx interface-method lifted)
                         (raw "(")
                         (sequence-node
                          (mapv #(parameter-node ctx % lifted) parameters) ", ")
@@ -10513,7 +10870,7 @@
                                              interface-method
                                              (.getType interface-method))
                       (raw (str " " name))
-                      (executable-formals-node interface-method)
+                      (executable-formals-node ctx interface-method)
                       (raw "(")
                       (sequence-node (mapv #(parameter-node ctx %) parameters) ", ")
                       (raw ");")]))
@@ -10958,7 +11315,7 @@
         (method-return-type-node ctx owner method)
         (raw ")(this.")
         (raw (abstract-covariant-bridge-name ctx owner method))
-        (method-formals-node method lifted)
+        (method-formals-node ctx method lifted)
         (raw "(")
         (sequence-node (method-argument-nodes method) ", ")
         (raw ")));")])])))
@@ -10976,7 +11333,7 @@
                     (when override? "override ")))
           (override-family-return-type-node ctx owner method)
           (raw (str " " (abstract-covariant-bridge-name ctx owner method)))
-          (method-formals-node method lifted)
+          (method-formals-node ctx method lifted)
           (raw "(")
           (sequence-node
            (mapv #(parameter-node ctx % lifted) (.getParameters method)) ", ")
@@ -10991,7 +11348,7 @@
            [(sequence-node
              [(raw "return this.")
               (raw (method-name ctx owner method))
-              (method-formals-node method lifted)
+              (method-formals-node ctx method lifted)
               (raw "(")
               (sequence-node (method-argument-nodes method) ", ")
               (raw ");")])]))]
@@ -11205,7 +11562,7 @@
                (raw (str " " (method-name ctx
                                           (.getDeclaringType candidate)
                                           candidate)))
-               (method-formals-node candidate lifted)
+               (method-formals-node ctx candidate lifted)
                (raw "(")
                (sequence-node
                 (mapv #(parameter-node ctx % lifted) candidate-parameters) ", ")
@@ -11649,6 +12006,166 @@
        "\n\n")
       (raw "\n}")])))
 
+(defn- derived-erasure-authored
+  "Marks C# written by the derived generic erasure rule, which the authorship
+  ledger counts as authored."
+  [node]
+  (csharp/with-source
+    node
+    {:rule :java-library.rule/derived-generic-erasure :authored-rule true}))
+
+(defn- public-erasure-reference?
+  "True when a signature type stays public after erasure, so a public erasure
+  interface may name it."
+  [^CtTypeReference reference]
+  (cond
+    (nil? reference) true
+
+    (instance? CtArrayTypeReference reference)
+    (public-erasure-reference?
+     (.getComponentType ^CtArrayTypeReference reference))
+
+    (instance? CtWildcardReference reference)
+    (public-erasure-reference?
+     (.getBoundingType ^CtWildcardReference reference))
+
+    (instance? CtTypeParameterReference reference)
+    (let [declaration (type-parameter-declaration reference)]
+      (or (not (some #(identical? declaration %) *erased-type-parameters*))
+          (public-erasure-reference?
+           (type-parameter-erasure-reference declaration))))
+
+    (.isPrimitive reference) true
+
+    :else
+    (let [declaration (.getTypeDeclaration reference)]
+      (and (or (nil? declaration)
+               (.isShadow ^CtType declaration)
+               (every? #(= "public" (emitted-type-visibility %))
+                       (declaring-types declaration)))
+           (every? public-erasure-reference?
+                   (.getActualTypeArguments reference))))))
+
+(defn- derived-erasure-signature-node
+  [ctx ^CtType type ^CtMethod method qualifier]
+  (binding [*erased-type-parameters* (vec (.getFormalCtTypeParameters type))]
+    (sequence-node
+     [(declaration-type-node ctx method (.getType method))
+      (raw (str " " (when qualifier (str qualifier "."))
+                (method-name ctx type method) "("))
+      (sequence-node (mapv #(parameter-node ctx %) (.getParameters method))
+                     ", ")
+      (raw ")")])))
+
+(defn- derived-erasure-methods
+  "The instance methods of a generic class that its erasure interface
+  declares, in source order, without signatures that coincide after erasure."
+  [ctx ^CtType type]
+  (let [public? (= "public" (emitted-type-visibility type))]
+    (binding [*erased-type-parameters* (vec (.getFormalCtTypeParameters type))]
+      (->> (.getTypeMembers type)
+           (filter
+            (fn [member]
+              (and (instance? CtMethod member)
+                   (let [^CtMethod method member]
+                     (and (not (.hasModifier method ModifierKind/STATIC))
+                          (not (.hasModifier method ModifierKind/PRIVATE))
+                          (not (destination-object-method? method))
+                          (every? #(class-literal-type-parameter? ctx %)
+                                  (.getFormalCtTypeParameters method))
+                          (not-any? by-reference-calendar-parameter?
+                                    (.getParameters method))
+                          (or (not public?)
+                              (every? public-erasure-reference?
+                                      (cons (.getType method)
+                                            (map #(.getType ^CtParameter %)
+                                                 (.getParameters method))))))))))
+           (reduce
+            (fn [[seen methods] ^CtMethod method]
+              (let [signature
+                    (into [(method-name ctx type method)]
+                          (map #(:text (csharp/render-raw
+                                        (declaration-type-node
+                                         ctx % (.getType ^CtParameter %)))))
+                          (.getParameters method))]
+                (if (contains? seen signature)
+                  [seen methods]
+                  [(conj seen signature) (conj methods method)])))
+            [#{} []])
+           second))))
+
+(defn- derived-erasure-interface-node [ctx ^CtType type methods]
+  (let [name (derived-erasure-name type)
+        qualified (str (or (some-> (.getDeclaringType type) .getQualifiedName)
+                           (.getQualifiedName (.getPackage type)))
+                       (if (.getDeclaringType type) "$" ".")
+                       name)]
+    (when (some #(= qualified (.getQualifiedName ^CtType %))
+                (model-all-types (.getModel (.getFactory type))))
+      (unsupported! "Derived generic erasure interface name is taken" type))
+    (derived-erasure-authored
+     (sequence-node
+      [(raw (str (emitted-type-visibility type) " interface " name " {\n"))
+       (sequence-node
+        (mapv #(sequence-node
+                [(derived-erasure-signature-node ctx type % nil) (raw ";")])
+              methods)
+        "\n")
+       (raw "\n}")]))))
+
+(defn- derived-erasure-implementation-node
+  "Implements one erasure interface member explicitly when the class method
+  cannot implement it implicitly: it is not public, or its signature names a
+  class type parameter (bridged through casts, as Java's erased bridge does)."
+  [ctx ^CtType type ^CtMethod method]
+  (let [formals (vec (.getFormalCtTypeParameters type))
+        mentions? (fn [reference]
+                    (boolean
+                     (some #(reference-mentions-type-parameter? reference %)
+                           formals)))
+        return-reference (.getType method)
+        parameters (vec (.getParameters method))
+        return-mentions? (mentions? return-reference)
+        parameter-mentions (mapv #(mentions? (.getType ^CtParameter %))
+                                 parameters)
+        direct-return?
+        (and (instance? CtTypeParameterReference return-reference)
+             (not (instance? CtWildcardReference return-reference))
+             (some-> (type-parameter-declaration return-reference)
+                     type-parameter-erasure-reference
+                     .getActualTypeArguments
+                     empty?))]
+    (when (or return-mentions?
+              (some true? parameter-mentions)
+              (not (.hasModifier method ModifierKind/PUBLIC)))
+      (derived-erasure-authored
+       (sequence-node
+        [(derived-erasure-signature-node
+          ctx type method (derived-erasure-name type))
+         (raw " => ")
+         (when (and return-mentions? (not direct-return?))
+           (sequence-node
+            [(raw "(")
+             (binding [*erased-type-parameters* formals]
+               (declaration-type-node ctx method return-reference))
+             (raw ")(object)")]))
+         (raw (str "this." (method-name ctx type method) "("))
+         (sequence-node
+          (mapv (fn [^CtParameter parameter mentions]
+                  (let [name (raw (identifier (.getSimpleName parameter)))]
+                    (if mentions
+                      (sequence-node
+                       [(raw "(")
+                        (declaration-type-node ctx parameter
+                                               (.getType parameter))
+                        (raw ")(object)")
+                        name])
+                      name)))
+                parameters
+                parameter-mentions)
+          ", ")
+         (raw ");")])))))
+
 (defn- emit-root [ctx ^CtType type]
   (when-not (or (instance? CtClass type) (interface-type? type))
     (unsupported! "Java library declaration shape is not implemented" type))
@@ -11658,11 +12175,18 @@
                :java-library.declaration/class)
         id (register-type! ctx type name rule)
         bases (base-type-references type)
+        derived-erasure? (derived-erasure-type? ctx type)
+        derived-erasure-methods
+        (when derived-erasure? (derived-erasure-methods ctx type))
         base-nodes
-        (into
-         (vec (keep #(base-type-node ctx type %) bases))
-         (when-let [extra-base-nodes (:destination-base-type-nodes ctx)]
-           (extra-base-nodes ctx type)))
+        (cond->
+         (into
+          (vec (keep #(base-type-node ctx type %) bases))
+          (when-let [extra-base-nodes (:destination-base-type-nodes ctx)]
+            (extra-base-nodes ctx type)))
+          derived-erasure?
+          (conj (derived-erasure-authored
+                 (raw (derived-erasure-name type)))))
         functional-bases
         (when (instance? CtClass type)
           (filter #(contains? functional-interface-types (.getQualifiedName ^CtTypeReference %))
@@ -11824,13 +12348,17 @@
                          (field-anonymous-calls member-ctx %)
                          [])
                       members))
+        derived-erasure-implementations
+        (vec (keep #(derived-erasure-implementation-node member-ctx type %)
+                   derived-erasure-methods))
         member-nodes
         (cond-> (into (vec member-nodes)
                       (concat abstract-covariant-bridge-hook-nodes
                               interface-contracts
                               interface-redeclaration-contracts
                               runtime-interface-contracts
-                              java-map-entry-contracts))
+                              java-map-entry-contracts
+                              derived-erasure-implementations))
           inner?
           (conj
            (sequence-node
@@ -11912,6 +12440,8 @@
         source)
       (when functional-method
         (project-functional-adapter-node ctx type functional-method))
+      (when derived-erasure?
+        (derived-erasure-interface-node ctx type derived-erasure-methods))
       (when (seq static-companion-member-nodes)
         (sequence-node
          [(raw (str (emitted-type-visibility type) " static class "
@@ -11924,6 +12454,28 @@
       (when (instance? CtAnnotationType type)
         (annotation-companion-node ctx type))]
      "\n\n")))
+
+(defn- emission-facts
+  "Translation facts a project exports to the projects that depend on it: the
+  signature keys of its accessible methods whose return type is emitted as a
+  collection of nullable boxed primitives, decided from their bodies."
+  [resolved-model]
+  {:nullable-boxed-returns
+   (into (sorted-set)
+         (keep
+          (fn [^CtMethod method]
+            (when (and (not (.hasModifier method ModifierKind/PRIVATE))
+                       (boxed-primitive-collection-element (.getType method))
+                       (nullable-boxed-collection-declaration?
+                        method (.getType method)))
+              (executable-signature-key (.getReference method)))))
+         (for [^CtType root (java/project-roots resolved-model)
+               ^CtType type (tree-seq
+                             (fn [^CtType type] (seq (.getNestedTypes type)))
+                             (fn [^CtType type] (.getNestedTypes type))
+                             root)
+               method (.getMethods type)]
+           method))})
 
 (def ^:private bridge-capabilities
   {:java-bidi
@@ -12137,7 +12689,8 @@
      :emit-root-node emit-declaration-root-node
      :translate-member translate-declaration-member
      :merge-context! merge-context!
-     :context-results context-results}
+     :context-results context-results
+     :emission-facts emission-facts}
     :resolved-mappings
     {:type-node type-node
      :create-body-context create-body-context

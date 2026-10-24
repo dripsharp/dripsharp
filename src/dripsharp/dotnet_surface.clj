@@ -29,6 +29,8 @@
     "java-functional-adapter-type"
     "java-functional-adapter-member"
     "java-static-interface-companion-type"
+    "java-generic-erasure-interface-type"
+    "java-generic-erasure-interface-member"
     "java-compatibility-type"
     "java-compatibility-member"
     "clr-special-accessor"})
@@ -515,6 +517,37 @@
                  :source-declaration (get-in metadata [:row :identity])
                  :translation-rule "java-static-interface-companion-type"))))))
 
+(defn- generic-erasure-interface-row
+  "Maps a row of a derived generic erasure interface `IName`, which the
+  translator emits beside a generic Java class `Name` used through wildcard
+  or raw types, to that class's Java declaration."
+  [workspace row metadata-rows]
+  (let [owner (normalize-owner (:owner row))
+        segments (str/split owner #"\.")
+        interface-name (last segments)]
+    (when (and (re-matches #"I[A-Z].*" interface-name)
+               (or (= "type" (:kind row)) (= "method" (:kind row))))
+      (let [class-owner (str/join "." (concat (butlast segments)
+                                              [(subs interface-name 1)]))
+            class-types
+            (filter
+             #(and (= "type" (get-in % [:generated :destination :kind]))
+                   (= class-owner
+                      (normalize-owner
+                       (get-in % [:generated :destination :owner]))))
+             metadata-rows)]
+        (when (= 1 (count class-types))
+          (let [metadata (first class-types)]
+            (assoc row
+                   :source-provenance
+                   (portable-provenance
+                    workspace (get-in metadata [:generated :source :location]))
+                   :source-declaration (get-in metadata [:row :identity])
+                   :translation-rule
+                   (if (= "type" (:kind row))
+                     "java-generic-erasure-interface-type"
+                     "java-generic-erasure-interface-member"))))))))
+
 (defn annotate-contract-rows!
   "Joins every reflected row either to one exact selected Java declaration or
   to an explicitly public reusable compatibility declaration/CLR accessor."
@@ -585,6 +618,7 @@
                 (closeable-disposable-row workspace row type-metadata)
                 (functional-adapter-row workspace row metadata-rows)
                 (static-interface-companion-row workspace row metadata-rows)
+                (generic-erasure-interface-row workspace row metadata-rows)
                 (let [owner (:owner row)
                       provenance
                       (registered-compatibility-provenance owner)]

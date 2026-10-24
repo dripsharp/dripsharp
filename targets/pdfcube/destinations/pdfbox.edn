@@ -115,14 +115,13 @@
    :projection :skia-sharp}]
  :internal-capabilities
  #{:calendar-value-semantics :icc :jbig2 :jpx :managed-raster :printing
-   :security-handler-erasure :skia-graphics :unicode-bidi}
+   :pdfbox-crypto :skia-graphics :unicode-bidi}
  :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
  :bridge-capabilities #{:java-bidi}
  :runtime-sources
  ["runtime/DripSharp.PdfCarton.Fonts.Compat.cs"
   "runtime/DripSharp.PdfCarton.AreaIntersection.cs"
   "runtime/DripSharp.PdfCarton.Icc.cs"
-  "runtime/DripSharp.PdfCarton.ImageCodecs.cs"
-  "runtime/DripSharp.PdfCarton.Compat.cs"]
+  "runtime/DripSharp.PdfCarton.ImageCodecs.cs"]
  :public-surface
  {:strategy dripsharp.pdfcube.java-project/public-surface-strategy}}

@@ -839,6 +839,12 @@
       (spit (str file) (str (pr-str portable-metadata) "\n"))
       (assoc emission :public-metadata-file file :public-metadata metadata))))
 
+(defn- dependency-facts
+  "Merges the translation facts that dependency emissions export for their
+  dependents (sets keyed by fact)."
+  [dependency-emissions]
+  (apply merge-with into {} (keep :emission-facts dependency-emissions)))
+
 (defn- generate-prepared-profile!
   [{:keys [root target graph profile-name source-project project-input
            dependency-emissions discover-main-fn validate-project-input-fn
@@ -892,6 +898,8 @@
                            :project-input input-model
                            :resolved-model java-model
                            :public-api-boundary emission-public-api-boundary
+                           :dependency-facts
+                           (dependency-facts dependency-emissions)
                            :configuration destination
                            :rule-bundle rule-bundle})
          destination)

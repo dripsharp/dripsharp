@@ -83,14 +83,8 @@
   {:id "SkiaSharp"
    :version "4.150.1"
    :projection :skia-sharp}]
- :internal-capabilities #{:preflight-font-erasure}
- :generic-erasure-mappings
- {"org.apache.pdfbox.preflight.font.container.FontContainer"
-  "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"
-  "org.apache.pdfbox.preflight.font.FontValidator"
-  "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator"}
+ :internal-capabilities #{}
  :destination-capabilities #{:java-compat :java-regex-unicode}
  :bridge-capabilities #{}
- :runtime-sources ["runtime/DripSharp.PdfCarton.Preflight.Compat.cs"]
  :public-surface
  {:strategy dripsharp.pdfcube.java-project/public-surface-strategy}}

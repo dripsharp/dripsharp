@@ -79,30 +79,4 @@
    :public-types
    {:count 0
     :sha256
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
-  {:id :pdfcube/pdfbox-compat
-   :kind :file
-   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Compat.cs"
-   :include-pattern nil
-   :charset nil
-   :capability nil
-   :source-files 1
-   :source-inventory-sha256
-   "b6cb60928472674c4d2740c4c7245967f4a6d7d0e5468c700eeff43343d88511"
-   :public-types
-   {:count 1
-    :sha256
-    "3cc685fe26a5c912f207b92c2fd93fbf4562d04074081b7f400df51b5567f300"}}
-  {:id :pdfcube/preflight-compat
-   :kind :file
-   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Preflight.Compat.cs"
-   :include-pattern nil
-   :charset nil
-   :capability nil
-   :source-files 1
-   :source-inventory-sha256
-   "edf05663a8c56884ff0ae6b94893d8beac88f3a7f3545885aeefaa3576349404"
-   :public-types
-   {:count 2
-    :sha256
-    "61aad4ec327b871fceb2b3ae844e48fbdd9d65c000543e97537f29251ce3a125"}}]}
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}]}

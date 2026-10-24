@@ -1772,10 +1772,6 @@
   (fn [target arguments]
     (call-node target member arguments)))
 
-(def ^:private translated-project-invocation-adaptations
-  {"executable:org.apache.pdfbox.preflight.PreflightPath#getClosestTypePosition(java.lang.Class)"
-   (direct-instance-adaptation "GetClosestTypePosition")})
-
 (def ^:private graphics-invocation-adaptations
   {"executable:java.awt.Graphics#clearRect(int,int,int,int)"
    (direct-instance-adaptation "ClearRect")
@@ -2886,12 +2882,6 @@
 (def ^:private pdfbox-codec-legal-files
   (baseline/legal-files :pdfcube [:codecs]))
 
-(def ^:private preflight-generic-erasure-mappings
-  {"org.apache.pdfbox.preflight.font.container.FontContainer"
-   "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"
-   "org.apache.pdfbox.preflight.font.FontValidator"
-   "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator"})
-
 (defn- baseline-profile
   [profile-key]
   (baseline/profile :pdfcube profile-key))
@@ -3019,7 +3009,7 @@
     :legal-files (into legal-files pdfbox-codec-legal-files)
     :internal-capabilities
     #{:calendar-value-semantics :icc :jbig2 :jpx :managed-raster :printing
-      :security-handler-erasure :skia-graphics :unicode-bidi}
+      :pdfbox-crypto :skia-graphics :unicode-bidi}
     :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
     :bridge-capabilities #{:java-bidi}}
 
@@ -3055,8 +3045,7 @@
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package csharp-package memory-package code-pages-package
                        skia-package]
-    :internal-capabilities #{:preflight-font-erasure}
-    :generic-erasure-mappings preflight-generic-erasure-mappings
+    :internal-capabilities #{}
     :destination-capabilities #{:java-compat :java-regex-unicode}
     :bridge-capabilities #{}}))
 
@@ -3328,13 +3317,13 @@
         (vec
          (remove
           nil?
-          [(when (or (contains? (:internal-capabilities configuration) :security-handler-erasure)
+          [(when (or (contains? (:internal-capabilities configuration) :pdfbox-crypto)
                      (contains? #{:fontbox :pdfbox :preflight} (:pdfcube-product configuration)))
              (project-xml/element
               "DefineConstants"
               [(project-xml/text
                 (str "$(DefineConstants)"
-                     (when (contains? (:internal-capabilities configuration) :security-handler-erasure)
+                     (when (contains? (:internal-capabilities configuration) :pdfbox-crypto)
                        ";DRIPSHARP_PDFBOX_CRYPTO")
                      (when (contains? #{:fontbox :pdfbox :preflight} (:pdfcube-product configuration))
                        ";DRIPSHARP_SHARED_JAVA_FILE")))]))
@@ -3365,41 +3354,12 @@
   (or (:compatibility-namespace configuration)
       base-compatibility-namespace))
 
-(defn- insert-node
-  [nodes index node]
-  (vec (concat (subvec nodes 0 index)
-               [node]
-               (subvec nodes index))))
-
 (defn- declaration?
   [node declaration-kind source-qualified-name]
   (and (= :declaration (:kind node))
        (= declaration-kind (get-in node [:data :declaration-kind]))
        (= source-qualified-name
           (get-in node [:data :source-qualified-name]))))
-
-(defn- add-base-contract
-  [declaration base-contract]
-  (let [header (:header declaration)
-        nodes (:nodes header)]
-    (when-not (and (= :sequence (:kind header)) (vector? nodes))
-      (fail! "Structured type declaration has no composable header"
-             {:kind :invalid-pdfcube-structured-declaration
-              :declaration-data (:data declaration)}))
-    (let [insertion
-          (if (get-in declaration [:data :has-constraints?])
-            (dec (count nodes))
-            (count nodes))
-          separator
-          (if (get-in declaration [:data :has-base-types?]) ", " " : ")]
-      (-> declaration
-          (assoc-in [:header :nodes]
-                    (insert-node
-                     nodes
-                     insertion
-                     (csharp/sequence-node
-                      [(csharp/raw separator) (csharp/raw base-contract)])))
-          (assoc-in [:data :has-base-types?] true)))))
 
 (defn- update-declaration
   [node declaration-kind source-qualified-name update-node]
@@ -3419,56 +3379,6 @@
             :declaration-data (:data declaration)}))
   (update-in declaration [:body :statements :statements]
              #(vec (cons member %))))
-
-(def ^:private security-handler-carrier
-  (str "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler"
-       "<global::DripSharp.PdfCarton.Pdmodel.Encryption.ProtectionPolicy>"))
-
-(def ^:private erased-security-handler
-  "global::DripSharp.Runtime.PdfBoxSecurityHandler")
-
-(defn- replace-security-handler-carrier
-  [node]
-  (-> node
-      (csharp/transform
-       (fn [current]
-         (if (= security-handler-carrier
-                (:text (csharp/render-raw current)))
-           (cond-> (csharp/raw erased-security-handler)
-             (seq (:sources current))
-             (assoc :sources (:sources current)))
-           current)))
-      (csharp/replace-raw-text
-       [[security-handler-carrier erased-security-handler]])))
-
-(defn- security-handler-declaration?
-  [node]
-  (let [found? (volatile! false)]
-    (csharp/transform
-     node
-     (fn [current]
-       (when
-        (declaration?
-         current :type "org.apache.pdfbox.pdmodel.encryption.SecurityHandler")
-         (vreset! found? true))
-       current))
-    @found?))
-
-(defn- erase-security-handler-carrier
-  [configuration node]
-  (if-not (contains? (:internal-capabilities configuration)
-                     :security-handler-erasure)
-    node
-    (let [security-handler? (security-handler-declaration? node)]
-      (cond-> node
-        (not security-handler?)
-        replace-security-handler-carrier
-
-        security-handler?
-        (update-declaration
-         :type
-         "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
-         #(add-base-contract % erased-security-handler))))))
 
 (defn- replace-rendered-statement
   [declaration rendered-statement replacement-statement {:keys [every?]}]
@@ -3794,122 +3704,6 @@
        node
        owned-bitmap-statement-rewrites))))
 
-(def ^:private preflight-font-container-contract
-  "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer")
-
-(def ^:private preflight-font-validator-contract
-  "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator")
-
-(defn- replace-single-generic-argument
-  [node targets source replacement]
-  (csharp/transform
-   node
-   (fn [current]
-     (if
-      (and
-       (= :generic-name (:kind current))
-       (contains? targets (:text (csharp/render-raw (:target current))))
-       (= 1 (count (:arguments current)))
-       (= source
-          (:text (csharp/render-raw (first (:arguments current))))))
-       (update current :arguments
-               (fn [[argument]]
-                 [(csharp/sequence-node
-                   [argument (csharp/raw replacement)])]))
-       current))))
-
-(defn- replace-rendered-node
-  [node source replacement]
-  (csharp/transform
-   node
-   (fn [current]
-     (if (= source (:text (csharp/render-raw current)))
-       (cond-> replacement
-         (seq (:sources current))
-         (assoc :sources (:sources current)))
-       current))))
-
-(defn- erase-generic-name
-  [node name]
-  (csharp/transform
-   node
-   (fn [current]
-     (let [rendered
-           (when (= :generic-name (:kind current))
-             (:text (csharp/render-raw current)))]
-       (if (and rendered
-                (str/includes? rendered (str name "<")))
-         (:target current)
-         current)))))
-
-(defn- preserve-preflight-generic-contracts
-  [configuration node]
-  (if-not (= "DripSharp.PdfCarton.Preflight" (get-in configuration [:package :id]))
-    node
-    (-> node
-        (update-declaration
-         :type
-         "org.apache.pdfbox.preflight.font.container.FontContainer"
-         #(add-base-contract % "IFontContainer"))
-        (update-declaration
-         :type
-         "org.apache.pdfbox.preflight.font.FontValidator"
-         #(-> %
-              (add-base-contract "IFontValidator")
-              (prepend-member
-               (csharp/raw
-                (str preflight-font-container-contract
-                     " IFontValidator.GetFontContainer() => "
-                     "GetFontContainer();")))))
-        (update-declaration
-         :type
-         "org.apache.pdfbox.preflight.font.Type3FontValidator"
-         #(replace-single-generic-argument
-           (replace-rendered-node
-            %
-            "global::System.Array.Empty<float>()"
-            (csharp/invocation
-             (csharp/generic-name
-              (csharp/raw "global::System.Array.Empty")
-              [(csharp/raw "float?")])
-             []))
-           #{"global::System.Collections.Generic.IList"}
-           "float"
-           "?"))
-        (update-declaration
-         :method
-         "org.apache.pdfbox.preflight.PreflightPath"
-         (fn [declaration]
-           (if (= "getClosestTypePosition"
-                  (get-in declaration [:data :source-name]))
-             (update declaration :header replace-rendered-node
-                     "<T>" (csharp/raw ""))
-             declaration)))
-        (update-declaration
-         :method
-         "org.apache.pdfbox.preflight.PreflightPath"
-         (fn [declaration]
-           (if (= "getClosestPathElement"
-                  (get-in declaration [:data :source-name]))
-             (if (str/includes? (:text (csharp/render-raw (:body declaration)))
-                                "GetPathElement<T>")
-               declaration
-               (update declaration :body csharp/replace-raw-text
-                       [["GetPathElement" "GetPathElement<T>"]]))
-             declaration)))
-        (update-declaration
-         :method
-         "org.apache.pdfbox.preflight.font.Type0FontValidator"
-         (fn [declaration]
-           (if (= "createDescendantValidator"
-                  (get-in declaration [:data :source-name]))
-             (update declaration :body csharp/replace-raw-text
-                     [["var cidFontValidator = default!;"
-                       (str preflight-font-validator-contract
-                            " cidFontValidator = default!;")]])
-             declaration)))
-        (erase-generic-name "GetClosestTypePosition"))))
-
 (defn- transform-node [configuration node]
   (let [destination (compatibility-namespace configuration)
         node
@@ -3925,10 +3719,7 @@
                                           (str base-compatibility-namespace "." name)])
                               ["JavaFile" "JavaFileBridge" "JavaFileBoundary"])))
                node)]
-    (->> node
-         (erase-security-handler-carrier configuration)
-         (own-intermediate-bitmaps configuration)
-         (preserve-preflight-generic-contracts configuration))))
+    (own-intermediate-bitmaps configuration node)))
 
 (defn- compatibility-asset [configuration asset]
   (let [asset (if (= base-compatibility-namespace
@@ -4085,28 +3876,7 @@
       :authorship-class :vendored-third-party
       :strategy :pdfcube.pdfbox/jpx-source
       :missing-kind :missing-pdfcube-jpx-source
-      :missing-message "Pinned PdfCarton JPEG 2000 source is missing"})
-
-    (contains? (:internal-capabilities configuration)
-               :security-handler-erasure)
-    (conj
-     {:source
-      (configured-runtime-source configuration "DripSharp.PdfCarton.Compat.cs")
-      :destination "DripSharp/Runtime/PdfBoxSecurityHandler.cs"
-      :strategy :pdfcube.pdfbox/security-handler-erasure
-      :missing-kind :missing-pdfcube-pdfbox-compatibility-source
-      :missing-message "PdfCarton PDFBox compatibility source is missing"})
-
-    (contains? (:internal-capabilities configuration)
-               :preflight-font-erasure)
-    (conj
-     {:source
-      (configured-runtime-source configuration
-                                 "DripSharp.PdfCarton.Preflight.Compat.cs")
-      :destination "DripSharp/Runtime/PdfCartonPreflightCompat.cs"
-      :strategy :pdfcube.preflight/font-erasure
-      :missing-kind :missing-pdfcube-preflight-compatibility-source
-      :missing-message "PdfCarton Preflight compatibility source is missing"})))
+      :missing-message "Pinned PdfCarton JPEG 2000 source is missing"})))
 
 (defn rule-bundle
   "Returns the PdfCarton rule bundle composed over reusable Java-library rules."
@@ -4138,7 +3908,6 @@
 
                    :executable
                    (or (contains? commons-invocation-adaptations key)
-                       (contains? translated-project-invocation-adaptations key)
                        (contains? graphics-invocation-adaptations key)
                        (and
                         (contains? (:internal-capabilities configuration)
@@ -4162,7 +3931,6 @@
            (let [configuration (:configuration options)
                  invocation-adaptations
                  (cond-> (merge commons-invocation-adaptations
-                                translated-project-invocation-adaptations
                                 graphics-invocation-adaptations
                                 (when-let [[source-package destination-namespace]
                                            (first (:namespace-prefixes configuration))]
@@ -4174,6 +3942,7 @@
                    (merge font-discovery-invocation-adaptations))]
              (base-create-context
               (assoc options
+                     :derived-generic-erasure? true
                      :destination-type-mappings commons-type-mappings
                      :destination-constructor-adaptations
                      commons-constructor-adaptations

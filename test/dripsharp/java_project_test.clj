@@ -5,6 +5,7 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.complete-parser-fixture :as fixture]
             [dripsharp.concurrency :as concurrency]
+            [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
@@ -41,6 +42,26 @@
 
 (def ^:private pdfbox-non-affiliation-disclaimer
   "This package is an independent translation and is not affiliated with, endorsed by, or sponsored by the Apache Software Foundation.")
+
+(deftest authored-rule-line-count-covers-multiline-spans
+  (let [authored #(csharp/with-source % {:rule :test/rule :authored-rule true})
+        rendered
+        (csharp/render-raw
+         (csharp/sequence-node
+          [(csharp/raw "m0\n")
+           (authored (csharp/sequence-node
+                      [(csharp/raw "a1\n")
+                       (authored (csharp/raw "a2\n"))]))
+           (csharp/raw "m3 ")
+           (authored (csharp/raw "a3"))
+           (csharp/raw "\nm4\n")]))]
+    (is (= "m0\na1\na2\nm3 a3\nm4\n" (:text rendered)))
+    ;; Lines 1-3 carry authored text: a span ending just after a newline does
+    ;; not reach the next line, nested spans count once, and a line mixing
+    ;; mechanical and authored text counts as authored.
+    (is (= 3 (project-emission/authored-rule-line-count rendered)))
+    (is (zero? (project-emission/authored-rule-line-count
+                (csharp/render-raw (csharp/raw "m0\nm1\n")))))))
 
 (deftest generated-package-descriptions-carry-target-specific-disclaimers
   (let [workspace (paths/workspace-root)

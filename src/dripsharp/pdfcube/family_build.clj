@@ -38,7 +38,9 @@
           "java-compatibility-member"
           "java-compatibility-type"
           "java-functional-adapter-member"
-          "java-functional-adapter-type"}))
+          "java-functional-adapter-type"
+          "java-generic-erasure-interface-member"
+          "java-generic-erasure-interface-type"}))
 
 (defn- fail!
   [message data]

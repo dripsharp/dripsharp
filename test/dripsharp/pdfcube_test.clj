@@ -83,17 +83,6 @@
                      ((:text-transform %) source)))
                 codec-assets))))
 
-(defn- structured-type
-  [qualified-name header-nodes members constraints?]
-  (csharp/declaration
-   (csharp/sequence-node header-nodes)
-   (csharp/block (csharp/statement-list members "\n\n"))
-   {:declaration-kind :type
-    :name (last (str/split qualified-name #"[.]"))
-    :source-qualified-name qualified-name
-    :has-base-types? false
-    :has-constraints? constraints?}))
-
 (deftest compatibility-namespace-transform-shifts-source-map-ranges
   (let [source-token "global::DripSharp.Runtime"
         destination-token "global::DripSharp.PdfCarton.Runtime.Fonts"
@@ -129,225 +118,6 @@
            (get by-source first-source)))
     (is (= {:start second-start :end (count (:text transformed))}
            (get by-source second-source)))))
-
-(deftest preflight-font-types-implement-erased-runtime-contracts
-  (let [configuration {:package {:id "DripSharp.PdfCarton.Preflight"}}
-        container
-        "global::DripSharp.PdfCarton.Preflight.Font.Container.FontContainer"
-        font-like "global::DripSharp.PdfCarton.Pdmodel.Font.PDFontLike"
-        container-result
-        (render-transformed
-         configuration
-         (structured-type
-          "org.apache.pdfbox.preflight.font.container.FontContainer"
-          [(csharp/raw "public abstract class FontContainer<T>")
-           (csharp/raw (str " where T : " font-like))]
-          [(csharp/raw (str "private " container "<object> value;"))]
-          true))
-        validator-result
-        (render-transformed
-         configuration
-         (structured-type
-          "org.apache.pdfbox.preflight.font.FontValidator"
-          [(csharp/raw "public abstract class FontValidator<T>")
-           (csharp/raw
-            (str " where T : "
-                 "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"))]
-          [(csharp/raw
-            (str "private global::DripSharp.PdfCarton.Preflight.Font.FontValidator<"
-                 container
-                 "<global::DripSharp.PdfCarton.Pdmodel.Font.PDCIDFont>> value;"))]
-          true))]
-    (is (not (str/includes? (:text container-result)
-                            "public interface IFontContainer")))
-    (is (str/includes?
-         (:text container-result)
-         "public abstract class FontContainer<T> : IFontContainer"))
-    (is (not (str/includes? (:text validator-result)
-                            "public interface IFontValidator")))
-    (is (str/includes?
-         (:text validator-result)
-         (str "public abstract class FontValidator<T> : IFontValidator where T : "
-              "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer")))
-    (is (str/includes?
-         (:text validator-result)
-         (str "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer "
-              "IFontValidator.GetFontContainer() => GetFontContainer();")))))
-
-(deftest preflight-position-lookup-erases-unused-method-type-parameter
-  (let [position-method
-        (csharp/declaration
-         (csharp/sequence-node
-          [(csharp/raw "public int ")
-           (csharp/raw "GetClosestTypePosition")
-           (csharp/raw "<T>")
-           (csharp/raw "(global::System.Type type)")])
-         (csharp/block
-          (csharp/statement-list [(csharp/raw "return -1;")] "\n"))
-         {:declaration-kind :method
-          :source-qualified-name
-          "org.apache.pdfbox.preflight.PreflightPath"
-          :source-name "getClosestTypePosition"})
-        path-method
-        (csharp/declaration
-         (csharp/raw
-          "public T GetClosestPathElement<T>(global::System.Type type)")
-         (csharp/block
-          (csharp/statement-list
-           [(csharp/sequence-node
-             [(csharp/raw "return ")
-              (csharp/raw "GetPathElement")
-              (csharp/raw "(")
-              (csharp/invocation
-               (csharp/generic-name
-                (csharp/sequence-node
-                 [(csharp/raw "vPath.")
-                  (csharp/raw "GetClosestTypePosition")])
-                [(csharp/raw "object")])
-               [(csharp/raw "type")])
-              (csharp/raw ", type);")])]
-           "\n"))
-         {:declaration-kind :method
-          :source-qualified-name
-          "org.apache.pdfbox.preflight.PreflightPath"
-          :source-name "getClosestPathElement"})
-        transformed
-        (render-transformed
-         {:package {:id "DripSharp.PdfCarton.Preflight"}}
-         (csharp/sequence-node [position-method path-method] "\n"))
-        transformed-twice
-        (csharp/render
-         (transform-node
-          {:package {:id "DripSharp.PdfCarton.Preflight"}}
-          (transform-node
-           {:package {:id "DripSharp.PdfCarton.Preflight"}}
-           (csharp/sequence-node [position-method path-method] "\n"))))]
-    (is (str/includes?
-         (:text transformed)
-         "public int GetClosestTypePosition(global::System.Type type)"))
-    (is (not (str/includes? (:text transformed)
-                            "GetClosestTypePosition<T>")))
-    (is (str/includes? (:text transformed)
-                       "GetPathElement<T>("))
-    (is (not (str/includes? (:text transformed-twice)
-                            "GetPathElement<T><T>")))
-    (is (not (str/includes? (:text transformed)
-                            "GetClosestTypePosition<object>")))))
-
-(deftest preflight-null-wildcard-validator-local-uses-erased-contract
-  (let [method
-        (csharp/declaration
-         (csharp/raw
-          (str "protected global::DripSharp.PdfCarton.Preflight.Font.IFontValidator "
-               "CreateDescendantValidator(object font)"))
-         (csharp/block
-          (csharp/statement-list
-           [(csharp/raw "var cidFontValidator = default!;")
-            (csharp/raw "return cidFontValidator!;")]
-           "\n"))
-         {:declaration-kind :method
-          :source-qualified-name
-          "org.apache.pdfbox.preflight.font.Type0FontValidator"
-          :source-name "createDescendantValidator"})
-        result
-        (render-transformed
-         {:package {:id "DripSharp.PdfCarton.Preflight"}}
-         method)]
-    (is (str/includes?
-         (:text result)
-         (str "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator "
-              "cidFontValidator = default!;")))
-    (is (not (str/includes? (:text result)
-                            "var cidFontValidator = default!;")))))
-
-(deftest preflight-type3-widths-preserve-nullable-boxed-floats
-  (let [configuration {:package {:id "DripSharp.PdfCarton.Preflight"}}
-        result
-        (render-transformed
-         configuration
-         (structured-type
-          "org.apache.pdfbox.preflight.font.Type3FontValidator"
-          [(csharp/raw "public class Type3FontValidator")]
-          [(csharp/sequence-node
-            [(csharp/generic-name
-              (csharp/raw "global::System.Collections.Generic.IList")
-              [(csharp/raw "float")])
-             (csharp/raw " widths = value;\nfloat width = ")
-             (csharp/invocation
-              (csharp/generic-name
-               (csharp/raw
-                "global::DripSharp.Runtime.JavaCompat.UnboxObject")
-               [(csharp/raw "float")])
-              [(csharp/raw "value")])
-             (csharp/raw ";\nreturn ")
-             (csharp/sequence-node
-              [(csharp/raw "global::System.Array.Empty<")
-               (csharp/raw "float")
-               (csharp/raw ">()")])
-             (csharp/raw ";")])]
-          false))]
-    (is (str/includes?
-         (:text result)
-         "global::System.Collections.Generic.IList<float?> widths"))
-    (is (str/includes?
-         (:text result)
-         (str "float width = global::DripSharp.Runtime.JavaCompat."
-              "UnboxObject<float>(value);")))
-    (is (str/includes?
-         (:text result)
-         "return global::System.Array.Empty<float?>();"))))
-
-(deftest pdfbox-security-handler-erasure-preserves-specialized-handlers
-  (let [carrier
-        (str "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler"
-             "<global::DripSharp.PdfCarton.Pdmodel.Encryption.ProtectionPolicy>")
-        erased "global::DripSharp.Runtime.PdfBoxSecurityHandler"
-        specialized
-        (str "public sealed class StandardSecurityHandler : "
-             "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler"
-             "<global::DripSharp.PdfCarton.Pdmodel.Encryption.StandardProtectionPolicy> {}")
-        structured-carrier
-        (csharp/declaration
-         (csharp/sequence-node
-          [(csharp/raw "public ")
-           (csharp/generic-name
-            (csharp/raw
-             "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler")
-            [(csharp/raw
-              "global::DripSharp.PdfCarton.Pdmodel.Encryption.ProtectionPolicy")])
-           (csharp/raw " Create() => default!")]))
-        configuration {:internal-capabilities #{:security-handler-erasure}}]
-    (is (= (str "public " erased " Create() => default!;")
-           (:text
-            (render-transformed
-             configuration
-             (csharp/raw
-              (str "public " carrier " Create() => default!;"))))))
-    (is (= (str "public " erased " Create() => default!;")
-           (:text
-            (render-transformed configuration structured-carrier))))
-    (is (= (str "#nullable disable\n"
-                "public abstract class SecurityHandler<TPOLICY> : "
-                erased " where TPOLICY : ProtectionPolicy {\n"
-                "private int value = " carrier ".DEFAULT_KEY_LENGTH;\n}")
-           (:text
-            (render-transformed
-             configuration
-             (csharp/sequence-node
-              [(csharp/raw "#nullable disable\n")
-               (csharp/sequence-node
-                [(structured-type
-                  "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
-                  [(csharp/raw
-                    "public abstract class SecurityHandler<TPOLICY>")
-                   (csharp/raw " where TPOLICY : ProtectionPolicy")]
-                  [(csharp/raw
-                    (str "private int value = " carrier
-                         ".DEFAULT_KEY_LENGTH;"))]
-                  true)])])))))
-    (is (= specialized
-           (:text
-            (render-transformed configuration (csharp/raw specialized)))))))
 
 (deftest annotation-matrix-and-word-normalization-are-emitted-unchanged
   (doseq [[type-name source-name statements]
@@ -701,14 +471,10 @@
     (is (= #{}
            (:bridge-capabilities
             (:destination (read-profile-and-destination "pdfcube-preflight")))))
-    (is (= #{:preflight-font-erasure}
+    (is (= #{}
            (:internal-capabilities
             (:destination (read-profile-and-destination "pdfcube-preflight")))))
-    (is (=
-         {"org.apache.pdfbox.preflight.font.container.FontContainer"
-          "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"
-          "org.apache.pdfbox.preflight.font.FontValidator"
-          "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator"}
+    (is (nil?
          (:generic-erasure-mappings
           (:destination
            (read-profile-and-destination "pdfcube-preflight")))))
@@ -1005,6 +771,215 @@
     (is (str/includes? source "public override bool IsLocked()"))
     (is (not (re-find #"class Locked\s*:[^{]*Lockable" source)))
     (is (builds-without-warnings? emission))))
+
+(deftest generic-classes-used-through-wildcards-get-a-derived-erasure-interface
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-io")
+        fixture
+        (model!
+         "org/apache/pdfbox/io/ErasureFixture.java"
+         (str "package org.apache.pdfbox.io; "
+              "import java.util.ArrayList; import java.util.List; "
+              "public final class ErasureFixture { "
+              "public static class Policy {} "
+              "public static final class StrictPolicy extends Policy {} "
+              "public abstract static class Handler<P extends Policy> { "
+              "private P policy; "
+              "public abstract boolean isStrict(); "
+              "public P getPolicy() { return policy; } "
+              "public void setPolicy(P policy) { this.policy = policy; } "
+              "protected int keyLength() { return 40; } "
+              "public static int defaultKeyLength() { return 40; } } "
+              "public static final class StrictHandler extends Handler<StrictPolicy> { "
+              "@Override public boolean isStrict() { return true; } } "
+              "public static final class LooseHandler extends Handler<Policy> { "
+              "@Override public boolean isStrict() { return false; } } "
+              "public static final class Plain<V> { public V value; } "
+              "public static class Base { public int size() { return 0; } } "
+              "public static final class Box<T> extends Base {} "
+              "public static final class Mapper<T> { "
+              "public <U> U identity(U value) { return value; } } "
+              "public static final class Bag<T> { "
+              "public List<T> values() { return new ArrayList<>(); } } "
+              "static int kept(Box<?> box, Mapper<?> mapper, Bag<?> bag) { "
+              "return box.size() + mapper.identity(\"x\").length() "
+              "+ bag.values().size(); } "
+              "private Handler<? extends Policy> current; "
+              "private final List<Handler<?>> all = new ArrayList<>(); "
+              "private final Plain<String> plain = new Plain<>(); "
+              "static boolean known(Class<? extends Handler> type) { return type != null; } "
+              "static boolean handler(Object value) { return value instanceof Handler; } "
+              "@SuppressWarnings(\"unchecked\") "
+              "static Handler<Policy> carrier(Object handler) { "
+              "return (Handler<Policy>) handler; } "
+              "public int use(boolean strict) { "
+              "if (strict) { current = new StrictHandler(); } "
+              "else { current = new LooseHandler(); } "
+              "all.add(current); "
+              "Handler<Policy> carrier = carrier(new StrictHandler()); "
+              "carrier.setPolicy(new StrictPolicy()); "
+              "return current.keyLength() + all.size() + Handler.defaultKeyLength() "
+              "+ (carrier.getPolicy() == null ? 0 : 1) + plain.value.length(); } "
+              "public static <T> int position(Class<T> type) { "
+              "return type == null ? -1 : 0; } "
+              "@SuppressWarnings(\"unchecked\") "
+              "public static <T> T element(Object value, Class<T> type) { "
+              "return (T) value; } "
+              "public static <T> int count(Class<T> type) { "
+              "List<T> values = new ArrayList<T>(); return values.size(); } "
+              "public static int lookup() { return position(String.class) "
+              "+ element(\"x\", String.class).length() + count(String.class); } } "
+              "abstract class Checker<H extends ErasureFixture.Handler> { "
+              "private final H handler; "
+              "Checker(H handler) { this.handler = handler; } "
+              "public H getHandler() { return handler; } "
+              "abstract void check(); } "
+              "final class StrictChecker extends Checker<ErasureFixture.StrictHandler> { "
+              "StrictChecker() { super(new ErasureFixture.StrictHandler()); } "
+              "@Override void check() {} "
+              "static boolean strict(Checker<? extends ErasureFixture.Handler<?>> checker) { "
+              "return checker.getHandler().isStrict(); } }"))
+        emission (emit! fixture destination)
+        read (fn [file]
+               (slurp (str (paths/resolve-path
+                            (:project-root emission)
+                            (str "src/DripSharp/PdfCarton/IO/" file)))))
+        source (read "ErasureFixture.cs")
+        checker (read "Checker.cs")
+        strict-checker (read "StrictChecker.cs")
+        compact #(str/replace % #"\s+" " ")
+        fixture-type "global::DripSharp.PdfCarton.IO.ErasureFixture"
+        erased (str fixture-type ".IHandler")]
+    (testing "the interface is derived from the class's instance methods at their erasure"
+      (is (str/includes?
+           (compact source)
+           (str "public interface IHandler { bool IsStrict(); "
+                fixture-type ".Policy GetPolicy(); "
+                "void SetPolicy(" fixture-type ".Policy policy); "
+                "int KeyLength(); }")))
+      (is (re-find #"public abstract class Handler<P> : IHandler where P" source))
+      (is (not (re-find #"interface IHandler[^}]*DefaultKeyLength" source))))
+    (testing "methods naming a type parameter or not public are bridged explicitly"
+      (is (str/includes? (compact source)
+                         (str fixture-type ".Policy IHandler.GetPolicy() => "
+                              "this.GetPolicy();")))
+      (is (str/includes? (compact source)
+                         (str "void IHandler.SetPolicy(" fixture-type
+                              ".Policy policy) => this.SetPolicy((P)(object)policy);")))
+      (is (str/includes? source "int IHandler.KeyLength() => this.KeyLength();"))
+      (is (not (str/includes? source "IHandler.IsStrict()"))))
+    (testing "wildcard, raw and bound-instantiation values use the interface"
+      (is (str/includes? source (str "private " erased " current")))
+      (is (str/includes? source
+                         (str "global::System.Collections.Generic.IList<" erased "> all")))
+      (is (str/includes? source (str "internal static " erased " carrier(object handler)")))
+      (is (re-find (re-pattern (str "\\Q" erased "\\E carrier\\s+= ")) source))
+      (is (str/includes? source (str "value is " erased))))
+    (testing "created, statically accessed and inherited types keep the class"
+      (is (str/includes? source (str "new " fixture-type ".StrictHandler()")))
+      (is (str/includes? source (str fixture-type ".Handler<" fixture-type
+                                     ".Policy>.DefaultKeyLength()")))
+      (is (str/includes? (compact source)
+                         (str "class StrictHandler : " fixture-type ".Handler<"
+                              fixture-type ".StrictPolicy>")))
+      (is (not (str/includes? source "IPlain"))))
+    (testing "classes an erasure interface cannot represent keep the class"
+      (doseq [name ["IBox" "IMapper" "IBag"]]
+        (is (not (str/includes? source name)) name)))
+    (testing "a raw type-parameter bound erases to the interface"
+      (is (str/includes? (compact checker)
+                         (str "internal abstract class Checker<H> : IChecker where H : "
+                              erased)))
+      (is (str/includes? (compact checker)
+                         (str "internal interface IChecker { " erased
+                              " GetHandler(); void check(); }")))
+      (is (str/includes? (compact checker)
+                         (str erased " IChecker.GetHandler() => this.GetHandler();")))
+      (is (str/includes?
+           strict-checker
+           "internal static bool strict(global::DripSharp.PdfCarton.IO.IChecker checker)")))
+    (testing "a method type parameter seen only through Class<T> is dropped"
+      (is (str/includes? source "public static int Position(global::System.Type type)"))
+      (is (str/includes? source (str fixture-type ".Position(typeof(string))")))
+      (is (str/includes?
+           source
+           "public static T Element<T>(object value, global::System.Type type)"))
+      (is (str/includes? source (str fixture-type ".Element<string>(\"x\", typeof(string))")))
+      (is (str/includes?
+           source
+           "public static int Count<T>(global::System.Type type)")))
+    (testing "the lines the rule writes count as authored"
+      ;; The class header naming IHandler, the six interface lines, and the
+      ;; three bridges, one of which the presentation pass wraps to two lines.
+      (is (= 11 (some #(when (str/ends-with? (:file %) "ErasureFixture.cs")
+                         (:authored-rule-lines %))
+                      (:artifacts emission)))))
+    (is (builds-without-warnings? emission))))
+
+(deftest sibling-project-nullable-boxed-collections-keep-nullable-elements
+  (let [numbers-source
+        (str "package org.apache.pdfbox.cos; "
+             "import java.util.ArrayList; import java.util.List; "
+             "public final class NumberListFixture { "
+             "public List<Float> withGaps() { "
+             "List<Float> values = new ArrayList<>(); "
+             "values.add(1f); values.add(null); return values; } "
+             "public List<Float> dense() { "
+             "List<Float> values = new ArrayList<>(); "
+             "values.add(1f); return values; } }")
+        {pdfbox :destination} (read-profile-and-destination "pdfcube-pdfbox")
+        dependency
+        (emit! (model! "org/apache/pdfbox/cos/NumberListFixture.java"
+                       numbers-source)
+               pdfbox)
+        facts (:emission-facts dependency)
+        {preflight :destination} (read-profile-and-destination "pdfcube-preflight")
+        fixture
+        (model!
+         "org/apache/pdfbox/preflight/WidthsFixture.java"
+         (str "package org.apache.pdfbox.preflight; "
+              "import java.util.Collections; import java.util.List; "
+              "import org.apache.pdfbox.cos.NumberListFixture; "
+              "public final class WidthsFixture { "
+              "public List<Float> widths(NumberListFixture numbers) { "
+              "if (numbers != null) { return numbers.withGaps(); } "
+              "return Collections.emptyList(); } "
+              "public List<Float> dense(NumberListFixture numbers) { "
+              "return numbers.dense(); } "
+              "public boolean first(NumberListFixture numbers) { "
+              "List<Float> widths = widths(numbers); "
+              "return widths.get(0) == null; } }")
+         {"org/apache/pdfbox/cos/NumberListFixture.java" numbers-source})
+        emission
+        (concurrency/call-with-executor
+         {:worker-count 2}
+         #(project-emission/emit-project!
+           {:workspace-root (paths/workspace-root)
+            :target (temp-directory)
+            :project-input (:input fixture)
+            :resolved-model (:model fixture)
+            :dependency-facts facts
+            :configuration preflight
+            :rule-bundle (pdfcube/rule-bundle)}))
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emission)
+                     "src/DripSharp/PdfCarton/Preflight/WidthsFixture.cs")))]
+    (is (= #{"org.apache.pdfbox.cos.NumberListFixture#withGaps()"}
+           (set (:nullable-boxed-returns facts))))
+    (is (str/includes?
+         source
+         (str "public global::System.Collections.Generic.IList<float?> "
+              "Widths(global::DripSharp.PdfCarton.Cos.NumberListFixture numbers)")))
+    (is (str/includes?
+         source
+         (str "return global::DripSharp.Runtime.JavaCompat.CastList<float?>("
+              "global::System.Array.Empty<float>());")))
+    (is (str/includes? source "global::System.Collections.Generic.IList<float?> widths"))
+    (is (str/includes?
+         source
+         (str "public global::System.Collections.Generic.IList<float> "
+              "Dense(global::DripSharp.PdfCarton.Cos.NumberListFixture numbers)")))))
 
 (deftest mapped-floating-rectangle-width-preserves-java-division
   (let [{destination :destination}

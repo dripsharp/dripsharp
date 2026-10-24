@@ -1059,15 +1059,19 @@
        "\n"))
 
 (defn authored-rule-line-count
-  "Counts the lines of rendered C# that carry a node a translator rule marked
+  "Counts the lines of rendered C# spanned by a node a translator rule marked
   as authored (source metadata :authored-rule), so the authorship ledger can
   count them as authored instead of mechanical."
   [{:keys [text mappings]}]
   (let [line-of (fn [offset]
-                  (count (filter #(= \newline %) (subs text 0 offset))))]
+                  (count (filter #(= \newline %)
+                                 (subs text 0 (min (count text) offset)))))]
     (->> mappings
          (filter #(get-in % [:source :authored-rule]))
-         (map #(line-of (min (count text) (get-in % [:destination :start]))))
+         (mapcat (fn [{{:keys [start end]} :destination}]
+                   (let [first-line (line-of start)
+                         last-line (line-of (max start (dec (or end start))))]
+                     (range first-line (inc last-line)))))
          distinct
          count)))
 
@@ -1297,7 +1301,7 @@
   Callers may pass :rule-bundle directly, or configuration must select a
   namespace-qualified zero-argument bundle factory with :destination-bundle."
   [{:keys [workspace-root target project-input resolved-model configuration
-           public-api-boundary]
+           public-api-boundary dependency-facts]
     :as options}]
   (let [project-input (project-input/validate! project-input)
         rule-bundle (resolve-rule-bundle! options)
@@ -1406,6 +1410,7 @@
            :selected-declarations selected-declarations
            :public-api-type-keys public-api-type-keys
            :public-api-declaration-keys public-api-declaration-keys
+           :dependency-facts dependency-facts
            :runtime-capabilities (:runtime-capabilities rule-bundle)
            :blocker-start blocker-start
            :emit-members emit-members})
@@ -1690,4 +1695,8 @@
        :authorship authorship-ledger
        :mechanical-source-header-proof mechanical-source-header-proof
        :source-accounts accounts
-       :resource-artifacts resource-artifacts})))
+       :resource-artifacts resource-artifacts
+       :emission-facts
+       (when-let [emission-facts
+                  (rule rule-bundle :structural-declarations :emission-facts)]
+         (emission-facts resolved-model))})))

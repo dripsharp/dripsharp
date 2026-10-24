@@ -19,7 +19,7 @@
  :capabilities
  #{:calendar-value-semantics :font-discovery :icc :java-bidi :java-compat
    :java-io :java-nio :java-regex-unicode :jbig2 :jpx :managed-raster
-   :preflight-font-erasure :printing :security-handler-erasure :skia-geometry
+   :pdfbox-crypto :printing :skia-geometry
    :skia-graphics :unicode-bidi :xml}
  :authorship
  {:compatibility "config/authored-compat.edn"
@@ -77,12 +77,12 @@
    :mapping-overlays []
    :runtime-assets
    [:pdfcube/fontbox-compat :pdfcube/area-intersection :pdfcube/icc
-    :pdfcube/image-codecs :pdfcube/pdfbox-compat]
+    :pdfcube/image-codecs]
    :validation-contracts []
    :authorship
    {:sources
     [:pdfcube/fontbox-compat :pdfcube/area-intersection :pdfcube/icc
-     :pdfcube/image-codecs :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx
+     :pdfcube/image-codecs :pdfcube/jbig2 :pdfcube/jpx
      :pdfcube/jpeg]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
@@ -90,20 +90,20 @@
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing
-     :security-handler-erasure :skia-graphics :unicode-bidi}}
+     :pdfbox-crypto :skia-graphics :unicode-bidi}}
   {:id "pdfcube-preflight"
    :path "profiles/preflight.edn"
    :destination :preflight
    :mapping-overlays []
-   :runtime-assets [:pdfcube/preflight-compat]
+   :runtime-assets []
    :validation-contracts []
    :authorship
-   {:sources [:pdfcube/preflight-compat]
+   {:sources []
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
     :max-authored-fraction 47/8455}
    :required-capabilities
-   #{:java-compat :java-regex-unicode :preflight-font-erasure}}]
+   #{:java-compat :java-regex-unicode}}]
  :destinations
  [{:id :io :path "destinations/io.edn"}
   {:id :fontbox :path "destinations/fontbox.edn"}
@@ -129,13 +129,7 @@
    :capabilities #{:skia-geometry}}
   {:id :pdfcube/image-codecs
    :path "runtime/DripSharp.PdfCarton.ImageCodecs.cs"
-   :capabilities #{:jbig2 :jpx}}
-  {:id :pdfcube/pdfbox-compat
-   :path "runtime/DripSharp.PdfCarton.Compat.cs"
-   :capabilities #{:managed-raster}}
-  {:id :pdfcube/preflight-compat
-   :path "runtime/DripSharp.PdfCarton.Preflight.Compat.cs"
-   :capabilities #{:preflight-font-erasure}}]
+   :capabilities #{:jbig2 :jpx}}]
  :validation-contracts
  [{:id :pdfcube-io :kind :differential :path "validation/io.edn"}
   {:id :pdfcube-fontbox
