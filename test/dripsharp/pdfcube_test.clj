@@ -428,29 +428,25 @@
          (str "COSDictionary, "
               "global::DripSharp.PdfCarton.Cos.COSUpdateInfo")))))
 
-(deftest pdfbox-annotation-rendering-matches-content-stream-number-precision
-  (let [assignment
-        (str "global::DripSharp.PdfCarton.Util.Matrix aa = "
-             "global::DripSharp.PdfCarton.Util.Matrix.Concatenate(a, matrix);")
-        declaration
-        (csharp/declaration
-         (csharp/raw "protected internal void processAnnotation()")
-         (csharp/block [(csharp/raw assignment)])
-         {:declaration-kind :method
-          :source-name "processAnnotation"
-          :source-qualified-name
-          "org.apache.pdfbox.contentstream.PDFStreamEngine"})
-        transformed
-        (:text
-         (render-transformed
-          {:package {:id "DripSharp.PdfCarton"}}
-          declaration))]
-    (is (str/includes? transformed assignment))
-    (is (str/includes? transformed "for (int row = 0; row < 3; row++)"))
-    (is (str/includes? transformed "aa.GetValue(row, column), 5"))
-    (is (str/includes?
-         transformed
-         "global::System.MidpointRounding.AwayFromZero"))))
+(deftest annotation-matrix-and-word-normalization-are-emitted-unchanged
+  (doseq [[type-name source-name statements]
+          [["org.apache.pdfbox.contentstream.PDFStreamEngine" "processAnnotation"
+            [(str "global::DripSharp.PdfCarton.Util.Matrix aa = "
+                  "global::DripSharp.PdfCarton.Util.Matrix.Concatenate(a, matrix);")
+             "this.GetGraphicsState().SetCurrentTransformationMatrix(aa);"]]
+           ["org.apache.pdfbox.text.PDFTextStripper" "normalizeWord"
+            ["global::System.Text.StringBuilder builder = null;"
+             "return this.handleDirection(word);"]]]]
+    (let [declaration (csharp/declaration
+                       (csharp/raw (str "private object " source-name "()"))
+                       (csharp/block (mapv csharp/raw statements))
+                       {:declaration-kind :method
+                        :source-name source-name
+                        :source-qualified-name type-name})]
+      (is (= (:text (csharp/render declaration))
+             (:text (render-transformed {:package {:id "DripSharp.PdfCarton"}}
+                                        declaration)))
+          (str type-name "#" source-name)))))
 
 (deftest decode-filters-and-colour-conversions-are-emitted-unchanged
   (doseq [[type-name source-name parameter-count statement]
@@ -573,31 +569,6 @@
         (is (str/includes? rendered "area.IntersectTemporary(__dripsharpClipPath);"))
         (is (not (str/includes? rendered (str "new " area "(this.linePath)"))))
         (is (= 1 (count (re-seq #"new global::DripSharp\.Runtime\.JavaArea\(" rendered))))))))
-
-(deftest pdfbox-text-normalization-preserves-upstream-arabic-mark-order
-  (let [declaration
-        (csharp/declaration
-         (csharp/raw "private string normalizeWord(string word)")
-         (csharp/block [(csharp/raw "return word;")])
-         {:declaration-kind :method
-          :source-name "normalizeWord"
-          :source-qualified-name
-          "org.apache.pdfbox.text.PDFTextStripper"})
-        transformed
-        (:text
-         (render-transformed
-          {:package {:id "DripSharp.PdfCarton"}}
-          declaration))]
-    (is (str/includes?
-         transformed
-         (str "PdfBoxTextCompatibility.NormalizeVisualWord("
-              "word, this.sortByPosition)")))
-    (is (str/includes?
-         (slurp "targets/pdfcube/runtime/DripSharp.PdfCarton.Compat.cs")
-         "normalized = ReverseUtf16(normalized)"))
-    (is (str/includes?
-         (slurp "targets/pdfcube/runtime/DripSharp.PdfCarton.Compat.cs")
-         "return normalizedWord.ToString()"))))
 
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]

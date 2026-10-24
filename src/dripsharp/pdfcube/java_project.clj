@@ -3581,59 +3581,6 @@
      "org.apache.pdfbox.cos.UnmodifiableCOSDictionary"
      #(add-base-contract % cos-update-info-contract))))
 
-(def ^:private annotation-transform-assignment
-  (str "global::DripSharp.PdfCarton.Util.Matrix aa = "
-       "global::DripSharp.PdfCarton.Util.Matrix.Concatenate(a, matrix);"))
-
-(def ^:private annotation-transform-quantization
-  (str "for (int row = 0; row < 3; row++) {\n"
-       "for (int column = 0; column < 2; column++) {\n"
-       "aa.SetValue(row, column, (float)global::System.Math.Round("
-       "aa.GetValue(row, column), 5, "
-       "global::System.MidpointRounding.AwayFromZero));\n"
-       "}\n"
-       "}"))
-
-(defn- insert-after-rendered-statement
-  [declaration rendered-statement inserted-statement]
-  (let [found? (volatile! false)
-        transformed
-        (update
-         declaration
-         :body
-         csharp/transform
-         (fn [current]
-           (if (and (not @found?)
-                    (contains? #{:raw :sequence} (:kind current))
-                    (= rendered-statement (:text (csharp/render-raw current))))
-             (do
-               (vreset! found? true)
-               (csharp/sequence-node
-                [current (csharp/raw "\n") inserted-statement]))
-             current)))]
-    (when-not @found?
-      (fail! "Structured method is missing the expected statement"
-             {:kind :missing-pdfcube-structured-statement
-              :expected rendered-statement
-              :declaration-data (:data declaration)}))
-    transformed))
-
-(defn- preserve-skia-annotation-rasterization
-  [configuration node]
-  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
-    node
-    (update-declaration
-     node
-     :method
-     "org.apache.pdfbox.contentstream.PDFStreamEngine"
-     (fn [declaration]
-       (if (= "processAnnotation" (get-in declaration [:data :source-name]))
-         (insert-after-rendered-statement
-          declaration
-          annotation-transform-assignment
-          (csharp/raw annotation-transform-quantization))
-         declaration)))))
-
 (defn- replace-rendered-statement
   [declaration rendered-statement replacement-statement {:keys [every?]}]
   (let [found? (volatile! false)
@@ -3958,25 +3905,6 @@
        node
        owned-bitmap-statement-rewrites))))
 
-(defn- preserve-pdfbox-text-normalization
-  [configuration node]
-  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
-    node
-    (update-declaration
-     node
-     :method
-     "org.apache.pdfbox.text.PDFTextStripper"
-     (fn [declaration]
-       (if (= "normalizeWord" (get-in declaration [:data :source-name]))
-         (assoc declaration :body
-                (csharp/block
-                 [(csharp/raw
-                   (str
-                    "return this.handleDirection("
-                    "global::DripSharp.Runtime.PdfBoxTextCompatibility."
-                    "NormalizeVisualWord(word, this.sortByPosition));"))]))
-         declaration)))))
-
 (def ^:private preflight-font-container-contract
   "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer")
 
@@ -4112,9 +4040,7 @@
          (erase-security-handler-carrier configuration)
          (preserve-calendar-value-semantics configuration)
          (preserve-cos-update-dispatch configuration)
-         (preserve-skia-annotation-rasterization configuration)
          (own-intermediate-bitmaps configuration)
-         (preserve-pdfbox-text-normalization configuration)
          (preserve-preflight-generic-contracts configuration))))
 
 (defn- compatibility-asset [configuration asset]
