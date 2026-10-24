@@ -1051,6 +1051,201 @@
                (.getArguments invocation)))))
          (.getElements executable (TypeFilter. CtInvocation))))))))
 
+;; java.util.Calendar maps to a destination value type, so Java code that
+;; mutates a Calendar through an alias would lose the change: a callee that
+;; mutates its Calendar parameter, or a DateFormat that parses or formats into
+;; the Calendar given to setCalendar. These rules restore the aliasing from the
+;; JDK API shape alone: such a parameter is passed by reference, and the
+;; variable given to setCalendar is copied back from the format.
+
+(def ^:private calendar-value-types
+  #{"java.util.Calendar" "java.util.GregorianCalendar"})
+
+(def ^:private calendar-mutators
+  #{"add" "clear" "roll" "set" "setFirstDayOfWeek" "setLenient"
+    "setMinimalDaysInFirstWeek" "setTime" "setTimeInMillis" "setTimeZone"
+    "setWeekDate"})
+
+(def ^:private date-format-types
+  #{"java.text.DateFormat" "java.text.SimpleDateFormat"})
+
+(defn- calendar-value-reference? [^CtTypeReference reference]
+  (contains? calendar-value-types (some-> reference .getQualifiedName)))
+
+(defn- date-format-call?
+  [^CtInvocation invocation name argument-count]
+  (let [executable (.getExecutable invocation)]
+    (and (contains? date-format-types
+                    (some-> executable .getDeclaringType .getQualifiedName))
+         (= name (.getSimpleName executable))
+         (= argument-count (count (.getArguments invocation))))))
+
+(defn- source-start [^CtElement element]
+  (let [position (.getPosition element)]
+    (when (.isValidPosition position)
+      (.getSourceStart position))))
+
+(defn- aliasable-variable? [declaration]
+  (or (instance? CtLocalVariable declaration)
+      (instance? CtParameter declaration)))
+
+(defn- written-in?
+  [^CtElement executable declaration]
+  (some #(identical? declaration (accessed-declaration %))
+        (.getElements executable (TypeFilter. CtVariableWrite))))
+
+(defn- encloses?
+  [^CtElement ancestor ^CtElement element]
+  (loop [current element]
+    (cond
+      (identical? ancestor current) true
+      (and current (.isParentInitialized current))
+      (recur (.getParent current))
+      :else false)))
+
+(defn- dominating-set-calendar
+  "Returns the only DateFormat#setCalendar call on format in executable when
+  it is a statement of a block enclosing invocation and precedes it, so it has
+  run whenever invocation runs."
+  [^CtElement executable format ^CtInvocation invocation]
+  (let [calls (filterv
+               (fn [^CtInvocation candidate]
+                 (and (date-format-call? candidate "setCalendar" 1)
+                      (identical? format
+                                  (accessed-declaration (.getTarget candidate)))))
+               (.getElements executable (TypeFilter. CtInvocation)))
+        ^CtInvocation call (first calls)
+        block (when (and call (.isParentInitialized call)) (.getParent call))
+        call-start (some-> call source-start)
+        start (source-start invocation)]
+    (when (and (= 1 (count calls))
+               (instance? CtBlock block)
+               (encloses? block invocation)
+               call-start start (< call-start start))
+      call)))
+
+(defn- date-format-aliased-calendar
+  "Returns the read of the local Calendar given to a local DateFormat by a
+  setCalendar call that has always run before invocation parses or formats
+  with that format. Neither variable may be reassigned in the executable."
+  [^CtInvocation invocation]
+  (when (or (date-format-call? invocation "parse" 2)
+            (date-format-call? invocation "format" 1))
+    (let [format (accessed-declaration (.getTarget invocation))
+          executable (enclosing-executable-element invocation)
+          ^CtInvocation set-calendar
+          (when (and (aliasable-variable? format) executable)
+            (dominating-set-calendar executable format invocation))
+          argument (some-> set-calendar .getArguments first)
+          calendar (accessed-declaration argument)]
+      (when (and (instance? CtVariableRead argument)
+                 (aliasable-variable? calendar)
+                 (not (written-in? executable format))
+                 (not (written-in? executable calendar)))
+        argument))))
+
+(defn- inside-nested-body?
+  [^CtElement element ^CtElement executable]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (or (nil? current) (identical? current executable)) false
+      (or (instance? CtLambda current) (instance? CtType current)) true
+      (.isParentInitialized ^CtElement current)
+      (recur (.getParent ^CtElement current))
+      :else false)))
+
+(defn- method-referenced?
+  "True when a method reference names method anywhere it is visible from: its
+  top-level type when private, its package otherwise."
+  [^CtMethod method]
+  (let [top-level (.getTopLevelType (.getDeclaringType method))
+        ^CtElement scope (if (.hasModifier method ModifierKind/PRIVATE)
+                           top-level
+                           (.getPackage top-level))]
+    (boolean
+     (some (fn [^CtExecutableReferenceExpression reference]
+             (identical? method (some-> reference .getExecutable .getDeclaration)))
+           (.getElements scope (TypeFilter. CtExecutableReferenceExpression))))))
+
+(defn- by-reference-calendar-candidate? [^CtParameter parameter]
+  (let [method (when (.isParentInitialized parameter) (.getParent parameter))]
+    (and (instance? CtMethod method)
+         (some? (.getBody ^CtMethod method))
+         (calendar-value-reference? (.getType parameter))
+         (not (.isVarArgs parameter))
+         (not (.hasModifier ^CtMethod method ModifierKind/PUBLIC))
+         (not (.hasModifier ^CtMethod method ModifierKind/PROTECTED))
+         (or (.hasModifier ^CtMethod method ModifierKind/STATIC)
+             (.hasModifier ^CtMethod method ModifierKind/PRIVATE))
+         (not-any?
+          (fn [^CtVariableAccess access]
+            (and (identical? parameter (accessed-declaration access))
+                 (or (instance? CtVariableWrite access)
+                     (inside-nested-body? access method))))
+          (.getElements ^CtMethod method (TypeFilter. CtVariableAccess)))
+         (not (method-referenced? method)))))
+
+(defn- by-reference-calendar-parameter*
+  [^CtParameter parameter seen]
+  (and
+   (not-any? #(identical? parameter %) seen)
+   (by-reference-calendar-candidate? parameter)
+   (let [^CtMethod method (.getParent parameter)
+         seen (conj seen parameter)
+         reads-parameter? #(identical? parameter (accessed-declaration %))]
+     (boolean
+      (some
+       (fn [^CtInvocation invocation]
+         (let [executable (.getExecutable invocation)
+               target (.getTarget invocation)
+               callee (.getDeclaration executable)]
+           (or
+            (and (calendar-value-reference? (.getDeclaringType executable))
+                 (contains? calendar-mutators (.getSimpleName executable))
+                 (reads-parameter? target))
+            (some-> (date-format-aliased-calendar invocation) reads-parameter?)
+            (when (instance? CtMethod callee)
+              (let [parameters (vec (.getParameters ^CtMethod callee))]
+                (some
+                 (fn [[index argument]]
+                   (and (< index (count parameters))
+                        (reads-parameter? argument)
+                        (by-reference-calendar-parameter*
+                         (nth parameters index) seen)))
+                 (map-indexed vector (.getArguments invocation))))))))
+       (.getElements method (TypeFilter. CtInvocation)))))))
+
+(defn- by-reference-calendar-parameter?
+  "True for a Calendar parameter of a non-public, non-virtual method that
+  mutates it with a JDK Calendar mutator, directly or through another such
+  parameter, so that the caller's variable sees the change as in Java."
+  [^CtParameter parameter]
+  (by-reference-calendar-parameter* parameter []))
+
+(defn- calendar-aliasing-node
+  "Marks C# that the Calendar aliasing rule writes, which the authorship
+  ledger counts as authored."
+  [text]
+  (csharp/with-source
+    (raw text)
+    {:rule :java-library.rule/calendar-aliasing :authored-rule true}))
+
+(defn- by-reference-calendar-argument
+  [callee index ^CtExpression argument node]
+  (let [parameters (when (instance? CtMethod callee)
+                     (vec (.getParameters ^CtMethod callee)))]
+    (when (and (< index (count parameters))
+               (by-reference-calendar-parameter? (nth parameters index)))
+      (when-not (and (instance? CtVariableRead argument)
+                     (aliasable-variable? (accessed-declaration argument)))
+        (fail! "A by-reference Calendar argument must be a local variable"
+               {:kind :unsupported-by-reference-calendar-argument
+                :callee (str (.getSignature ^CtMethod callee))
+                :argument (str argument)
+                :location (spoon/source-location argument)}))
+      (sequence-node [(calendar-aliasing-node "ref ")
+                      (assignment-target-node node)]))))
+
 (defn- nullable-boxed-collection-expression?
   [^CtExpression expression seen]
   (cond
@@ -6526,6 +6721,9 @@
                          declaration parameter-types
                          (count (.getArguments element)) index argument)]
                     (or
+                     (when (= :project (:origin occurrence))
+                       (by-reference-calendar-argument
+                        declaration index argument node))
                      (raw-list-constructor-for-generic-owner-node
                       @ctx-holder argument expected declaration target node)
                      (argument-value-node
@@ -6561,6 +6759,21 @@
                     @ctx-holder target declaration arguments)
                    (default-interface-return-super-node
                     @ctx-holder target declaration arguments)))
+                (when-let [^CtVariableRead calendar
+                           (date-format-aliased-calendar element)]
+                  (sequence-node
+                   [target-node
+                    (raw (if (= "parse" (.getSimpleName (.getExecutable element)))
+                           ".Parse("
+                           ".Format("))
+                    (sequence-node
+                     (conj arguments
+                           (calendar-aliasing-node
+                            (str "ref "
+                                 (local-reference-name
+                                  @ctx-holder (.getVariable calendar)))))
+                     ", ")
+                    (raw ")")]))
                 (shared-invocation-adaptation-node
                  occurrence target target-node arguments)
                 (when-let [adaptation
@@ -8795,6 +9008,8 @@
               (= "java.lang.Object" (.getQualifiedName (.getType parameter))))]
      (sequence-node
       [(when (.isVarArgs parameter) (raw "params "))
+       (when (by-reference-calendar-parameter? parameter)
+         (calendar-aliasing-node "ref "))
        (if object-equals-parameter?
          (raw (if (= "enable" (get-in ctx [:configuration :project :nullable]))
                 "object?"

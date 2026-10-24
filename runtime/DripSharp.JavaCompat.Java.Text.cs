@@ -332,6 +332,30 @@ sealed class JavaSimpleDateFormat
         return date.ToString(pattern, culture);
     }
 
+    // Java formats and parses through the Calendar given to setCalendar, so
+    // its owner sees the result. Calendars are values here: these overloads
+    // copy the format's calendar back into the variable that was given to it
+    // whenever Java would have changed that Calendar (a format, or a parse
+    // that succeeds).
+    internal string Format(DateTimeOffset? value, ref DateTimeOffset? aliasedCalendar)
+    {
+        var text = Format(value);
+        calendar = JavaCompat.CalendarSetTimeZone(value ?? DateTimeOffset.Now, timeZone);
+        aliasedCalendar = calendar;
+        return text;
+    }
+
+    internal DateTimeOffset? Parse(
+        string text,
+        JavaParsePosition position,
+        ref DateTimeOffset? aliasedCalendar)
+    {
+        var parsed = Parse(text, position);
+        if (parsed.HasValue)
+            aliasedCalendar = calendar;
+        return parsed;
+    }
+
     public DateTimeOffset? Parse(string text, JavaParsePosition position)
     {
         ArgumentNullException.ThrowIfNull(text);

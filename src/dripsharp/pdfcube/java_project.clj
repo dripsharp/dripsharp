@@ -1791,23 +1791,7 @@
    "executable:org.apache.pdfbox.io.RandomAccessReadView#close()"
    (direct-instance-adaptation "Dispose")
    "executable:org.apache.pdfbox.preflight.PreflightPath#getClosestTypePosition(java.lang.Class)"
-   (direct-instance-adaptation "GetClosestTypePosition")
-
-   "executable:org.apache.pdfbox.util.DateConverter#adjustTimeZoneNicely(java.util.GregorianCalendar,java.util.TimeZone)"
-   (fn [target arguments]
-     (sequence-node
-      [(first arguments)
-       (raw " = ")
-       (call-node target "adjustTimeZoneNicely" arguments)]))
-
-   "executable:org.apache.pdfbox.util.DateConverter#parseTZoffset(java.lang.String,java.util.GregorianCalendar,java.text.ParsePosition)"
-   (fn [target arguments]
-     (call-node
-      target
-      "parseTZoffset"
-      [(first arguments)
-       (sequence-node [(raw "ref ") (second arguments)])
-       (nth arguments 2)]))})
+   (direct-instance-adaptation "GetClosestTypePosition")})
 
 (def ^:private translated-project-boxed-covariant-executables
   #{"executable:org.apache.xmpbox.type.BooleanType#getValue()"})
@@ -3461,15 +3445,6 @@
   (update-in declaration [:body :statements :statements]
              #(vec (cons member %))))
 
-(defn- append-statement
-  [declaration statement]
-  (when-not (= :statement-list
-               (get-in declaration [:body :statements :kind]))
-    (fail! "Structured method declaration has no statement list"
-           {:kind :invalid-pdfcube-structured-declaration
-            :declaration-data (:data declaration)}))
-  (update-in declaration [:body :statements :statements] conj statement))
-
 (def ^:private security-handler-carrier
   (str "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler"
        "<global::DripSharp.PdfCarton.Pdmodel.Encryption.ProtectionPolicy>"))
@@ -3519,67 +3494,6 @@
          :type
          "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
          #(add-base-contract % erased-security-handler))))))
-
-(defn- preserve-calendar-value-semantics
-  [configuration node]
-  (if-not
-   (contains? (:internal-capabilities configuration)
-              :calendar-value-semantics)
-    node
-    (-> node
-        (update-declaration
-         :method
-         "org.apache.pdfbox.util.DateConverter"
-         (fn [declaration]
-           (case (get-in declaration [:data :source-name])
-             "adjustTimeZoneNicely"
-             (-> declaration
-                 (update :header
-                         csharp/replace-raw-text
-                         [["void" "global::System.DateTimeOffset?"]])
-                 (append-statement (csharp/raw "return cal;")))
-
-             "parseTZoffset"
-             (update declaration :header
-                     csharp/replace-raw-text
-                     [["global::System.DateTimeOffset"
-                       "ref global::System.DateTimeOffset"]])
-
-             "parseSimpleDate"
-             (assoc
-              declaration
-              :body
-              (csharp/block
-               [(csharp/raw
-                 (str
-                  "foreach (string fmt in fmts) {\n"
-                  "global::DripSharp.Runtime.JavaParsePosition where = new global::DripSharp.Runtime.JavaParsePosition(initialWhere.GetIndex());\n"
-                  "global::DripSharp.Runtime.JavaSimpleDateFormat sdf = new global::DripSharp.Runtime.JavaSimpleDateFormat(fmt, global::System.Globalization.CultureInfo.GetCultureInfo(\"en\"));\n"
-                  "global::System.DateTimeOffset? retCal = global::DripSharp.PdfCarton.Util.DateConverter.newGreg();\n"
-                  "sdf.SetCalendar(retCal);\n"
-                  "global::System.DateTimeOffset? parsedDate = sdf.Parse(text, where);\n"
-                  "if ((parsedDate != default!)) {\n"
-                  "initialWhere.SetIndex(where.GetIndex());\n"
-                  "global::DripSharp.PdfCarton.Util.DateConverter.skipOptionals(text, initialWhere, \" \" );\n"
-                  "return parsedDate;\n"
-                  "}\n"
-                  "}\n"
-                  "return default!;"))]))
-
-             declaration))))))
-
-(def ^:private cos-update-info-contract
-  "global::DripSharp.PdfCarton.Cos.COSUpdateInfo")
-
-(defn- preserve-cos-update-dispatch
-  [configuration node]
-  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
-    node
-    (update-declaration
-     node
-     :type
-     "org.apache.pdfbox.cos.UnmodifiableCOSDictionary"
-     #(add-base-contract % cos-update-info-contract))))
 
 (defn- replace-rendered-statement
   [declaration rendered-statement replacement-statement {:keys [every?]}]
@@ -4038,8 +3952,6 @@
                node)]
     (->> node
          (erase-security-handler-carrier configuration)
-         (preserve-calendar-value-semantics configuration)
-         (preserve-cos-update-dispatch configuration)
          (own-intermediate-bitmaps configuration)
          (preserve-preflight-generic-contracts configuration))))
 

@@ -349,85 +349,6 @@
            (:text
             (render-transformed configuration (csharp/raw specialized)))))))
 
-(deftest pdfbox-calendar-value-semantics-preserve-date-time-zone-mutations
-  (let [adjust
-        (csharp/declaration
-         (csharp/sequence-node
-          [(csharp/raw "private static ")
-           (csharp/raw "void")
-           (csharp/raw
-            (str " adjustTimeZoneNicely("
-                 "global::System.DateTimeOffset? cal, "
-                 "global::System.TimeZoneInfo tz)"))])
-         (csharp/block
-          [(csharp/raw
-            (str "cal = global::DripSharp.Runtime.JavaCompat."
-                 "CalendarAdd(cal, 12, -offset);"))])
-         {:declaration-kind :method
-          :source-name "adjustTimeZoneNicely"
-          :source-qualified-name "org.apache.pdfbox.util.DateConverter"})
-        parse-offset
-        (csharp/declaration
-         (csharp/raw
-          (str "internal static bool parseTZoffset(string text, "
-               "global::System.DateTimeOffset? cal, Position initialWhere)"))
-         (csharp/block [])
-         {:declaration-kind :method
-          :source-name "parseTZoffset"
-          :source-qualified-name "org.apache.pdfbox.util.DateConverter"})
-        parse-simple
-        (csharp/declaration
-         (csharp/raw
-          (str "private static global::System.DateTimeOffset? parseSimpleDate("
-               "string text, string[] fmts, Position initialWhere)"))
-         (csharp/block [(csharp/raw "return retCal;")])
-         {:declaration-kind :method
-          :source-name "parseSimpleDate"
-          :source-qualified-name "org.apache.pdfbox.util.DateConverter"})
-        transformed
-        (:text
-         (render-transformed
-          {:internal-capabilities #{:calendar-value-semantics}}
-          (csharp/sequence-node
-           [adjust (csharp/raw "\n") parse-offset
-            (csharp/raw "\n") parse-simple])))]
-    (is (str/includes?
-         transformed
-         "private static global::System.DateTimeOffset? adjustTimeZoneNicely("))
-    (is (str/includes?
-         transformed
-         "CalendarAdd(cal, 12, -offset);\nreturn cal;\n}"))
-    (is (str/includes?
-         transformed
-         "parseTZoffset(string text, ref global::System.DateTimeOffset? cal,"))
-    (is (str/includes? transformed "parsedDate = sdf.Parse(text, where);"))
-    (is (str/includes? transformed "return parsedDate;"))
-    (is (not (str/includes? transformed "return retCal;")))
-    (is (not (str/includes? transformed "private static void")))))
-
-(deftest pdfbox-unmodifiable-dictionary-reimplements-update-interface
-  (let [declaration
-        (csharp/declaration
-         (csharp/sequence-node
-          [(csharp/raw "internal sealed class UnmodifiableCOSDictionary")
-           (csharp/raw " : global::DripSharp.PdfCarton.Cos.COSDictionary")])
-         (csharp/block (csharp/statement-list [] "\n\n"))
-         {:declaration-kind :type
-          :name "UnmodifiableCOSDictionary"
-          :source-qualified-name
-          "org.apache.pdfbox.cos.UnmodifiableCOSDictionary"
-          :has-base-types? true
-          :has-constraints? false})
-        transformed
-        (:text
-         (render-transformed
-          {:package {:id "DripSharp.PdfCarton"}}
-          declaration))]
-    (is (str/includes?
-         transformed
-         (str "COSDictionary, "
-              "global::DripSharp.PdfCarton.Cos.COSUpdateInfo")))))
-
 (deftest annotation-matrix-and-word-normalization-are-emitted-unchanged
   (doseq [[type-name source-name statements]
           [["org.apache.pdfbox.contentstream.PDFStreamEngine" "processAnnotation"
@@ -963,6 +884,127 @@
                       :command ["dotnet" "build" (:project-file emission)
                                 "--nologo" "--configuration" "Release"
                                 "--verbosity:quiet" "-warnaserror"]}))))))
+
+(defn- builds-without-warnings? [emission]
+  (zero?
+   (:exit
+    (process/run! {:directory (:project-root emission)
+                   :command ["dotnet" "build" (:project-file emission)
+                             "--nologo" "--configuration" "Release"
+                             "--verbosity:quiet" "-warnaserror"
+                             "-p:NuGetAudit=false"]}))))
+
+(deftest calendar-aliasing-follows-jdk-calendar-and-date-format-calls
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-io")
+        fixture
+        (model!
+         "org/apache/pdfbox/io/CalendarAliasFixture.java"
+         (str "package org.apache.pdfbox.io; "
+              "import java.text.ParsePosition; "
+              "import java.text.SimpleDateFormat; "
+              "import java.util.Calendar; "
+              "import java.util.GregorianCalendar; "
+              "import java.util.Locale; "
+              "import java.util.TimeZone; "
+              "public final class CalendarAliasFixture { "
+              "private static void shift(GregorianCalendar cal, TimeZone tz) { "
+              "cal.setTimeZone(tz); cal.add(Calendar.MINUTE, -5); } "
+              "static boolean shiftNamed(String text, GregorianCalendar cal) { "
+              "shift(cal, TimeZone.getTimeZone(text)); return text.isEmpty(); } "
+              "static int year(GregorianCalendar cal) { "
+              "return cal.get(Calendar.YEAR); } "
+              "public static void publicShift(GregorianCalendar cal) { "
+              "cal.add(Calendar.MINUTE, 1); } "
+              "static GregorianCalendar parse(String text, ParsePosition where) { "
+              "SimpleDateFormat sdf = new SimpleDateFormat(\"yyyy\", Locale.ENGLISH); "
+              "GregorianCalendar cal = new GregorianCalendar("
+              "TimeZone.getTimeZone(\"UTC\"), Locale.ENGLISH); "
+              "sdf.setCalendar(cal); "
+              "if (sdf.parse(text, where) != null) { "
+              "shiftNamed(\"UTC\", cal); return cal; } "
+              "return null; } "
+              "private static void nudge(GregorianCalendar cal) { "
+              "cal.add(Calendar.MINUTE, 1); } "
+              "static void viaReference(GregorianCalendar cal) { "
+              "java.util.function.Consumer<GregorianCalendar> action = "
+              "CalendarAliasFixture::nudge; action.accept(cal); } "
+              "static GregorianCalendar conditional(String text, boolean other) { "
+              "SimpleDateFormat first = new SimpleDateFormat(\"yyyy\", Locale.ENGLISH); "
+              "GregorianCalendar a = new GregorianCalendar("
+              "TimeZone.getTimeZone(\"UTC\"), Locale.ENGLISH); "
+              "GregorianCalendar b = new GregorianCalendar("
+              "TimeZone.getTimeZone(\"UTC\"), Locale.ENGLISH); "
+              "first.setCalendar(a); "
+              "if (other) { first.setCalendar(b); } "
+              "first.parse(text, new ParsePosition(0)); return a; } "
+              "static String scoped(java.util.Date date) { "
+              "SimpleDateFormat second = new SimpleDateFormat(\"yyyy\", Locale.ENGLISH); "
+              "if (date != null) { GregorianCalendar inner = new GregorianCalendar("
+              "TimeZone.getTimeZone(\"UTC\"), Locale.ENGLISH); "
+              "second.setCalendar(inner); } "
+              "return second.format(date); } }"))
+        emission (emit! fixture destination)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/DripSharp/PdfCarton/IO/CalendarAliasFixture.cs")))
+        calendar "global::System.DateTimeOffset?"]
+    (testing "a Calendar parameter mutated directly or through a callee is by reference"
+      (is (str/includes? source (str "void shift(ref " calendar " cal,")))
+      (is (str/includes? source (str "bool shiftNamed(string text, ref " calendar " cal)")))
+      (is (str/includes? source "shift(ref cal,"))
+      (is (str/includes? source "shiftNamed(\"UTC\", ref cal)")))
+    (testing "read-only and public Calendar parameters stay by value"
+      (is (str/includes? source (str "int year(" calendar " cal)")))
+      (is (str/includes? source (str "void PublicShift(" calendar " cal)"))))
+    (testing "a mutating helper named by a method reference stays by value"
+      (is (str/includes? source (str "void nudge(" calendar " cal)"))))
+    (testing "parse copies the format's calendar back into the variable given to setCalendar"
+      (is (str/includes? source "sdf.SetCalendar(cal);"))
+      (is (str/includes? source "sdf.Parse(text, where, ref cal)")))
+    (testing "no copy-back unless one setCalendar call has always run in scope"
+      (is (str/includes?
+           source "first.Parse(text, new global::DripSharp.Runtime.JavaParsePosition(0))"))
+      (is (str/includes? source "second.Format(date)"))
+      (is (not (str/includes? source "ref a)")))
+      (is (not (str/includes? source "ref b)")))
+      (is (not (str/includes? source "ref inner)"))))
+    (testing "the lines the rule writes count as authored"
+      (is (= 5 (some #(when (str/ends-with? (:file %) "CalendarAliasFixture.cs")
+                        (:authored-rule-lines %))
+                     (:artifacts emission)))))
+    (is (builds-without-warnings? emission))))
+
+(deftest overridden-default-interface-methods-dispatch-through-the-interface
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-io")
+        fixture
+        (model!
+         "org/apache/pdfbox/io/DispatchFixture.java"
+         (str "package org.apache.pdfbox.io; "
+              "public final class DispatchFixture { "
+              "public interface Lockable { "
+              "default boolean isLocked() { return false; } } "
+              "public static class Base implements Lockable {} "
+              "public static final class Locked extends Base { "
+              "@Override public boolean isLocked() { return true; } } "
+              "public static boolean viaInterface() { "
+              "Lockable value = new Locked(); return value.isLocked(); } }"))
+        emission (emit! fixture destination)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/DripSharp/PdfCarton/IO/DispatchFixture.cs")))]
+    ;; The inherited default method is emitted as an implicit virtual interface
+    ;; implementation, so the override is reached through the interface without
+    ;; re-declaring it on the subclass.
+    (is (str/includes? source "public virtual bool IsLocked()"))
+    (is (str/includes? source "public override bool IsLocked()"))
+    (is (not (re-find #"class Locked\s*:[^{]*Lockable" source)))
+    (is (builds-without-warnings? emission))))
 
 (deftest mapped-floating-rectangle-width-preserves-java-division
   (let [{destination :destination}

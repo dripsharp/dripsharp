@@ -1058,6 +1058,19 @@
          "upstream supplies no NOTICE file.")
        "\n"))
 
+(defn authored-rule-line-count
+  "Counts the lines of rendered C# that carry a node a translator rule marked
+  as authored (source metadata :authored-rule), so the authorship ledger can
+  count them as authored instead of mechanical."
+  [{:keys [text mappings]}]
+  (let [line-of (fn [offset]
+                  (count (filter #(= \newline %) (subs text 0 offset))))]
+    (->> mappings
+         (filter #(get-in % [:source :authored-rule]))
+         (map #(line-of (min (count text) (get-in % [:destination :start]))))
+         distinct
+         count)))
+
 (defn verify-mechanical-source-headers!
   "Recomputes and verifies every exact mechanical header in an emission.
   Copied authored/runtime/legal assets have :strategy and are deliberately
@@ -1443,13 +1456,16 @@
                           result (context-results rule-bundle ctx)]
                       (write-text! file (:text rendered))
                       {:index index
-                       :artifact {:file (portable project-root file)
-                                  :source (spoon/source-location type)
-                                  :upstream-source upstream-source
-                                  :mechanical-source-header mechanical-header
-                                  :mappings
-                                  (mapv #(assoc % :file (portable project-root file))
-                                        (:mappings rendered))}
+                       :artifact (let [rule-lines (authored-rule-line-count rendered)]
+                                   (cond-> {:file (portable project-root file)
+                                            :source (spoon/source-location type)
+                                            :upstream-source upstream-source
+                                            :mechanical-source-header mechanical-header
+                                            :mappings
+                                            (mapv #(assoc % :file (portable project-root file))
+                                                  (:mappings rendered))}
+                                     (pos? rule-lines)
+                                     (assoc :authored-rule-lines rule-lines)))
                        :declarations (:declarations result)
                        :diagnostics (:diagnostics result)
                        :body-translations (:body-translations result)}))

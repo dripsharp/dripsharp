@@ -1242,3 +1242,44 @@
           (is (= 1 (get-in (ex-data leak) [:actual :count])))))
       (finally
         (delete-tree! root)))))
+
+(deftest rule-emitted-lines-in-mechanical-files-count-as-authored
+  (let [root (Files/createTempDirectory
+              "dripsharp-rule-lines-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [configuration
+            {:repository "https://example.invalid/upstream.git"
+             :revision "1111111111111111111111111111111111111111"
+             :notice-reference nil}
+            upstream "example/Mechanical.java"
+            header (java-project/mechanical-source-header configuration
+                                                          upstream)
+            text (str header (str/join (repeat 10 "internal class M { }\n")))
+            lines (count (str/split-lines text))
+            _ (write-text! root "generated/src/Mechanical.cs" text)
+            artifact {:file "src/Mechanical.cs"
+                      :upstream-source upstream
+                      :mechanical-source-header header}
+            ledger (create-ledger! root [(assoc artifact :authored-rule-lines 2)]
+                                   nil)
+            too-many (caught
+                      #(create-ledger!
+                        root [(assoc artifact :authored-rule-lines (inc lines))]
+                        nil))]
+        (is (= 2 (get-in ledger [:files 0 :authored-rule-lines])))
+        (is (= {:files 1
+                :mechanical-lines (- lines 2)
+                :authored-compat-lines 0
+                :authored-destination-runtime-lines 2
+                :vendored-third-party-lines 0
+                :authored-lines 2
+                :total-lines lines
+                :authored-fraction (/ 2.0 lines)}
+               (:totals ledger)))
+        (is (not (contains? (get-in (create-ledger! root [artifact] nil)
+                                    [:files 0])
+                            :authored-rule-lines)))
+        (is (some? (ex-data too-many))))
+      (finally
+        (delete-tree! root)))))

@@ -272,16 +272,22 @@
   (contains? (disj source-classes :mechanical) class))
 
 (defn- totals
+  "Sums lines per class. A mechanical file's :authored-rule-lines, the lines
+  that carry C# emitted by a translator rule rather than translated from the
+  upstream source, count as authored destination code."
   [files]
-  (let [mechanical-lines
-        (reduce + 0 (map :lines (filter #(= :mechanical (:class %)) files)))
+  (let [mechanical-files (filter #(= :mechanical (:class %)) files)
+        rule-lines (reduce + 0 (keep :authored-rule-lines mechanical-files))
+        mechanical-lines
+        (- (reduce + 0 (map :lines mechanical-files)) rule-lines)
         compatibility-lines
         (reduce + 0 (map :lines (filter #(= :authored-compat (:class %)) files)))
         destination-lines
-        (reduce + 0
-                (map :lines
-                     (filter #(= :authored-destination-runtime (:class %))
-                             files)))
+        (+ rule-lines
+           (reduce + 0
+                   (map :lines
+                        (filter #(= :authored-destination-runtime (:class %))
+                                files))))
         third-party-lines
         (reduce + 0
                 (map :lines
@@ -918,10 +924,19 @@
                  {:path path :class class :allowed source-classes}))
         (exact-keys!
          entry
-         (if (= :mechanical class)
-           #{:path :class :source :lines}
-           #{:path :class :provenance :sha256 :lines})
+         (cond
+           (not= :mechanical class) #{:path :class :provenance :sha256 :lines}
+           (contains? entry :authored-rule-lines)
+           #{:path :class :source :lines :authored-rule-lines}
+           :else #{:path :class :source :lines})
          path)
+        (when (contains? entry :authored-rule-lines)
+          (let [rule-lines (:authored-rule-lines entry)]
+            (when-not (and (pos-int? rule-lines) (int? lines)
+                           (<= rule-lines lines))
+              (fail! "Authored rule lines must be a positive part of the file"
+                     {:path path :authored-rule-lines rule-lines
+                      :lines lines}))))
         (let [file (paths/absolute (paths/resolve-path project-root path))]
           (when-not (and (.startsWith file source-root)
                          (paths/regular-file? file))
@@ -1003,7 +1018,7 @@
     (let [files
           (mapv
            (fn [{:keys [file upstream-source mechanical-source-header
-                        authorship-class source]}]
+                        authorship-class source authored-rule-lines]}]
              (let [output (paths/resolve-path project-root file)
                    lines (line-count output)]
                (if mechanical-source-header
@@ -1014,11 +1029,13 @@
                      (fail! "Mechanical source has invalid authorship metadata"
                             {:path file :upstream-source upstream-source
                              :authorship-class authorship-class}))
-                   {:path file
-                    :class :mechanical
-                    :source {:file upstream-source
-                             :revision (:revision mechanical-source)}
-                    :lines lines})
+                   (cond-> {:path file
+                            :class :mechanical
+                            :source {:file upstream-source
+                                     :revision (:revision mechanical-source)}
+                            :lines lines}
+                     (and authored-rule-lines (pos? authored-rule-lines))
+                     (assoc :authored-rule-lines authored-rule-lines)))
                  (do
                    (when-not (contracted? authorship-class)
                      (fail! "Contracted C# artifact lacks an exact source class"
