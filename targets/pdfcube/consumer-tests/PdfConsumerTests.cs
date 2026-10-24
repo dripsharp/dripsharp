@@ -12091,6 +12091,11 @@ public sealed class PatternFillPathLifetimeTests
             Assert.Equal(SKColors.White, warm.GetPixel(103, 101));
         }
 
+        // The runtime's own Gen2GcCallbacks, dynamic method resolvers (from
+        // test-host start-up or earlier tests) and the soft-reference clock
+        // re-register for finalization at every collection, so the count left
+        // after the render is compared with the same count without it.
+        var floor = PendingAfterCollections();
         var baseline = Abandoned(() => { });
         var abandoned = Abandoned(() =>
         {
@@ -12098,15 +12103,22 @@ public sealed class PatternFillPathLifetimeTests
         });
         Assert.True(abandoned - baseline <= Fills * GarbagePerFill,
             $"{abandoned - baseline} finalizable objects after {Fills} pattern fills (baseline {baseline}).");
-        // Finalizers that free further finalizable objects take a pass each.
+        var left = PendingAfterCollections();
+        Assert.True(left - floor <= Fills,
+            $"{left - floor} finalizable objects left after a collection ({left}, without the render {floor}).");
+    }
+
+    // Finalizable objects a collection finds after earlier ones have run every
+    // finalizer; finalizers that free further finalizable objects take a pass each.
+    private static long PendingAfterCollections()
+    {
         for (var pass = 0; pass < 10; pass++)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
         }
         GC.Collect(2, GCCollectionMode.Forced, blocking: true);
-        var left = GC.GetGCMemoryInfo(GCKind.FullBlocking).FinalizationPendingCount;
-        Assert.True(left <= baseline + Fills, $"{left} finalizable objects left after a collection (baseline {baseline}).");
+        return GC.GetGCMemoryInfo(GCKind.FullBlocking).FinalizationPendingCount;
     }
 
     // Finalizable objects left by action when no collection runs during it.
