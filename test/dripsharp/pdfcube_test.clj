@@ -483,6 +483,38 @@
                                         declaration)))
           (str type-name "#" source-name)))))
 
+(deftest image-masking-and-drawing-are-emitted-unchanged
+  (doseq [[type-name source-name parameter-count statement]
+          [["org.apache.pdfbox.rendering.PageDrawer" "drawImage" 1
+            (str "global::SkiaSharp.SKBitmap renderedPaint = "
+                 "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap(w, h, "
+                 "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB);")]
+           ["org.apache.pdfbox.rendering.PageDrawer" "drawBufferedImage" 3
+            "image = this.applyTransferFunction(image, transfer);"]
+           ["org.apache.pdfbox.rendering.PageDrawer" "applyTransferFunction" 2
+            "return bim;"]
+           ["org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject" "getImage" 2
+            "return image;"]
+           ["org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject" "applyMask" 5
+            "return image;"]
+           ["org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject" "scaleImage" 5
+            "return image2;"]
+           ["org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader" "fromAny" 7
+            "return rgbImage;"]
+           ["org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader" "applyColorKeyMask" 2
+            "return masked;"]]]
+    (let [declaration (csharp/declaration
+                       (csharp/raw (str "private object " source-name "()"))
+                       (csharp/block [(csharp/raw statement)])
+                       {:declaration-kind :method
+                        :source-name source-name
+                        :parameter-count parameter-count
+                        :source-qualified-name type-name})]
+      (is (= (:text (csharp/render declaration))
+             (:text (render-transformed {:package {:id "DripSharp.PdfCarton"}}
+                                        declaration)))
+          (str type-name "#" source-name)))))
+
 (deftest rendering-intermediates-are-owned
   (let [config {:package {:id "DripSharp.PdfCarton"}}
         render (fn [node] (:text (render-transformed config node)))
@@ -519,29 +551,6 @@
                             "__dripsharpOwned.Release(this.image);")))
       (let [other (group-ctor 3)]
         (is (= (:text (csharp/render other)) (render other)))))
-    (testing "applyMask declares its scope first and releases every returned image"
-      (let [rendered (render (declaration
-                              :method "org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject"
-                              {:source-name "applyMask" :parameter-count 5}
-                              ["return image;"
-                               (str "mask = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
-                                    "PDImageXObject.scaleImage(mask, width, height, "
-                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY, "
-                                    "interpolateMask);")
-                               (str "mask = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
-                                    "PDImageXObject.scaleImage(mask, width, height, "
-                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY, false);")
-                               (str "image = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
-                                    "PDImageXObject.scaleImage(image, width, height, "
-                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB, "
-                                    "this.GetInterpolate());")
-                               (str "image = global::DripSharp.PdfCarton.Pdmodel.Graphics.Image."
-                                    "PDImageXObject.scaleImage(image, width, height, "
-                                    "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB, false);")
-                               "return image;"]))]
-        (is (< (.indexOf rendered "PdfCartonDisposalScope __dripsharpOwned")
-               (.indexOf rendered "return __dripsharpOwned.Release(image);")))
-        (is (= 2 (count (re-seq #"return __dripsharpOwned\.Release\(image\);" rendered))))))
     (testing "the page drawer keeps one soft-mask image in a field it declares"
       (let [drawer (csharp/declaration
                     (csharp/raw "public class PageDrawer")

@@ -9223,7 +9223,7 @@ internal enum PathCursor : byte { Empty, Open, Closed, Unknown }
 // but SKBitmap pixels are native memory the GC cannot see. Two parts:
 // - Managed pixels: int- and byte-backed bitmaps (CreateIntBacked,
 //   CreateByteBacked) and large Java-visible images (Allocate: decoded images, raster-backed images, new
-//   BufferedImages) hold their pixels in a pinned managed array, which the GC
+//   BufferedImages, getScaledInstance copies) hold their pixels in a pinned managed array, which the GC
 //   sees and frees with the image, so translated code may drop them as Java
 //   code does.
 // - Backstop: every other compat-allocated bitmap is a PdfCartonNativeBitmap,
@@ -10372,9 +10372,11 @@ internal static class PdfCartonFontCompat
         if (width == 0 || height == 0)
             throw new ArgumentException("Scaled image dimensions cannot be zero.");
 
+        // Java code drops the scaled copy once drawn, so a large one's pixels
+        // are managed memory the GC frees (PdfCartonNativeBitmap.Allocate).
         if (hints == SCALE_SMOOTH)
             return AreaAverageImage(source, width, height);
-        var destination = new PdfCartonNativeBitmap(new SKImageInfo(
+        var destination = PdfCartonNativeBitmap.Allocate(new SKImageInfo(
             width,
             height,
             source.ColorType,
@@ -10406,7 +10408,7 @@ internal static class PdfCartonFontCompat
             : ConvertedForReading(source);
         try
         {
-            var destination = new PdfCartonNativeBitmap(new SKImageInfo(
+            var destination = PdfCartonNativeBitmap.Allocate(new SKImageInfo(
                 width,
                 height,
                 gray ? SKColorType.Gray8 : SKColorType.Bgra8888,

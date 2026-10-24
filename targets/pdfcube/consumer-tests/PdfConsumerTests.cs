@@ -9958,6 +9958,7 @@ public sealed class RenderingBitmapLifetimeTests
         Settle();
         var live = Compat.PdfCartonNativeBitmap.LiveCount;
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        long imagesLeft = 0;
         for (var round = 0; round < 3; round++)
         {
             foreach (var page in Pages)
@@ -9965,10 +9966,13 @@ public sealed class RenderingBitmapLifetimeTests
                 {
                     using (var image = renderer.RenderImage(page, 2, type))
                         Assert.Equal(expected[(page, name)], Hash(image));
-                    // No collection ran in between, so the render disposed its bitmaps.
+                    if (page == Images) imagesLeft = Math.Max(imagesLeft, CollectImageGarbage(bytes));
+                    // No collection ran in between (but for the image page), so
+                    // the render disposed its bitmaps.
                     AssertUnchanged(live, bytes, $"page {page} as {name}");
                 }
         }
+        AssertImageGarbageBounded(imagesLeft, "the image page");
 
         // Printing rasterizes each page into an image of its own first.
         var printable = new DripSharp.PdfCarton.Printing.PDFPrintable(
@@ -9984,14 +9988,19 @@ public sealed class RenderingBitmapLifetimeTests
                 Assert.Equal(Compat.JavaPrintConstants.PAGE_EXISTS,
                     printable.Print(graphics, new Compat.JavaPageFormat(), page));
             }
+            if (page == Images) AssertImageGarbageBounded(CollectImageGarbage(bytes), "printing the image page");
             AssertUnchanged(live, bytes, $"printing page {page}");
         }
         GC.KeepAlive(pinned);
     }
 
-    // Decoding a masked, colour-keyed or DeviceN image keeps only the result.
+    // Decoding a masked, colour-keyed or DeviceN image leaves its
+    // intermediate images (the unmasked image, the mask, their scaled and
+    // colour-keyed copies, DeviceN's per-colorant images) to the collector,
+    // as Java does: what one decode leaves is bounded, and a collection
+    // releases all of it, also when the soft mask fails to decode.
     [Fact]
-    public void ImageDecodingDisposesItsIntermediateBitmaps()
+    public void ImageDecodingLeavesOnlyCollectableIntermediateBitmaps()
     {
         using var document = Loader.LoadPDF(Signed(Fixture()));
         var resources = document.GetPage(Images).GetResources();
@@ -10007,20 +10016,38 @@ public sealed class RenderingBitmapLifetimeTests
         Settle();
         var live = Compat.PdfCartonNativeBitmap.LiveCount;
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        long left = 0;
         for (var round = 0; round < 5; round++)
         {
             foreach (var name in ImageNames)
             {
                 using (var image = Fresh(name).GetImage())
                     Assert.Equal(expected[name], Hash(image));
-                // DeviceN conversion leaves its per-colorant images, whose
-                // pixels are managed, to the collector, as Java does.
-                if (name == "ImN") Settle();
+                left = Math.Max(left, CollectImageGarbage(bytes));
                 AssertUnchanged(live, bytes, name);
             }
             // The soft mask fails to decode after the image itself decoded.
             Assert.ThrowsAny<Exception>(() => Fresh("ImBad").GetImage());
+            left = Math.Max(left, CollectImageGarbage(bytes));
             AssertUnchanged(live, bytes, "image with a corrupt soft mask");
+        }
+        AssertImageGarbageBounded(left, "decoding an image");
+    }
+
+    // PageDrawer drops the getScaledInstance copies it draws downscaled
+    // images and stencil masks through, as Java code does, so a large copy
+    // keeps its pixels in managed memory the collector sees and frees.
+    [Fact]
+    public void LargeScaledImageCopiesHoldManagedPixels()
+    {
+        using var source = Compat.PdfCartonFontCompat.CreateBitmap(
+            1000, 1000, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        foreach (var hints in new[] { Compat.PdfCartonFontCompat.SCALE_SMOOTH, 0 })
+        {
+            using var large = Compat.PdfCartonFontCompat.ScaleImage(source, 400, 400, hints);
+            Assert.True(((Compat.PdfCartonNativeBitmap)large).HoldsManagedPixels, $"hints {hints}");
+            using var small = Compat.PdfCartonFontCompat.ScaleImage(source, 40, 40, hints);
+            Assert.False(((Compat.PdfCartonNativeBitmap)small).HoldsManagedPixels, $"hints {hints}");
         }
     }
 
@@ -10040,12 +10067,15 @@ public sealed class RenderingBitmapLifetimeTests
         {
             var counting = new SamplingRenderer(document, int.MaxValue, null);
             using (counting.RenderImage(page, 2, ImageType.Rgb)) { }
+            if (page == Images) AssertImageGarbageBounded(CollectImageGarbage(bytes), $"page {page}");
             AssertUnchanged(live, bytes, $"page {page}");
             Assert.True(counting.Fills > 1, $"page {page} has {counting.Fills} fills.");
             foreach (var failAt in Enumerable.Range(1, 12).Where(fill => fill <= counting.Fills))
             {
                 var failing = new SamplingRenderer(document, failAt, () => new InjectedFailure());
                 Assert.Throws<InjectedFailure>(() => failing.RenderImage(page, 2, ImageType.Rgb));
+                if (page == Images)
+                    AssertImageGarbageBounded(CollectImageGarbage(bytes), $"page {page} failing at fill {failAt}");
                 AssertUnchanged(live, bytes, $"page {page} failing at fill {failAt}");
             }
         }
@@ -10091,6 +10121,8 @@ public sealed class RenderingBitmapLifetimeTests
                 Assert.IsNotType<SoftMask>(graphics.GetPaint());
                 graphics.FillRect(0, 0, 10, 10);
             }
+            if (page == Images)
+                AssertImageGarbageBounded(CollectImageGarbage(bytes), $"page {page} drawn into caller graphics");
             AssertUnchanged(live, bytes, $"page {page} drawn into caller graphics");
         }
         GC.KeepAlive(pinned);
@@ -10178,6 +10210,26 @@ public sealed class RenderingBitmapLifetimeTests
             bytes == Compat.PdfCartonNativeBitmap.OutstandingBytes,
             $"{name} left {Compat.PdfCartonNativeBitmap.LiveCount - live} bitmaps " +
             $"({Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes} bytes) undisposed.");
+
+    // Image decoding and drawing leave their intermediate images to the
+    // collector, as Java does (their pixels are managed memory, or native
+    // memory reported as GC pressure; see PdfCartonNativeBitmap): returns the
+    // compat bytes they left over the baseline, then collects them.
+    private static long CollectImageGarbage(long bytes)
+    {
+        var left = Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes;
+        Settle();
+        return left;
+    }
+
+    // The fixture's images are at most 64x64 and its pages 288x288 pixels:
+    // one image-page render leaves about 9 KB of intermediates, while a
+    // retained page image (324 KiB) or garbage kept across renders would
+    // exceed this.
+    private const long ImageGarbageBound = 64 * 1024;
+
+    private static void AssertImageGarbageBounded(long left, string name) =>
+        Assert.True(left <= ImageGarbageBound, $"{name} left {left} compat bytes before a collection.");
 
     private static void Settle()
     {

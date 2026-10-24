@@ -3688,11 +3688,9 @@
   [statement (str owned-resources-declaration "\n" statement)])
 
 (defn- releasing-return
-  ([value] (releasing-return value nil))
-  ([value options]
-   (cond-> [(str "return " value ";")
-            (str "return __dripsharpOwned.Release(" value ");")]
-     options (conj options))))
+  [value]
+  [(str "return " value ";")
+   (str "return __dripsharpOwned.Release(" value ");")])
 
 (defn- compat-bitmap
   [& arguments]
@@ -3866,46 +3864,6 @@
    ["org.apache.pdfbox.rendering.GroupGraphics" "dispose" 0]
    [["this.alphaG2D.Dispose();"
      "this.alphaG2D.Dispose();\nthis.__dripsharpOwnedAlphaImage?.Dispose();"]]
-   ;; Stencil masks: the rendered paint, mask and scaled mask, or the
-   ;; stencil image, are drawn and dropped. pdImage.GetImage() is cached by
-   ;; the image and stays unowned.
-   ["org.apache.pdfbox.rendering.PageDrawer" "drawImage" 1]
-   [(owned-assignment (str skia-bitmap " renderedPaint")
-                      (compat-bitmap "w" "h" (compat-type "TYPE_INT_ARGB"))
-                      {:declare? true})
-    (owned-assignment (str compat-graphics " g")
-                      (str "(" compat-graphics ")(" compat-call
-                           "CreateGraphics(renderedPaint)!)"))
-    (owned-assignment (str skia-bitmap " tmp")
-                      (compat-bitmap "maskWidth" "maskHeight" (compat-type "TYPE_INT_RGB")))
-    (owned-assignment (str skia-bitmap " renderedMask")
-                      (compat-bitmap "w" "h" (compat-type "TYPE_INT_RGB")))
-    (owned-assignment "g" (str "(" compat-graphics ")(" compat-call
-                               "CreateGraphics(renderedMask)!)"))
-    (owned-assignment (str skia-bitmap " scaledMask")
-                      (str compat-call "ScaleImage(mask, w2, h2, "
-                           (compat-type "SCALE_SMOOTH") ")"))
-    (using-local (str skia-bitmap " image = "
-                      "pdImage.GetStencilImage(this.GetNonStrokingPaint());"))]
-   ;; The image itself belongs to the caller (PDImageXObject caches it);
-   ;; its transfer-mapped, downscaled or printer copies do not escape.
-   ["org.apache.pdfbox.rendering.PageDrawer" "drawBufferedImage"]
-   [(declaring-scope "global::SkiaSharp.SKMatrix originalTransform = this.graphics.GetTransform();")
-    (owned-assignment "image" "this.applyTransferFunction(image, transfer)")
-    (owned-assignment (str skia-bitmap " imageToDraw")
-                      (str compat-call "ScaleImage(image, w, h, "
-                           (compat-type "SCALE_SMOOTH") ")"))
-    (owned-assignment (str skia-bitmap " bim")
-                      (compat-bitmap (str compat-call "GetImageWidth(image)") (str compat-call "GetImageHeight(image)")
-                                     (compat-type "TYPE_4BYTE_ABGR")))
-    (owned-assignment (str compat-graphics " g") (str compat-call "CreateGraphics(bim)"))]
-   ["org.apache.pdfbox.rendering.PageDrawer" "applyTransferFunction"]
-   [(declaring-scope (str skia-bitmap " bim;"))
-    (owned-assignment "bim" (compat-bitmap "imageWidth" "imageHeight"
-                                           (compat-type "TYPE_INT_ARGB")))
-    (owned-assignment "bim" (compat-bitmap "imageWidth" "imageHeight"
-                                           (compat-type "TYPE_INT_RGB")))
-    (releasing-return "bim")]
    ;; The page image is returned unless it was forced to ARGB for blending
    ;; and converted, and is disposed when the render fails. pageImage is the
    ;; backdrop of the render in progress; it is cleared when renderImage
@@ -3931,57 +3889,7 @@
    [(declaring-scope (str skia-bitmap " image = default!;"))
     [(str "graphics2D = " compat-call "CreateGraphics(image!);")
      (str "__dripsharpOwned.Own(image);\n"
-          "graphics2D = __dripsharpOwned.Own(" compat-call "CreateGraphics(image!));")]]
-   ;; Masked images: the unmasked image and the mask (fresh decodes; the JPX
-   ;; soft mask is the image's own and stays unowned) are replaced by
-   ;; applyMask's result, and its rescaled copies by the masked image.
-   ["org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject" "getImage" 2]
-   (let [rgb (str "global::DripSharp.PdfCarton.Pdmodel.Graphics.Image.SampledImageReader."
-                  "GetRGBImage(this, region, subsampling, this.GetColorKeyMask())")
-         owned #(str "__dripsharpOwned.Own(" % ")")
-         mask-call (fn [mask] (str mask ".GetOpaqueImage(region, subsampling)"))
-         apply-mask (fn [image mask tail]
-                      (str "image = this.applyMask(" image ", " mask ", " tail ");"))]
-     [(declaring-scope (str skia-bitmap " image;"))
-      [(apply-mask rgb "this.jpxSMask" "false, true, (float[])default!")
-       (apply-mask (owned rgb) "this.jpxSMask" "false, true, (float[])default!")]
-      [(apply-mask rgb (mask-call "softMask")
-                   "softMask.GetInterpolate(), true, this.extractMatte(softMask)")
-       (apply-mask (owned rgb) (owned (mask-call "softMask"))
-                   "softMask.GetInterpolate(), true, this.extractMatte(softMask)")]
-      [(apply-mask rgb (mask-call "mask") "mask.GetInterpolate(), false, (float[])default!")
-       (apply-mask (owned rgb) (owned (mask-call "mask"))
-                   "mask.GetInterpolate(), false, (float[])default!")]
-      (owned-assignment "image" rgb)
-      (releasing-return "image")])
-   ["org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject" "applyMask"]
-   (let [scale (fn [image type interpolate]
-                 (str "global::DripSharp.PdfCarton.Pdmodel.Graphics.Image.PDImageXObject."
-                      "scaleImage(" image ", width, height, " (compat-type type) ", "
-                      interpolate ")"))]
-     [[:prepend owned-resources-declaration]
-      (owned-assignment "mask" (scale "mask" "TYPE_BYTE_GRAY" "interpolateMask"))
-      (owned-assignment "mask" (scale "mask" "TYPE_BYTE_GRAY" "false"))
-      (owned-assignment "image" (scale "image" "TYPE_INT_ARGB" "this.GetInterpolate()"))
-      (owned-assignment "image" (scale "image" "TYPE_INT_ARGB" "false"))
-      (releasing-return "image" {:every? true})])
-   ["org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject" "scaleImage"]
-   [(owned-assignment (str skia-bitmap " image2") (compat-bitmap "width" "height" "type")
-                      {:declare? true})
-    (owned-assignment (str compat-graphics " g") (str compat-call "CreateGraphics(image2)"))
-    (releasing-return "image2" {:every? true})]
-   ;; Colour-key masking replaces the decoded image and its key mask.
-   ["org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader" "fromAny"]
-   [(declaring-scope (str skia-bitmap " colorKeyMask = default!;"))
-    (owned-assignment "colorKeyMask" (compat-bitmap "width" "height"
-                                                    (compat-type "TYPE_BYTE_GRAY")))
-    (owned-assignment (str skia-bitmap " rgbImage") "colorSpace.ToRGBImage(raster)")
-    (releasing-return "rgbImage")]
-   ["org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader" "applyColorKeyMask"]
-   [(owned-assignment (str skia-bitmap " masked")
-                      (compat-bitmap "width" "height" (compat-type "TYPE_INT_ARGB"))
-                      {:declare? true})
-    (releasing-return "masked")]})
+          "graphics2D = __dripsharpOwned.Own(" compat-call "CreateGraphics(image!));")]]})
 
 (def ^:private owned-bitmap-members
   "Fields and helpers the owned-bitmap statement rewrites rely on, prepended
