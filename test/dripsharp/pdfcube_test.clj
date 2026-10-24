@@ -247,28 +247,38 @@
                  (:text (render-transformed config type)))
               type-name))))))
 
-(deftest rendering-intermediates-are-owned
-  (let [config {:package {:id "DripSharp.PdfCarton"}}
-        render (fn [node] (:text (render-transformed config node)))
-        declaration (fn [kind type-name data statements]
-                      (csharp/declaration
-                       (csharp/raw (str "void " (or (:source-name data) "ctor") "()"))
-                       (csharp/block (mapv csharp/raw statements))
-                       (merge {:declaration-kind kind
-                               :source-qualified-name type-name}
-                              data)))]
-    (testing "a pattern fill's area reads linePath in place and fills the clip copy"
-      (let [area "global::DripSharp.Runtime.JavaArea"
-            rendered (render (declaration
-                              :method "org.apache.pdfbox.rendering.PageDrawer"
-                              {:source-name "fillPath" :parameter-count 1}
-                              [(str area " area = new " area "(this.linePath);")
-                               "object clip = this.graphics.GetClip();"
-                               (str "area.Intersect(new " area "(clip));")]))]
-        (is (str/includes? rendered (str "__dripsharpOwned.Own(" area ".Lend(this.linePath))")))
-        (is (str/includes? rendered "area.IntersectTemporary(__dripsharpClipPath);"))
-        (is (not (str/includes? rendered (str "new " area "(this.linePath)"))))
-        (is (= 1 (count (re-seq #"new global::DripSharp\.Runtime\.JavaArea\(" rendered))))))))
+(deftest page-drawer-geometry-is-emitted-unchanged
+  (doseq [[source-name parameter-count statement]
+          [["fillPath" 1
+            (str "global::DripSharp.PdfCarton.Runtime.Fonts.JavaArea area = "
+                 "global::DripSharp.Runtime.PdfCartonFontCompat.CreateArea(this.linePath);")]
+           ["fillPath" 1 "object clip = this.graphics.GetClip();"]
+           ["fillPath" 1
+            "area.Intersect(global::DripSharp.Runtime.PdfCartonFontCompat.CreateArea(clip));"]
+           ["intersectShadingBBox" 2
+            (str "global::DripSharp.PdfCarton.Runtime.Fonts.JavaArea bboxArea = "
+                 "global::DripSharp.Runtime.PdfCartonFontCompat.CreateArea(bbox.Transform(m));")]
+           ["isRectangular" 1
+            (str "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator iter = "
+                 "global::DripSharp.Runtime.PdfCartonFontCompat.PathIterator("
+                 "path, (global::SkiaSharp.SKMatrix)default!);")]
+           ["drawGlyph" 5
+            (str "object glyph = global::DripSharp.Runtime.PdfCartonFontCompat."
+                 "CreateTransformedShape(at, path);")]
+           ["drawGlyph" 5 "global::DripSharp.Runtime.JavaCompat.Add(this.textClippings, glyph);"]
+           ["endTextClip" 0 "state.IntersectClippingPath(path);"]
+           ["getLinePath" 0 "return this.linePath;"]]]
+    (let [declaration (csharp/declaration
+                       (csharp/raw (str "private object " source-name "()"))
+                       (csharp/block [(csharp/raw statement)])
+                       {:declaration-kind :method
+                        :source-name source-name
+                        :parameter-count parameter-count
+                        :source-qualified-name "org.apache.pdfbox.rendering.PageDrawer"})]
+      (is (= (:text (csharp/render declaration))
+             (:text (render-transformed {:package {:id "DripSharp.PdfCarton"}}
+                                        declaration)))
+          (str "PageDrawer#" source-name ": " statement)))))
 
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]
@@ -438,6 +448,37 @@
        :public-api-boundary public-api-boundary
        :configuration destination
        :rule-bundle (pdfcube/rule-bundle)}))))
+
+(deftest general-paths-translate-to-the-shared-managed-path
+  ;; java.awt.geom.GeneralPath, Path2D and Area map to the managed types of
+  ;; the FontBox assembly in every product, and a method returning a path
+  ;; field returns it as Java does. The fixture is synthetic.
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-fontbox")
+        fixture
+        (model!
+         "org/apache/fontbox/PathOwner.java"
+         (str "package org.apache.fontbox; "
+              "import java.awt.geom.Area; "
+              "import java.awt.geom.GeneralPath; "
+              "import java.awt.geom.Path2D; "
+              "public class PathOwner { "
+              "private GeneralPath path = new GeneralPath(); "
+              "public GeneralPath getPath() { return path; } "
+              "public Path2D copy() { return new Path2D.Double(path); } "
+              "public Area area() { return new Area(path); } }"))
+        emission (emit! fixture destination)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/DripSharp/PdfCarton/Fonts/PathOwner.cs")))]
+    (is (re-find #"global::DripSharp\.PdfCarton\.Runtime\.Fonts\.JavaPath2D GetPath\(\) \{\s+return this\.path;" source))
+    (is (re-find #"PdfCartonFontCompat\.CreateDoublePath\(this\.path\)" source))
+    (is (re-find #"global::DripSharp\.PdfCarton\.Runtime\.Fonts\.JavaArea Area\(\)" source))
+    (is (re-find #"PdfCartonFontCompat\.CreateArea\(this\.path\)" source))
+    (is (not (str/includes? source "LendPath")))
+    (is (not (str/includes? source "SKPath")))))
 
 (deftest five-configurations-match-the-approved-pdfcarton-family
   (let [workspace (paths/workspace-root)

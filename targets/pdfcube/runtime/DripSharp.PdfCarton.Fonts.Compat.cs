@@ -21,6 +21,11 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Xml;
 using SkiaSharp;
+// The managed geometry types live in the FontBox assembly only (see
+// DripSharp.PdfCarton.Geometry.cs), whose compat namespace this is.
+using JavaArea = global::DripSharp.PdfCarton.Runtime.Fonts.JavaArea;
+using JavaPath2D = global::DripSharp.PdfCarton.Runtime.Fonts.JavaPath2D;
+using JavaPathIterator = global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator;
 
 namespace DripSharp.Runtime;
 
@@ -4148,7 +4153,10 @@ public sealed class JavaBasicStroke : JavaStroke
     {
         using var path = PdfCartonFontCompat.BorrowPath(shape);
         using var paint = CreateSkiaPaint();
-        return paint.GetFillPath(path.Path) ?? new SKPath();
+        using var outline = paint.GetFillPath(path.Path);
+        var result = new JavaPath2D(JavaPath2D.WIND_NON_ZERO, outline?.VerbCount ?? 0, doublePrecision: false);
+        if (outline is not null) result.ReadFrom(outline);
+        return result;
     }
 
     internal SKPaint CreateSkiaPaint()
@@ -6070,6 +6078,10 @@ public class PdfCartonGraphics2D : IDisposable
     private SKPath? clipRegion;
     // FillAntialiased's reusable device path (never shared with a copy).
     private SKPath? scratchDevicePath;
+    // The reused Skia path managed shapes are drawn and clipped through
+    // (LeasePath); made on first use, kept until Dispose.
+    private SKPath? scratchPath;
+    private bool scratchPathOut;
 
     protected PdfCartonGraphics2D()
     {
@@ -6428,8 +6440,18 @@ public class PdfCartonGraphics2D : IDisposable
         if (clipPath is null || !transform.TryInvert(out var inverse)) return null;
         if (clipRectangle is not null && PdfCartonAliasedFill.IsAxisAligned(inverse))
             return inverse.MapRect(clipPath.Bounds);
-        var result = new SKPath(clipPath);
-        result.Transform(inverse);
+        // Java has no inverse fills; an inverse Skia path a caller clipped to
+        // comes back as such a path, which the caller owns.
+        if (clipPath.FillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd)
+        {
+            var inverted = new SKPath();
+            clipPath.Transform(in inverse, inverted);
+            return inverted;
+        }
+        using var userPath = new SKPath();
+        clipPath.Transform(in inverse, userPath);
+        var result = new JavaPath2D(JavaPath2D.WIND_NON_ZERO, userPath.VerbCount, doublePrecision: false);
+        result.ReadFrom(userPath);
         return result;
     }
 
@@ -6444,8 +6466,17 @@ public class PdfCartonGraphics2D : IDisposable
                 (int)Math.Ceiling(rectangle.Right),
                 (int)Math.Ceiling(rectangle.Bottom));
         }
-        using var path = userClip as SKPath;
-        return path is null ? CanvasClipBounds() : PdfCartonFontCompat.PathBounds(path);
+        if (userClip is SKPath inverted)
+        {
+            using (inverted)
+            {
+                var bounds = inverted.Bounds;
+                return new SKRectI(
+                    (int)Math.Floor(bounds.Left), (int)Math.Floor(bounds.Top),
+                    (int)Math.Ceiling(bounds.Right), (int)Math.Ceiling(bounds.Bottom));
+            }
+        }
+        return userClip is JavaPath2D path ? PdfCartonFontCompat.PathBounds(path) : CanvasClipBounds();
     }
 
     public virtual void Clip(object shape)
@@ -6685,7 +6716,7 @@ public class PdfCartonGraphics2D : IDisposable
     {
         ArgumentNullException.ThrowIfNull(shape);
         var hitShape = onStroke ? stroke.CreateStrokedShape(shape) : shape;
-        using var path = PdfCartonFontCompat.CreatePath(hitShape);
+        using var path = PdfCartonFontCompat.CreateSkiaPath(hitShape);
         path.Transform(transform);
         var bounds = path.Bounds;
         return bounds.IntersectsWith(new SKRect(
@@ -6754,6 +6785,8 @@ public class PdfCartonGraphics2D : IDisposable
         ClearClip();
         scratchDevicePath?.Dispose();
         scratchDevicePath = null;
+        if (!scratchPathOut) scratchPath?.Dispose();
+        scratchPath = null;
         if (canvas is null)
             return;
         canvas.RestoreToCount(restoreCount);
@@ -6803,6 +6836,17 @@ public class PdfCartonGraphics2D : IDisposable
     private void DrawShape(object shape, bool fill)
     {
         ArgumentNullException.ThrowIfNull(shape);
+        if (shape is JavaPath2D managed)
+        {
+            // A managed path is drawn as the Skia path of its segments, made
+            // once for the whole draw in this graphics' reused path, except
+            // for an antialiased fill, whose coverage is computed from the
+            // segments themselves.
+            if (fill && FillManagedAntialiased(managed)) return;
+            using var managedLease = LeasePath(managed);
+            DrawShape(managedLease.Path, fill);
+            return;
+        }
         if (!fill && stroke is not JavaBasicStroke)
         {
             var strokedShape = stroke.CreateStrokedShape(shape);
@@ -7299,6 +7343,12 @@ public class PdfCartonGraphics2D : IDisposable
     //   PdfCartonAliasedFill.ClipRegion).
     private void IntersectClip(object shape)
     {
+        if (shape is JavaPath2D managed)
+        {
+            using var managedLease = LeasePath(managed);
+            IntersectClip(managedLease.Path);
+            return;
+        }
         var rectangle = PdfCartonAliasedFill.TryDeviceRectangle(
             shape, transform, out var left, out var top, out var right, out var bottom);
         if (clipPath is null)
@@ -7308,7 +7358,7 @@ public class PdfCartonGraphics2D : IDisposable
                 SetClipRectangle(left, top, right, bottom);
                 return;
             }
-            var devicePath = PdfCartonFontCompat.CreatePath(shape);
+            var devicePath = PdfCartonFontCompat.CreateSkiaPath(shape);
             devicePath.Transform(transform);
             SetClipShape(devicePath, PdfCartonAliasedFill.ClipRegion(shape, transform, RegionBounds()));
             return;
@@ -7394,6 +7444,52 @@ public class PdfCartonGraphics2D : IDisposable
     {
         using var lease = PdfCartonFontCompat.BorrowPath(shape);
         return PdfCartonStrokeNormalization.Normalize(lease.Path, transform);
+    }
+
+    // The Skia path of a managed shape's segments for one operation: this
+    // graphics' reused path, refilled, or a path of its own while that one
+    // is out (a draw within a draw).
+    private PdfCartonFontCompat.PathLease LeasePath(JavaPath2D shape)
+    {
+        if (scratchPathOut || disposed) return PdfCartonFontCompat.BorrowPath(shape);
+        var path = scratchPath ??= new SKPath();
+        scratchPathOut = true;
+        shape.WriteTo(path);
+        return new PdfCartonFontCompat.PathLease(path, false, this);
+    }
+
+    internal void ReturnScratchPath(SKPath path)
+    {
+        scratchPathOut = false;
+        if (disposed) path.Dispose();
+    }
+
+    // An antialiased fill of a managed shape with a colour: its device
+    // segments go straight into Java 2D's coverage (PdfCartonAntialiasedFill),
+    // mapped as a Skia path of the shape would be, so no Skia path is made.
+    // False when FillAntialiased would not draw it this way.
+    private bool FillManagedAntialiased(JavaPath2D shape)
+    {
+        if (bitmap is null || !IsAntialiasEnabled() || paint is not JavaColor) return false;
+        if (transform.Persp0 != 0 || transform.Persp1 != 0 || transform.Persp2 != 1)
+            return false;
+        var types = shape.DeviceSegments(transform, out var segmentCount, out var points, out var pathBounds);
+        var bounds = DrawingBounds(pathBounds, stroked: false, deviceSpace: true);
+        var mask = PdfCartonAntialiasedFill.Mask(
+            types, segmentCount, points, shape.WindingRule == JavaPath2D.WIND_EVEN_ODD, bounds);
+        if (mask is null) return true;
+        try
+        {
+            var deviceBounds = new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+            RenderLayer(
+                (layer, _, drawingPaint) => PdfCartonAntialiasedFill.Draw(layer, mask, bounds, drawingPaint),
+                stroked: false, imagePaint: false, deviceBounds, deviceSpace: true);
+        }
+        finally
+        {
+            PdfCartonAntialiasedFill.Return(mask);
+        }
+        return true;
     }
 
     // Fills shape, or the outline of the current BasicStroke along it, with
@@ -7653,179 +7749,6 @@ public class JavaPoint : JavaPoint2D, IEquatable<JavaPoint>
         checked((int)Math.Floor(value + 0.5d));
 }
 
-// A lazy java.awt.geom.PathIterator over a Skia path, as upstream's are: it
-// reads the path's segments in place, one at a time, and transforms each
-// as it is read. A path lent by its owner is never copied; a path made for
-// the iterator alone is disposed with it, once it is exhausted at the latest.
-public sealed class JavaPathIterator : IDisposable
-{
-    public const int WIND_EVEN_ODD = 0;
-    public const int WIND_NON_ZERO = 1;
-    public const int SEG_MOVETO = 0;
-    public const int SEG_LINETO = 1;
-    public const int SEG_QUADTO = 2;
-    public const int SEG_CUBICTO = 3;
-    public const int SEG_CLOSE = 4;
-
-    private readonly SKPath source;
-    private readonly bool ownsSource;
-    private readonly SKMatrix transform;
-    private readonly bool transformed;
-    private readonly int windingRule;
-    private readonly int count;
-    private readonly SKPoint[] points = new SKPoint[4];
-    private SKPath.RawIterator? iterator;
-    private SKPathVerb verb;
-    private bool loaded;
-    private int remaining;
-
-    internal JavaPathIterator(SKPath path, object? transform, bool ownsPath = false)
-    {
-        ArgumentNullException.ThrowIfNull(path);
-        source = path;
-        ownsSource = ownsPath;
-        if ((path.SegmentMasks & SKPathSegmentMask.Conic) != 0)
-        {
-            Dispose();
-            throw new NotSupportedException(
-                "A conic Skia segment cannot be represented by java.awt.geom.PathIterator.");
-        }
-        if (transform is SKMatrix matrix && !PdfCartonFontCompat.IsDefaultMatrix(matrix))
-        {
-            this.transform = matrix;
-            transformed = true;
-        }
-        windingRule = path.FillType is SKPathFillType.EvenOdd or SKPathFillType.InverseEvenOdd
-            ? WIND_EVEN_ODD
-            : WIND_NON_ZERO;
-        count = remaining = path.VerbCount;
-        if (remaining == 0) Dispose();
-    }
-
-    public bool IsDone() => remaining <= 0;
-
-    public void Next()
-    {
-        if (IsDone()) return;
-        Load();
-        loaded = false;
-        if (--remaining == 0) Dispose();
-    }
-
-    public int CurrentSegment(double[] coordinates)
-    {
-        ArgumentNullException.ThrowIfNull(coordinates);
-        var (first, length) = Segment(coordinates.Length);
-        for (var point = 0; point < length; point++)
-        {
-            coordinates[point * 2] = points[first + point].X;
-            coordinates[point * 2 + 1] = points[first + point].Y;
-        }
-        return SegmentType();
-    }
-
-    public int CurrentSegment(float[] coordinates)
-    {
-        ArgumentNullException.ThrowIfNull(coordinates);
-        var (first, length) = Segment(coordinates.Length);
-        for (var point = 0; point < length; point++)
-        {
-            coordinates[point * 2] = points[first + point].X;
-            coordinates[point * 2 + 1] = points[first + point].Y;
-        }
-        return SegmentType();
-    }
-
-    public int GetWindingRule() => windingRule;
-
-    public void Dispose()
-    {
-        remaining = 0;
-        iterator?.Dispose();
-        iterator = null;
-        if (ownsSource) source.Dispose();
-    }
-
-    // Path2D.append(PathIterator, connect): the segments not yet iterated.
-    internal void AppendTo(SKPath path, bool connect)
-    {
-        ArgumentNullException.ThrowIfNull(path);
-        if (IsDone()) return;
-        if (remaining == count)
-        {
-            // Skia ignores a path appended to itself, so that one is copied.
-            using var self = ReferenceEquals(path, source) ? new SKPath(source) : null;
-            var mode = connect ? SKPathAddMode.Extend : SKPathAddMode.Append;
-            if (transformed) path.AddPath(self ?? source, in transform, mode);
-            else path.AddPath(self ?? source, mode);
-            Dispose();
-            return;
-        }
-        // The rest continues the destination's current subpath; connect
-        // turns only a leading move into a line. It is read before any is
-        // appended, as the destination may be the source.
-        var rest = new List<(SKPathVerb Verb, SKPoint A, SKPoint B, SKPoint C)>(remaining);
-        for (; !IsDone(); Next())
-        {
-            Load();
-            rest.Add(verb == SKPathVerb.Move
-                ? (verb, points[0], default, default)
-                : (verb, points[1], points[2], points[3]));
-        }
-        foreach (var (segment, a, b, c) in rest)
-        {
-            switch (segment)
-            {
-                case SKPathVerb.Move when connect && !path.IsEmpty:
-                    if (path.LastPoint != a) path.LineTo(a);
-                    break;
-                case SKPathVerb.Move: path.MoveTo(a); break;
-                case SKPathVerb.Line: path.LineTo(a); break;
-                case SKPathVerb.Quad: path.QuadTo(a, b); break;
-                case SKPathVerb.Cubic: path.CubicTo(a, b, c); break;
-                default: path.Close(); break;
-            }
-            connect = false;
-        }
-    }
-
-    private void Load()
-    {
-        if (loaded) return;
-        iterator ??= source.CreateRawIterator();
-        verb = iterator.Next(points);
-        if (transformed) transform.MapPoints(points, points);
-        loaded = true;
-    }
-
-    private (int First, int Length) Segment(int capacity)
-    {
-        if (IsDone()) throw new InvalidOperationException("Path iterator is exhausted.");
-        Load();
-        var segment = verb switch
-        {
-            SKPathVerb.Move => (0, 1),
-            SKPathVerb.Line => (1, 1),
-            SKPathVerb.Quad => (1, 2),
-            SKPathVerb.Cubic => (1, 3),
-            SKPathVerb.Close => (0, 0),
-            _ => throw new NotSupportedException($"Unsupported Skia path verb `{verb}`.")
-        };
-        if (capacity < segment.Item2 * 2)
-            throw new IndexOutOfRangeException("Path coordinate array is too small.");
-        return segment;
-    }
-
-    private int SegmentType() => verb switch
-    {
-        SKPathVerb.Move => SEG_MOVETO,
-        SKPathVerb.Line => SEG_LINETO,
-        SKPathVerb.Quad => SEG_QUADTO,
-        SKPathVerb.Cubic => SEG_CUBICTO,
-        _ => SEG_CLOSE
-    };
-}
-
 public sealed class JavaEllipse
 {
     private readonly double x;
@@ -7866,7 +7789,7 @@ public sealed class JavaEllipse
             }
         }
 
-        var path = new SKPath();
+        var path = new JavaPath2D();
         for (var step = 0; step < steps; step++)
         {
             var angle = step * 2 * Math.PI / steps;
@@ -7881,8 +7804,25 @@ public sealed class JavaEllipse
                 path.LineTo((float)pointX, (float)pointY);
             }
         }
-        path.Close();
-        return new JavaPathIterator(path, transform, ownsPath: true);
+        path.ClosePath();
+        return new JavaPathIterator(path, transform);
+    }
+
+    // ToPath's segments as a managed path (new GeneralPath(ellipse) rounds
+    // them to float, an Area keeps them).
+    internal JavaPath2D ToJavaPath()
+    {
+        var path = new JavaPath2D(JavaPath2D.WIND_NON_ZERO, 6, doublePrecision: true);
+        if (width < 0 || height < 0) return path;
+        double rx = width / 2, ry = height / 2, cx = x + rx, cy = y + ry, right = x + width, bottom = y + height;
+        double kx = rx * JavaCurves.Control, ky = ry * JavaCurves.Control;
+        path.MoveTo(right, cy);
+        path.CurveTo(right, cy + ky, cx + kx, bottom, cx, bottom);
+        path.CurveTo(cx - kx, bottom, x, cy + ky, x, cy);
+        path.CurveTo(x, cy - ky, cx - kx, y, cx, y);
+        path.CurveTo(cx + kx, y, right, cy - ky, right, cy);
+        path.ClosePath();
+        return path;
     }
 
     // The path Java's Ellipse2D iterates (read back from Java 2D's
@@ -8696,13 +8636,29 @@ internal static class PdfCartonAntialiasedFill
     internal static byte[]? Mask(SKPath devicePath, SKRectI bounds)
     {
         if (bounds.IsEmpty) return null;
+        using var iterator = devicePath.CreateRawIterator();
+        var segments = new SkiaSegments(iterator);
+        return Mask(ref segments, devicePath.FillType == SKPathFillType.EvenOdd, bounds);
+    }
+
+    // The same for a managed path's device segments (JavaPath2D.DeviceSegments).
+    [MethodImpl((MethodImplOptions)512)]
+    internal static byte[]? Mask(byte[] types, int typeCount, SKPoint[] points, bool evenOdd, SKRectI bounds)
+    {
+        if (bounds.IsEmpty) return null;
+        var segments = new ManagedSegments(types, typeCount, points);
+        return Mask(ref segments, evenOdd, bounds);
+    }
+
+    [MethodImpl((MethodImplOptions)512)]
+    private static byte[]? Mask<T>(ref T segments, bool evenOdd, SKRectI bounds) where T : struct, ISegments
+    {
         int top = bounds.Top, bottom = bounds.Bottom, left = bounds.Left, right = bounds.Right;
-        var count = Flatten(devicePath, top, bottom);
+        var count = Flatten(ref segments, top, bottom);
         if (count == 0) return null;
         try
         {
-            return Scan(edges!, count, devicePath.FillType == SKPathFillType.EvenOdd, top, left,
-                right - left, bottom - top);
+            return Scan(edges!, count, evenOdd, top, left, right - left, bottom - top);
         }
         finally
         {
@@ -8986,21 +8942,85 @@ internal static class PdfCartonAntialiasedFill
     private static T[] Grow<T>(T[]? array, int length) =>
         array is not null && array.Length >= length ? array : new T[Math.Max(length, (array?.Length ?? 16) * 2)];
 
+    // Segments as a Skia raw iterator reads them: the points of a line,
+    // quadratic or cubic start with its first point.
+    internal interface ISegments
+    {
+        SKPathVerb Next(SKPoint[] points);
+        float ConicWeight();
+    }
+
+    private readonly struct SkiaSegments(SKPath.RawIterator iterator) : ISegments
+    {
+        public SKPathVerb Next(SKPoint[] points) => iterator.Next(points);
+        public float ConicWeight() => iterator.ConicWeight();
+    }
+
+    // A managed path's segments read as the Skia path the same calls would
+    // have built: a segment after a close starts with a move to the closed
+    // subpath's start, as Skia inserts one.
+    private struct ManagedSegments(byte[] types, int typeCount, SKPoint[] points) : ISegments
+    {
+        private int segment;
+        private int point;
+        private SKPoint current;
+        private SKPoint start;
+        private bool closed;
+
+        public SKPathVerb Next(SKPoint[] output)
+        {
+            if (segment >= typeCount) return SKPathVerb.Done;
+            var type = types[segment];
+            if (closed && type != JavaPath2D.MoveSegment && type != JavaPath2D.CloseSegment)
+            {
+                closed = false;
+                output[0] = start;
+                return SKPathVerb.Move;
+            }
+            segment++;
+            output[0] = current;
+            switch (type)
+            {
+                case JavaPath2D.MoveSegment:
+                    closed = false;
+                    current = start = output[0] = points[point++];
+                    return SKPathVerb.Move;
+                case JavaPath2D.LineSegment:
+                    current = output[1] = points[point++];
+                    return SKPathVerb.Line;
+                case JavaPath2D.QuadSegment:
+                    output[1] = points[point++];
+                    current = output[2] = points[point++];
+                    return SKPathVerb.Quad;
+                case JavaPath2D.CubicSegment:
+                    output[1] = points[point++];
+                    output[2] = points[point++];
+                    current = output[3] = points[point++];
+                    return SKPathVerb.Cubic;
+                default:
+                    closed = true;
+                    current = start;
+                    return SKPathVerb.Close;
+            }
+        }
+
+        public float ConicWeight() => 1;
+    }
+
     // The path's outline as lines (subpaths closed), keeping the edges that
     // reach the sample rows of [top, bottom); returns how many are in edges.
     // It and its hot local functions are optimized from the first call, as
     // Mask is.
     [MethodImpl((MethodImplOptions)512)]
-    private static int Flatten(SKPath path, int top, int bottom)
+    private static int Flatten<T>(ref T segments, int top, int bottom) where T : struct, ISegments
     {
         edges ??= new Edge[64];
         var count = 0;
         var points = verbPoints ??= new SKPoint[4];
         double startX = 0, startY = 0, x = 0, y = 0;
         var open = false;
-        using var iterator = path.CreateRawIterator();
         SKPathVerb verb;
-        while ((verb = iterator.Next(points)) != SKPathVerb.Done)
+        while ((verb = segments.Next(points)) != SKPathVerb.Done)
         {
             switch (verb)
             {
@@ -9018,7 +9038,7 @@ internal static class PdfCartonAntialiasedFill
                     break;
                 case SKPathVerb.Conic:
                     // Java has no conics; a Skia-made arc is followed as quadratics.
-                    var quads = SKPath.ConvertConicToQuads(points[0], points[1], points[2], iterator.ConicWeight(), 2);
+                    var quads = SKPath.ConvertConicToQuads(points[0], points[1], points[2], segments.ConicWeight(), 2);
                     for (var index = 1; index + 1 < quads.Length; index += 2)
                         Quad(quads[index].X, quads[index].Y, quads[index + 1].X, quads[index + 1].Y);
                     break;
@@ -9137,104 +9157,6 @@ internal static class PdfCartonAntialiasedFill
         }
     }
 }
-
-// Owns its path: Dispose releases it at once instead of at finalization.
-// A Lend area reads a borrowed path in place until its first change.
-public sealed class JavaArea : IDisposable
-{
-    private SKPath path;
-    private bool ownsPath = true;
-
-    public JavaArea() => path = new SKPath();
-
-    public JavaArea(object shape) => path = PdfCartonFontCompat.CreatePath(shape);
-
-    private JavaArea(SKPath path, bool ownsPath) => (this.path, this.ownsPath) = (path, ownsPath);
-
-    // new Area(path) for a path left unchanged while the area is in use.
-    internal static JavaArea Lend(SKPath path) =>
-        new(path ?? throw new ArgumentNullException(nameof(path)), ownsPath: false);
-
-    public bool IsEmpty => path.IsEmpty;
-    public SKRect Bounds => path.Bounds;
-    internal SKPath Path => path;
-
-    public void Intersect(JavaArea other)
-    {
-        ArgumentNullException.ThrowIfNull(other);
-        IntersectInto(other.path, ownsPath ? path : new SKPath());
-    }
-
-    // intersect(new Area(shape)) for a path made for this call alone
-    // (Graphics2D.getClip's copy): it receives the intersection and becomes
-    // this area's path. Its maker may still dispose it (that is idempotent).
-    internal void IntersectTemporary(SKPath shape) =>
-        IntersectInto(shape ?? throw new ArgumentNullException(nameof(shape)), shape);
-
-    // The result may be written over an operand. Skia intersects small paths
-    // and makes its even-odd result the nonzero one an Area has, with its
-    // holes reversed; larger ones are clipped (PdfCartonAreaIntersection).
-    private void IntersectInto(SKPath other, SKPath result)
-    {
-        if (!PdfCartonAreaIntersection.Intersect(path, other, result))
-        {
-            if (result != path && result != other) result.Dispose();
-            throw new InvalidOperationException("Unable to intersect paths.");
-        }
-        if (result == path) return;
-        if (ownsPath) path.Dispose();
-        (path, ownsPath) = (result, true);
-    }
-
-    public void Reset()
-    {
-        if (ownsPath) path.Reset();
-        else (path, ownsPath) = (new SKPath(), true);
-    }
-
-    public void Dispose()
-    {
-        if (ownsPath) path.Dispose();
-    }
-
-    public JavaPathIterator GetPathIterator(object? transform) =>
-        new(path, transform);
-
-    public override bool Equals(object? value)
-    {
-        if (ReferenceEquals(this, value)) return true;
-        if (value is not JavaArea other) return false;
-        using var difference = new SKPath();
-        return path.Op(other.path, SKPathOp.Xor, difference) && difference.IsEmpty;
-    }
-
-    public override int GetHashCode() => Bounds.GetHashCode();
-}
-
-// A java.awt.geom.GeneralPath made by translated code. SkiaSharp m150 keeps
-// an SKPath's mutations in a builder that any read of the path flushes, and
-// the next mutation then copies the whole path into a new builder. PageDrawer
-// and Type1CharString ask for the current point before every segment, so the
-// compat helpers keep Path2D.getCurrentPoint() here instead of reading the
-// path, which keeps building an n-segment path O(n). Only this assembly's
-// helpers keep it; after a change they do not follow (transform, append) it
-// is Unknown and read from the path once. A path handed to callers, who can
-// change it through SKPath itself, is Lent and always read.
-internal sealed class PdfCartonGeneralPath : SKPath
-{
-    internal PdfCartonGeneralPath() { }
-
-    internal PdfCartonGeneralPath(SKPath source) : base(source) { }
-
-    internal PathCursor Cursor;
-    internal bool Lent;
-    // The current point, and the start of the current subpath, to which
-    // closePath returns it.
-    internal SKPoint Current;
-    internal SKPoint SubpathStart;
-}
-
-internal enum PathCursor : byte { Empty, Open, Closed, Unknown }
 
 // Native-bitmap lifetime. Java leaves BufferedImages to the garbage collector,
 // but SKBitmap pixels are native memory the GC cannot see. Two parts:
@@ -12113,175 +12035,70 @@ internal static class PdfCartonFontCompat
 
     // Path2D.getCurrentPoint: null for an empty path, else the last point,
     // or after a close the start of the closed subpath.
-    internal static JavaPoint2D? CurrentPoint(SKPath path)
-    {
-        var general = path as PdfCartonGeneralPath;
-        if (general is null || general.Lent || general.Cursor == PathCursor.Unknown)
-        {
-            var cursor = ReadCursor(path, out var current, out var start);
-            if (general is null || general.Lent)
-                return cursor == PathCursor.Empty ? null : new JavaPoint2D(current.X, current.Y);
-            Track(general, cursor, current, start);
-        }
-        return general.Cursor == PathCursor.Empty
-            ? null
-            : new JavaPoint2D(general.Current.X, general.Current.Y);
-    }
+    internal static JavaPoint2D? CurrentPoint(JavaPath2D path) =>
+        path.TryGetCurrentPoint(out var x, out var y) ? new JavaPoint2D(x, y) : null;
 
-    // The cursor read from the path itself, one pass over its verbs.
-    private static PathCursor ReadCursor(SKPath path, out SKPoint current, out SKPoint start)
-    {
-        current = start = default;
-        if (path.IsEmpty) return PathCursor.Empty;
-        var last = SKPathVerb.Done;
-        Span<SKPoint> points = stackalloc SKPoint[4];
-        using (var iterator = path.CreateRawIterator())
-        {
-            for (var verb = iterator.Next(points); verb != SKPathVerb.Done; verb = iterator.Next(points))
-            {
-                if (verb == SKPathVerb.Move) start = points[0];
-                last = verb;
-            }
-        }
-        if (last == SKPathVerb.Close)
-        {
-            current = start;
-            return PathCursor.Closed;
-        }
-        current = path.LastPoint;
-        return PathCursor.Open;
-    }
-
-    private static void Track(PdfCartonGeneralPath path, PathCursor cursor, SKPoint current, SKPoint start)
-    {
-        path.Cursor = cursor;
-        path.Current = current;
-        path.SubpathStart = start;
-    }
-
-    // After a line, quad or cubic segment ending at (x, y). Skia starts a
-    // segment after a close at the closed subpath's start, as Path2D does;
-    // a segment on an empty path (Path2D throws) is read back from the path.
-    private static void TrackSegment(SKPath path, float x, float y)
-    {
-        if (path is not PdfCartonGeneralPath general || general.Cursor == PathCursor.Unknown) return;
-        if (general.Cursor == PathCursor.Empty)
-        {
-            general.Cursor = PathCursor.Unknown;
-            return;
-        }
-        general.Cursor = PathCursor.Open;
-        general.Current = new SKPoint(x, y);
-    }
-
-    private static void ForgetCursor(SKPath path)
-    {
-        if (path is PdfCartonGeneralPath general) general.Cursor = PathCursor.Unknown;
-    }
-
-    // A path handed to code outside the compat helpers (PageDrawer.getLinePath),
-    // which may change it natively: its current point is read from then on.
-    internal static SKPath LendPath(SKPath path)
-    {
-        if (path is PdfCartonGeneralPath general) general.Lent = true;
-        return path;
-    }
-
-    internal static JavaPathIterator PathIterator(SKPath path, object? transform) =>
+    internal static JavaPathIterator PathIterator(JavaPath2D path, object? transform) =>
         new(path, transform);
 
     // Shape.getPathIterator: paths and areas are iterated in place.
-    internal static JavaPathIterator ShapePathIterator(
-        object shape,
-        object? transform)
-    {
-        var lease = BorrowPath(shape);
-        return new JavaPathIterator(lease.Path, transform, ownsPath: lease.Owned);
-    }
+    internal static JavaPathIterator ShapePathIterator(object shape, object? transform) =>
+        new(ToJavaPath(shape), transform);
 
-    internal static void Close(SKPath path)
-    {
-        path.Close();
-        if (path is PdfCartonGeneralPath { Cursor: PathCursor.Open or PathCursor.Closed } general)
-        {
-            general.Cursor = PathCursor.Closed;
-            general.Current = general.SubpathStart;
-        }
-    }
+    internal static void Close(JavaPath2D path) => path.ClosePath();
 
     // Path2D.reset.
-    internal static void ResetPath(SKPath path)
-    {
-        path.Reset();
-        if (path is PdfCartonGeneralPath general) general.Cursor = PathCursor.Empty;
-    }
+    internal static void ResetPath(JavaPath2D path) => path.Reset();
 
-    // Path2D.clone: a GeneralPath that keeps its source's cursor.
-    internal static SKPath ClonePath(SKPath path)
-    {
-        var clone = new PdfCartonGeneralPath(path) { Cursor = PathCursor.Unknown };
-        if (path is PdfCartonGeneralPath { Lent: false } general)
-            Track(clone, general.Cursor, general.Current, general.SubpathStart);
-        return clone;
-    }
+    // Path2D.clone: a path of the same precision.
+    internal static JavaPath2D ClonePath(JavaPath2D path) =>
+        new(path, path.IsDoublePrecision);
 
-    internal static void SetWindingRule(SKPath path, int windingRule) =>
-        path.FillType = windingRule == JavaPathIterator.WIND_EVEN_ODD
-            ? SKPathFillType.EvenOdd
-            : SKPathFillType.Winding;
+    internal static void SetWindingRule(JavaPath2D path, int windingRule) =>
+        path.SetWindingRule(windingRule);
 
-    internal static void TransformPath(SKPath path, SKMatrix transform)
+    internal static void TransformPath(JavaPath2D path, SKMatrix transform)
     {
         ArgumentNullException.ThrowIfNull(path);
         path.Transform(transform);
-        ForgetCursor(path);
     }
 
-    // A path (a glyph from the glyph cache, once per glyph shown) is
-    // transformed straight into the new path rather than copied first and
-    // then transformed in place.
-    internal static object CreateTransformedShape(
-        SKMatrix transform,
-        object shape)
+    // AffineTransform.createTransformedShape: a path that reads the shape's
+    // segments through the transform (JavaPath2D), so a glyph outline drawn
+    // once per glyph shown is never copied.
+    internal static JavaPath2D CreateTransformedShape(SKMatrix transform, object shape)
     {
-        var source = shape as SKPath ?? (shape as JavaArea)?.Path;
-        if (source is not null)
-        {
-            var transformed = new SKPath();
-            source.Transform(in transform, transformed);
-            return transformed;
-        }
-        var path = CreatePath(shape);
-        path.Transform(transform);
-        return path;
+        ArgumentNullException.ThrowIfNull(shape);
+        return new JavaPath2D(ToJavaPath(shape), transform);
     }
 
     internal static SKRect ShapeBounds(object shape)
     {
+        if (shape is JavaPath2D path) return path.Bounds;
         using var lease = BorrowPath(shape);
         return lease.Path.Bounds;
     }
 
-    // createTransformedShape(shape).getBounds2D() without keeping the shape.
-    internal static SKRect TransformedShapeBounds(SKMatrix transform, object shape)
-    {
-        using var path = (SKPath)CreateTransformedShape(transform, shape);
-        return path.Bounds;
-    }
+    // createTransformedShape(shape).getBounds2D().
+    internal static SKRect TransformedShapeBounds(SKMatrix transform, object shape) =>
+        CreateTransformedShape(transform, shape).Bounds;
 
-    // The shape as a path to read, not keep: an SKPath or an area's path is
-    // lent as is, any other shape is converted into a path the lease owns.
+    // The shape as a Skia path to read, not keep: an SKPath is lent as is,
+    // any other shape is copied into a path the lease owns.
     internal static PathLease BorrowPath(object shape) =>
         shape is SKPath path ? new PathLease(path, false)
-        : shape is JavaArea area ? new PathLease(area.Path, false)
-        : new PathLease(CreatePath(shape), true);
+        : shape is JavaPath2D managed ? new PathLease(managed.ToSKPath(), true)
+        : new PathLease(CreateSkiaPath(shape), true);
 
     internal readonly struct PathLease : IDisposable
     {
-        internal PathLease(SKPath path, bool owned)
+        private readonly PdfCartonGraphics2D? returnTo;
+
+        internal PathLease(SKPath path, bool owned, PdfCartonGraphics2D? returnTo = null)
         {
             Path = path;
             Owned = owned;
+            this.returnTo = returnTo;
         }
 
         internal SKPath Path { get; }
@@ -12289,26 +12106,17 @@ internal static class PdfCartonFontCompat
 
         public void Dispose()
         {
-            if (Owned) Path.Dispose();
+            if (returnTo is not null) returnTo.ReturnScratchPath(Path);
+            else if (Owned) Path.Dispose();
         }
     }
 
-    // new GeneralPath().
-    internal static SKPath CreatePath() => new PdfCartonGeneralPath();
-
-    internal static SKPath CreatePath(int windingRule, int initialCapacity)
-    {
-        if (initialCapacity < 0) throw new ArgumentException("Initial capacity cannot be negative.");
-        var path = new PdfCartonGeneralPath();
-        SetWindingRule(path, windingRule);
-        return path;
-    }
-
-    internal static SKPath CreatePath(object shape)
+    // A Skia path of any Java shape, which the caller owns.
+    internal static SKPath CreateSkiaPath(object shape)
     {
         ArgumentNullException.ThrowIfNull(shape);
         if (shape is SKPath path) return new SKPath(path);
-        if (shape is JavaArea area) return new SKPath(area.Path);
+        if (shape is JavaPath2D managed) return managed.ToSKPath();
         if (shape is JavaEllipse ellipse) return ellipse.ToPath();
         if (shape is SKRect rectangle)
         {
@@ -12329,7 +12137,51 @@ internal static class PdfCartonFontCompat
         throw new ArgumentException("Unsupported Java shape.", nameof(shape));
     }
 
-    internal static SKRectI PathBounds(SKPath path)
+    // The shape as a managed path to read: a path as it is, any other shape
+    // copied.
+    internal static JavaPath2D ToJavaPath(object shape)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+        if (shape is JavaPath2D path) return path;
+        if (shape is JavaEllipse ellipse) return ellipse.ToJavaPath();
+        var result = new JavaPath2D(JavaPath2D.WIND_NON_ZERO, 5, doublePrecision: true);
+        if (shape is SKRect or SKRectI)
+        {
+            var rectangle = shape is SKRectI i ? new SKRect(i.Left, i.Top, i.Right, i.Bottom) : (SKRect)shape;
+            // The rectangle's corners as SKPath.AddRect adds them.
+            result.MoveTo(rectangle.Left, rectangle.Top);
+            result.LineTo(rectangle.Right, rectangle.Top);
+            result.LineTo(rectangle.Right, rectangle.Bottom);
+            result.LineTo(rectangle.Left, rectangle.Bottom);
+            result.ClosePath();
+            return result;
+        }
+        if (shape is SKPath skiaPath)
+        {
+            result.ReadFrom(skiaPath);
+            return result;
+        }
+        throw new ArgumentException("Unsupported Java shape.", nameof(shape));
+    }
+
+    // new GeneralPath().
+    internal static JavaPath2D CreatePath() => new();
+
+    internal static JavaPath2D CreatePath(int windingRule, int initialCapacity) =>
+        new(windingRule, initialCapacity, doublePrecision: false);
+
+    // new GeneralPath(shape): a float copy.
+    internal static JavaPath2D CreatePath(object shape) =>
+        new(ToJavaPath(shape), doublePrecision: false);
+
+    // new Path2D.Double(shape).
+    internal static JavaPath2D CreateDoublePath(object shape) =>
+        new(ToJavaPath(shape), doublePrecision: true);
+
+    // new Area(shape).
+    internal static JavaArea CreateArea(object shape) => new(ToJavaPath(shape));
+
+    internal static SKRectI PathBounds(JavaPath2D path)
     {
         var bounds = path.Bounds;
         return new SKRectI(
@@ -12339,64 +12191,31 @@ internal static class PdfCartonFontCompat
             (int)Math.Ceiling(bounds.Bottom));
     }
 
-    internal static void AddPath(SKPath path, JavaPathIterator addition)
-    {
-        addition.AppendTo(path, connect: false);
-        ForgetCursor(path);
-    }
+    internal static void AddPath(JavaPath2D path, JavaPathIterator addition) =>
+        path.Append(addition, connect: false);
 
-    internal static void AppendPath(SKPath path, object shape, bool connect)
-    {
-        using var lease = BorrowPath(shape);
-        // Skia drops a path appended to itself, so that one is copied.
-        using var self = ReferenceEquals(lease.Path, path) ? new SKPath(path) : null;
-        path.AddPath(
-            self ?? lease.Path,
-            connect ? SKPathAddMode.Extend : SKPathAddMode.Append);
-        ForgetCursor(path);
-    }
+    internal static void AppendPath(JavaPath2D path, object shape, bool connect) =>
+        path.Append(ShapePathIterator(shape, null), connect);
 
-    internal static void AppendPath(
-        SKPath path,
-        JavaPathIterator addition,
-        bool connect)
-    {
-        addition.AppendTo(path, connect);
-        ForgetCursor(path);
-    }
+    internal static void AppendPath(JavaPath2D path, JavaPathIterator addition, bool connect) =>
+        path.Append(addition, connect);
 
-    internal static void MoveTo(SKPath path, double x, double y)
-    {
-        var point = new SKPoint((float)x, (float)y);
-        path.MoveTo(point);
-        if (path is PdfCartonGeneralPath general)
-            Track(general, PathCursor.Open, point, point);
-    }
+    internal static void MoveTo(JavaPath2D path, double x, double y) => path.MoveTo(x, y);
 
-    internal static void LineTo(SKPath path, double x, double y)
-    {
-        path.LineTo((float)x, (float)y);
-        TrackSegment(path, (float)x, (float)y);
-    }
+    internal static void LineTo(JavaPath2D path, double x, double y) => path.LineTo(x, y);
 
-    internal static void QuadTo(SKPath path, double x1, double y1, double x2, double y2)
-    {
-        path.QuadTo((float)x1, (float)y1, (float)x2, (float)y2);
-        TrackSegment(path, (float)x2, (float)y2);
-    }
+    internal static void QuadTo(JavaPath2D path, double x1, double y1, double x2, double y2) =>
+        path.QuadTo(x1, y1, x2, y2);
 
     internal static void CurveTo(
-        SKPath path,
+        JavaPath2D path,
         double x1,
         double y1,
         double x2,
         double y2,
         double x3,
-        double y3)
-    {
-        path.CubicTo((float)x1, (float)y1, (float)x2, (float)y2, (float)x3, (float)y3);
-        TrackSegment(path, (float)x3, (float)y3);
-    }
+        double y3) =>
+        path.CurveTo(x1, y1, x2, y2, x3, y3);
 }
 
 #pragma warning restore CS0618

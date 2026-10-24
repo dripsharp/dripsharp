@@ -13,6 +13,7 @@ using DripSharp.PdfCarton.Rendering;
 using SkiaSharp;
 using Xunit;
 using Compat = DripSharp.Runtime;
+using Geometry = DripSharp.PdfCarton.Runtime.Fonts;
 
 namespace DripSharp.PdfCarton.Tests;
 
@@ -223,12 +224,15 @@ public sealed class PdfConsumerTests
         Compat.PdfCartonAntialiasedFill.Return(mask);
         var maskAllocation = MeasureRepeatedMasks(glyph, bounds);
         Assert.True(maskAllocation < 1000 * 160, $"1000 masks allocated {maskAllocation} bytes.");
-        foreach (var name in new[] { "Mask", "Flatten" })
+        var optimized = typeof(Compat.PdfCartonAntialiasedFill)
+            .GetMethods(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+            .Where(method => method.Name is "Mask" or "Flatten")
+            .ToList();
+        Assert.Equal(4, optimized.Count);
+        foreach (var method in optimized)
         {
-            var method = typeof(Compat.PdfCartonAntialiasedFill).GetMethod(
-                name, System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
             Assert.True(method.MethodImplementationFlags.HasFlag(
-                System.Reflection.MethodImplAttributes.AggressiveOptimization), name);
+                System.Reflection.MethodImplAttributes.AggressiveOptimization), method.ToString());
         }
     }
 
@@ -412,23 +416,89 @@ public sealed class PdfConsumerTests
         return GC.GetAllocatedBytesForCurrentThread() - allocated;
     }
 
-    // A glyph path is transformed into a new path, keeping its winding rule
+    // A glyph path is transformed into a new shape, keeping its winding rule
     // and leaving the cached glyph as it was.
     [Fact]
     public void TransformedShapesAreNewPathsWithTheSourceWindingRule()
     {
-        using var glyph = new SKPath { FillType = SKPathFillType.EvenOdd };
-#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
-        glyph.AddRect(new SKRect(0, 0, 10, 20));
-        glyph.AddCircle(5, 5, 2);
-#pragma warning restore CS0618
+        var glyph = new Geometry.JavaPath2D(Geometry.JavaPath2D.WIND_EVEN_ODD, 8, doublePrecision: false);
+        glyph.MoveTo(0, 0);
+        glyph.LineTo(10, 0);
+        glyph.LineTo(10, 20);
+        glyph.LineTo(0, 20);
+        glyph.ClosePath();
+        glyph.MoveTo(7, 5);
+        glyph.CurveTo(7, 6.1, 6.1, 7, 5, 7);
+        glyph.ClosePath();
         var transform = SKMatrix.CreateScale(2, 3).PostConcat(SKMatrix.CreateTranslation(7, 11));
-        using var shape = (SKPath)Compat.PdfCartonFontCompat.CreateTransformedShape(transform, glyph);
+        var transformed = Compat.PdfCartonFontCompat.CreateTransformedShape(transform, glyph);
+        var shape = Compat.PdfCartonFontCompat.CreatePath(transformed);
         Assert.NotSame(glyph, shape);
-        Assert.Equal(SKPathFillType.EvenOdd, shape.FillType);
+        Assert.Equal(Geometry.JavaPath2D.WIND_EVEN_ODD, shape.WindingRule);
         Assert.Equal(new SKRect(7, 11, 27, 71), shape.Bounds);
         Assert.Equal(new SKRect(0, 0, 10, 20), glyph.Bounds);
-        Assert.Equal(glyph.PointCount, shape.PointCount);
+        Assert.Equal(PathIteratorTests.Segments(glyph.GetPathIterator(transform)), PathIteratorTests.Segments(shape.GetPathIterator(null)));
+    }
+
+    // createTransformedShape reads a path's segments through the transform
+    // until either changes: a shape keeps the path as it was when made,
+    // through any later change of it, and holds no native memory.
+    [Fact]
+    public void TransformedShapesOfAGeneralPathKeepItAsItWas()
+    {
+        var transform = SKMatrix.CreateTranslation(100, 0);
+        static SKRect Bounds(object shape) => Compat.PdfCartonFontCompat.ShapeBounds(shape);
+        var source = Compat.PdfCartonFontCompat.CreatePath();
+        Compat.PdfCartonFontCompat.MoveTo(source, 0, 0);
+        Compat.PdfCartonFontCompat.LineTo(source, 10, 10);
+        var first = Compat.PdfCartonFontCompat.CreateTransformedShape(transform, source);
+        Assert.IsNotAssignableFrom<IDisposable>(first);
+        var second = Compat.PdfCartonFontCompat.CreateTransformedShape(transform, source);
+        Compat.PdfCartonFontCompat.LineTo(source, 20, 30);
+        var third = Compat.PdfCartonFontCompat.CreateTransformedShape(transform, source);
+        Compat.PdfCartonFontCompat.SetWindingRule(source, Geometry.JavaPathIterator.WIND_EVEN_ODD);
+        var fourth = Compat.PdfCartonFontCompat.CreateTransformedShape(transform, source);
+        Compat.PdfCartonFontCompat.TransformPath(source, SKMatrix.CreateScale(2, 2));
+        var scaled = Compat.PdfCartonFontCompat.CreateTransformedShape(transform, source);
+        Compat.PdfCartonFontCompat.ResetPath(source);
+        Compat.PdfCartonFontCompat.MoveTo(source, 50, 50);
+        Compat.PdfCartonFontCompat.LineTo(source, 60, 60);
+
+        Assert.Equal(new SKRect(100, 0, 110, 10), Bounds(first));
+        Assert.Equal(new SKRect(100, 0, 110, 10), Bounds(second));
+        Assert.Equal(new SKRect(100, 0, 120, 30), Bounds(third));
+        Assert.Equal(Geometry.JavaPath2D.WIND_NON_ZERO, ((Geometry.JavaPath2D)third).WindingRule);
+        Assert.Equal(Geometry.JavaPath2D.WIND_EVEN_ODD, ((Geometry.JavaPath2D)fourth).WindingRule);
+        Assert.Equal(new SKRect(100, 0, 140, 60), Bounds(scaled));
+        Assert.Equal(new SKRect(50, 50, 60, 60), Bounds(source));
+
+        // A shape changed itself takes segments of its own.
+        Compat.PdfCartonFontCompat.LineTo(first, 0, 0);
+        Assert.Equal(new SKRect(0, 0, 110, 10), Bounds(first));
+        Assert.Equal(new SKRect(100, 0, 110, 10), Bounds(second));
+    }
+
+    // A GeneralPath keeps its segments as Path2D does: a lineTo without a
+    // moveTo fails, a moveTo after a moveTo replaces it, a close after a
+    // close adds nothing, and a float path rounds what a double one keeps.
+    [Fact]
+    public void ManagedPathsKeepSegmentsAsPath2DDoes()
+    {
+        var path = Compat.PdfCartonFontCompat.CreatePath();
+        Assert.Throws<InvalidOperationException>(() => Compat.PdfCartonFontCompat.LineTo(path, 1, 1));
+        Assert.Throws<InvalidOperationException>(() => Compat.PdfCartonFontCompat.Close(path));
+        Compat.PdfCartonFontCompat.MoveTo(path, 1, 1);
+        Compat.PdfCartonFontCompat.MoveTo(path, 0.1, 2);
+        Compat.PdfCartonFontCompat.LineTo(path, 3, 4);
+        Compat.PdfCartonFontCompat.Close(path);
+        Compat.PdfCartonFontCompat.Close(path);
+        Compat.PdfCartonFontCompat.LineTo(path, 5, 6);
+        Assert.Equal(["0:0.10000000149011612,2", "1:3,4", "4:", "1:5,6"], PathIteratorTests.Segments(path.GetPathIterator(null)));
+        var copy = Compat.PdfCartonFontCompat.CreateDoublePath(path);
+        Compat.PdfCartonFontCompat.LineTo(copy, 0.1, 0.2);
+        Assert.Equal("1:0.1,0.2", PathIteratorTests.Segments(copy.GetPathIterator(null))[^1]);
+        Assert.True(copy.IsDoublePrecision);
+        Assert.False(path.IsDoublePrecision);
     }
 
     // Three pages of one non-embedded TrueType font with /Widths: every
@@ -10771,14 +10841,15 @@ public sealed class PathIteratorTests
     [Fact]
     public void PathIteratorsReadTheSameSegmentsAsATransformedCopy()
     {
-        using var path = new SKPath { FillType = SKPathFillType.EvenOdd };
+        var path = new Geometry.JavaPath2D(Geometry.JavaPath2D.WIND_EVEN_ODD, 8, doublePrecision: false);
         path.MoveTo(1, 2);
         path.LineTo(10.5f, 2.25f);
         path.QuadTo(12, 4, 9, 9);
-        path.CubicTo(7, 11, 3, 12, 1.125f, 8);
-        path.Close();
+        path.CurveTo(7, 11, 3, 12, 1.125f, 8);
+        path.ClosePath();
         path.MoveTo(20, 20);
         path.LineTo(30, 25);
+        using var skiaPath = path.ToSKPath();
         var rotation = SKMatrix.CreateRotationDegrees(33, 4, 5);
         foreach (var transform in new object?[]
                  {
@@ -10786,15 +10857,23 @@ public sealed class PathIteratorTests
                      SKMatrix.Concat(rotation, SKMatrix.CreateSkew(0.25f, -0.5f)),
                  })
         {
-            var expected = CopiedSegments(path, transform);
+            var expected = CopiedSegments(skiaPath, transform);
             Assert.Equal(expected, Segments(Compat.PdfCartonFontCompat.PathIterator(path, transform)));
-            using var area = new Compat.JavaArea(path);
+            var area = Compat.PdfCartonFontCompat.CreateArea(path);
             Assert.Equal(expected, Segments(Compat.PdfCartonFontCompat.ShapePathIterator(area, transform)));
             Assert.Equal(expected, Segments(area.GetPathIterator(transform)));
+            // A transformed shape reads the same segments, mapped once more.
+            var shape = Compat.PdfCartonFontCompat.CreateTransformedShape(rotation, path);
+            using (var rotated = new SKPath())
+            {
+                skiaPath.Transform(in rotation, rotated);
+                Assert.Equal(CopiedSegments(rotated, transform),
+                    Segments(Compat.PdfCartonFontCompat.ShapePathIterator(shape, transform)));
+            }
             var iterator = Compat.PdfCartonFontCompat.PathIterator(path, transform);
-            Assert.Equal(Compat.JavaPathIterator.WIND_EVEN_ODD, iterator.GetWindingRule());
+            Assert.Equal(Geometry.JavaPathIterator.WIND_EVEN_ODD, iterator.GetWindingRule());
             var floats = new float[6];
-            Assert.Equal(Compat.JavaPathIterator.SEG_MOVETO, iterator.CurrentSegment(floats));
+            Assert.Equal(Geometry.JavaPathIterator.SEG_MOVETO, iterator.CurrentSegment(floats));
             Assert.Equal(expected[0], Segment(0, floats.Take(2).Select(value => (double)value)));
         }
 
@@ -10812,9 +10891,9 @@ public sealed class PathIteratorTests
     [Fact]
     public void IsDoneAndTheFirstSegmentsDoNotCopyALargePath()
     {
-        using var large = Polyline(100_000);
-        using var small = Polyline(10);
-        long Allocated(SKPath path)
+        var large = Polyline(100_000);
+        var small = Polyline(10);
+        long Allocated(Geometry.JavaPath2D path)
         {
             Compat.PdfCartonFontCompat.PathIterator(path, null).IsDone();
             var before = GC.GetAllocatedBytesForCurrentThread();
@@ -10833,70 +10912,145 @@ public sealed class PathIteratorTests
         Assert.Equal(100_001, Segments(Compat.PdfCartonFontCompat.PathIterator(large, null)).Count);
     }
 
+    // A managed path is drawn and clipped through a Skia path its graphics
+    // reuse; appending reads the source's segments without copying them.
     [Fact]
     public void DrawingAndAppendingLendPathsInsteadOfCopyingThem()
     {
-        using var path = Polyline(3);
-        using var area = new Compat.JavaArea(path);
-        using (var lease = Compat.PdfCartonFontCompat.BorrowPath(path))
-            Assert.Same(path, lease.Path);
-        using (var lease = Compat.PdfCartonFontCompat.BorrowPath(area))
-            Assert.Same(area.Path, lease.Path);
+        var path = Polyline(3);
+        using var skiaPath = path.ToSKPath();
+        using (var lease = Compat.PdfCartonFontCompat.BorrowPath(skiaPath))
+            Assert.Same(skiaPath, lease.Path);
         var rectangle = Compat.PdfCartonFontCompat.BorrowPath(new SKRect(0, 0, 1, 1));
         Assert.True(rectangle.Owned);
         rectangle.Dispose();
 
-        // Skia ignores a path appended to itself, so self-appends still copy.
+        // A path appended to itself is read as it was.
         Compat.PdfCartonFontCompat.AppendPath(path, path, false);
-        Assert.Equal(8, path.VerbCount);
+        Assert.Equal(8, Segments(path.GetPathIterator(null)).Count);
         Compat.PdfCartonFontCompat.AppendPath(
             path, Compat.PdfCartonFontCompat.PathIterator(path, null), false);
-        Assert.Equal(16, path.VerbCount);
+        Assert.Equal(16, Segments(path.GetPathIterator(null)).Count);
 
         // Appending an iterator appends the segments it has not yet returned,
         // continuing the destination's current subpath as Path2D.append does.
-        using var target = new SKPath();
+        var target = Compat.PdfCartonFontCompat.CreatePath();
         target.MoveTo(0, 0);
-        using var source = Polyline(3);
-        source.Close();
+        var source = Polyline(3);
+        source.ClosePath();
         var iterator = Compat.PdfCartonFontCompat.PathIterator(source, SKMatrix.CreateTranslation(5, 0));
         iterator.Next();
         iterator.Next();
         Compat.PdfCartonFontCompat.AppendPath(target, iterator, false);
         Assert.True(iterator.IsDone());
-        Assert.Equal(new[] { new SKPoint(0, 0), new SKPoint(7, 0), new SKPoint(8, 1) }, target.Points);
         Assert.Equal(new[] { "0:0,0", "1:7,0", "1:8,1", "4:" },
             Segments(Compat.PdfCartonFontCompat.PathIterator(target, null)));
-        // A partially read iterator appended to its own path reads it first
-        // (Skia records the implicit move back to the start after a close).
+        // A partially read iterator appended to its own path reads the
+        // segments it had left; after a close, Path2D starts no new subpath.
         var own = Compat.PdfCartonFontCompat.PathIterator(source, null);
         own.Next();
         Compat.PdfCartonFontCompat.AppendPath(source, own, true);
-        Assert.Equal(new[] { "0:0,0", "1:1,1", "1:2,0", "1:3,1", "4:", "0:0,0", "1:1,1", "1:2,0", "1:3,1", "4:" },
+        Assert.Equal(new[] { "0:0,0", "1:1,1", "1:2,0", "1:3,1", "4:", "1:1,1", "1:2,0", "1:3,1", "4:" },
             Segments(Compat.PdfCartonFontCompat.PathIterator(source, null)));
+
+        // Drawing a managed path twice reuses the graphics' Skia path.
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        using var graphics = new Compat.PdfCartonGraphics2D(image);
+        graphics.Draw(Polyline(3));
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        graphics.Draw(Polyline(3));
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 16 * 1024);
     }
 
-    // GeneralPaths keep Path2D.getCurrentPoint() beside the native path and
-    // a plain SKPath is read for it; both follow Path2D, whose current point
-    // after a close is the start of the closed subpath.
+    // new Area(path) reads the path's segments until either changes: making
+    // one copies nothing whatever the size, and a change of either leaves
+    // the other as it was.
+    [Fact]
+    public void AreasShareTheirSourcesSegmentsUntilEitherChanges()
+    {
+        var large = Polyline(100_000);
+        var small = Polyline(10);
+        long Allocated(Geometry.JavaPath2D path)
+        {
+            Compat.PdfCartonFontCompat.CreateArea(path);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            Compat.PdfCartonFontCompat.CreateArea(path);
+            return GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        Assert.Equal(Allocated(small), Allocated(large));
+        Assert.True(Allocated(large) < 512, $"{Allocated(large)} bytes");
+
+        var source = Polyline(3);
+        var area = Compat.PdfCartonFontCompat.CreateArea(source);
+        Compat.PdfCartonFontCompat.LineTo(source, 9, 9);
+        Compat.PdfCartonFontCompat.TransformPath(source, SKMatrix.CreateTranslation(100, 0));
+        Assert.Equal(new[] { "0:0,0", "1:1,1", "1:2,0", "1:3,1" }, Segments(area.GetPathIterator(null)));
+        var square = Compat.PdfCartonFontCompat.CreatePath(new SKRect(0, 0, 10, 10));
+        var other = Compat.PdfCartonFontCompat.CreateArea(square);
+        other.Intersect(Compat.PdfCartonFontCompat.CreateArea(new SKRect(5, 5, 20, 20)));
+        Assert.Equal(new SKRect(0, 0, 10, 10), square.Bounds);
+        Assert.Equal(new SKRect(5, 5, 10, 10), other.Bounds);
+        Compat.PdfCartonFontCompat.LineTo(square, 30, 30);
+        Assert.Equal(new SKRect(5, 5, 10, 10), other.Bounds);
+    }
+
+    // A Skia path with an inverse fill that a caller clips to comes back
+    // from getClip as such a path, so setClip(getClip()) keeps the clip.
+    [Fact]
+    public void GetClipPreservesInverseFillRoundTrips()
+    {
+        uint[] Paint(bool roundTrip)
+        {
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(10, 6, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            using var graphics = new Compat.PdfCartonGraphics2D(image);
+            using var inverse = new SKPath { FillType = SKPathFillType.InverseWinding };
+            inverse.AddRect(new SKRect(3, 2, 7, 4));
+            graphics.SetClip(inverse);
+            if (roundTrip) graphics.SetClip(graphics.GetClip());
+            graphics.SetColor(SKColors.Black);
+            graphics.FillRect(0, 0, 10, 6);
+            return image.Pixels.Select(pixel => (uint)pixel).ToArray();
+        }
+        var expected = Paint(false);
+        Assert.Equal(0u, expected[3 * 10 + 5] >> 24);
+        Assert.Equal(255u, expected[0] >> 24);
+        Assert.Equal(expected, Paint(true));
+    }
+
+    // PDFBox asks for the current point before each l and h; after a close
+    // it is the subpath's start, found without reading back the path.
+    [Fact]
+    public void CurrentPointsAfterManyClosesStayCheap()
+    {
+        var path = Compat.PdfCartonFontCompat.CreatePath();
+        Compat.PdfCartonFontCompat.MoveTo(path, 1, 2);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        for (var index = 0; index < 50_000; index++)
+        {
+            Compat.PdfCartonFontCompat.LineTo(path, index, index % 7);
+            Assert.Equal((index, index % 7), Point(Compat.PdfCartonFontCompat.CurrentPoint(path)));
+            Compat.PdfCartonFontCompat.Close(path);
+            Assert.Equal((1, 2), Point(Compat.PdfCartonFontCompat.CurrentPoint(path)));
+        }
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"{watch.Elapsed}");
+    }
+
+    // GeneralPaths follow Path2D.getCurrentPoint(): the last point, or after
+    // a close the start of the closed subpath, and none for an empty path.
     [Fact]
     public void GeneralPathsTrackTheCurrentPointAsPath2DDoes()
     {
-        using var general = Compat.PdfCartonFontCompat.CreatePath();
-        using var plain = new SKPath();
-        using var corner = Polyline(2);
-        void Step(Action<SKPath> change, (double X, double Y)? expected)
+        var general = Compat.PdfCartonFontCompat.CreatePath();
+        var corner = Polyline(2);
+        void Step(Action<Geometry.JavaPath2D> change, (double X, double Y)? expected)
         {
             change(general);
-            change(plain);
             Assert.Equal(expected, Point(Compat.PdfCartonFontCompat.CurrentPoint(general)));
-            Assert.Equal(expected, Point(Compat.PdfCartonFontCompat.CurrentPoint(plain)));
-            Assert.Equal(CopiedSegments(plain, null), CopiedSegments(general, null));
-            Assert.Equal(plain.FillType, general.FillType);
         }
 
         Step(_ => { }, null);
-        Step(Compat.PdfCartonFontCompat.Close, null);
+        // Path2D throws for a close or a segment before any move.
+        Assert.Throws<InvalidOperationException>(() => Compat.PdfCartonFontCompat.Close(general));
         Step(path => Compat.PdfCartonFontCompat.MoveTo(path, 1, 2), (1, 2));
         Step(path => Compat.PdfCartonFontCompat.LineTo(path, 10.5, 2.25), (10.5, 2.25));
         Step(path => Compat.PdfCartonFontCompat.QuadTo(path, 12, 4, 9, 9), (9, 9));
@@ -10908,7 +11062,7 @@ public sealed class PathIteratorTests
         Step(path => Compat.PdfCartonFontCompat.MoveTo(path, 20, 20), (20, 20));
         Step(path => Compat.PdfCartonFontCompat.MoveTo(path, 21, 22), (21, 22));
         Step(path => Compat.PdfCartonFontCompat.LineTo(path, 30, 25), (30, 25));
-        Step(path => Compat.PdfCartonFontCompat.SetWindingRule(path, Compat.JavaPathIterator.WIND_EVEN_ODD), (30, 25));
+        Step(path => Compat.PdfCartonFontCompat.SetWindingRule(path, Geometry.JavaPathIterator.WIND_EVEN_ODD), (30, 25));
         Step(path => Compat.PdfCartonFontCompat.TransformPath(path, SKMatrix.CreateScaleTranslation(2, 2, 1, 1)), (61, 51));
         Step(path => Compat.PdfCartonFontCompat.LineTo(path, 70, 50), (70, 50));
         Step(path => Compat.PdfCartonFontCompat.AppendPath(path, new SKRect(2, 3, 12, 8), false), (2, 3));
@@ -10917,19 +11071,23 @@ public sealed class PathIteratorTests
         Step(path => Compat.PdfCartonFontCompat.AppendPath(path, corner, false), (2, 0));
         Step(path => Compat.PdfCartonFontCompat.AddPath(path, Compat.PdfCartonFontCompat.PathIterator(corner, null)), (2, 0));
         Step(Compat.PdfCartonFontCompat.ResetPath, null);
-        // Path2D throws for a segment before any move; Skia starts it at the origin.
+        Assert.Throws<InvalidOperationException>(() => Compat.PdfCartonFontCompat.LineTo(general, 3, 4));
+        Step(path => Compat.PdfCartonFontCompat.MoveTo(path, 0, 0), (0, 0));
         Step(path => Compat.PdfCartonFontCompat.LineTo(path, 3, 4), (3, 4));
         Step(Compat.PdfCartonFontCompat.Close, (0, 0));
         Step(path => Compat.PdfCartonFontCompat.CurveTo(path, 1, 1, 2, 2, 3, 3), (3, 3));
 
-        // A clone keeps the cursor and is followed on its own.
-        using var clone = Compat.PdfCartonFontCompat.ClonePath(general);
+        // A clone is followed on its own.
+        var clone = Compat.PdfCartonFontCompat.ClonePath(general);
         Compat.PdfCartonFontCompat.Close(clone);
         Assert.Equal((0, 0), Point(Compat.PdfCartonFontCompat.CurrentPoint(clone)));
         Assert.Equal((3, 3), Point(Compat.PdfCartonFontCompat.CurrentPoint(general)));
-        using var created = Compat.PdfCartonFontCompat.CreatePath(Compat.JavaPathIterator.WIND_EVEN_ODD, 4);
+        var created = Compat.PdfCartonFontCompat.CreatePath(Geometry.JavaPathIterator.WIND_EVEN_ODD, 4);
         Assert.Null(Compat.PdfCartonFontCompat.CurrentPoint(created));
-        Assert.Equal(SKPathFillType.EvenOdd, created.FillType);
+        Assert.Equal(Geometry.JavaPath2D.WIND_EVEN_ODD, created.WindingRule);
+        // A transformed shape's current point is mapped as its segments are.
+        var shape = Compat.PdfCartonFontCompat.CreateTransformedShape(SKMatrix.CreateTranslation(10, 0), general);
+        Assert.Equal((13, 3), Point(Compat.PdfCartonFontCompat.CurrentPoint(shape)));
     }
 
     // PageDrawer asks for the current point before each l and c. Reading
@@ -11023,25 +11181,27 @@ public sealed class PathIteratorTests
     private static (double X, double Y)? Point(Compat.JavaPoint2D? point) =>
         point is null ? null : (point.X, point.Y);
 
-    // A pattern fill clips its path to an Area of its own (PDFBOX-2901). The
-    // area reads the path in place and writes the intersection into the
-    // graphics' getClip copy, so that is the fill's one temporary path,
-    // disposed after the fill. Java's chain made four: the path's Area copy,
-    // the getClip copy, its Area copy and the intersection's result.
+    // A pattern fill clips its path to an Area of its own (PDFBOX-2901), as
+    // Java does: the path's Area copy, the getClip copy, its Area copy and the
+    // intersection's result. A Skia path copy shares its source's points
+    // until either changes, so the Area copies hold no second copy of the
+    // large path; the intersection, written over the area's own path, is the
+    // fill's one temporary path. The getClip copies are left to the
+    // collector, as in Java, and none outlives the render.
     [Fact]
     public void PatternFillOfLargePathUsesAtMostOneTemporaryPath()
     {
-        // A lent area reads its path in place; an intersection with a
-        // temporary is written into that temporary, which the area takes.
-        using (var source = Polyline(4))
-        using (var lent = Compat.JavaArea.Lend(source))
+        // An intersection is written over the area's own copy; its source
+        // and the other operand are unchanged.
         {
-            Assert.Same(source, lent.Path);
-            var temporary = new SKPath();
-            temporary.AddRect(new SKRect(0, 0, 2, 2));
-            lent.IntersectTemporary(temporary);
-            Assert.Same(temporary, lent.Path);
-            Assert.Equal(5, source.VerbCount);
+            var source = Polyline(4);
+            var area = Compat.PdfCartonFontCompat.CreateArea(source);
+            Assert.NotSame(source, area);
+            var square = Compat.PdfCartonFontCompat.CreateArea(new SKRect(0, 0, 2, 2));
+            area.Intersect(square);
+            Assert.Equal(5, Segments(source.GetPathIterator(null)).Count);
+            Assert.Equal(5, Segments(square.GetPathIterator(null)).Count);
+            Assert.Equal(new SKRect(0, 0, 2, 1), area.Bounds);
         }
 
         using var document = PatternPage(200, $"20 20 160 160 re W n /Pattern cs /P1 scn\n{LargeSquaresPath()}f");
@@ -11050,10 +11210,9 @@ public sealed class PathIteratorTests
         bitmap.Erase(SKColors.Blue);
         using (var graphics = new RecordingGraphics(bitmap))
         {
-            new PDFRenderer(document).RenderPageToGraphics(0, graphics);
-            Assert.Equal(["area in a clip copy"], graphics.Fills);
-            // Not formatted on failure: a disposed SKPath crashes formatting.
-            Assert.Equal(0, graphics.Clips.Count(clip => clip.Handle != IntPtr.Zero));
+            RenderPage(document, graphics);
+            Assert.Equal(["area in a path of its own"], graphics.Fills);
+            AssertClipCopiesAreCollected(graphics);
         }
 
         // renderPageToGraphics clears the page first (clearRect). Device row
@@ -11071,19 +11230,19 @@ public sealed class PathIteratorTests
     }
 
     // A shading pattern's /BBox adds one intersection (intersectShadingBBox),
-    // written over the area's path, which is still the getClip copy: that copy
-    // stays the fill's one copy of the large path. The bounding box is a path
-    // of its own, as PDRectangle.transform makes it in Java, but it has four
-    // points whatever the size of the filled path, and is disposed once
-    // intersected.
+    // written over the area's own path, which stays the fill's one copy of
+    // the large path. The bounding box is a path of its own, as
+    // PDRectangle.transform makes it in Java, but it has four points whatever
+    // the size of the filled path.
     [Fact]
     public void ShadingPatternFillWithBBoxUnderAClipCopiesTheLargePathOnce()
     {
-        using (var box = (SKPath)new PDRectangle(40, 40, 120, 120)
-                   .Transform(new DripSharp.PdfCarton.Util.Matrix(2, 0, 0, -2, 0, 400)))
         {
-            Assert.Equal(4, box.PointCount);
-            Assert.Equal(5, box.VerbCount);
+            var box = new PDRectangle(40, 40, 120, 120)
+                .Transform(new DripSharp.PdfCarton.Util.Matrix(2, 0, 0, -2, 0, 400));
+            var segments = Segments(box.GetPathIterator(null));
+            Assert.Equal(5, segments.Count);
+            Assert.Equal(4, segments.Count(segment => segment != "4:"));
         }
 
         using var document = PatternPage(
@@ -11096,10 +11255,9 @@ public sealed class PathIteratorTests
         bitmap.Erase(SKColors.Blue);
         using (var graphics = new RecordingGraphics(bitmap))
         {
-            new PDFRenderer(document).RenderPageToGraphics(0, graphics);
-            Assert.Equal(["area in a clip copy"], graphics.Fills);
-            // Not formatted on failure: a disposed SKPath crashes formatting.
-            Assert.Equal(0, graphics.Clips.Count(clip => clip.Handle != IntPtr.Zero));
+            RenderPage(document, graphics);
+            Assert.Equal(["area in a path of its own"], graphics.Fills);
+            AssertClipCopiesAreCollected(graphics);
         }
 
         // Squares are painted inside both the clip (20 to 180) and the
@@ -11635,16 +11793,14 @@ public sealed class PathIteratorTests
                      (staircase, new SKPoint(300, 100), new SKPoint(100, 300)),
                  })
         {
-            using var area = new Compat.JavaArea(path);
+            var area = Compat.PdfCartonFontCompat.CreateArea(path);
             path.Dispose();
-            using var rectangle = new SKPath();
-            rectangle.AddRect(new SKRect(50, 60, 420, 380));
-            using (var clip = Compat.JavaArea.Lend(rectangle))
-                area.Intersect(clip);
-            Assert.True(area.Path.Contains(inside.X, inside.Y), $"{inside}");
-            Assert.False(area.Path.Contains(outside.X, outside.Y), $"{outside}");
-            Assert.False(area.Path.Contains(inside.X, 50), "above the rectangle");
-            Assert.False(area.Path.Contains(450, inside.Y), "right of the rectangle");
+            area.Intersect(Compat.PdfCartonFontCompat.CreateArea(new SKRect(50, 60, 420, 380)));
+            using var result = area.ToSKPath();
+            Assert.True(result.Contains(inside.X, inside.Y), $"{inside}");
+            Assert.False(result.Contains(outside.X, outside.Y), $"{outside}");
+            Assert.False(result.Contains(inside.X, 50), "above the rectangle");
+            Assert.False(result.Contains(450, inside.Y), "right of the rectangle");
             Assert.True(area.Bounds.Left >= 50 && area.Bounds.Right <= 420, $"{area.Bounds}");
         }
     }
@@ -11658,10 +11814,9 @@ public sealed class PathIteratorTests
     {
         SKPath Intersection(SKPath first, SKPath second)
         {
-            using var area = new Compat.JavaArea(first);
-            using (var other = Compat.JavaArea.Lend(second))
-                area.Intersect(other);
-            return new SKPath(area.Path);
+            var area = Compat.PdfCartonFontCompat.CreateArea(first);
+            area.Intersect(Compat.PdfCartonFontCompat.CreateArea(second));
+            return area.ToSKPath();
         }
 
         using var circle = new SKPath();
@@ -11784,8 +11939,11 @@ public sealed class PathIteratorTests
 
         public override void SetClip(object? clip)
         {
-            if (clip is Compat.JavaArea area)
-                Clips.Add((area.Path.Contains(200, 702), area.Path.Contains(200, 695)));
+            if (clip is Geometry.JavaArea area)
+            {
+                using var path = area.ToSKPath();
+                Clips.Add((path.Contains(200, 702), path.Contains(200, 695)));
+            }
             base.SetClip(clip);
         }
     }
@@ -11805,42 +11963,60 @@ public sealed class PathIteratorTests
                 "/Resources << >>", "1 0 0 rg 0 0 10 10 re f"),
         ]));
 
-    // Records the clip copies the graphics hands out and what each fill's
-    // shape is.
+    // Records the clip copies the graphics hands out (weakly, so they can be
+    // collected) and what each fill's shape is.
     private sealed class RecordingGraphics(SKBitmap bitmap) : Compat.PdfCartonGraphics2D(bitmap)
     {
-        internal List<SKPath> Clips { get; } = [];
+        internal List<WeakReference<Geometry.JavaPath2D>> Clips { get; } = [];
         internal List<string> Fills { get; } = [];
 
         public override object? GetClip()
         {
             var clip = base.GetClip();
-            if (clip is SKPath path) Clips.Add(path);
+            if (clip is Geometry.JavaPath2D path) Clips.Add(new WeakReference<Geometry.JavaPath2D>(path));
             return clip;
         }
 
         public override void Fill(object shape)
         {
-            Fills.Add(shape is not Compat.JavaArea area ? shape.GetType().Name
-                : Clips.Any(clip => ReferenceEquals(clip, area.Path)) ? "area in a clip copy"
-                : "area in a path of its own");
+            Fills.Add(shape is not Geometry.JavaArea area ? shape.GetType().Name
+                : Clips.Any(clip => clip.TryGetTarget(out var copy) && ReferenceEquals(copy, area))
+                    ? "area in a clip copy"
+                    : "area in a path of its own");
             base.Fill(shape);
         }
     }
 
-    private static SKPath Polyline(int segments)
+    // Not inlined, so no local of the render keeps its paths reachable.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void RenderPage(PDDocument document, RecordingGraphics graphics) =>
+        new PDFRenderer(document).RenderPageToGraphics(0, graphics);
+
+    // Bounded memory: the render keeps none of the clip copies it asked for.
+    private static void AssertClipCopiesAreCollected(RecordingGraphics graphics)
     {
-        var path = new SKPath();
+        Assert.NotEmpty(graphics.Clips);
+        for (var pass = 0; pass < 3; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        Assert.Equal(0, graphics.Clips.Count(clip => clip.TryGetTarget(out _)));
+    }
+
+    private static Geometry.JavaPath2D Polyline(int segments)
+    {
+        var path = new Geometry.JavaPath2D();
         path.MoveTo(0, 0);
         for (var index = 1; index <= segments; index++)
             path.LineTo(index, index % 2);
         return path;
     }
 
-    private static string Segment(int type, IEnumerable<double> coordinates) =>
+    internal static string Segment(int type, IEnumerable<double> coordinates) =>
         $"{type}:{string.Join(",", coordinates.Select(value => value.ToString("R")))}";
 
-    private static List<string> Segments(Compat.JavaPathIterator iterator)
+    internal static List<string> Segments(Geometry.JavaPathIterator iterator)
     {
         var result = new List<string>();
         for (; !iterator.IsDone(); iterator.Next())
@@ -11884,6 +12060,104 @@ public sealed class PathIteratorTests
 [CollectionDefinition(nameof(NativePathLifetimeCollection), DisableParallelization = true)]
 public sealed class NativePathLifetimeCollection
 {
+}
+
+[Collection(nameof(NativePathLifetimeCollection))]
+public sealed class PatternFillPathLifetimeTests
+{
+    // Java leaves a pattern fill's Area copies, getClip copy and shading box
+    // to its collector, and so does PageDrawer now. Bounded memory: a render
+    // of 20 pattern fills of a 12,500-segment path under a clip, with or
+    // without a shading /BBox, leaves at most GarbagePerFill finalizable
+    // objects per fill until the collector runs, and a collection finalizes
+    // them. A tiling fill left 7.35 when PageDrawer disposed its paths (the
+    // tiling paint's own objects); the two Area copies, the getClip copy and
+    // the intersection add 4, of which only the intersection is as large as
+    // the filled path (the Area copies share their sources' points).
+    private const int Fills = 20;
+    private const int GarbagePerFill = 12;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PatternFillsLeaveABoundedNumberOfPathsToTheCollector(bool shadingBox)
+    {
+        using var document = Loader.LoadPDF((sbyte[])(Array)PatternFillsPdf(shadingBox));
+        var renderer = new PDFRenderer(document);
+        using (var warm = renderer.RenderImage(0, 1, ImageType.Rgb))
+        {
+            // Device row y shows PDF y 199 - y to 200 - y; squares cover x..x+3 of each 4.
+            Assert.Equal(SKColors.Red, warm.GetPixel(101, 101));
+            Assert.Equal(SKColors.White, warm.GetPixel(103, 101));
+        }
+
+        var baseline = Abandoned(() => { });
+        var abandoned = Abandoned(() =>
+        {
+            using (renderer.RenderImage(0, 1, ImageType.Rgb)) { }
+        });
+        Assert.True(abandoned - baseline <= Fills * GarbagePerFill,
+            $"{abandoned - baseline} finalizable objects after {Fills} pattern fills (baseline {baseline}).");
+        // Finalizers that free further finalizable objects take a pass each.
+        for (var pass = 0; pass < 10; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        var left = GC.GetGCMemoryInfo(GCKind.FullBlocking).FinalizationPendingCount;
+        Assert.True(left <= baseline + Fills, $"{left} finalizable objects left after a collection (baseline {baseline}).");
+    }
+
+    // Finalizable objects left by action when no collection runs during it.
+    private static long Abandoned(Action action)
+    {
+        for (var pass = 0; pass < 3; pass++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        var noCollection = GC.TryStartNoGCRegion(128L << 20);
+        try
+        {
+            action();
+        }
+        finally
+        {
+            if (noCollection && System.Runtime.GCSettings.LatencyMode ==
+                System.Runtime.GCLatencyMode.NoGCRegion)
+                GC.EndNoGCRegion();
+        }
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        return GC.GetGCMemoryInfo(GCKind.FullBlocking).FinalizationPendingCount;
+    }
+
+    private static byte[] PatternFillsPdf(bool shadingBox)
+    {
+        var squares = new System.Text.StringBuilder();
+        for (var y = 0; y < 200; y += 4)
+            for (var x = 0; x < 200; x += 4)
+                squares.Append($"{x} {y} m {x + 3} {y} l {x + 3} {y + 3} l {x} {y + 3} l h\n");
+        var content = new System.Text.StringBuilder("1 1 1 rg 0 0 200 200 re f\n");
+        for (var fill = 0; fill < Fills; fill++)
+            content.Append($"q {20 - fill % 2} 20 160 160 re W n /Pattern cs /P1 scn\n{squares}f Q\n");
+        var pattern = shadingBox
+            ? "<< /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /BBox [20 20 180 180] " +
+              "/Coords [0 0 200 0] /Extend [true true] " +
+              "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [1 0 0] /N 1 >> >> >>"
+            : RasterConversionConsumerTests.PdfStream(
+                "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 " +
+                "/Resources << >>", "1 0 0 rg 0 0 10 10 re f");
+        return RasterConversionConsumerTests.SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] " +
+            "/Resources << /Pattern << /P1 5 0 R >> >> /Contents 4 0 R >>",
+            RasterConversionConsumerTests.PdfStream("", content.ToString()),
+            pattern,
+        ]);
+    }
 }
 
 [Collection(nameof(NativePathLifetimeCollection))]

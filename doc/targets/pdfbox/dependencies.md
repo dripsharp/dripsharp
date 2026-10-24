@@ -136,9 +136,13 @@ Use [`SkiaSharp` `4.150.1`](https://www.nuget.org/packages/SkiaSharp/4.150.1)
 releases during upstream synchronization.
 
 SkiaSharp supplies the canvas, paths, matrices, bitmaps, shaders, clipping,
-strokes, PDF blend modes, and common JPEG/PNG-style codecs. Map `GeneralPath`
-to `SKPath`, `AffineTransform` to `SKMatrix`, mutable `BufferedImage` to
-`SKBitmap`, and `Graphics2D` to a PdfCarton compatibility facade over `SKCanvas`.
+strokes, PDF blend modes, and common JPEG/PNG-style codecs. Map `GeneralPath`,
+`Path2D` and `Area` to one managed path type of the compatibility layer, defined
+once in the FontBox assembly (segments as managed data, no native memory; the
+`Graphics2D` facade copies them into an `SKPath` it reuses whenever Skia draws,
+clips or intersects them), `AffineTransform` to `SKMatrix`, mutable
+`BufferedImage` to `SKBitmap`, and `Graphics2D` to a PdfCarton compatibility
+facade over `SKCanvas`.
 Use the CPU raster backend for canonical differential validation.
 
 SkiaSharp is not a Java2D or general `Raster` implementation. PdfCarton must keep

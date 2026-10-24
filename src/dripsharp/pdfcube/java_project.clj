@@ -344,17 +344,17 @@
    ["global::DripSharp.Runtime.JavaLineBreakIterator"
     :pdfcube.type/line-break-iterator]
    "java.awt.geom.GeneralPath"
-   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.JavaPath2D" :pdfcube.type/path]
    "java.awt.geom.Path2D"
-   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.JavaPath2D" :pdfcube.type/path]
    "java.awt.geom.Path2D$Float"
-   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.JavaPath2D" :pdfcube.type/path]
    "java.awt.geom.Path2D$Double"
-   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.JavaPath2D" :pdfcube.type/path]
    "java.awt.geom.Area"
-   ["global::DripSharp.Runtime.JavaArea" :pdfcube.type/area]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.JavaArea" :pdfcube.type/area]
    "java.awt.geom.PathIterator"
-   ["global::DripSharp.Runtime.JavaPathIterator" :pdfcube.type/path-iterator]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator" :pdfcube.type/path-iterator]
    "java.awt.geom.Ellipse2D"
    ["global::DripSharp.Runtime.JavaEllipse" :pdfcube.type/ellipse]
    "java.awt.geom.RectangularShape"
@@ -2361,8 +2361,8 @@
    (fn [arguments]
      (font-compat-call "Rectangle" arguments))
 
-   ;; GeneralPaths keep their current point outside the native path; see
-   ;; PdfCartonGeneralPath in the FontBox compat runtime.
+   ;; GeneralPath, Path2D and Area are the managed JavaPath2D of the FontBox
+   ;; compat runtime (DripSharp.PdfCarton.Geometry.cs).
    "executable:java.awt.geom.GeneralPath#<init>()"
    (fn [_arguments]
      (font-compat-call "CreatePath" []))
@@ -2377,18 +2377,15 @@
 
    "executable:java.awt.geom.Path2D$Double#<init>(java.awt.Shape)"
    (fn [arguments]
-     (font-compat-call "CreatePath" arguments))
+     (font-compat-call "CreateDoublePath" arguments))
 
    "executable:java.awt.geom.Area#<init>()"
    (fn [_arguments]
-     (raw "new global::DripSharp.Runtime.JavaArea()"))
+     (raw "new global::DripSharp.PdfCarton.Runtime.Fonts.JavaArea()"))
 
    "executable:java.awt.geom.Area#<init>(java.awt.Shape)"
    (fn [arguments]
-     (sequence-node
-      [(raw "new global::DripSharp.Runtime.JavaArea(")
-       (csharp/sequence-node arguments ", ")
-       (raw ")")]))
+     (font-compat-call "CreateArea" arguments))
 
    "executable:java.awt.TexturePaint#<init>(java.awt.image.BufferedImage,java.awt.geom.Rectangle2D)"
    (fn [arguments]
@@ -2736,39 +2733,39 @@
 
    "field:java.awt.geom.PathIterator#WIND_EVEN_ODD"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.WIND_EVEN_ODD"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.WIND_EVEN_ODD"))
 
    "field:java.awt.geom.PathIterator#WIND_NON_ZERO"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.WIND_NON_ZERO"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.WIND_NON_ZERO"))
 
    "field:java.awt.geom.Path2D#WIND_EVEN_ODD"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.WIND_EVEN_ODD"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.WIND_EVEN_ODD"))
 
    "field:java.awt.geom.Path2D#WIND_NON_ZERO"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.WIND_NON_ZERO"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.WIND_NON_ZERO"))
 
    "field:java.awt.geom.PathIterator#SEG_MOVETO"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.SEG_MOVETO"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.SEG_MOVETO"))
 
    "field:java.awt.geom.PathIterator#SEG_LINETO"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.SEG_LINETO"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.SEG_LINETO"))
 
    "field:java.awt.geom.PathIterator#SEG_QUADTO"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.SEG_QUADTO"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.SEG_QUADTO"))
 
    "field:java.awt.geom.PathIterator#SEG_CUBICTO"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.SEG_CUBICTO"))
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.SEG_CUBICTO"))
 
    "field:java.awt.geom.PathIterator#SEG_CLOSE"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.JavaPathIterator.SEG_CLOSE"))})
+     (raw "global::DripSharp.PdfCarton.Runtime.Fonts.JavaPathIterator.SEG_CLOSE"))})
 
 (def ^:private font-discovery-invocation-adaptations
   {"executable:java.io.File#canRead()"
@@ -3354,183 +3351,6 @@
   (or (:compatibility-namespace configuration)
       base-compatibility-namespace))
 
-(defn- declaration?
-  [node declaration-kind source-qualified-name]
-  (and (= :declaration (:kind node))
-       (= declaration-kind (get-in node [:data :declaration-kind]))
-       (= source-qualified-name
-          (get-in node [:data :source-qualified-name]))))
-
-(defn- update-declaration
-  [node declaration-kind source-qualified-name update-node]
-  (csharp/transform
-   node
-   (fn [current]
-     (if (declaration? current declaration-kind source-qualified-name)
-       (update-node current)
-       current))))
-
-(defn- prepend-member
-  [declaration member]
-  (when-not (= :statement-list
-               (get-in declaration [:body :statements :kind]))
-    (fail! "Structured type declaration has no member statement list"
-           {:kind :invalid-pdfcube-structured-declaration
-            :declaration-data (:data declaration)}))
-  (update-in declaration [:body :statements :statements]
-             #(vec (cons member %))))
-
-(defn- replace-rendered-statement
-  [declaration rendered-statement replacement-statement {:keys [every?]}]
-  (let [found? (volatile! false)
-        transformed
-        (update
-         declaration
-         :body
-         csharp/transform
-         (fn [current]
-           (if (and (or every? (not @found?))
-                    (contains? #{:raw :sequence} (:kind current))
-                    (= rendered-statement (:text (csharp/render-raw current))))
-             (do
-               (vreset! found? true)
-               (csharp/raw replacement-statement))
-             current)))]
-    (when-not @found?
-      (fail! "Structured method is missing the expected statement"
-             {:kind :missing-pdfcube-structured-statement
-              :expected rendered-statement
-              :declaration-data (:data declaration)}))
-    transformed))
-
-(def ^:private owned-resources-declaration
-  (str "using global::DripSharp.Runtime.PdfCartonDisposalScope __dripsharpOwned = "
-       "new global::DripSharp.Runtime.PdfCartonDisposalScope();"))
-
-(defn- using-local
-  "Rewrites a local declaration into a `using` local, disposed when its block
-  exits."
-  [statement]
-  [statement (str "using " statement)])
-
-(def ^:private owned-bitmap-statement-rewrites
-  "Java leaves intermediate BufferedImages to the garbage collector, but their
-  SKBitmap translations own native pixel memory. Each entry rewrites rendered
-  statements of one translated method so a non-escaping intermediate bitmap is
-  disposed deterministically (a `using` local, or Own-ed by a
-  PdfCartonDisposalScope that disposes everything not Release-d as the result)
-  and an owned result is disposed when the method fails before returning it.
-  Compat-allocated bitmaps also report GC memory pressure as a backstop (see
-  PdfCartonNativeBitmap in the PdfCarton Fonts.Compat runtime). Keys are
-  [declaring type, method] or [declaring type, method, parameter count]; a
-  rewrite's optional third element {:every? true} replaces every matching
-  statement instead of the first, and [:prepend statement] or [:append
-  statement] adds a statement at the start or end of the body."
-  {;; Glyph and fill shapes. Java leaves temporary Shapes to its collector;
-   ;; their SKPath translations own native memory and would otherwise wait
-   ;; for the finalizer, one per glyph shown. A glyph's transformed path is
-   ;; disposed once drawn; a text clip keeps a copy of it (clipping text
-   ;; modes are rare), disposed once intersected into the clipping path,
-   ;; which copies it again.
-   ["org.apache.pdfbox.rendering.PageDrawer" "drawGlyph"]
-   [["object glyph = global::DripSharp.Runtime.PdfCartonFontCompat.CreateTransformedShape(at, path);"
-     (str "using global::SkiaSharp.SKPath __dripsharpGlyph = (global::SkiaSharp.SKPath)"
-          "global::DripSharp.Runtime.PdfCartonFontCompat.CreateTransformedShape(at, path);\n"
-          "object glyph = __dripsharpGlyph;")]
-    ["global::DripSharp.Runtime.JavaCompat.Add(this.textClippings, glyph);"
-     (str "global::DripSharp.Runtime.JavaCompat.Add(this.textClippings, "
-          "new global::SkiaSharp.SKPath(__dripsharpGlyph));")]]
-   ;; The buffered clips are disposed at ET, also when the text mode stopped
-   ;; clipping before it (the list is never read again).
-   ["org.apache.pdfbox.rendering.PageDrawer" "endTextClip"]
-   (let [dispose-clips (str "foreach (object __dripsharpGlyph in this.textClippings) {\n"
-                            "(__dripsharpGlyph as global::System.IDisposable)?.Dispose();\n"
-                            "}")]
-     [["state.IntersectClippingPath(path);"
-       (str "state.IntersectClippingPath(path);\npath.Dispose();\n" dispose-clips)]
-      ;; A stray ET may come before any BT, with no list yet.
-      [:append (str "if (this.textClippings != null) {\n" dispose-clips
-                    "\nthis.textClippings.Clear();\n}")]])
-   ;; A pattern fill clips the path to an Area of its own. The area reads
-   ;; linePath in place (unchanged until the fill is done) and writes the
-   ;; intersection into the graphics clip copy, so at most that one path is
-   ;; made, and dropped after the fill. A shading's bounding box only adds
-   ;; its own four-sided path, which its Area reads in place.
-   ["org.apache.pdfbox.rendering.PageDrawer" "fillPath"]
-   [[:prepend owned-resources-declaration]
-    [(str "global::DripSharp.Runtime.JavaArea area = "
-          "new global::DripSharp.Runtime.JavaArea(this.linePath);")
-     (str "global::DripSharp.Runtime.JavaArea area = __dripsharpOwned.Own("
-          "global::DripSharp.Runtime.JavaArea.Lend(this.linePath))!;")]
-    ["object clip = this.graphics.GetClip();"
-     (str "object clip = this.graphics.GetClip();\n"
-          "__dripsharpOwned.Own(clip as global::System.IDisposable);")]
-    ["area.Intersect(new global::DripSharp.Runtime.JavaArea(clip));"
-     (str "if (clip is global::SkiaSharp.SKPath __dripsharpClipPath) {\n"
-          "area.IntersectTemporary(__dripsharpClipPath);\n"
-          "} else {\n"
-          "area.Intersect(__dripsharpOwned.Own("
-          "new global::DripSharp.Runtime.JavaArea(clip))!);\n"
-          "}")]]
-   ["org.apache.pdfbox.rendering.PageDrawer" "intersectShadingBBox"]
-   [[(str "global::DripSharp.Runtime.JavaArea bboxArea = "
-          "new global::DripSharp.Runtime.JavaArea(bbox.Transform(m));")
-     (str "using global::SkiaSharp.SKPath __dripsharpBBoxPath = bbox.Transform(m);\n"
-          "using global::DripSharp.Runtime.JavaArea bboxArea = "
-          "global::DripSharp.Runtime.JavaArea.Lend(__dripsharpBBoxPath);")]]
-   ;; Subclasses may change the path they get through SKPath itself, which
-   ;; the GeneralPath cursor does not see; it is read from the path after.
-   ["org.apache.pdfbox.rendering.PageDrawer" "getLinePath"]
-   [["return this.linePath;"
-     "return global::DripSharp.Runtime.PdfCartonFontCompat.LendPath(this.linePath);"]]
-   ;; isRectangular stops after a few segments of most paths; disposing the
-   ;; iterator releases its native segment reader at once.
-   ["org.apache.pdfbox.rendering.PageDrawer" "isRectangular"]
-   [(using-local (str "global::DripSharp.Runtime.JavaPathIterator iter = "
-                      "global::DripSharp.Runtime.PdfCartonFontCompat.PathIterator("
-                      "path, (global::SkiaSharp.SKMatrix)default!);"))]})
-
-(defn- add-body-statement
-  [declaration position statement]
-  (when-not (= :statement-list
-               (get-in declaration [:body :statements :kind]))
-    (fail! "Structured method declaration has no statement list"
-           {:kind :invalid-pdfcube-structured-declaration
-            :declaration-data (:data declaration)}))
-  (update-in declaration [:body :statements :statements]
-             (fn [statements]
-               (case position
-                 :prepend (vec (cons (csharp/raw statement) statements))
-                 :append (conj (vec statements) (csharp/raw statement))))))
-
-(defn- apply-owned-bitmap-rewrite
-  [declaration [rendered replacement options]]
-  (if (#{:prepend :append} rendered)
-    (add-body-statement declaration rendered replacement)
-    (replace-rendered-statement declaration rendered replacement options)))
-
-(defn- own-intermediate-bitmaps
-  [configuration node]
-  (if-not (= "DripSharp.PdfCarton" (get-in configuration [:package :id]))
-    node
-    (reduce-kv
-     (fn [node [type-name method-name parameter-count] rewrites]
-       (update-declaration
-        node
-        :method
-        type-name
-        (fn [declaration]
-          (if (and (= method-name (get-in declaration [:data :source-name]))
-                   (cond
-                     (nil? parameter-count) true
-                     :else
-                     (= parameter-count
-                        (get-in declaration [:data :parameter-count]))))
-            (reduce apply-owned-bitmap-rewrite declaration rewrites)
-            declaration))))
-     node
-     owned-bitmap-statement-rewrites)))
-
 (defn- transform-node [configuration node]
   (let [destination (compatibility-namespace configuration)
         node
@@ -3538,15 +3358,14 @@
           node
           (csharp/transform-namespaces
            node
-           {base-compatibility-namespace destination}))
-        node (if (= :fontbox (:pdfcube-product configuration))
-               (csharp/transform-namespaces
-                node
-                (into {} (map (fn [name] [(str destination "." name)
-                                          (str base-compatibility-namespace "." name)])
-                              ["JavaFile" "JavaFileBridge" "JavaFileBoundary"])))
-               node)]
-    (own-intermediate-bitmaps configuration node)))
+           {base-compatibility-namespace destination}))]
+    (if (= :fontbox (:pdfcube-product configuration))
+      (csharp/transform-namespaces
+       node
+       (into {} (map (fn [name] [(str destination "." name)
+                                 (str base-compatibility-namespace "." name)])
+                     ["JavaFile" "JavaFileBridge" "JavaFileBoundary"])))
+      node)))
 
 (defn- compatibility-asset [configuration asset]
   (let [asset (if (= base-compatibility-namespace
@@ -3620,6 +3439,18 @@
       :strategy :pdfcube.fontbox/skia-geometry
       :missing-kind :missing-pdfcube-fontbox-compatibility-source
       :missing-message "PdfCarton FontBox compatibility source is missing"})
+
+    ;; The managed geometry types are compiled into the FontBox assembly
+    ;; only; the PDFBox assembly sees them through its internals.
+    (contains? (:internal-capabilities configuration) :skia-geometry)
+    (conj
+     {:source
+      (configured-runtime-source configuration
+                                 "DripSharp.PdfCarton.Geometry.cs")
+      :destination "DripSharp/Runtime/PdfCartonGeometry.cs"
+      :strategy :pdfcube.fontbox/geometry
+      :missing-kind :missing-pdfcube-geometry-source
+      :missing-message "PdfCarton geometry source is missing"})
 
     (or (contains? (:internal-capabilities configuration) :skia-geometry)
         (contains? (:internal-capabilities configuration) :skia-graphics))

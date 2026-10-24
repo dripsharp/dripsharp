@@ -12,9 +12,22 @@
    :source-inventory-sha256
    "009138448258754a96c6a95922a4e6ed02248edbc1a70f63c5ee77b94054d957"
    :public-types
-   {:count 59
+   {:count 57
     :sha256
-    "c7eddf739e47327cf9128b9aca4734ffdd5f0b5385a89d03416748cf33c5deed"}}
+    "ee82db1fffc333a5c7024caa4dc9c3d8e788da192b8e06857895d52c41a95dbc"}}
+  {:id :pdfcube/geometry
+   :kind :file
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Geometry.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :source-inventory-sha256
+   "7d2d928b66c8a7d5ed00dbb7b2a45deb05a33e53d3290c3c9c9681b2ad682b36"
+   :public-types
+   {:count 3
+    :sha256
+    "fff2d48937ce1cd8f61c8ea263497af6cd905678992499b23da976b4381bf8e1"}}
   {:id :pdfcube/area-intersection
    :kind :file
    :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.AreaIntersection.cs"
