@@ -3005,7 +3005,7 @@
                        pkcs-package skia-package]
     :legal-files (into legal-files pdfbox-codec-legal-files)
     :internal-capabilities
-    #{:calendar-value-semantics :icc :jbig2 :jpx :managed-raster :printing
+    #{:icc :jbig2 :jpx :managed-raster :printing
       :pdfbox-crypto :skia-graphics :unicode-bidi}
     :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
     :bridge-capabilities #{:java-bidi}}

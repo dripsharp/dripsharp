@@ -9698,54 +9698,6 @@ internal sealed class PdfCartonNativeBitmap : SKBitmap
     }
 }
 
-// Owns the native resources (bitmaps, graphics contexts) of one translated
-// method that do not escape it. Dispose releases every owned resource not
-// handed back with Release, newest first, on success and failure alike.
-internal sealed class PdfCartonDisposalScope : IDisposable
-{
-    private List<IDisposable>? owned;
-
-    // Null resources are ignored, so optional results can be owned as is.
-    internal T? Own<T>(T? resource)
-        where T : class, IDisposable
-    {
-        if (resource is not null) (owned ??= new List<IDisposable>()).Add(resource);
-        return resource;
-    }
-
-    // Transfers ownership of `resource` to the caller (the method's result).
-    internal T? Release<T>(T? resource)
-        where T : class, IDisposable
-    {
-        if (resource is not null)
-            owned?.RemoveAll(candidate => ReferenceEquals(candidate, resource));
-        return resource;
-    }
-
-    public void Dispose()
-    {
-        var resources = owned;
-        owned = null;
-        if (resources is null) return;
-        for (var index = resources.Count - 1; index >= 0; index--)
-            resources[index].Dispose();
-    }
-
-    // A resource that runs `action` once when disposed, so an owned side
-    // effect (clearing a field that references an owned bitmap) is undone on
-    // every exit unless it is Release-d.
-    internal static IDisposable Deferred(Action action) => new DeferredAction(action);
-
-    private sealed class DeferredAction : IDisposable
-    {
-        private Action? action;
-
-        internal DeferredAction(Action action) => this.action = action;
-
-        public void Dispose() => Interlocked.Exchange(ref action, null)?.Invoke();
-    }
-}
-
 internal static class PdfCartonFontCompat
 {
     internal const int SCALE_SMOOTH = 4;

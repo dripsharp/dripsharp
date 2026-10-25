@@ -280,6 +280,111 @@
                                         declaration)))
           (str "PageDrawer#" source-name ": " statement)))))
 
+(def ^:private formerly-targeted-members
+  "Upstream classes and members that earlier translator rules rewrote,
+  injected members into, or adapted by name."
+  {:io {"org.apache.pdfbox.io.RandomAccessRead" []
+        "org.apache.pdfbox.io.RandomAccessReadView" ["close"]}
+   :fontbox {"org.apache.fontbox.ttf.TrueTypeCollection" ["close"]
+             "org.apache.fontbox.ttf.TrueTypeFont" ["close"]
+             "org.apache.fontbox.ttf.model.GsubData" []}
+   :xmpbox {"org.apache.xmpbox.type.BooleanType" ["getValue"]}
+   :pdfbox {"org.apache.pdfbox.contentstream.PDFStreamEngine" ["processAnnotation"]
+            "org.apache.pdfbox.cos.UnmodifiableCOSDictionary" []
+            "org.apache.pdfbox.filter.DCTFilter" ["readImageRaster"]
+            "org.apache.pdfbox.filter.JBIG2Filter" ["decode"]
+            "org.apache.pdfbox.filter.JPXFilter" ["decode" "readJPX"]
+            "org.apache.pdfbox.pdmodel.encryption.SecurityHandler" []
+            "org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace" ["toRGBImageAWT"]
+            "org.apache.pdfbox.pdmodel.graphics.color.PDDeviceN" ["toRGBWithAttributes"]
+            "org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject"
+            ["getImage" "applyMask" "scaleImage"]
+            "org.apache.pdfbox.pdmodel.graphics.image.SampledImageReader"
+            ["from1Bit" "fromAny" "applyColorKeyMask"]
+            "org.apache.pdfbox.printing.PDFPrintable" ["print"]
+            "org.apache.pdfbox.rendering.GroupGraphics" ["dispose"]
+            "org.apache.pdfbox.rendering.PDFRenderer" ["renderImage"]
+            "org.apache.pdfbox.rendering.PageDrawer"
+            ["adjustImage" "applySoftMaskToPaint" "applyTransferFunction"
+             "drawBufferedImage" "drawGlyph" "drawImage" "drawPage" "endTextClip"
+             "fillPath" "getLinePath" "intersectShadingBBox" "isRectangular"
+             "showTransparencyGroupOnGraphics"]
+            "org.apache.pdfbox.rendering.PageDrawer$TransparencyGroup" []
+            "org.apache.pdfbox.text.PDFTextStripper" ["normalizeWord"]
+            "org.apache.pdfbox.util.DateConverter" ["adjustTimeZoneNicely" "parseTZoffset"]}
+   :preflight {"org.apache.pdfbox.preflight.PreflightPath"
+               ["getClosestPathElement" "getClosestTypePosition"]
+               "org.apache.pdfbox.preflight.font.FontValidator" []
+               "org.apache.pdfbox.preflight.font.Type0FontValidator"
+               ["createDescendantValidator"]
+               "org.apache.pdfbox.preflight.font.Type3FontValidator" []
+               "org.apache.pdfbox.preflight.font.container.FontContainer" []}})
+
+(defn- statements
+  "Statement shapes that earlier rules matched, in the product's own
+  compatibility namespace so that only a rule could change them."
+  [compat]
+  (mapv csharp/raw
+        [(str "global::SkiaSharp.SKBitmap image = global::" compat
+              ".PdfCartonFontCompat.CreateBitmap(w, h, global::" compat
+              ".PdfCartonFontCompat.TYPE_INT_ARGB);")
+         (str "global::SkiaSharp.SKCanvas g = global::" compat
+              ".PdfCartonFontCompat.CreateGraphics(image);")
+         "image = reader.Read(0, irp);"
+         "this.pageImage = image;"
+         "this.graphics = g;"
+         "object clip = this.graphics.GetClip();"
+         "state.IntersectClippingPath(path);"
+         "var cidFontValidator = default!;"
+         "float[] values = global::System.Array.Empty<float>();"
+         "return this.GetPathElement(index, type);"
+         "return image;"]))
+
+(defn- declarations
+  "Synthetic type, field, constructor and method declarations of `type-name`
+  for every arity a rule might have keyed on."
+  [type-name members compat]
+  (let [body (csharp/block (statements compat))]
+    (concat
+     [(csharp/declaration (csharp/raw "public class Translated : global::System.Object")
+                          (csharp/block [(csharp/raw "private int other;")])
+                          {:declaration-kind :type
+                           :source-qualified-name type-name})
+      (csharp/declaration (csharp/raw "public static readonly object NO_DATA_FOUND = null;")
+                          nil
+                          {:declaration-kind :field
+                           :source-name "NO_DATA_FOUND"
+                           :source-qualified-name type-name})]
+     (for [parameter-count (range 8)
+           [kind source-name] (cons [:constructor nil]
+                                    (map (fn [name] [:method name])
+                                         (cons "other" members)))]
+       (csharp/declaration
+        (csharp/raw (str "private T " (or source-name "ctor") "<T>()"))
+        body
+        (cond-> {:declaration-kind kind
+                 :parameter-count parameter-count
+                 :source-qualified-name type-name}
+          source-name (assoc :source-name source-name)))))))
+
+(deftest formerly-targeted-pdfbox-declarations-are-emitted-unchanged
+  (let [transform (fn [configuration node] (transform-node configuration node))
+        workspace (paths/workspace-root)]
+    (doseq [[product types] formerly-targeted-members
+            :let [configuration (project-emission/read-configuration
+                                 workspace
+                                 (str "targets/pdfcube/destinations/" (name product) ".edn"))
+                  compat (or (:compatibility-namespace configuration) "DripSharp.Runtime")]
+            [type-name members] types
+            declaration (declarations type-name members compat)
+            :let [node (csharp/sequence-node [declaration])]]
+      (is (= (:text (csharp/render node))
+             (:text (csharp/render (transform configuration node))))
+          (str (name product) " " type-name " "
+               (get-in declaration [:data :declaration-kind]) " "
+               (get-in declaration [:data :source-name]) "/"
+               (get-in declaration [:data :parameter-count]))))))
+
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]
     (Files/createDirectories (.getParent file)

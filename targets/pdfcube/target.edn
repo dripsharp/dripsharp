@@ -17,7 +17,7 @@
   :net48-compatibility :inferred-from-netstandard2.0
   :net48-runtime-tested? false}
  :capabilities
- #{:calendar-value-semantics :font-discovery :icc :java-bidi :java-compat
+ #{:font-discovery :icc :java-bidi :java-compat
    :java-io :java-nio :java-regex-unicode :jbig2 :jpx :managed-raster
    :pdfbox-crypto :printing :skia-geometry
    :skia-graphics :unicode-bidi :xml}
@@ -88,7 +88,7 @@
     :review "pkl-c8t.20"
     :max-authored-fraction 18705/201119}
    :required-capabilities
-   #{:calendar-value-semantics :icc :java-bidi :java-compat
+   #{:icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing
      :pdfbox-crypto :skia-graphics :unicode-bidi}}
   {:id "pdfcube-preflight"

@@ -427,6 +427,14 @@ need a focused .NET replacement for behavior supplied by Truffle, while normal
 collections, I/O, URIs, reflection, concurrency, and similar platform APIs
 should use .NET wherever practical.
 
+PdfCarton is PDFBox translated mechanically and then overlaid with the
+authored JDK/AWT/ImageIO compatibility runtime. Its translator rules are keyed
+on Java and JDK API shape only: apart from package coordinates and package to
+namespace maps, no rule names a PDFBox, FontBox or XmpBox class or member, so
+no rule rewrites statements of, or injects members into, translated PDFBox
+code. Native-resource lifetime belongs to the compatibility runtime.
+`dripsharp.pdfcube-translator-rules-test` enforces this.
+
 ## Validation
 
 Compilation is necessary but not sufficient:

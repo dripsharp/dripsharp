@@ -18,6 +18,7 @@
     dripsharp.tree-cleanup-test
     dripsharp.source-accountability-test
     dripsharp.authored-runtime-test
+    dripsharp.pdfcube-translator-rules-test
     dripsharp.authorship-report-test
     dripsharp.bundle-contract-test
     dripsharp.differential-registry-test
