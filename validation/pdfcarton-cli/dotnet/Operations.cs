@@ -23,6 +23,7 @@ using DripSharp.PdfCarton.Xmp;
 using DripSharp.PdfCarton.Xmp.Xml;
 using DripSharp.Runtime;
 using SkiaSharp;
+using PdfCartonImage = DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage;
 
 namespace PdfCli;
 
@@ -79,7 +80,7 @@ internal static class Operations
     private static string Sha256(sbyte[] data) => Hex(SHA256.HashData(MemoryMarshal.AsBytes(data.AsSpan())));
 
     /// <summary>The contract's pixel hash: rows top to bottom, R, G, B, A from getRGB.</summary>
-    private static string PixelSha256(SKBitmap image)
+    private static string PixelSha256(PdfCartonImage image)
     {
         var w = image.Width;
         var h = image.Height;
@@ -103,13 +104,8 @@ internal static class Operations
     }
 
     /// <summary>ImageIO.write(image, "png", file): the image's stored samples as PNG.</summary>
-    private static void WritePng(SKBitmap image, string path)
-    {
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100)
-            ?? throw new IOException($"Cannot encode a {image.ColorType} image as PNG");
-        using var stream = File.Create(path);
-        data.SaveTo(stream);
-    }
+    private static void WritePng(PdfCartonImage image, string path) =>
+        File.WriteAllBytes(path, image.EncodePng());
 
     private static string Numbered(string pattern, params int[] numbers) =>
         string.Format(CultureInfo.InvariantCulture, pattern, numbers.Cast<object>().ToArray());
@@ -308,7 +304,7 @@ internal static class Operations
         var pages = new List<(int, int, int, string?)>();
         foreach (var p in Pages(selection))
         {
-            using var image = renderer.RenderImageWithDPI(p - 1, dpi, type);
+            var image = renderer.RenderImageWithDPI(p - 1, dpi, type);
             var name = Numbered("page-{0:D4}.png", p);
             if (outDir is not null) WritePng(image, Path.Combine(outDir, name));
             pages.Add((p, image.Width, image.Height, outDir is null ? null : name));
@@ -785,7 +781,7 @@ internal static class Operations
 
     internal const string DefaultCreateText = "Hello from pdfcli";
 
-    private static SKBitmap CreateImage()
+    private static PdfCartonImage CreateImage()
     {
         var image = PdfCartonFontCompat.CreateBitmap(16, 16, PdfCartonFontCompat.TYPE_INT_RGB);
         for (var y = 0; y < 16; y++)
@@ -799,7 +795,7 @@ internal static class Operations
         using var doc = new PDDocument();
         var page = new PDPage(PDRectangle.Letter);
         doc.AddPage(page);
-        using var pixels = CreateImage();
+        var pixels = CreateImage();
         var image = LosslessFactory.CreateFromImage(doc, pixels);
         using (var cs = new PDPageContentStream(doc, page))
         {

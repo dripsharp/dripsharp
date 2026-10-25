@@ -27,7 +27,9 @@ public class RasterStrategyBenchmarks
         ValidateAll();
         bitmap = Create(Size, Size, 0);
         staging = Create(Size, Size, 0);
-        raster = PdfCartonFontCompat.GetRaster(bitmap);
+        // Compat's raster views an image (managed pixels) of the same layout.
+        raster = PdfCartonFontCompat.GetRaster(
+            new PdfCartonImage(new SKImageInfo(Size, Size, SKColorType.Bgra8888, SKAlphaType.Unpremul)));
         samples = Samples(Size * Size);
         destination = new int[samples.Length];
         raster.SetPixels(0, 0, Size, Size, samples);
@@ -149,6 +151,9 @@ public class RasterStrategyBenchmarks
         GC.KeepAlive(image);
     }
 
+    private static PdfCartonImage Image(int width, int height) =>
+        new(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+
     private static SKBitmap Create(int width, int height, int padding) =>
         new(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul), width * 4 + padding);
 
@@ -171,8 +176,9 @@ public class RasterStrategyBenchmarks
         foreach (var vector in new[] { false, true })
         {
             const int height = 3;
-            using var expected = Create(width + 2, height + 2, 12);
-            using var actual = Create(width + 2, height + 2, 12);
+            // Images have minimal rows, so the strategy's bitmap does too.
+            var expected = Image(width + 2, height + 2);
+            using var actual = Create(width + 2, height + 2, 0);
             expected.GetPixelSpan().Fill(0xA5);
             actual.GetPixelSpan().Fill(0xA5);
             var values = Samples(width * height);
@@ -193,8 +199,8 @@ public class RasterStrategyBenchmarks
         }
         foreach (var width in new[] { 1, 3, 4, 5, 17, 512 })
         {
-            using var expected = Create(width, 3, 12);
-            using var actual = Create(width, 3, 12);
+            var expected = Image(width, 3);
+            using var actual = Create(width, 3, 0);
             using var scratch = Create(width, 3, 0);
             expected.GetPixelSpan().Fill(0xA5);
             actual.GetPixelSpan().Fill(0xA5);

@@ -11,6 +11,7 @@ using DripSharp.PdfCarton.Pdmodel.Common;
 using DripSharp.PdfCarton.Printing;
 using DripSharp.PdfCarton.Rendering;
 using SkiaSharp;
+using PdfCartonImage = DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage;
 
 internal static class Program
 {
@@ -279,9 +280,7 @@ internal static class Program
                     PDFPrintable.RasterizeOff,
                     true,
                     renderer);
-            using var output =
-                new SKBitmap(new SKImageInfo(140, 140, SKColorType.Bgra8888));
-            output.Erase(SKColors.White);
+            var output = White(140, 140);
             using (var graphics = new PdfCartonGraphics2D(output))
             {
                 var result = printable.Print(graphics, pageFormat, 0);
@@ -310,9 +309,7 @@ internal static class Program
                 144,
                 true,
                 fixedRenderer);
-        using var fixedOutput =
-            new SKBitmap(new SKImageInfo(120, 120, SKColorType.Bgra8888));
-        fixedOutput.Erase(SKColors.White);
+        var fixedOutput = White(120, 120);
         int fixedResult;
         using (var fixedGraphics = new PdfCartonGraphics2D(fixedOutput))
         {
@@ -337,9 +334,7 @@ internal static class Program
                 144,
                 true,
                 borderRenderer);
-        using var borderOutput =
-            new SKBitmap(new SKImageInfo(120, 120, SKColorType.Bgra8888));
-        borderOutput.Erase(SKColors.White);
+        var borderOutput = White(120, 120);
         int borderResult;
         using (var borderGraphics = new PdfCartonGraphics2D(borderOutput))
         {
@@ -360,9 +355,7 @@ internal static class Program
                 PDFPrintable.RasterizeDpiAuto,
                 false,
                 autoRenderer);
-        using var autoOutput =
-            new SKBitmap(new SKImageInfo(240, 240, SKColorType.Bgra8888));
-        autoOutput.Erase(SKColors.White);
+        var autoOutput = White(240, 240);
         int autoResult;
         using (var autoGraphics = new PdfCartonGraphics2D(autoOutput))
         {
@@ -380,9 +373,7 @@ internal static class Program
 
     private static void ObserveRenderedOutput(PDDocument document)
     {
-        using var output =
-            new SKBitmap(new SKImageInfo(200, 100, SKColorType.Bgra8888));
-        output.Erase(SKColors.White);
+        var output = White(200, 100);
         var printable =
             new PDFPrintable(
                 document,
@@ -418,8 +409,8 @@ internal static class Program
                 0,
                 false,
                 invalidRenderer);
-        using var invalidImage =
-            new SKBitmap(new SKImageInfo(100, 100, SKColorType.Bgra8888));
+        var invalidImage =
+            new PdfCartonImage(new SKImageInfo(100, 100, SKColorType.Bgra8888));
         using (var invalidGraphics = new PdfCartonGraphics2D(invalidImage))
         {
             Observe(
@@ -442,8 +433,8 @@ internal static class Program
                 0,
                 false,
                 throwingRenderer);
-        using var throwingImage =
-            new SKBitmap(new SKImageInfo(100, 100, SKColorType.Bgra8888));
+        var throwingImage =
+            new PdfCartonImage(new SKImageInfo(100, 100, SKColorType.Bgra8888));
         var throwingFailure = "none";
         using (var throwingGraphics = new PdfCartonGraphics2D(throwingImage))
         {
@@ -469,9 +460,7 @@ internal static class Program
                 144,
                 false,
                 renderer);
-        using var output =
-            new SKBitmap(new SKImageInfo(160, 160, SKColorType.Bgra8888));
-        output.Erase(SKColors.White);
+        var output = White(160, 160);
         using (var graphics = new PdfCartonGraphics2D(output))
         {
             graphics.Translate(7, 11);
@@ -621,8 +610,9 @@ internal static class Program
             _ => "portrait"
         };
 
-    private static string Bounds(SKBitmap image)
+    private static string Bounds(PdfCartonImage rendered)
     {
+        using var image = rendered.ToSKBitmap();
         var left = image.Width;
         var top = image.Height;
         var right = -1;
@@ -645,6 +635,12 @@ internal static class Program
         return Value(left, top, right, bottom, count);
     }
 
+    private static string Color(PdfCartonImage rendered, int x, int y)
+    {
+        using var image = rendered.ToSKBitmap();
+        return Color(image, x, y);
+    }
+
     private static string Color(SKBitmap image, int x, int y)
     {
         var color = image.GetPixel(x, y);
@@ -653,11 +649,20 @@ internal static class Program
             $"{color.Alpha:X2}{color.Red:X2}{color.Green:X2}{color.Blue:X2}");
     }
 
+    // A white page as a graphics target.
+    private static PdfCartonImage White(int width, int height)
+    {
+        using var page = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888));
+        page.Erase(SKColors.White);
+        return PdfCartonImage.FromSKBitmap(page);
+    }
+
     private static bool IsSolidInk(SKColor color) =>
         Math.Min(color.Red, Math.Min(color.Green, color.Blue)) < 64;
 
-    private static bool HasGrayPixel(SKBitmap image)
+    private static bool HasGrayPixel(PdfCartonImage rendered)
     {
+        using var image = rendered.ToSKBitmap();
         for (var y = 0; y < image.Height; y++)
         {
             for (var x = 0; x < image.Width; x++)

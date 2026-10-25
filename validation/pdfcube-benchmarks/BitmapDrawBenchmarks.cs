@@ -20,8 +20,8 @@ namespace PdfCarton.Benchmarks;
 [SimpleJob(RunStrategy.Monitoring, launchCount: 1, warmupCount: 1, iterationCount: 5)]
 public class BitmapDrawBenchmarks
 {
-    private SKBitmap page = null!;
-    private SKBitmap target = null!;
+    private PdfCartonImage page = null!;
+    private PdfCartonImage target = null!;
     private PdfCartonGraphics2D graphics = null!;
     private PDDocument document = null!;
     private PDFRenderer renderer = null!;
@@ -35,7 +35,7 @@ public class BitmapDrawBenchmarks
         graphics = new PdfCartonGraphics2D(target);
         document = Loader.LoadPDF((sbyte[])(Array)Fixture());
         renderer = new PDFRenderer(document);
-        using var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
+        var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
         // Setup-only output comparison across revisions; never timed.
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var bytes = image.GetPixelSpan();
@@ -56,7 +56,7 @@ public class BitmapDrawBenchmarks
     [Benchmark]
     public int RenderGroups()
     {
-        using var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
+        var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
         return image.Width * image.Height;
     }
 
@@ -64,8 +64,6 @@ public class BitmapDrawBenchmarks
     public void Cleanup()
     {
         graphics?.Dispose();
-        target?.Dispose();
-        page?.Dispose();
         document?.Dispose();
     }
 

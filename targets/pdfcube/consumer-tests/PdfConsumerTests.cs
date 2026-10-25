@@ -14,6 +14,7 @@ using SkiaSharp;
 using Xunit;
 using Compat = DripSharp.Runtime;
 using Geometry = DripSharp.PdfCarton.Runtime.Fonts;
+using PdfCartonImage = DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage;
 
 namespace DripSharp.PdfCarton.Tests;
 
@@ -149,7 +150,7 @@ public sealed class PdfConsumerTests
         long Allocated(int page)
         {
             var before = GC.GetAllocatedBytesForCurrentThread();
-            renderer.RenderImage(page).Dispose();
+            _ = renderer.RenderImage(page);
             return GC.GetAllocatedBytesForCurrentThread() - before;
         }
 
@@ -187,11 +188,11 @@ public sealed class PdfConsumerTests
         var pdf = NonEmbeddedTextPdf(lines, perLine, size: 10);
         using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
         var renderer = new PDFRenderer(document);
-        renderer.RenderImage(0).Dispose();
+        _ = renderer.RenderImage(0);
         for (var round = 0; round < 3; round++)
         {
-            renderer.RenderImage(1).Dispose();
-            renderer.RenderImage(2).Dispose();
+            _ = renderer.RenderImage(1);
+            _ = renderer.RenderImage(2);
         }
         var single = MeasureGlyphPage(renderer, 1);
         var twice = MeasureGlyphPage(renderer, 2);
@@ -256,7 +257,7 @@ public sealed class PdfConsumerTests
             path.Close();
         }
 #pragma warning restore CS0618
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         using var graphics = new Compat.PdfCartonGraphics2D(image);
         graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
             Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
@@ -342,7 +343,7 @@ public sealed class PdfConsumerTests
 
         static uint[] Fill(int size, SKPath path, Compat.JavaPaint paint)
         {
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using (var graphics = new Compat.PdfCartonGraphics2D(image))
             {
                 graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
@@ -394,7 +395,7 @@ public sealed class PdfConsumerTests
         {
             var before = GC.GetAllocatedBytesForCurrentThread();
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
-            using var image = renderer.RenderImage(page);
+            var image = renderer.RenderImage(page);
             var time = System.Diagnostics.Stopwatch.GetElapsedTime(started);
             allocated = GC.GetAllocatedBytesForCurrentThread() - before;
             if (time < elapsed) elapsed = time;
@@ -650,15 +651,15 @@ public sealed class PdfConsumerTests
     [Fact]
     public void ColorConversionHonorsPublicColorSpaceOverrides()
     {
-        using var source = IccRenderFixtures.Bitmap(SKAlphaType.Opaque,
+        var source = IccRenderFixtures.Bitmap(SKAlphaType.Opaque,
             new SKColor(10, 20, 30), new SKColor(200, 100, 50));
 
-        using var fromRgb = new DripSharp.Runtime.JavaColorConvertOp(new ConstantFromRgbSpace())
+        var fromRgb = new DripSharp.Runtime.JavaColorConvertOp(new ConstantFromRgbSpace())
             .Filter(source, null);
         Assert.All(IccRenderFixtures.Colors(fromRgb),
             color => Assert.Equal(new SKColor(64, 128, 191), color));
 
-        using var toRgb = new DripSharp.Runtime.JavaColorConvertOp(new RedToRgbSpace())
+        var toRgb = new DripSharp.Runtime.JavaColorConvertOp(new RedToRgbSpace())
             .Filter(source, null);
         Assert.All(IccRenderFixtures.Colors(toRgb),
             color => Assert.Equal(new SKColor(255, 0, 0), color));
@@ -667,15 +668,15 @@ public sealed class PdfConsumerTests
         // only FromCieXyz (destination) or only ToCieXyz (the op's space,
         // which Java 25 converts through before the destination, and the
         // source).
-        using var fromXyz = new DripSharp.Runtime.JavaColorConvertOp(new ConstantFromCieXyzSpace())
+        var fromXyz = new DripSharp.Runtime.JavaColorConvertOp(new ConstantFromCieXyzSpace())
             .Filter(source, null);
         Assert.All(IccRenderFixtures.Colors(fromXyz),
             color => Assert.Equal(new SKColor(64, 128, 191), color));
-        using var redXyz = new DripSharp.Runtime.JavaColorConvertOp(new RedToCieXyzSpace())
+        var redXyz = new DripSharp.Runtime.JavaColorConvertOp(new RedToCieXyzSpace())
             .Filter(source, null);
         Assert.All(IccRenderFixtures.Colors(redXyz),
             color => Assert.Equal(new SKColor(255, 0, 0), color));
-        using var fromRedXyz = new DripSharp.Runtime.JavaColorConvertOp(
+        var fromRedXyz = new DripSharp.Runtime.JavaColorConvertOp(
                 Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB))
             .Filter(redXyz, null);
         Assert.All(IccRenderFixtures.Colors(fromRedXyz),
@@ -691,8 +692,8 @@ public sealed class PdfConsumerTests
     {
         SKColor[] colors =
             [new(10, 20, 30, 0), new(40, 50, 60, 128), new(70, 80, 90, 255)];
-        using var source = IccRenderFixtures.Bitmap(SKAlphaType.Unpremul, colors);
-        using var destination = IccRenderFixtures.Bitmap(SKAlphaType.Unpremul,
+        var source = IccRenderFixtures.Bitmap(SKAlphaType.Unpremul, colors);
+        var destination = IccRenderFixtures.Bitmap(SKAlphaType.Unpremul,
             new SKColor(0, 0, 0, 0), new SKColor(0, 0, 0, 0), new SKColor(0, 0, 0, 0));
 
         var result = new DripSharp.Runtime.JavaColorConvertOp().Filter(source, destination);
@@ -940,7 +941,7 @@ public sealed class PdfConsumerTests
         static Compat.JavaIccColorSpace Space(string deviceClass, uint intent) =>
             new(new Compat.JavaIccProfile(IccRenderFixtures.Signed(
                 IccRenderFixtures.LutIntentProfile(deviceClass, intent))));
-        SKBitmap Image(Compat.JavaColorSpace space, int[][]? pixels = null)
+        PdfCartonImage Image(Compat.JavaColorSpace space, int[][]? pixels = null)
         {
             var model = new Compat.JavaColorModel(space, false, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
             var raster = model.CreateCompatibleWritableRaster(samples.Length, 1);
@@ -948,7 +949,7 @@ public sealed class PdfConsumerTests
                 raster.SetPixel(x, 0, pixels[x]);
             return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
         }
-        static int[] Samples(SKBitmap image)
+        static int[] Samples(PdfCartonImage image)
         {
             var raster = Compat.PdfCartonFontCompat.GetRaster(image);
             return Enumerable.Range(0, image.Width).SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray();
@@ -956,7 +957,7 @@ public sealed class PdfConsumerTests
         static int[] Channels(IEnumerable<uint> colors) =>
             colors.SelectMany(color => new[] { (int)(color >> 24), (int)(color >> 16 & 0xff),
                 (int)(color >> 8 & 0xff), (int)(color & 0xff) }).ToArray();
-        static int[] Rgb(SKBitmap image) => Channels(Enumerable.Range(0, image.Width)
+        static int[] Rgb(PdfCartonImage image) => Channels(Enumerable.Range(0, image.Width)
             .Select(x => (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, 0)));
         static void Near(int[] expected, int[] actual, string label) =>
             Assert.True(expected.Length == actual.Length &&
@@ -971,33 +972,33 @@ public sealed class PdfConsumerTests
                      ("mntr", 1u, perceptual), ("scnr", 1u, perceptual)
                  })
         {
-            using var source = Image(Space(deviceClass, intent), samples);
-            using var rgb = new Compat.JavaColorConvertOp().Filter(
+            var source = Image(Space(deviceClass, intent), samples);
+            var rgb = new Compat.JavaColorConvertOp().Filter(
                 source, Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
             Near(Channels(expected), Rgb(rgb), $"{deviceClass} intent {intent} -> INT_RGB");
         }
 
         // From TYPE_INT_RGB (an sRGB display profile first): perceptual B2A0.
-        using var srgb = Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var srgb = Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         for (var x = 0; x < samples.Length; x++)
             Compat.PdfCartonFontCompat.SetRgb(srgb, x, 0,
                 unchecked((int)0xff000000) | samples[x][0] << 16 | samples[x][1] << 8 | samples[x][2]);
         foreach (var (deviceClass, intent) in new[] { ("prtr", 0u), ("mntr", 1u) })
         {
-            using var converted = new Compat.JavaColorConvertOp().Filter(srgb, Image(Space(deviceClass, intent)));
+            var converted = new Compat.JavaColorConvertOp().Filter(srgb, Image(Space(deviceClass, intent)));
             Near([14, 16, 31, 56, 28, 2, 123, 128, 105, 0, 0, 0, 39, 28, 6, 47, 81, 31], Samples(converted),
                 $"INT_RGB -> {deviceClass} intent {intent}");
         }
 
         // ICC to ICC: the source's class picks the intent for both profiles.
-        using (var printer = Image(Space("prtr", 0), samples))
-        using (var toDisplay = new Compat.JavaColorConvertOp().Filter(printer, Image(Space("mntr", 1))))
-            Near([47, 60, 42, 28, 2, 56, 127, 105, 123, 0, 0, 0, 60, 24, 66, 91, 58, 58], Samples(toDisplay),
-                "prtr -> mntr");
-        using (var display = Image(Space("mntr", 1), samples))
-        using (var toPrinter = new Compat.JavaColorConvertOp().Filter(display, Image(Space("prtr", 0))))
-            Near([13, 26, 38, 64, 0, 0, 64, 64, 64, 0, 0, 0, 50, 25, 13, 3, 60, 33], Samples(toPrinter),
-                "mntr -> prtr");
+        var printer = Image(Space("prtr", 0), samples);
+        var toDisplay = new Compat.JavaColorConvertOp().Filter(printer, Image(Space("mntr", 1)));
+        Near([47, 60, 42, 28, 2, 56, 127, 105, 123, 0, 0, 0, 60, 24, 66, 91, 58, 58], Samples(toDisplay),
+            "prtr -> mntr");
+        var display = Image(Space("mntr", 1), samples);
+        var toPrinter = new Compat.JavaColorConvertOp().Filter(display, Image(Space("prtr", 0)));
+        Near([13, 26, 38, 64, 0, 0, 64, 64, 64, 0, 0, 0, 50, 25, 13, 3, 60, 33], Samples(toPrinter),
+            "mntr -> prtr");
 
         // toRGB and fromRGB are perceptual for every class and header intent.
         foreach (var (deviceClass, intent) in new[] { ("prtr", 1u), ("mntr", 1u), ("scnr", 1u) })
@@ -1022,8 +1023,8 @@ public sealed class PdfConsumerTests
                      new Compat.JavaColorConvertOp(new IdentityCieXyzSpace(), new IdentityCieXyzSpace())
                  })
         {
-            using var source = Image(Space("mntr", 1), samples);
-            using var rgb = op.Filter(
+            var source = Image(Space("mntr", 1), samples);
+            var rgb = op.Filter(
                 source, Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
             Near(Channels(colorimetric), Rgb(rgb), "custom-space op, mntr intent 1 -> INT_RGB");
         }
@@ -1038,7 +1039,7 @@ public sealed class PdfConsumerTests
                 Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE, samples.Length, 1, 3, new Compat.JavaPoint(0, 0));
             for (var x = 0; x < samples.Length; x++)
                 raster.SetPixel(x, 0, samples[x]);
-            using var image = colorSpace.ToRGBImage(raster);
+            var image = colorSpace.ToRGBImage(raster);
             Near(Channels(perceptual), Rgb(image), $"PDICCBased {deviceClass} intent {intent}");
         }
     }
@@ -1063,7 +1064,7 @@ public sealed class PdfConsumerTests
         var srgb = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB);
         var gray = Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY);
         var clip = new ClipCieXyzSpace();
-        SKBitmap Image(Compat.JavaColorSpace space, bool filled = true)
+        PdfCartonImage Image(Compat.JavaColorSpace space, bool filled = true)
         {
             var model = new Compat.JavaColorModel(space, false, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
             var raster = model.CreateCompatibleWritableRaster(samples.Length, 1);
@@ -1071,7 +1072,7 @@ public sealed class PdfConsumerTests
                 raster.SetPixel(x, 0, samples[x]);
             return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
         }
-        SKBitmap IntRgb()
+        PdfCartonImage IntRgb()
         {
             var image = Compat.PdfCartonFontCompat.CreateBitmap(samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
             for (var x = 0; x < samples.Length; x++)
@@ -1083,29 +1084,23 @@ public sealed class PdfConsumerTests
             Assert.True(expected.Length == actual.Length &&
                         expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= 1),
                 $"{label}: expected [{string.Join(",", expected)}], got [{string.Join(",", actual)}].");
-        void Rgb(string label, Compat.JavaColorConvertOp op, SKBitmap source, params int[] expected)
+        void Rgb(string label, Compat.JavaColorConvertOp op, PdfCartonImage source, params int[] expected)
         {
-            using (source)
-            using (var result = op.Filter(source, Compat.PdfCartonFontCompat.CreateBitmap(
-                       samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB)))
-                Near(expected.SelectMany(rgb => new[] { rgb >> 16, rgb >> 8 & 0xff, rgb & 0xff }).ToArray(),
-                    Enumerable.Range(0, samples.Length).SelectMany(x =>
-                    {
-                        var rgb = Compat.PdfCartonFontCompat.GetRgb(result, x, 0);
-                        return new[] { rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff };
-                    }).ToArray(), label);
+            var result = op.Filter(source, Compat.PdfCartonFontCompat.CreateBitmap(
+                samples.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
+            Near(expected.SelectMany(rgb => new[] { rgb >> 16, rgb >> 8 & 0xff, rgb & 0xff }).ToArray(),
+                Enumerable.Range(0, samples.Length).SelectMany(x =>
+                {
+                    var rgb = Compat.PdfCartonFontCompat.GetRgb(result, x, 0);
+                    return new[] { rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff };
+                }).ToArray(), label);
         }
-        void Samples(string label, Compat.JavaColorConvertOp op, SKBitmap source, SKBitmap? destination, params int[] expected)
+        void Samples(string label, Compat.JavaColorConvertOp op, PdfCartonImage source, PdfCartonImage? destination, params int[] expected)
         {
-            using (source)
-            using (destination)
-            {
-                var result = op.Filter(source, destination);
-                using var created = destination is null ? result : null;
-                var raster = Compat.PdfCartonFontCompat.GetRaster(result);
-                Near(expected, Enumerable.Range(0, samples.Length)
-                    .SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray(), label);
-            }
+            var result = op.Filter(source, destination);
+            var raster = Compat.PdfCartonFontCompat.GetRaster(result);
+            Near(expected, Enumerable.Range(0, samples.Length)
+                .SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray(), label);
         }
         static Compat.JavaColorConvertOp Op(params Compat.JavaColorSpace[] spaces) =>
             spaces.Length == 1 ? new(spaces[0]) : new(spaces[0], spaces[1]);
@@ -1179,7 +1174,7 @@ public sealed class PdfConsumerTests
     {
         static Compat.JavaIccColorSpace Space(byte[] profile) =>
             new(new Compat.JavaIccProfile(IccRenderFixtures.Signed(profile)));
-        static SKBitmap Image(Compat.JavaColorSpace space, bool alpha, int[][] pixels, int? fill = null)
+        static PdfCartonImage Image(Compat.JavaColorSpace space, bool alpha, int[][] pixels, int? fill = null)
         {
             var model = new Compat.JavaColorModel(space, alpha, Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
             var raster = model.CreateCompatibleWritableRaster(pixels.Length, 1);
@@ -1190,18 +1185,14 @@ public sealed class PdfConsumerTests
                     : pixels[x].Take(count - (alpha ? 1 : 0)).Concat(alpha ? [pixels[x][3]] : []).ToArray());
             return Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
         }
-        static void Samples(string label, Compat.JavaColorConvertOp op, SKBitmap source, SKBitmap destination, params int[] expected)
+        static void Samples(string label, Compat.JavaColorConvertOp op, PdfCartonImage source, PdfCartonImage destination, params int[] expected)
         {
-            using (source)
-            using (destination)
-            {
-                var raster = Compat.PdfCartonFontCompat.GetRaster(op.Filter(source, destination));
-                var actual = Enumerable.Range(0, destination.Width)
-                    .SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray();
-                Assert.True(expected.Length == actual.Length &&
-                            expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= 1),
-                    $"{label}: expected [{string.Join(",", expected)}], got [{string.Join(",", actual)}].");
-            }
+            var raster = Compat.PdfCartonFontCompat.GetRaster(op.Filter(source, destination));
+            var actual = Enumerable.Range(0, destination.Width)
+                .SelectMany(x => raster.GetPixel(x, 0, (int[]?)null)).ToArray();
+            Assert.True(expected.Length == actual.Length &&
+                        expected.Zip(actual).All(pair => Math.Abs(pair.First - pair.Second) <= 1),
+                $"{label}: expected [{string.Join(",", expected)}], got [{string.Join(",", actual)}].");
         }
 
         int[][] colors = [[51, 102, 153], [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255], [0, 0, 0], [200, 100, 50], [10, 240, 130]];
@@ -1272,10 +1263,10 @@ public sealed class PdfConsumerTests
         int[] argb = [unchecked((int)0x80336699), unchecked((int)0xffff0000), 0x0000ff00, 0x0a0000ff,
             unchecked((int)0xc8c86432), 0x4d0af082];
         uint[] overBlack = [0xff1a334d, 0xffff0000, 0xff000000, 0xff00000a, 0xff9d4e27, 0xff034827];
-        using var argbImage = Compat.PdfCartonFontCompat.CreateBitmap(argb.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var argbImage = Compat.PdfCartonFontCompat.CreateBitmap(argb.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         for (var x = 0; x < argb.Length; x++)
             Compat.PdfCartonFontCompat.SetRgb(argbImage, x, 0, argb[x]);
-        using var bgr = Compat.PdfCartonFontCompat.CreateBitmap(argb.Length, 1, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
+        var bgr = Compat.PdfCartonFontCompat.CreateBitmap(argb.Length, 1, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
         new Compat.JavaColorConvertOp().Filter(argbImage, bgr);
         var actualBgr = Enumerable.Range(0, argb.Length)
             .Select(x => (uint)Compat.PdfCartonFontCompat.GetRgb(bgr, x, 0)).ToArray();
@@ -1422,7 +1413,7 @@ public sealed class PdfConsumerTests
                     $"{label}: expected 0x{expected:x8}, got 0x{actual:x8}.");
         }
 
-        using var rendered = new PDFRenderer(document).RenderImage(0);
+        var rendered = new PDFRenderer(document).RenderImage(0);
         (int X, uint Argb)[] pixels =
         [
             (5, 0xffc9adf0), (15, 0xff2f669a), (25, 0xff827f8e), (35, 0xffd2abdd),
@@ -1432,13 +1423,13 @@ public sealed class PdfConsumerTests
         foreach (var (x, argb) in pixels)
             AssertPixel(argb, Compat.PdfCartonFontCompat.GetRgb(rendered, x, 5), $"page x={x}");
 
-        using var labPixels = labImage.GetImage();
+        var labPixels = labImage.GetImage();
         AssertPixel(0xffd2abdd, Compat.PdfCartonFontCompat.GetRgb(labPixels, 0, 0), "Lab image 0");
         AssertPixel(0xff787776, Compat.PdfCartonFontCompat.GetRgb(labPixels, 1, 0), "Lab image 1");
-        using var calPixels = calImage.GetImage();
+        var calPixels = calImage.GetImage();
         AssertPixel(0xff2f669a, Compat.PdfCartonFontCompat.GetRgb(calPixels, 0, 0), "CalRGB image 0");
         AssertPixel(0xff818081, Compat.PdfCartonFontCompat.GetRgb(calPixels, 1, 0), "CalRGB image 1");
-        using var grayPixels = grayImage.GetImage();
+        var grayPixels = grayImage.GetImage();
         AssertPixel(0xff3e3c45, Compat.PdfCartonFontCompat.GetRgb(grayPixels, 0, 0), "CalGray image 0");
         AssertPixel(0xffc2bdd4, Compat.PdfCartonFontCompat.GetRgb(grayPixels, 1, 0), "CalGray image 1");
     }
@@ -1549,10 +1540,11 @@ internal static class IccRenderFixtures
     internal static byte[] Render(byte[] pdf)
     {
         using var document = Loader.LoadPDF(Signed(pdf));
-        using var image = new PDFRenderer(document).RenderImage(0);
+        var image = new PDFRenderer(document).RenderImage(0);
         using var rgba = new SKBitmap(new SKImageInfo(
             image.Width, image.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
-        Assert.True(image.CopyTo(rgba, SKColorType.Rgba8888));
+        using var rendered = image.ToSKBitmap();
+        Assert.True(rendered.CopyTo(rgba, SKColorType.Rgba8888));
         return rgba.GetPixelSpan().ToArray();
     }
 
@@ -1922,9 +1914,9 @@ internal static class IccRenderFixtures
         return image.GetColorSpace();
     }
 
-    internal static SKBitmap Bitmap(SKAlphaType alphaType, params SKColor[] colors)
+    internal static PdfCartonImage Bitmap(SKAlphaType alphaType, params SKColor[] colors)
     {
-        var bitmap = new SKBitmap(new SKImageInfo(
+        var bitmap = new PdfCartonImage(new SKImageInfo(
             colors.Length, 1, SKColorType.Bgra8888, alphaType));
         var pixels = bitmap.GetPixelSpan();
         for (var index = 0; index < colors.Length; index++)
@@ -1934,13 +1926,12 @@ internal static class IccRenderFixtures
             pixels[index * 4 + 2] = colors[index].Red;
             pixels[index * 4 + 3] = colors[index].Alpha;
         }
-        bitmap.NotifyPixelsChanged();
         return bitmap;
     }
 
     // Reads stored BGRA bytes directly (one row), so colors under zero alpha
     // are observed as stored.
-    internal static SKColor[] Colors(SKBitmap bitmap)
+    internal static SKColor[] Colors(PdfCartonImage bitmap)
     {
         Assert.Equal(SKColorType.Bgra8888, bitmap.ColorType);
         Assert.Equal(1, bitmap.Height);
@@ -2008,7 +1999,7 @@ public sealed class RasterConversionConsumerTests
         {
             var raster = Fill(
                 model.CreateCompatibleWritableRaster(size, size == Width ? Height : size), max, name.Length);
-            using var image = Compat.PdfCartonFontCompat.CreateImage(model, raster, premultiplied, null);
+            var image = Compat.PdfCartonFontCompat.CreateImage(model, raster, premultiplied, null);
             AssertStored(name, image, model, raster);
         }
     }
@@ -2027,7 +2018,7 @@ public sealed class RasterConversionConsumerTests
                      Compat.PdfCartonFontCompat.TYPE_INT_ARGB
                  })
         {
-            using var own = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var own = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
             var raster = Compat.PdfCartonFontCompat.GetRaster(own);
             if (raster.TransferType == Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE)
                 _ = ((Compat.JavaDataBufferByte)raster.GetDataBuffer()).GetData();
@@ -2035,7 +2026,7 @@ public sealed class RasterConversionConsumerTests
             Compat.PdfCartonFontCompat.SetImageData(own, raster);
             AssertStored($"type {type} own raster", own, Compat.PdfCartonFontCompat.GetColorModel(own), raster);
 
-            using var target = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var target = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
             var bands = type == Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY ? 1 : 3;
             var source = Fill(Compat.PdfCartonFontCompat.CreateInterleavedRaster(
                 Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE, Width, Height, bands,
@@ -2062,7 +2053,7 @@ public sealed class RasterConversionConsumerTests
             var source = Fill(new Compat.JavaColorModel(sourceType)
                 .CreateCompatibleWritableRaster(Width, Height), 255, sourceType);
             // DeviceRGB's ToRGBImage is SetImageData into a new INT_RGB image.
-            using var target = targetType == Compat.PdfCartonFontCompat.TYPE_INT_RGB
+            var target = targetType == Compat.PdfCartonFontCompat.TYPE_INT_RGB
                 ? PDDeviceRGB.Instance.ToRGBImage(source)
                 : Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, targetType);
             if (targetType != Compat.PdfCartonFontCompat.TYPE_INT_RGB)
@@ -2094,7 +2085,7 @@ public sealed class RasterConversionConsumerTests
         raster.SetPixel(3, 1, [200]);
         // CreateImage renders on the image's first native use (a draw, or a
         // Skia call such as GetPixel), so that is where rendering fails.
-        using var image = Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
+        var image = Compat.PdfCartonFontCompat.CreateImage(model, raster, false, null);
         var error = Assert.ThrowsAny<ArgumentException>(
             () => Compat.PdfCartonFontCompat.EnsureNativePixels(image));
         Assert.Contains("Palette index 200", error.Message);
@@ -2195,10 +2186,10 @@ public sealed class RasterConversionConsumerTests
             using var document = new PDDocument();
             PDImageXObject Image() => new(document, new MemoryStream(samples), null!,
                 width, height, bitsPerComponent, space);
-            Image().GetImage().Dispose();
+            _ = Image().GetImage();
             var image = Image();
             var allocated = GC.GetAllocatedBytesForCurrentThread();
-            using var bitmap = image.GetImage();
+            var bitmap = image.GetImage();
             allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
             Assert.True(allocated < 8L * width * height,
                 $"{name}: decoding allocated {allocated} bytes for {width * height} pixels.");
@@ -2395,7 +2386,7 @@ public sealed class RasterConversionConsumerTests
             using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
             var shading = document.GetPage(0).GetResources().GetShading(COSName.GetPDFName("Sh1"));
             var paint = new TileRecordingPaint(shading.ToPaint(new DripSharp.PdfCarton.Util.Matrix()), 4096);
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(
                 width, height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
             var area = new SKRect(0, 0, width, height);
             using (var graphics = new Compat.PdfCartonGraphics2D(image))
@@ -2468,7 +2459,7 @@ public sealed class RasterConversionConsumerTests
         path.LineTo(0.3f, height - 0.3f);
         path.Close();
 #pragma warning restore CS0618
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         using (var graphics = new Compat.PdfCartonGraphics2D(image))
         {
             graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
@@ -2529,12 +2520,13 @@ public sealed class RasterConversionConsumerTests
         using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
         var renderer = new PDFRenderer(document);
         allocated = GC.GetAllocatedBytesForCurrentThread();
-        using var image = renderer.RenderImageWithDPI(0, 150);
+        var image = renderer.RenderImageWithDPI(0, 150);
         allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
         Assert.Equal((1275, 1649), (image.Width, image.Height));
         using var rgba = new SKBitmap(new SKImageInfo(
             image.Width, image.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
-        Assert.True(image.CopyTo(rgba, SKColorType.Rgba8888));
+        using var rendered = image.ToSKBitmap();
+        Assert.True(rendered.CopyTo(rgba, SKColorType.Rgba8888));
         return rgba.GetPixelSpan().ToArray();
     }
 
@@ -2905,7 +2897,7 @@ public sealed class RasterConversionConsumerTests
 
         foreach (var (alpha, expected) in new[] { (255, Mask(opaqueSpans)), (128, Mask(translucentSpans)) })
         {
-            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+            var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
                 size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using (var graphics = new Compat.PdfCartonGraphics2D(bitmap))
             {
@@ -3136,7 +3128,7 @@ public sealed class RasterConversionConsumerTests
         path.LineTo(6.3f, 2);
         path.LineTo(0, 2);
         path.Close();
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(16, 16, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(16, 16, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         using (var graphics = new Compat.PdfCartonGraphics2D(image))
         {
             graphics.SetColor(new SKColor(255, 0, 0));
@@ -3183,7 +3175,7 @@ public sealed class RasterConversionConsumerTests
         // Java draws an opaque 7x5 image under translate(20, 20), rotate(0.5),
         // scale(3, 3) at (-3, -2) as 316 fully opaque pixels and no partial
         // ones, whatever the hints.
-        using var tile = Compat.PdfCartonFontCompat.CreateBitmap(7, 5, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var tile = Compat.PdfCartonFontCompat.CreateBitmap(7, 5, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         tile.Erase(SKColors.Red);
         Action<Compat.PdfCartonGraphics2D> drawImage = graphics =>
         {
@@ -3306,7 +3298,7 @@ public sealed class RasterConversionConsumerTests
         inflection.LineTo(192, 799);
         inflection.LineTo(0, 799);
         inflection.Close();
-        using var tall = Compat.PdfCartonFontCompat.CreateBitmap(256, 800, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var tall = Compat.PdfCartonFontCompat.CreateBitmap(256, 800, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         using (var graphics = new Compat.PdfCartonGraphics2D(tall))
         {
             graphics.SetRenderingHint(
@@ -3323,7 +3315,7 @@ public sealed class RasterConversionConsumerTests
 
     private static uint[] ArgbMask(int size, object? antialiasing, Action<Compat.PdfCartonGraphics2D> draw)
     {
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         using (var graphics = new Compat.PdfCartonGraphics2D(image))
         {
             if (antialiasing is not null)
@@ -3371,7 +3363,7 @@ public sealed class RasterConversionConsumerTests
 
     private static string[] AliasedMask(int size, float scale, byte alpha, Action<Compat.PdfCartonGraphics2D> fill)
     {
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         image.Erase(SKColors.Transparent);
         using (var graphics = new Compat.PdfCartonGraphics2D(image))
         {
@@ -3394,11 +3386,11 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void FilteredTexturePaintsBlendTransparentTexelsLikeJava()
     {
-        using var tile = Compat.PdfCartonFontCompat.CreateBitmap(13, 12, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var tile = Compat.PdfCartonFontCompat.CreateBitmap(13, 12, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         for (var y = 0; y < 12; y++)
             for (var x = 0; x < 13; x++)
                 tile.SetPixel(x, y, x < 6 && y < 6 ? SKColors.Red : x >= 6 && y >= 6 ? SKColors.Blue : SKColor.Empty);
-        using var page = Compat.PdfCartonFontCompat.CreateBitmap(200, 200, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var page = Compat.PdfCartonFontCompat.CreateBitmap(200, 200, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         page.Erase(SKColors.White);
         using (var graphics = new Compat.PdfCartonGraphics2D(page))
         {
@@ -3432,7 +3424,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void TexturePaintsSampleLikeJavaOnAnyCanvas()
     {
-        using var tile = new SKBitmap(new SKImageInfo(2, 1, SKColorType.Bgra8888, SKAlphaType.Opaque));
+        var tile = new PdfCartonImage(new SKImageInfo(2, 1, SKColorType.Bgra8888, SKAlphaType.Opaque));
         tile.SetPixel(0, 0, SKColors.Red);
         tile.SetPixel(1, 0, SKColors.Blue);
         int[] nearest = [0, 255, 255, 255, 255, 0, 0, 0, 0];
@@ -3518,7 +3510,7 @@ public sealed class RasterConversionConsumerTests
     // Compares stored native pixels with the getters' color of each pixel.
     private static void AssertStored(
         string name,
-        SKBitmap image,
+        PdfCartonImage image,
         Compat.JavaColorModel model,
         Compat.JavaRaster raster)
     {
@@ -3629,8 +3621,10 @@ public sealed class RasterConversionConsumerTests
         };
         foreach (var (name, color, alpha, padding, type, offsets) in cases)
         {
+            // Images have minimal rows: padding no longer applies.
+            _ = padding;
             var info = new SKImageInfo(Width, Height, color, alpha);
-            var bitmap = new SKBitmap(info, info.RowBytes + padding);
+            var bitmap = new PdfCartonImage(info);
             var pixels = bitmap.GetPixelSpan();
             var random = new Random(name.Length);
             random.NextBytes(pixels);
@@ -3641,7 +3635,6 @@ public sealed class RasterConversionConsumerTests
                     for (var component = 0; component < 3; component++)
                         pixels[index + component] = (byte)(pixels[index + component] % (pixels[index + 3] + 1));
             }
-            bitmap.NotifyPixelsChanged();
             Compat.PdfCartonFontCompat.RegisterImageType(bitmap, type);
 
             var view = Compat.PdfCartonFontCompat.GetRaster(bitmap);
@@ -3655,7 +3648,6 @@ public sealed class RasterConversionConsumerTests
             var materialized = new Compat.JavaRaster(bitmap);
             var materializedData = ((Compat.JavaDataBufferByte)materialized.GetDataBuffer()).GetData();
             var snapshotData = ((Compat.JavaDataBufferByte)snapshot.GetDataBuffer()).GetData();
-            bitmap.Dispose();
 
             for (var y = 0; y < Height; y++)
             {
@@ -3699,9 +3691,11 @@ public sealed class RasterConversionConsumerTests
         };
         foreach (var (name, color, alpha, padding, type) in cases)
         {
+            // Images have minimal rows: padding no longer applies.
+            _ = padding;
             var info = new SKImageInfo(Width, Height, color, alpha);
-            using var bitmap = new SKBitmap(info, info.RowBytes + padding);
-            using var expected = new SKBitmap(info, info.RowBytes + padding);
+            var bitmap = new PdfCartonImage(info);
+            var expected = new PdfCartonImage(info);
             bitmap.Erase(SKColors.Transparent);
             expected.Erase(SKColors.Transparent);
             Compat.PdfCartonFontCompat.RegisterImageType(bitmap, type);
@@ -3784,9 +3778,9 @@ public sealed class RasterConversionConsumerTests
     [InlineData(true, true)]
     public void BitmapRasterWritesAreVisibleToLaterDraws(bool directSkia, bool scaled)
     {
-        using var source = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var source = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         source.Erase(SKColors.Red);
-        using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+        var target = Compat.PdfCartonFontCompat.CreateBitmap(
             Width * 2, Height * 2, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         using var graphics = new Compat.PdfCartonGraphics2D(target);
         using var canvasTarget = new SKBitmap(
@@ -3801,11 +3795,13 @@ public sealed class RasterConversionConsumerTests
                 return target.GetPixel(x, y);
             }
             canvas.Clear(SKColors.Transparent);
+            // Skia draws an image through a copy of its pixels.
+            using var copy = source.ToSKBitmap();
             if (scaled)
-                canvas.DrawBitmap(source, new SKRect(0, 0, Width * 2, Height * 2),
+                canvas.DrawBitmap(copy, new SKRect(0, 0, Width * 2, Height * 2),
                     new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.Nearest), null);
             else
-                canvas.DrawBitmap(source, 0, 0, SKSamplingOptions.Default, null);
+                canvas.DrawBitmap(copy, 0, 0, SKSamplingOptions.Default, null);
             canvas.Flush();
             return canvasTarget.GetPixel(x, y);
         }
@@ -3824,7 +3820,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void ConcurrentRasterAndTypeRegistrationOnOneBitmapDoNotThrow()
     {
-        using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
         Parallel.For(0, 8, new ParallelOptions { MaxDegreeOfParallelism = 8 }, worker =>
         {
@@ -3849,32 +3845,6 @@ public sealed class RasterConversionConsumerTests
         Assert.Equal(new[] { 7, 2, 3, 255 }, Compat.PdfCartonFontCompat.GetRaster(bitmap).GetPixel(0, 7, (int[]?)null));
     }
 
-    // A retained raster views the bitmap's pixels until they are reallocated;
-    // GetRaster then views the new pixels, and a disposed bitmap's view throws.
-    [Fact]
-    public void RetainedBitmapRastersFollowReallocationAndDisposal()
-    {
-        var bitmap = new SKBitmap(new SKImageInfo(4, 4, SKColorType.Bgra8888, SKAlphaType.Opaque));
-        bitmap.Erase(SKColors.Red);
-        var raster = Compat.PdfCartonFontCompat.GetRaster(bitmap);
-        Assert.Same(raster, Compat.PdfCartonFontCompat.GetRaster(bitmap));
-        Assert.Equal(new[] { 255, 0, 0 }, raster.GetPixel(3, 3, (int[]?)null));
-
-        Assert.True(bitmap.TryAllocPixels(new SKImageInfo(64, 32, SKColorType.Bgra8888, SKAlphaType.Opaque)));
-        bitmap.Erase(SKColors.Lime);
-        var reallocated = Compat.PdfCartonFontCompat.GetRaster(bitmap);
-        Assert.NotSame(raster, reallocated);
-        Assert.Equal(64, reallocated.Width);
-        Assert.Equal(new[] { 0, 255, 0 }, reallocated.GetPixel(63, 31, (int[]?)null));
-        // The replaced view refuses access rather than touching released pixels.
-        Assert.Throws<InvalidOperationException>(() => raster.SetPixel(0, 0, new[] { 1, 2, 3 }));
-        Assert.Throws<InvalidOperationException>(() => raster.GetDataBuffer().GetElement(0));
-
-        bitmap.Dispose();
-        Assert.ThrowsAny<ObjectDisposedException>(() => reallocated.GetPixel(0, 0, (int[]?)null));
-        Assert.ThrowsAny<ObjectDisposedException>(() => reallocated.SetPixel(0, 0, new[] { 1, 2, 3 }));
-    }
-
     // BlendComposite reads the destination through a copy of the page raster.
     // An INT page's copy holds its packed pixels, which the page's colour model
     // decodes, so a Multiply fill blends with the backdrop instead of
@@ -3890,7 +3860,7 @@ public sealed class RasterConversionConsumerTests
                      Compat.PdfCartonFontCompat.TYPE_CUSTOM
                  })
         {
-            using var page = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var page = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
             page.Erase(new SKColor(80, 120, 160));
             using (var graphics = new Compat.PdfCartonGraphics2D(page))
             {
@@ -3936,10 +3906,10 @@ public sealed class RasterConversionConsumerTests
                      Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY
                  })
         {
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(4, 4, type);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(4, 4, type);
             Assert.Same(srgb, Compat.PdfCartonFontCompat.GetColorModel(image).ColorSpace);
         }
-        using var gray = Compat.PdfCartonFontCompat.CreateBitmap(
+        var gray = Compat.PdfCartonFontCompat.CreateBitmap(
             4, 4, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
         Assert.Same(
             Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY),
@@ -3969,7 +3939,7 @@ public sealed class RasterConversionConsumerTests
             return (byte)(int)(value * 255f + 0.5f);
         }
 
-        using var page = Compat.PdfCartonFontCompat.CreateBitmap(
+        var page = Compat.PdfCartonFontCompat.CreateBitmap(
             256, 2, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         for (var index = 0; index < 256; index++)
         {
@@ -4002,7 +3972,7 @@ public sealed class RasterConversionConsumerTests
         // The conversion allocated four arrays per pixel (about 160 bytes in
         // all); without it the blend allocates about four bytes per pixel,
         // for the layer and raster copies.
-        using var large = Compat.PdfCartonFontCompat.CreateBitmap(
+        var large = Compat.PdfCartonFontCompat.CreateBitmap(
             256, 256, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         large.Erase(new SKColor(80, 120, 160));
         using (var graphics = new Compat.PdfCartonGraphics2D(large))
@@ -4084,7 +4054,7 @@ public sealed class RasterConversionConsumerTests
             }
         }
 
-        using var rgb = new PDFRenderer(document).RenderImage(0);
+        var rgb = new PDFRenderer(document).RenderImage(0);
         for (var index = 0; index < expected.Length; index++)
         {
             var (mode, rgbBackdrop, grayBackdrop) = expected[index];
@@ -4107,7 +4077,7 @@ public sealed class RasterConversionConsumerTests
                      Compat.PdfCartonFontCompat.TYPE_INT_RGB
                  })
         {
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
             var raster = Compat.PdfCartonFontCompat.GetRaster(image);
             var data = ((Compat.JavaDataBufferInt)raster.GetDataBuffer()).GetData();
             Assert.Same(data,
@@ -4115,8 +4085,8 @@ public sealed class RasterConversionConsumerTests
             Assert.Equal(Width * Height, data.Length);
 
             // Skia drawing into the image is visible in the array.
-            using (var canvas = new SKCanvas(image))
-                canvas.Clear(new SKColor(10, 20, 30));
+            using (var lease = image.Lease())
+                lease.Canvas.Clear(new SKColor(10, 20, 30));
             Assert.Equal(unchecked((int)0xff0a141e), data[5 * Width + 7]);
 
             // Writes into the array are visible to raster reads, GetRgb and Skia.
@@ -4128,7 +4098,7 @@ public sealed class RasterConversionConsumerTests
             Assert.Equal(
                 type == Compat.PdfCartonFontCompat.TYPE_INT_ARGB ? new[] { 200, 100, 50, 128 } : new[] { 200, 100, 50 },
                 raster.GetPixel(7, 5, (int[]?)null));
-            using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+            var target = Compat.PdfCartonFontCompat.CreateBitmap(
                 Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using (var graphics = new Compat.PdfCartonGraphics2D(target))
                 graphics.DrawImage(image, 0, 0, null);
@@ -4154,7 +4124,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void ByteGrayDataBufferIsTheLiveImageStorage()
     {
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(
             Width, Height, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
         var raster = Compat.PdfCartonFontCompat.GetRaster(image);
         var data = ((Compat.JavaDataBufferByte)raster.GetDataBuffer()).GetData();
@@ -4178,7 +4148,7 @@ public sealed class RasterConversionConsumerTests
         Assert.Equal(77, data[Width + 2]);
 
         // Array writes made after a draw reach the next draw.
-        using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+        var target = Compat.PdfCartonFontCompat.CreateBitmap(
             Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         using (var graphics = new Compat.PdfCartonGraphics2D(target))
             graphics.DrawImage(image, 0, 0, null);
@@ -4209,7 +4179,7 @@ public sealed class RasterConversionConsumerTests
             Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB),
             false,
             Compat.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE);
-        SKBitmap Image()
+        PdfCartonImage Image()
         {
             var raster = model.CreateCompatibleWritableRaster(Width, Height);
             for (var y = 0; y < Height; y++)
@@ -4219,9 +4189,9 @@ public sealed class RasterConversionConsumerTests
         }
         static SKColor Expected(int x, int y) => new((byte)(x * 6), (byte)(y * 10), 200);
 
-        using (var converted = Image())
+        var converted = Image();
         {
-            using var destination = Compat.PdfCartonFontCompat.CreateBitmap(
+            var destination = Compat.PdfCartonFontCompat.CreateBitmap(
                 Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
             new Compat.JavaColorConvertOp().Filter(converted, destination);
             Assert.Equal(Expected(7, 5), destination.GetPixel(7, 5));
@@ -4229,20 +4199,22 @@ public sealed class RasterConversionConsumerTests
             Assert.Equal(Expected(7, 5), converted.GetPixel(7, 5));
             Assert.False(Compat.PdfCartonFontCompat.IsNativePending(converted));
         }
-        using (var drawn = Image())
-        using (var target = new SKBitmap(Width, Height))
+        var drawn = Image();
+        using var target = new SKBitmap(Width, Height);
         {
             using (var canvas = new SKCanvas(target))
-                canvas.DrawBitmap(drawn, 0, 0, SKSamplingOptions.Default, null);
+            using (var drawnCopy = drawn.ToSKBitmap())
+                canvas.DrawBitmap(drawnCopy, 0, 0, SKSamplingOptions.Default, null);
             Assert.Equal(Expected(Width - 1, Height - 1), target.GetPixel(Width - 1, Height - 1));
         }
-        using (var encoded = Image())
-        using (var snapshot = SKImage.FromBitmap(encoded))
+        var encoded = Image();
+        using (var encodedCopy = encoded.ToSKBitmap())
+        using (var snapshot = SKImage.FromBitmap(encodedCopy))
         using (var copy = SKBitmap.FromImage(snapshot))
             Assert.Equal(Expected(3, 4), copy.GetPixel(3, 4));
         for (var round = 0; round < 20; round++)
         {
-            using var shared = Image();
+            var shared = Image();
             var colors = new SKColor[8];
             Parallel.For(0, colors.Length, new ParallelOptions { MaxDegreeOfParallelism = 8 },
                 index => colors[index] = shared.GetPixel(index, index % Height));
@@ -4256,7 +4228,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void IntDataBufferGetDataDoesNotCopyThePixels()
     {
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(
             2000, 2000, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         var buffer = (Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer();
         var first = buffer.GetData();
@@ -4282,7 +4254,7 @@ public sealed class RasterConversionConsumerTests
         {
             var bgr = type == Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR;
             var bands = bgr ? 3 : 1;
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
             using var early = new Compat.PdfCartonGraphics2D(image);
             var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
             Assert.Same(data,
@@ -4306,7 +4278,7 @@ public sealed class RasterConversionConsumerTests
                 bgr ? new SKColor(red, green, blue) : new SKColor(red, red, red);
             SKColor Drawn(int x, int y)
             {
-                using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+                var target = Compat.PdfCartonFontCompat.CreateBitmap(
                     Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
                 using (var graphics = new Compat.PdfCartonGraphics2D(target))
                     graphics.DrawImage(image, 0, 0, null);
@@ -4345,13 +4317,13 @@ public sealed class RasterConversionConsumerTests
                      Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY
                  })
         {
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
             using var graphics = new Compat.PdfCartonGraphics2D(image);
             var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
             var bands = type == Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR ? 3 : 1;
             SKColor Drawn(int x, int y)
             {
-                using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+                var target = Compat.PdfCartonFontCompat.CreateBitmap(
                     Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
                 using (var drawing = new Compat.PdfCartonGraphics2D(target))
                     drawing.DrawImage(image, 0, 0, null);
@@ -4388,7 +4360,7 @@ public sealed class RasterConversionConsumerTests
             data.Skip(index).Take(4).Select(value => unchecked((byte)value)).ToArray();
 
         // A copy of the image's data (DeepCopy of a live view) has the layout too.
-        using (var source = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type))
+        var source = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
         {
             Compat.PdfCartonFontCompat.SetRgb(source, 1, 0, unchecked((int)0x80112233));
             var copy = Compat.PdfCartonFontCompat.GetImageData(source);
@@ -4397,7 +4369,7 @@ public sealed class RasterConversionConsumerTests
             Assert.Equal(new[] { 0x11, 0x22, 0x33, 0x80 }, copy.GetPixel(1, 0, (int[]?)null));
         }
 
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
         Compat.PdfCartonFontCompat.SetRgb(image, 0, 0, unchecked((int)0x80112233));
         var raster = Compat.PdfCartonFontCompat.GetRaster(image);
         var data = ((Compat.JavaDataBufferByte)raster.GetDataBuffer()).GetData();
@@ -4420,7 +4392,7 @@ public sealed class RasterConversionConsumerTests
         }
         SKColor Drawn(int x, int y)
         {
-            using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+            var target = Compat.PdfCartonFontCompat.CreateBitmap(
                 Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using (var graphics = new Compat.PdfCartonGraphics2D(target))
                 graphics.DrawImage(image, 0, 0, null);
@@ -4459,7 +4431,7 @@ public sealed class RasterConversionConsumerTests
         {
             var bgr = type == Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR;
             var bands = bgr ? 3 : 1;
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(Width, Height, type);
             using var graphics = new Compat.PdfCartonGraphics2D(image);
             var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
             // Backdrop (80, 120, 160), or gray 100, written through the array.
@@ -4506,9 +4478,9 @@ public sealed class RasterConversionConsumerTests
             Assert.Equal(bgr ? 160 : 100, data[(18 * Width + 30) * bands] & 0xff);
         }
 
-        static SKColor Drawn(SKBitmap image, int x, int y)
+        static SKColor Drawn(PdfCartonImage image, int x, int y)
         {
-            using var target = Compat.PdfCartonFontCompat.CreateBitmap(
+            var target = Compat.PdfCartonFontCompat.CreateBitmap(
                 Width, Height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using (var drawing = new Compat.PdfCartonGraphics2D(target))
                 drawing.DrawImage(image, 0, 0, null);
@@ -4521,7 +4493,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void ByteDataBufferPublishRendersOnlyChangedSamples()
     {
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(
             1000, 1000, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
         var data = ((Compat.JavaDataBufferByte)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
         Compat.PdfCartonFontCompat.EnsureNativePixels(image);
@@ -4537,7 +4509,7 @@ public sealed class RasterConversionConsumerTests
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
-    private static (long Allocated, TimeSpan Elapsed) MeasureByteDataPublishes(SKBitmap image, sbyte[] data)
+    private static (long Allocated, TimeSpan Elapsed) MeasureByteDataPublishes(PdfCartonImage image, sbyte[] data)
     {
         Compat.PdfCartonFontCompat.EnsureNativePixels(image);
         var allocated = GC.GetAllocatedBytesForCurrentThread();
@@ -4569,12 +4541,12 @@ public sealed class RasterConversionConsumerTests
         {
             foreach (var (width, height) in new[] { (1, 1), (2550, 3300) })
             {
-                using var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, type);
+                var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, type);
                 var colorModel = Compat.PdfCartonFontCompat.GetColorModel(image);
                 Assert.Equal(transparency, colorModel.Transparency);
                 Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
-                using (var canvas = new SKCanvas(image))
-                    canvas.Clear(SKColors.Red);
+                using (var lease = image.Lease())
+                    lease.Canvas.Clear(SKColors.Red);
                 Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
                 var (mismatches, allocated, jitted, elapsed) =
                     MeasureRepeatedTransparencyLookups(image, colorModel, transparency);
@@ -4598,7 +4570,7 @@ public sealed class RasterConversionConsumerTests
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
     private static (int Mismatches, long Allocated, long Jitted, TimeSpan Elapsed)
-        MeasureRepeatedTransparencyLookups(SKBitmap image, Compat.JavaColorModel colorModel, int transparency)
+        MeasureRepeatedTransparencyLookups(PdfCartonImage image, Compat.JavaColorModel colorModel, int transparency)
     {
         var mismatches = 0;
         var jitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true);
@@ -4624,18 +4596,17 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void DecodedImageTransparencyFollowsItsDecoder()
     {
-        using var source = new SKBitmap(new SKImageInfo(8, 6, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        var source = new PdfCartonImage(new SKImageInfo(8, 6, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         source.Erase(SKColors.Transparent);
         source.SetPixel(7, 5, SKColors.Blue);
-        byte[] png;
-        using (var sourceImage = SKImage.FromBitmap(source))
-        using (var data = sourceImage.Encode(SKEncodedImageFormat.Png, 100))
-            png = data.ToArray();
+        var png = source.EncodePng();
         Assert.Equal(6, png[25]); // IHDR colour type: RGB with alpha
 
-        using var decodedPng = Compat.PdfCartonFontCompat.DecodeImage(png);
-        using var gif = Compat.PdfCartonFontCompat.DecodeImage(TransparentGif());
-        using var foreign = source.Copy();
+        var decodedPng = Compat.PdfCartonFontCompat.DecodeImage(png);
+        var gif = Compat.PdfCartonFontCompat.DecodeImage(TransparentGif());
+        // Pixels compat has no metadata for.
+        var foreign = new PdfCartonImage(source.Info);
+        source.GetPixelSpan().CopyTo(foreign.GetPixelSpan());
         foreach (var (image, expected) in new[]
                  {
                      (decodedPng, Compat.PdfCartonTransparency.TRANSLUCENT),
@@ -4645,8 +4616,8 @@ public sealed class RasterConversionConsumerTests
         {
             Assert.Equal(expected, Compat.PdfCartonFontCompat.GetTransparency(image));
             Assert.Equal(expected, Compat.PdfCartonFontCompat.GetColorModel(image).Transparency);
-            using (var canvas = new SKCanvas(image))
-                canvas.Clear(SKColors.Red.WithAlpha(100));
+            using (var lease = image.Lease())
+                lease.Canvas.Clear(SKColors.Red.WithAlpha(100));
             Assert.Equal(expected, Compat.PdfCartonFontCompat.GetTransparency(image));
             Assert.Equal(expected, Compat.PdfCartonFontCompat.GetColorModel(image).Transparency);
         }
@@ -4672,13 +4643,13 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void ImageFactoriesTreatAnArgbImageAsTranslucent()
     {
-        using var image = BinaryAlphaArgbImage();
+        var image = BinaryAlphaArgbImage();
         using var document = new PDDocument();
         var xobject = LosslessFactory.CreateFromImage(document, image);
         var mask = xobject.GetSoftMask();
         Assert.NotNull(mask);
         Assert.Equal(8, mask.GetBitsPerComponent());
-        using var alpha = mask.GetImage();
+        var alpha = mask.GetImage();
         Assert.Equal(unchecked((int)0xff000000), Compat.PdfCartonFontCompat.GetRgb(alpha, 0, 0));
         Assert.Equal(unchecked((int)0xffffffff), Compat.PdfCartonFontCompat.GetRgb(alpha, 1, 0));
 
@@ -4691,7 +4662,7 @@ public sealed class RasterConversionConsumerTests
 
     // 20x10 TYPE_INT_ARGB: transparent black where (x + y) % 3 == 0, else
     // opaque 0xff3366cc.
-    private static SKBitmap BinaryAlphaArgbImage()
+    private static PdfCartonImage BinaryAlphaArgbImage()
     {
         var image = Compat.PdfCartonFontCompat.CreateBitmap(20, 10, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         for (var y = 0; y < 10; y++)
@@ -4725,7 +4696,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void JpegFactorySoftMaskDecodesOneSamplePerPixel()
     {
-        using var image = BinaryAlphaArgbImage();
+        var image = BinaryAlphaArgbImage();
         byte[] pdf;
         using (var document = new PDDocument())
         {
@@ -4763,7 +4734,7 @@ public sealed class RasterConversionConsumerTests
         }
 
         Assert.Equal(1, mask.GetRawRaster().NumberOfBands);
-        using var alpha = mask.GetImage();
+        var alpha = mask.GetImage();
         Assert.Equal((width, height), (alpha.Width, alpha.Height));
         var actual = new byte[width * height];
         for (var y = 0; y < height; y++)
@@ -4807,7 +4778,7 @@ public sealed class RasterConversionConsumerTests
         using var document = Loader.LoadPDF((sbyte[])(Array)BlendGroupFixture());
         foreach (var type in new[] { ImageType.Rgb, ImageType.Argb })
         {
-            using var image = new PDFRenderer(document).RenderImage(0, 1, type);
+            var image = new PDFRenderer(document).RenderImage(0, 1, type);
             foreach (var (x, y, argb) in expected)
             {
                 var actual = (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, y);
@@ -4826,11 +4797,11 @@ public sealed class RasterConversionConsumerTests
     public void SetRgbWritesOnePixelOfAnyImage()
     {
         const int Size = 1000;
-        using var gray = GrayAlphaImage(Size, Size);
-        using var grayPage = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
-        using var bgrPage = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
-        using var intBgr = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_INT_BGR);
-        using var materialized = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var gray = GrayAlphaImage(Size, Size);
+        var grayPage = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var bgrPage = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
+        var intBgr = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_INT_BGR);
+        var materialized = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
         _ = Compat.PdfCartonFontCompat.GetRaster(grayPage);
         _ = Compat.PdfCartonFontCompat.GetRaster(bgrPage);
         _ = Compat.PdfCartonFontCompat.GetRaster(intBgr);
@@ -4897,7 +4868,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void BulkGetRgbMatchesOnePixelGetRgbForEveryImageKind()
     {
-        var images = new List<(string Name, SKBitmap Image)>();
+        var images = new List<(string Name, PdfCartonImage Image)>();
         try
         {
             foreach (var (type, name) in new[]
@@ -4953,10 +4924,9 @@ public sealed class RasterConversionConsumerTests
                          (SKColorType.Rgba8888, SKAlphaType.Unpremul), (SKColorType.Rgba8888, SKAlphaType.Premul),
                      })
             {
-                var image = new SKBitmap(new SKImageInfo(Width, Height, colorType, alphaType));
+                var image = new PdfCartonImage(new SKImageInfo(Width, Height, colorType, alphaType));
                 images.Add(($"plain {colorType} {alphaType}", image));
                 new Random((int)colorType * 10 + (int)alphaType).NextBytes(image.GetPixelSpan());
-                image.NotifyPixelsChanged();
             }
 
             const int Offset = 5, Sentinel = 0x5a5a5a5a;
@@ -4992,7 +4962,7 @@ public sealed class RasterConversionConsumerTests
         }
         finally
         {
-            foreach (var (_, image) in images) image.Dispose();
+            images.Clear();
         }
 
         // A full read of a large image without a raster costs about a copy of
@@ -5005,7 +4975,7 @@ public sealed class RasterConversionConsumerTests
                      Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY,
                  })
         {
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, type);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, type);
             var values = new int[Size * Size];
             _ = Compat.PdfCartonFontCompat.GetRgb(image, 0, 0, Size, Size, values, 0, Size);
             var allocated = GC.GetAllocatedBytesForCurrentThread();
@@ -5039,7 +5009,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void CreatedImageRasterSeesNativeDrawing()
     {
-        using var image = GrayAlphaImage(40, 20);
+        var image = GrayAlphaImage(40, 20);
         using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(image))
         {
             graphics.SetColor(new SKColor(0x99, 0x99, 0x99));
@@ -5078,7 +5048,7 @@ public sealed class RasterConversionConsumerTests
     [Fact]
     public void CreatedImageRasterWritesSurviveNativeDrawing()
     {
-        using var image = GrayAlphaImage(4, 4);
+        var image = GrayAlphaImage(4, 4);
         var raster = Compat.PdfCartonFontCompat.GetRaster(image);
         raster.SetPixel(3, 3, [64, 255]);
         using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(image))
@@ -5095,7 +5065,6 @@ public sealed class RasterConversionConsumerTests
         Assert.Equal(0, Compat.PdfCartonFontCompat.GetRgb(image, 2, 0) >>> 24);
 
         Compat.PdfCartonFontCompat.SetRgb(image, 0, 3, unchecked((int)0xff808080));
-        Assert.True(image.TryAllocPixels(image.Info));
         image.Erase(SKColors.Transparent);
         Compat.PdfCartonFontCompat.SetRgb(image, 1, 3, unchecked((int)0xff909090));
         Assert.Equal(new SKColor(0x90, 0x90, 0x90), Compat.PdfCartonPixels.Read(image, 1, 3));
@@ -5108,10 +5077,10 @@ public sealed class RasterConversionConsumerTests
     public void SetRgbPreservesDistinctColorChannels()
     {
         const int Argb = unchecked((int)0x80c04020);
-        using var bgr = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
-        using var intArgb = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        using var intBgr = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_INT_BGR);
-        using var srgb = Compat.PdfCartonFontCompat.CreateImage(
+        var bgr = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR);
+        var intArgb = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var intBgr = Compat.PdfCartonFontCompat.CreateBitmap(3, 3, Compat.PdfCartonFontCompat.TYPE_INT_BGR);
+        var srgb = Compat.PdfCartonFontCompat.CreateImage(
             Compat.PdfCartonFontCompat.ComponentColorModel(
                 Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB),
                 true, false, Compat.PdfCartonTransparency.TRANSLUCENT,
@@ -5179,11 +5148,11 @@ public sealed class RasterConversionConsumerTests
                 };
                 var name = $"{groupSpace} group{(blend ? "" : ", blend mode unused")}";
                 using var document = Loader.LoadPDF((sbyte[])(Array)FormBlendGroupFixture(groupSpace, blend));
-                using var reference = new PDFRenderer(document).RenderImage(0, 10, ImageType.Rgb);
+                var reference = new PDFRenderer(document).RenderImage(0, 10, ImageType.Rgb);
                 foreach (var (type, typeName) in new[] { (ImageType.Rgb, "RGB"), (ImageType.Gray, "GRAY"), (ImageType.Bgr, "BGR") })
                 {
                     var started = System.Diagnostics.Stopwatch.GetTimestamp();
-                    using var image = new PDFRenderer(document).RenderImage(0, 10, type);
+                    var image = new PDFRenderer(document).RenderImage(0, 10, type);
                     var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
                     // Well under a second; the per-pixel re-render took hours.
                     Assert.True(elapsed < TimeSpan.FromSeconds(30),
@@ -5244,7 +5213,7 @@ public sealed class RasterConversionConsumerTests
             using var document = Loader.LoadPDF((sbyte[])(Array)IsolatedGroupFixture(groupSpace));
             foreach (var type in new[] { ImageType.Rgb, ImageType.Argb, ImageType.Bgr })
             {
-                using var image = new PDFRenderer(document).RenderImage(0, 1, type);
+                var image = new PDFRenderer(document).RenderImage(0, 1, type);
                 foreach (var (x, y, argb, tolerance) in expected)
                 {
                     var actual = (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, y);
@@ -5256,7 +5225,7 @@ public sealed class RasterConversionConsumerTests
             }
         }
 
-        using var gray = GrayAlphaImage(1, 1);
+        var gray = GrayAlphaImage(1, 1);
         var raster = Compat.PdfCartonFontCompat.GetRaster(gray);
         var samples = new List<int>();
         for (var r = 0; r < 256; r += 51)
@@ -5270,7 +5239,7 @@ public sealed class RasterConversionConsumerTests
 
         // The same before anything takes the bitmap's raster: setRGB stores
         // the sample natively and getRGB reads it as linear gray.
-        using var fresh = Compat.PdfCartonFontCompat.CreateBitmap(144, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var fresh = Compat.PdfCartonFontCompat.CreateBitmap(144, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
         var column = 0;
         for (var r = 0; r < 256; r += 51)
             for (var g = 0; g < 256; g += 51)
@@ -5287,21 +5256,21 @@ public sealed class RasterConversionConsumerTests
 
         // ColorConvertOp converts through the models' colour spaces (linear
         // CS_GRAY for TYPE_BYTE_GRAY) and the D50 PCS: Java 25's results.
-        using var rgbIn = Compat.PdfCartonFontCompat.CreateBitmap(8, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var rgbIn = Compat.PdfCartonFontCompat.CreateBitmap(8, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         var colors = new[] { 0xff0000, 0x00ff00, 0x0000ff, 0x808080, 0xcc6633, 0xffffff, 0x000000, 0x3366cc };
         for (var x = 0; x < colors.Length; x++)
             Compat.PdfCartonFontCompat.SetRgb(rgbIn, x, 0, unchecked((int)0xff000000) | colors[x]);
-        using var grayOut = new Compat.JavaColorConvertOp().Filter(
+        var grayOut = new Compat.JavaColorConvertOp().Filter(
             rgbIn, Compat.PdfCartonFontCompat.CreateBitmap(8, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY));
         var grayOutRaster = Compat.PdfCartonFontCompat.GetRaster(grayOut);
         var javaGray = new[] { 57, 183, 15, 55, 59, 255, 0, 36 };
         Assert.Equal(javaGray, colors.Select((_, x) => grayOutRaster.GetPixel(x, 0, (int[]?)null)[0]));
-        using var grayIn = Compat.PdfCartonFontCompat.CreateBitmap(5, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var grayIn = Compat.PdfCartonFontCompat.CreateBitmap(5, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
         var grayInRaster = Compat.PdfCartonFontCompat.GetRaster(grayIn);
         var graySamples = new[] { 0, 22, 64, 128, 200 };
         for (var x = 0; x < graySamples.Length; x++)
             grayInRaster.SetPixel(x, 0, new[] { graySamples[x] });
-        using var rgbOut = new Compat.JavaColorConvertOp().Filter(
+        var rgbOut = new Compat.JavaColorConvertOp().Filter(
             grayIn, Compat.PdfCartonFontCompat.CreateBitmap(5, 1, Compat.PdfCartonFontCompat.TYPE_INT_RGB));
         var javaRgb = new[] { 0xff000000u, 0xff535353u, 0xff898989u, 0xffbcbcbcu, 0xffe5e5e5u };
         for (var x = 0; x < graySamples.Length; x++)
@@ -5353,7 +5322,7 @@ public sealed class RasterConversionConsumerTests
                 "/Resources << /ExtGState << /MUL 5 0 R >> >>", "/MUL gs 0.5 g 10 10 40 40 re f"),
         });
         using var document = Loader.LoadPDF((sbyte[])(Array)fixture);
-        using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
+        var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
         var raster = Compat.PdfCartonFontCompat.GetRaster(image);
         Assert.Equal(255, raster.GetPixel(5, 5, (int[]?)null)[0]);
         Assert.Equal(55, raster.GetPixel(30, 70, (int[]?)null)[0]);
@@ -5370,7 +5339,7 @@ public sealed class RasterConversionConsumerTests
     public void GrayPageRendersAsJavaPdfBox()
     {
         var mismatches = new List<string>();
-        void Check(SKBitmap image, int x, int y, int sample, uint argb, string label)
+        void Check(PdfCartonImage image, int x, int y, int sample, uint argb, string label)
         {
             var actualSample = Compat.PdfCartonFontCompat.GetRaster(image).GetPixel(x, y, (int[]?)null)[0];
             var actual = (uint)Compat.PdfCartonFontCompat.GetRgb(image, x, y);
@@ -5414,7 +5383,7 @@ public sealed class RasterConversionConsumerTests
                 content.AddRect(20, 0, 10, 10);
                 content.Fill();
             }
-            using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
+            var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
             var name = blend ? "Multiply page" : "page without blend modes";
             Check(image, 5, 5, 128, 0xffbcbcbc, $"{name}, 0.5 gray");
             Check(image, 15, 5, 127, 0xffbbbbbb, $"{name}, RGB (0.8, 0.4, 0.2)");
@@ -5467,7 +5436,7 @@ public sealed class RasterConversionConsumerTests
                     content.RestoreGraphicsState();
                 }
             }
-            using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
+            var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Gray);
             for (var index = 0; index < modes.Length; index++)
             {
                 var (mode, rgbSample, rgbArgb, graySample, grayArgb) = modes[index];
@@ -5479,7 +5448,7 @@ public sealed class RasterConversionConsumerTests
 
         // TYPE_BYTE_GRAY's colour model: Java 25's getRGB of every sample,
         // and the samples setRGB stores (those of the gray + alpha image).
-        using var gray = Compat.PdfCartonFontCompat.CreateBitmap(1, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+        var gray = Compat.PdfCartonFontCompat.CreateBitmap(1, 1, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
         var raster = Compat.PdfCartonFontCompat.GetRaster(gray);
         var reads = new List<int>();
         for (var sample = 0; sample < 256; sample++)
@@ -5576,7 +5545,7 @@ public sealed class RasterConversionConsumerTests
         }
 
         var renderer = new PDFRenderer(document);
-        using var rendered = renderer.RenderImage(0, 2, ImageType.Binary);
+        var rendered = renderer.RenderImage(0, 2, ImageType.Binary);
         Assert.Equal(Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY, Compat.PdfCartonFontCompat.GetImageType(rendered));
         Assert.Equal(128, rendered.Width);
         Assert.Equal(40, rendered.Height);
@@ -5657,7 +5626,7 @@ public sealed class RasterConversionConsumerTests
             content.DrawImage(Masked(255), 0, 5, 24, 5);
         }
 
-        using var rendered = new PDFRenderer(document).RenderImage(0, 2, ImageType.Binary);
+        var rendered = new PDFRenderer(document).RenderImage(0, 2, ImageType.Binary);
         Assert.Equal(96, rendered.Width);
         Assert.Equal(40, rendered.Height);
         var mismatches = new List<string>();
@@ -5712,7 +5681,7 @@ public sealed class RasterConversionConsumerTests
         using (var content = new PDPageContentStream(document, page))
             content.DrawImage(image, 1, 1.5f, 14.7f, 7.9f);
 
-        using var rendered = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
+        var rendered = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
         Assert.Equal(18, rendered.Width);
         Assert.Equal(11, rendered.Height);
         var mismatches = new List<string>();
@@ -5739,11 +5708,11 @@ public sealed class RasterConversionConsumerTests
         int[] row = [0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255];
         string Scaled(int[] values, int width, int type)
         {
-            using var source = Compat.PdfCartonFontCompat.CreateBitmap(values.Length, 1, type);
+            var source = Compat.PdfCartonFontCompat.CreateBitmap(values.Length, 1, type);
             for (var x = 0; x < values.Length; x++)
                 Compat.PdfCartonFontCompat.SetRgb(source, x, 0,
                     unchecked((int)0xff000000) | values[x] << 16 | values[x] << 8 | values[x]);
-            using var scaled = Compat.PdfCartonFontCompat.ScaleImage(
+            var scaled = Compat.PdfCartonFontCompat.ScaleImage(
                 source, width, 1, Compat.PdfCartonFontCompat.SCALE_SMOOTH);
             return string.Join(" ", Enumerable.Range(0, width)
                 .Select(x => $"{scaled.GetPixel(x, 0).Red},{scaled.GetPixel(x, 0).Green},{scaled.GetPixel(x, 0).Blue}"));
@@ -5774,10 +5743,10 @@ public sealed class RasterConversionConsumerTests
             [3] = [0x800026d9, 0xa4c5f1a9, 0xc9192034],
             [2] = [0x924180be, 0xb655535a],
         };
-        using var straight = Compat.PdfCartonFontCompat.CreateBitmap(row.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var straight = Compat.PdfCartonFontCompat.CreateBitmap(row.Length, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         for (var x = 0; x < row.Length; x++)
             Compat.PdfCartonFontCompat.SetRgb(straight, x, 0, unchecked((int)row[x]));
-        using var premultiplied = new SKBitmap(new SKImageInfo(row.Length, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var premultiplied = new PdfCartonImage(new SKImageInfo(row.Length, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
         for (var x = 0; x < row.Length; x++)
             premultiplied.SetPixel(x, 0, new SKColor(row[x]));
         var mismatches = new List<string>();
@@ -5785,7 +5754,7 @@ public sealed class RasterConversionConsumerTests
         {
             foreach (var (width, java) in expected)
             {
-                using var scaled = Compat.PdfCartonFontCompat.ScaleImage(
+                var scaled = Compat.PdfCartonFontCompat.ScaleImage(
                     source, width, 1, Compat.PdfCartonFontCompat.SCALE_SMOOTH);
                 for (var x = 0; x < width; x++)
                 {
@@ -5821,7 +5790,7 @@ public sealed class RasterConversionConsumerTests
 
     // PageDrawer.create2ByteGrayAlphaImage: Java's gray + alpha image over
     // an interleaved byte raster, alpha first in memory.
-    private static SKBitmap GrayAlphaImage(int width, int height)
+    private static PdfCartonImage GrayAlphaImage(int width, int height)
     {
         var model = Compat.PdfCartonFontCompat.ComponentColorModel(
             Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY),
@@ -8024,6 +7993,40 @@ public sealed class NativeBitmapLifetimeCollection
 {
 }
 
+// The compat pixel memory still reachable: native bitmaps not yet released,
+// and images (PdfCartonImage, which has no finalizer to count it) not yet
+// collected, recorded weakly from the first read on.
+internal static class CompatPixels
+{
+    private static List<WeakReference> Images()
+    {
+        var tracked = PdfCartonImage.Tracked;
+        if (tracked is null)
+            System.Threading.Interlocked.CompareExchange(ref PdfCartonImage.Tracked, new List<WeakReference>(), null);
+        return PdfCartonImage.Tracked!;
+    }
+
+    private static (long Count, long Bytes) Live()
+    {
+        var tracked = Images();
+        long count = 0, bytes = 0;
+        lock (tracked)
+        {
+            tracked.RemoveAll(reference => !reference.IsAlive);
+            foreach (var reference in tracked)
+            {
+                if (reference.Target is not PdfCartonImage image) continue;
+                count++;
+                if (image.HasPixels) bytes += image.ByteCount;
+            }
+        }
+        return (count, bytes);
+    }
+
+    internal static long LiveCount => Compat.PdfCartonNativeBitmap.LiveCount + Live().Count;
+    internal static long OutstandingBytes => Compat.PdfCartonNativeBitmap.OutstandingBytes + Live().Bytes;
+}
+
 // DCT, JPX and JBIG2 decoding allocate full-size native bitmaps that Java
 // leaves to its collector. The filters dispose them on every exit, and every
 // compat bitmap reports its pixel bytes as GC memory pressure until it is
@@ -8073,8 +8076,8 @@ public sealed class DecodeFilterBitmapLifetimeTests
         Assert.Equal(expected[3], Decode(cases[3].Stream));
 
         Settle();
-        var live = Compat.PdfCartonNativeBitmap.LiveCount;
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var live = CompatPixels.LiveCount;
+        var bytes = CompatPixels.OutstandingBytes;
         foreach (var (test, index) in cases.Select((test, index) => (test, index)))
         {
             for (var round = 0; round < 10; round++)
@@ -8100,8 +8103,8 @@ public sealed class DecodeFilterBitmapLifetimeTests
     {
         var cases = Cases();
         Settle();
-        var live = Compat.PdfCartonNativeBitmap.LiveCount;
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var live = CompatPixels.LiveCount;
+        var bytes = CompatPixels.OutstandingBytes;
         foreach (var (name, filterName, stream) in cases)
         {
             var filter = FilterFactory.Instance.GetFilter(filterName);
@@ -8112,8 +8115,8 @@ public sealed class DecodeFilterBitmapLifetimeTests
         }
     }
 
-    // A page-sized decoded image keeps its pixels in managed memory (see
-    // PdfCartonNativeBitmap.Allocate), so the collector frees the images a
+    // A page-sized decoded image keeps its pixels in managed memory
+    // (PdfCartonImage), so the collector frees the images a
     // decode loop drops, as Java's does: however many are decoded, they hold
     // no native pixel memory, and the compat bytes return to the baseline
     // once collected. How many dropped images await the collector meanwhile
@@ -8125,13 +8128,12 @@ public sealed class DecodeFilterBitmapLifetimeTests
         var jpeg = IccRenderFixtures.SkiaJpeg(width, height);
         var reader = DripSharp.PdfCarton.Filter.Filter.FindImageReader("JPEG", "codec missing");
         reader.SetInput(Compat.PdfCartonImageIO.CreateImageInputStream(new MemoryStream(jpeg)));
-        using (var image = reader.Read(0, null))
-            Assert.True(((Compat.PdfCartonNativeBitmap)image).HoldsManagedPixels);
+        Assert.IsType<PdfCartonImage>(reader.Read(0, null));
 
         var stream = Encoded(jpeg, COSName.DctDecode);
         Assert.Equal(width * height * 3, Decode(stream).Length);
         Settle();
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var bytes = CompatPixels.OutstandingBytes;
         var native = Compat.PdfCartonNativeBitmap.NativeBytes;
         for (var round = 0; round < rounds; round++)
         {
@@ -8139,7 +8141,7 @@ public sealed class DecodeFilterBitmapLifetimeTests
             Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
         }
         Settle();
-        Assert.Equal(bytes, Compat.PdfCartonNativeBitmap.OutstandingBytes);
+        Assert.Equal(bytes, CompatPixels.OutstandingBytes);
     }
 
     // JBIG2Filter and JPXFilter read the decoded image only through its
@@ -8166,13 +8168,13 @@ public sealed class DecodeFilterBitmapLifetimeTests
         {
             Assert.Equal(length, Decode(stream).Length);
             Settle();
-            var live = Compat.PdfCartonNativeBitmap.LiveCount;
-            var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+            var live = CompatPixels.LiveCount;
+            var bytes = CompatPixels.OutstandingBytes;
             long peak = 0;
             for (var round = 0; round < 10; round++)
             {
                 Assert.Equal(length, Decode(stream).Length);
-                peak = Math.Max(peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes);
+                peak = Math.Max(peak, CompatPixels.OutstandingBytes - bytes);
             }
             Assert.True(peak == 0, $"{name}: {peak} compat pixel bytes outstanding");
             Settle();
@@ -8182,10 +8184,10 @@ public sealed class DecodeFilterBitmapLifetimeTests
 
     private static void AssertUnchanged(long live, long bytes, string name) =>
         Assert.True(
-            live == Compat.PdfCartonNativeBitmap.LiveCount &&
-            bytes == Compat.PdfCartonNativeBitmap.OutstandingBytes,
-            $"{name} left {Compat.PdfCartonNativeBitmap.LiveCount - live} bitmaps " +
-            $"({Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes} bytes) undisposed.");
+            live == CompatPixels.LiveCount &&
+            bytes == CompatPixels.OutstandingBytes,
+            $"{name} left {CompatPixels.LiveCount - live} bitmaps " +
+            $"({CompatPixels.OutstandingBytes - bytes} bytes) undisposed.");
 
     private sealed class FailingOutput : MemoryStream
     {
@@ -8206,8 +8208,8 @@ public sealed class DecodeFilterBitmapLifetimeTests
         var live = Compat.PdfCartonNativeBitmap.LiveCount;
         var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
 
-        var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
-            300, 200, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var bitmap = new Compat.PdfCartonNativeBitmap(
+            new SKImageInfo(300, 200, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         Assert.Equal(live + 1, Compat.PdfCartonNativeBitmap.LiveCount);
         Assert.Equal(bytes + 300L * 4 * 200, Compat.PdfCartonNativeBitmap.OutstandingBytes);
         bitmap.Dispose();
@@ -8223,13 +8225,92 @@ public sealed class DecodeFilterBitmapLifetimeTests
         Assert.Equal(bytes, Compat.PdfCartonNativeBitmap.OutstandingBytes);
     }
 
+    // Native pixels stay counted until Skia releases them: a canvas or image
+    // sharing a disposed or collected bitmap's pixels keeps them (and their
+    // bytes in NativeBytes) until it is released too.
+    [Fact]
+    public void NativeBytesCountPixelsACanvasOrImageStillShares()
+    {
+        Settle();
+        var native = Compat.PdfCartonNativeBitmap.NativeBytes;
+        const long bytes = 120L * 50 * 4;
+
+        var bitmap = new Compat.PdfCartonNativeBitmap(
+            new SKImageInfo(120, 50, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        Assert.Equal(native + bytes, Compat.PdfCartonNativeBitmap.NativeBytes);
+        Assert.All(bitmap.GetPixelSpan().ToArray(), value => Assert.Equal(0, value));
+        var canvas = new SKCanvas(bitmap);
+        bitmap.Dispose();
+        Assert.Equal(native + bytes, Compat.PdfCartonNativeBitmap.NativeBytes);
+        canvas.Clear(SKColors.Red);
+        canvas.Dispose();
+        Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
+
+        // The same with an image of the pixels, and a bitmap left to the collector.
+        var image = ShareAndAbandon();
+        Settle();
+        Assert.Equal(native + bytes, Compat.PdfCartonNativeBitmap.NativeBytes);
+        Assert.Equal(new SKColor(0, 0, 255), ReadPixel(image, 3, 4));
+        image.Dispose();
+        Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
+    }
+
+    // Fresh native pixels read zero, as Skia's own allocation does, also
+    // where the memory held another bitmap's pixels (20,000 bytes: a whole
+    // zeroing chunk and a partial one).
+    [Fact]
+    public void NativeBitmapAllocationsStartZeroed()
+    {
+        var info = new SKImageInfo(100, 50, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        for (var round = 0; round < 8; round++)
+        {
+            using var bitmap = new Compat.PdfCartonNativeBitmap(info);
+            Assert.True(bitmap.GetPixelSpan().IndexOfAnyExcept((byte)0) < 0, $"round {round}");
+            bitmap.Erase(SKColors.White);
+        }
+    }
+
+    // Like Skia's own allocation, a native bitmap refuses a pixel buffer over
+    // int.MaxValue bytes, before allocating anything.
+    [Fact]
+    public void NativeBitmapRejectsOversizedPixelBuffers()
+    {
+        Settle();
+        var live = Compat.PdfCartonNativeBitmap.LiveCount;
+        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var native = Compat.PdfCartonNativeBitmap.NativeBytes;
+        Assert.Throws<ArgumentException>(() => new Compat.PdfCartonNativeBitmap(
+            new SKImageInfo(32768, 65537, SKColorType.Gray8, SKAlphaType.Opaque)));
+        Assert.Throws<ArgumentException>(() => new Compat.PdfCartonNativeBitmap(
+            new SKImageInfo(16384, 32769, SKColorType.Bgra8888, SKAlphaType.Unpremul)));
+        Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
+        AssertUnchanged(live, bytes, "oversized native bitmaps");
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static SKImage ShareAndAbandon()
+    {
+        var bitmap = new Compat.PdfCartonNativeBitmap(
+            new SKImageInfo(120, 50, SKColorType.Bgra8888, SKAlphaType.Opaque));
+        bitmap.Erase(new SKColor(0, 0, 255));
+        bitmap.SetImmutable();
+        return SKImage.FromBitmap(bitmap);
+    }
+
+    private static SKColor ReadPixel(SKImage image, int x, int y)
+    {
+        using var pixel = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        Assert.True(image.ReadPixels(pixel.Info, pixel.GetPixels(), pixel.RowBytes, x, y));
+        return pixel.GetPixel(0, 0);
+    }
+
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void AbandonBitmaps(int count)
     {
         for (var index = 0; index < count; index++)
-            _ = Compat.PdfCartonFontCompat.CreateBitmap(
-                64, 64, Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY);
+            _ = new Compat.PdfCartonNativeBitmap(new SKImageInfo(64, 64, SKColorType.Gray8, SKAlphaType.Opaque));
     }
 
     private static void Settle()
@@ -8265,21 +8346,19 @@ public sealed class DecodeFilterBitmapLifetimeTests
         using var encoded = stream.CreateRawInputStream();
         using var decoded = new MemoryStream();
         var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
-        using var smask = result.GetJPXSMask();
+        var smask = result.GetJPXSMask();
         Assert.Equal((40, 24), (smask.Width, smask.Height));
         return decoded.ToArray();
     }
 
     internal static byte[] GrayJpeg(int width, int height)
     {
-        using var bitmap = new SKBitmap(
+        var bitmap = new PdfCartonImage(
             new SKImageInfo(width, height, SKColorType.Gray8, SKAlphaType.Opaque));
         var pixels = bitmap.GetPixelSpan();
         for (var index = 0; index < pixels.Length; index++)
             pixels[index] = (byte)(index * 5);
-        bitmap.NotifyPixelsChanged();
-        using var data = bitmap.Encode(SKEncodedImageFormat.Jpeg, 90);
-        return data.ToArray();
+        return bitmap.Encode(SKEncodedImageFormat.Jpeg, 90);
     }
 
     // Component c of pixel index is (index * (c + 3)) & 255; the alpha
@@ -8328,128 +8407,161 @@ public sealed class DecodeFilterBitmapLifetimeTests
 // The JBIG2 adapter packs the decoder's page bits straight into a 1-bit
 // raster, without an RGB or int-per-pixel copy, and both codec adapters
 // render native pixels only when the image is drawn.
-// TYPE_INT_RGB/ARGB images keep their pixels in a pinned managed array that
-// Skia's release callback unpins once no native owner shares the pixels.
+// An image keeps its pixels in a plain managed array and has no finalizer,
+// so a dropped image's pixels are freed by the next collection, as Java
+// garbage is. Skia wrappers over them live only inside compat calls, except a
+// Graphics2D's, which its dispose() releases; an undisposed Graphics2D's
+// wrapper is finalized, so its pixels are freed one collection later.
 [Collection(nameof(NativeBitmapLifetimeCollection))]
-public sealed class IntBitmapPixelLifetimeTests
+public sealed class ImagePixelLifetimeTests
 {
+    private static readonly int[] Types =
+    [
+        Compat.PdfCartonFontCompat.TYPE_INT_RGB, Compat.PdfCartonFontCompat.TYPE_INT_ARGB,
+        Compat.PdfCartonFontCompat.TYPE_BYTE_GRAY, Compat.PdfCartonFontCompat.TYPE_3BYTE_BGR,
+        Compat.PdfCartonFontCompat.TYPE_BYTE_BINARY,
+    ];
+
     [Fact]
-    public void AbandonedIntImagePixelsBecomeCollectible()
+    public void DroppedImagePixelsAreFreedByOneCollection()
     {
-        foreach (var type in new[] { Compat.PdfCartonFontCompat.TYPE_INT_RGB, Compat.PdfCartonFontCompat.TYPE_INT_ARGB })
+        foreach (var type in Types)
         {
-            var pixels = Abandon(type);
-            Collect();
-            Assert.False(pixels.IsAlive, $"type {type}: an abandoned image's pixels stayed pinned.");
+            var (image, pixels) = Abandon(64, type, disposeGraphics: true);
+            GC.Collect();
+            Assert.False(image.IsAlive, $"type {type}: a dropped image survived a collection.");
+            Assert.False(pixels.IsAlive, $"type {type}: a dropped image's pixels survived a collection.");
         }
     }
 
+    // A Graphics2D left undisposed releases its pinned wrapper when it is
+    // finalized, so its image's pixels are freed by the collection after.
     [Fact]
-    public void DisposedIntImageWrapperDoesNotRetainItsPixels()
+    public void UndisposedGraphicsFreesItsImagePixelsAfterFinalization()
     {
-        var image = Compat.PdfCartonFontCompat.CreateBitmap(64, 64, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        var pixels = PixelsOf(image);
-        image.Dispose();
-        Collect();
-        Assert.False(pixels.IsAlive);
-        GC.KeepAlive(image);
+        foreach (var type in Types)
+        {
+            var (_, pixels) = Abandon(64, type, disposeGraphics: false);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            Assert.False(pixels.IsAlive, $"type {type}: an undisposed graphics kept its image's pixels.");
+        }
     }
 
-    // A canvas shares the pixels: they stay pinned and drawable after the
-    // image is disposed and collected, until the canvas is gone too.
+    // A Create copy keeps the shared canvas usable after the graphics it was
+    // made from is dropped undisposed and finalized.
     [Fact]
-    public void IntImagePixelsOutliveTheImageWhileACanvasSharesThem()
+    public void GraphicsCopySurvivesCollectionOfOriginal()
     {
-        var (canvas, pixels) = CanvasOverDisposedImage();
-        Collect();
-        Assert.True(pixels.IsAlive);
-        Assert.Equal(unchecked((int)0xff010203), ClearAndRead(canvas, pixels));
-        canvas.Dispose();
-        Collect();
-        Assert.False(pixels.IsAlive);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(16, 16, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var copy = CopyOfAbandonedGraphics(image);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        copy.SetColor(new Compat.JavaColor(SKColors.Lime));
+        copy.FillRect(0, 0, 16, 16);
+        Assert.Equal(SKColors.Lime, image.GetPixel(8, 8));
+        copy.Dispose();
     }
 
-    // After SKBitmap replaces an int-backed image's pixels, GetData reads the
-    // current pixels instead of returning the detached array.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static Compat.PdfCartonGraphics2D CopyOfAbandonedGraphics(PdfCartonImage image) =>
+        Compat.PdfCartonFontCompat.CreateGraphics(image).Create();
+
+    // Drawn on a canvas that may record, an image goes through a copy of its
+    // pixels, which stays counted in NativeBytes while the recording keeps it.
     [Fact]
-    public void ReallocatedIntImageNoLongerHandsOutItsOldArray()
+    public void RecordedImageCopiesStayCountedUntilReleased()
     {
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(4, 4, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        var original = ((Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
-        Assert.True(image.TryAllocPixels(new SKImageInfo(64, 32, SKColorType.Bgra8888, SKAlphaType.Unpremul)));
-        image.Erase(SKColors.Lime);
-        var current = ((Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData();
-        Assert.NotSame(original, current);
-        Assert.Equal(64 * 32, current.Length);
-        Assert.All(current, value => Assert.Equal(unchecked((int)0xff00ff00), value));
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(40, 30, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        image.Erase(SKColors.Red);
+        var native = Compat.PdfCartonNativeBitmap.NativeBytes;
+        using var recorder = new SKPictureRecorder();
+        var canvas = recorder.BeginRecording(new SKRect(0, 0, 40, 30));
+        using (var graphics = new Compat.PdfCartonGraphics2D(canvas))
+            graphics.DrawImage(image, 0, 0, null);
+        var picture = recorder.EndRecording();
+        Assert.Equal(native + 40L * 30 * 4, Compat.PdfCartonNativeBitmap.NativeBytes);
+        using (var target = new SKBitmap(new SKImageInfo(40, 30, SKColorType.Bgra8888, SKAlphaType.Premul)))
+        using (var playback = new SKCanvas(target))
+        {
+            playback.DrawPicture(picture);
+            Assert.Equal(SKColors.Red, target.GetPixel(20, 15));
+        }
+        picture.Dispose();
+        Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
+    }
+
+    // A decoded image drawn by compat leaves no native pixels and nothing
+    // reachable once dropped.
+    [Fact]
+    public void DrawnDecodedImagesLeaveNoNativePixels()
+    {
+        GC.Collect();
+        var native = Compat.PdfCartonNativeBitmap.NativeBytes;
+        var target = Compat.PdfCartonFontCompat.CreateBitmap(64, 64, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var references = new List<WeakReference>();
+        for (var round = 0; round < 10; round++)
+            references.Add(DrawDecoded(target));
+        Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
+        GC.Collect();
+        Assert.All(references, reference => Assert.False(reference.IsAlive));
+        Assert.Equal(new SKColor(0, 0, 255), target.GetPixel(10, 10));
     }
 
     // Java code drops large intermediate images without disposing them, and
     // its collector reclaims them. Compat never forces a collection: a
     // dropped image's pixels are a managed array, reclaimed whenever the
-    // runtime collects (how much garbage it lets accumulate first is its own
-    // policy), and use no native memory meanwhile. With a 4 MiB image live,
-    // a collection after 100 dropped 1 MiB images leaves only the live one.
+    // runtime collects, and use no native memory meanwhile. With a 4 MiB image
+    // live, a collection after 100 dropped 1 MiB images leaves only the live one.
     [Fact]
     public void DroppedLargeImagesLeaveOnlyTheLiveImageOnceCollected()
     {
-        const long MiB = 1024 * 1024;
-        Collect();
-        var baseline = Compat.PdfCartonNativeBitmap.OutstandingBytes;
-        var liveBaseline = Compat.PdfCartonNativeBitmap.LiveCount;
+        GC.Collect();
         var native = Compat.PdfCartonNativeBitmap.NativeBytes;
-        using var live = Compat.PdfCartonFontCompat.CreateBitmap(1024, 1024, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        for (var dropped = 0; dropped < 100; dropped++)
+        var live = Compat.PdfCartonFontCompat.CreateBitmap(1024, 1024, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var livePixels = PixelsOf(live);
+        var dropped = new List<WeakReference>();
+        for (var index = 0; index < 100; index++)
         {
-            Abandon(512, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            dropped.Add(Abandon(512, Compat.PdfCartonFontCompat.TYPE_INT_ARGB, disposeGraphics: true).Pixels);
             Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
         }
-        Collect();
-        Assert.Equal(baseline + 4 * MiB, Compat.PdfCartonNativeBitmap.OutstandingBytes);
-        Assert.Equal(liveBaseline + 1, Compat.PdfCartonNativeBitmap.LiveCount);
+        GC.Collect();
+        Assert.All(dropped, reference => Assert.False(reference.IsAlive));
+        Assert.True(livePixels.IsAlive);
+        GC.KeepAlive(live);
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static WeakReference Abandon(int type) => Abandon(64, type);
-
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static WeakReference Abandon(int size, int type)
+    private static (WeakReference Image, WeakReference Pixels) Abandon(int size, int type, bool disposeGraphics)
     {
         var image = Compat.PdfCartonFontCompat.CreateBitmap(size, size, type);
-        using (var canvas = new SKCanvas(image))
-            canvas.Clear(SKColors.Red);
-        return PixelsOf(image);
+        var graphics = Compat.PdfCartonFontCompat.CreateGraphics(image);
+        graphics.SetColor(new Compat.JavaColor(SKColors.Red));
+        graphics.FillRect(0, 0, size / 2, size / 2);
+        if (disposeGraphics) graphics.Dispose();
+        _ = Compat.PdfCartonFontCompat.GetRaster(image);
+        _ = Compat.PdfCartonFontCompat.GetRgb(image, 1, 1);
+        return (new WeakReference(image), PixelsOf(image));
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static (SKCanvas, WeakReference) CanvasOverDisposedImage()
+    private static WeakReference DrawDecoded(PdfCartonImage target)
     {
-        var image = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        var canvas = new SKCanvas(image);
-        var pixels = PixelsOf(image);
-        image.Dispose();
-        return (canvas, pixels);
+        using var bitmap = new SKBitmap(new SKImageInfo(32, 32, SKColorType.Bgra8888, SKAlphaType.Opaque));
+        bitmap.Erase(SKColors.Blue);
+        using var data = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+        var decoded = Compat.PdfCartonFontCompat.DecodeImage(data.ToArray());
+        using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(target))
+            graphics.DrawImage(decoded, 0, 0, null);
+        return PixelsOf(decoded);
     }
 
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static int ClearAndRead(SKCanvas canvas, WeakReference pixels)
-    {
-        canvas.Clear(new SKColor(1, 2, 3));
-        return ((int[])pixels.Target!)[0];
-    }
-
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static WeakReference PixelsOf(SKBitmap image) =>
-        new(((Compat.JavaDataBufferInt)Compat.PdfCartonFontCompat.GetRaster(image).GetDataBuffer()).GetData());
-
-    private static void Collect()
-    {
-        for (var pass = 0; pass < 3; pass++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-        }
-    }
+    private static WeakReference PixelsOf(PdfCartonImage image) => new(image.Storage);
 }
 
 public sealed class ImageCodecAdapterTests
@@ -8488,8 +8600,8 @@ public sealed class ImageCodecAdapterTests
     [Fact]
     public void Jbig2ImagesRenderTheirPixelsWhenDrawn()
     {
-        using var image = Compat.PdfCartonImageCodecs.Decode("JBIG2", MixedPage());
-        using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
+        var image = Compat.PdfCartonImageCodecs.Decode("JBIG2", MixedPage());
+        var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
             67, 20, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
             graphics.DrawImage(image, 0, 0, (object)null!);
@@ -8515,12 +8627,10 @@ public sealed class ImageCodecAdapterTests
         WriteInt(data, 11, 2480);
         WriteInt(data, 15, 3508);
         const long packed = 310L * 3508;
-        using (Compat.PdfCartonImageCodecs.Decode("JBIG2", data))
-        {
-        }
+        _ = Compat.PdfCartonImageCodecs.Decode("JBIG2", data);
 
         var before = GC.GetAllocatedBytesForCurrentThread();
-        using var image = Compat.PdfCartonImageCodecs.Decode("JBIG2", data);
+        var image = Compat.PdfCartonImageCodecs.Decode("JBIG2", data);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
         Assert.Equal((2480, 3508), (image.Width, image.Height));
@@ -8545,7 +8655,7 @@ public sealed class ImageCodecAdapterTests
         });
         var adapter = Allocated(() =>
         {
-            using var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
+            var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
         });
 
         Assert.True(adapter - decoder < raster + buffer * 3 / 2,
@@ -8566,7 +8676,7 @@ public sealed class ImageCodecAdapterTests
         byte[] Render(ImageType type)
         {
             using var document = Loader.LoadPDF(new FileInfo(pdf));
-            using var image = new PDFRenderer(document).RenderImage(0, 0.6f, type);
+            var image = new PDFRenderer(document).RenderImage(0, 0.6f, type);
             Assert.Equal((367, 475), (image.Width, image.Height));
             return image.GetPixelSpan().ToArray();
         }
@@ -8622,7 +8732,7 @@ public sealed class ImageCodecAdapterTests
         Assert.Equal(container ? new byte[] { 0, 0, 0, 12, 0x6A, 0x50 } : [0xFF, 0x4F], data.Take(container ? 6 : 2));
         int[] Decoded(byte[] jpx)
         {
-            using var image = Compat.PdfCartonImageCodecs.Decode("JPX", jpx);
+            var image = Compat.PdfCartonImageCodecs.Decode("JPX", jpx);
             Assert.Equal((width, height), (image.Width, image.Height));
             return Compat.PdfCartonFontCompat.GetRaster(image).GetSamples(0, 0, width, height, 0, null);
         }
@@ -8710,7 +8820,7 @@ public sealed class ImageCodecAdapterTests
             null, parameters);
         int[] Decoded(byte[] jpx)
         {
-            using var image = Compat.PdfCartonImageCodecs.Decode("JPX", jpx);
+            var image = Compat.PdfCartonImageCodecs.Decode("JPX", jpx);
             return Compat.PdfCartonFontCompat.GetRaster(image).GetSamples(0, 0, size, size, 0, null);
         }
         Assert.Equal(samples, Decoded(data));
@@ -8789,7 +8899,7 @@ public sealed class ImageCodecAdapterTests
         }
         Assert.True(sots > 2, "The test needs tiles with several tile-parts.");
 
-        using var image = Compat.PdfCartonImageCodecs.Decode("JPX", output.ToArray());
+        var image = Compat.PdfCartonImageCodecs.Decode("JPX", output.ToArray());
         Assert.Equal((width, height), (image.Width, image.Height));
         Assert.Equal(samples, Compat.PdfCartonFontCompat.GetRaster(image).GetSamples(0, 0, width, height, 0, null));
     }
@@ -8804,13 +8914,13 @@ public sealed class ImageCodecAdapterTests
             samples[index] = (index * 5 & 255) - 128;
         var grayData = CoreJ2K.J2kImage.ToBytes(
             new CoreJ2K.Util.InterleavedImageSource(16, 8, 1, 8, new bool[1], [samples]));
-        using (var gray = Compat.PdfCartonImageCodecs.Decode("JPX", grayData))
+        var gray = Compat.PdfCartonImageCodecs.Decode("JPX", grayData);
         {
             Assert.Same(
                 Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_GRAY),
                 Compat.PdfCartonFontCompat.GetColorModel(gray).ColorSpace);
         }
-        using var rgb = Compat.PdfCartonImageCodecs.Decode(
+        var rgb = Compat.PdfCartonImageCodecs.Decode(
             "JPX", DecodeFilterBitmapLifetimeTests.Jpx(16, 8, alpha: false));
         Assert.Same(
             Compat.PdfCartonFontCompat.GetColorSpace(Compat.JavaColorSpace.CS_sRGB),
@@ -8835,7 +8945,7 @@ public sealed class ImageCodecAdapterTests
             foreach (var subsampling in new[] { 1, 2 })
             {
                 // The filters call the public Read, then read the raster and size.
-                using var image = Reader(format, data).Read(0, Subsampled(subsampling));
+                var image = Reader(format, data).Read(0, Subsampled(subsampling));
                 Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
                 Assert.Equal(transparency, Compat.PdfCartonFontCompat.GetTransparency(image));
                 var raster = Compat.PdfCartonFontCompat.GetRaster(image);
@@ -8845,7 +8955,7 @@ public sealed class ImageCodecAdapterTests
                 Assert.Equal((raster.Width, raster.Height), (width, height));
                 Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
 
-                using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
+                var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
                     width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
                 using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
                     graphics.DrawImage(image, 0, 0, (object)null!);
@@ -8867,7 +8977,7 @@ public sealed class ImageCodecAdapterTests
     public void JpxWithBinaryAlphaExtractsItsSoftMask()
     {
         var data = DecodeFilterBitmapLifetimeTests.Jpx(40, 24, alpha: true, binaryAlpha: true);
-        using (var image = Reader("JPEG2000", data).ReadDeferred(0, Subsampled(1)))
+        var image = Reader("JPEG2000", data).ReadDeferred(0, Subsampled(1));
             Assert.Equal(Compat.PdfCartonTransparency.TRANSLUCENT, Compat.PdfCartonFontCompat.GetTransparency(image));
 
         var stream = new COSStream();
@@ -8878,7 +8988,7 @@ public sealed class ImageCodecAdapterTests
         using var encoded = stream.CreateRawInputStream();
         using var decoded = new MemoryStream();
         var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
-        using var smask = result.GetJPXSMask();
+        var smask = result.GetJPXSMask();
         Assert.NotNull(smask);
         Assert.Equal(40 * 24 * 3, decoded.Length);
         for (var index = 0; index < 40 * 24; index++)
@@ -8905,7 +9015,7 @@ public sealed class ImageCodecAdapterTests
         using var encoded = stream.CreateRawInputStream();
         using var decoded = new MemoryStream();
         var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
-        using var smask = result.GetJPXSMask();
+        var smask = result.GetJPXSMask();
         Assert.NotNull(smask);
         var alpha = Compat.PdfCartonFontCompat.GetRaster(smask)
             .GetSamples(0, 0, width, height, 0, null);
@@ -8935,7 +9045,7 @@ public sealed class ImageCodecAdapterTests
     {
         const int width = 8, height = 4;
         var (data, gray, alpha) = GrayWithAlphaJpx();
-        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+        var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
         {
             var model = Compat.PdfCartonFontCompat.GetColorModel(image);
             Assert.Same(
@@ -8954,12 +9064,9 @@ public sealed class ImageCodecAdapterTests
             89, 97, 106, 114, 123, 132, 141, 150, 160, 169, 179, 189, 199, 210, 220, 231
         ];
         var (colour, smask, colourSpace, _) = DecodeJpxFilter(data, smaskInData: true);
-        using (smask)
-        {
-            Assert.NotNull(smask);
-            Assert.Equal(alpha, Compat.PdfCartonFontCompat.GetRaster(smask!)
-                .GetSamples(0, 0, width, height, 0, null));
-        }
+        Assert.NotNull(smask);
+        Assert.Equal(alpha, Compat.PdfCartonFontCompat.GetRaster(smask!)
+            .GetSamples(0, 0, width, height, 0, null));
         Assert.Equal(3, colourSpace.GetNumberOfComponents());
         Assert.Equal(overBlack.SelectMany(value => new[] { value, value, value }).ToArray(), colour);
 
@@ -8988,7 +9095,7 @@ public sealed class ImageCodecAdapterTests
                 (4, CoreJ2K.j2k.fileformat.metadata.ChannelType.Opacity, 0)]);
         var enumCs = BoxOffset(data, "colr") + 11;
         WriteInt(data, enumCs, 12);
-        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+        var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
         {
             var model = Compat.PdfCartonFontCompat.GetColorModel(image);
             Assert.Equal(Compat.JavaColorSpace.TYPE_CMYK, model.ColorSpace.Type);
@@ -8999,12 +9106,9 @@ public sealed class ImageCodecAdapterTests
                 Assert.Equal(samples[component], raster.GetSamples(0, 0, 8, 4, component, null));
         }
         var (colour3, smask, colourSpace, _) = DecodeJpxFilter(data, smaskInData: true);
-        using (smask)
-        {
-            Assert.NotNull(smask);
-            Assert.Equal(samples[4], Compat.PdfCartonFontCompat.GetRaster(smask!)
-                .GetSamples(0, 0, 8, 4, 0, null));
-        }
+        Assert.NotNull(smask);
+        Assert.Equal(samples[4], Compat.PdfCartonFontCompat.GetRaster(smask!)
+            .GetSamples(0, 0, 8, 4, 0, null));
         Assert.Equal(3, colourSpace.GetNumberOfComponents());
         Assert.Equal(8 * 4 * 3, colour3.Length);
     }
@@ -9022,7 +9126,7 @@ public sealed class ImageCodecAdapterTests
         const int width = 8, height = 4;
         var (data, palette) = PaletteJpx();
         var indexes = Enumerable.Range(0, width * height).Select(index => index & 3).ToArray();
-        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+        var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
         {
             var model = Compat.PdfCartonFontCompat.GetColorModel(image);
             Assert.Equal(8, model.PixelSize);
@@ -9082,7 +9186,7 @@ public sealed class ImageCodecAdapterTests
             decoded);
         Assert.Equal(4, bitsPerComponent);
         Assert.Equal(3, colourSpace.GetNumberOfComponents());
-        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage().Dispose());
+        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage());
         Assert.Equal(new byte[] { 0x13, 0x50, 0x13, 0x50 }, DecodeJpxFilter(data, false, RegionEveryOther()).Decoded);
 
         // 1-bit indexes.
@@ -9105,7 +9209,7 @@ public sealed class ImageCodecAdapterTests
             decoded);
         Assert.Equal(12, bitsPerComponent);
         Assert.Equal(3, colourSpace.GetNumberOfComponents());
-        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage().Dispose());
+        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage());
 
         // One-, two- and five-column palettes: 8-bit CS_GRAY indexes.
         foreach (var palette in new[] { new[] { new[] { 0 }, [77], [180], [255] },
@@ -9141,7 +9245,7 @@ public sealed class ImageCodecAdapterTests
             data, Enumerable.Range(0, pixels).Select(index => index < 15 ? 0xff000000 : 0xff0d0d0d).ToArray());
 
         data = PaletteJpx(2, [[0], [77], [180], [255]], index => index & 3);
-        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+        var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
             Assert.Equal(
                 new[] { new SKColor(0, 0, 0), new SKColor(85, 85, 85), new SKColor(170, 170, 170),
                         new SKColor(255, 255, 255) },
@@ -9150,7 +9254,7 @@ public sealed class ImageCodecAdapterTests
         Assert.Equal(Enumerable.Repeat((byte)0x1b, 8), decoded);
         Assert.Equal(2, bitsPerComponent);
         Assert.Equal(3, colourSpace.GetNumberOfComponents());
-        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage().Dispose());
+        Assert.ThrowsAny<IOException>(() => JpxImage(data).GetImage());
 
         data = PaletteJpx(
             4, Enumerable.Range(0, 16).Select(e => new[] { e * 17, 255 - e }).ToArray(), index => index & 15);
@@ -9177,14 +9281,12 @@ public sealed class ImageCodecAdapterTests
                  })
         {
             data = PaletteJpx(8, rgb.Select((entry, e) => entry.Append(alpha[e]).ToArray()).ToArray(), index => index & 3);
-            using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
-            {
-                var model = Compat.PdfCartonFontCompat.GetColorModel(image);
-                Assert.Equal(transparency, model.Transparency);
-                Assert.Equal(transparency != Compat.PdfCartonTransparency.OPAQUE, model.HasAlpha);
-                Assert.Equal(alpha.Select(value => (byte)value), model.Palette!.Select(color => color.Alpha));
-                Assert.Null(Compat.PdfCartonFontCompat.GetAlphaRaster(image));
-            }
+            var palette = Compat.PdfCartonImageCodecs.Decode("JPX", data);
+            var model = Compat.PdfCartonFontCompat.GetColorModel(palette);
+            Assert.Equal(transparency, model.Transparency);
+            Assert.Equal(transparency != Compat.PdfCartonTransparency.OPAQUE, model.HasAlpha);
+            Assert.Equal(alpha.Select(value => (byte)value), model.Palette!.Select(color => color.Alpha));
+            Assert.Null(Compat.PdfCartonFontCompat.GetAlphaRaster(palette));
             (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
             Assert.Equal(twoBit.Select(index => (byte)index), decoded);
             Assert.Equal(3, colourSpace.GetNumberOfComponents());
@@ -9198,11 +9300,11 @@ public sealed class ImageCodecAdapterTests
         data = PaletteJpx(
             8, [[0x1234, 0xAB00, 0x00FF], [0xFF01, 0x0180, 0x7F7F], [0, 0, 0], [65535, 65535, 65535]],
             index => index & 3, columnBits: 16);
-        using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
-            Assert.Equal(
-                new[] { new SKColor(0x34, 0x00, 0xff), new SKColor(0x01, 0x80, 0x7f), new SKColor(0, 0, 0),
-                        new SKColor(0xff, 0xff, 0xff) },
-                Compat.PdfCartonFontCompat.GetColorModel(image).Palette!);
+        var wideEntries = Compat.PdfCartonImageCodecs.Decode("JPX", data);
+        Assert.Equal(
+            new[] { new SKColor(0x34, 0x00, 0xff), new SKColor(0x01, 0x80, 0x7f), new SKColor(0, 0, 0),
+                    new SKColor(0xff, 0xff, 0xff) },
+            Compat.PdfCartonFontCompat.GetColorModel(wideEntries).Palette!);
         Assert.Equal(twoBit.Select(index => (byte)index), DecodeJpxFilter(data, false).Decoded);
     }
 
@@ -9230,7 +9332,7 @@ public sealed class ImageCodecAdapterTests
                      ("extra cmap entry", PaletteJpx(8, rgb, index => index & 3, cmap: [0, 1, 2, 1]), inOrder)
                  })
         {
-            using (var image = Compat.PdfCartonImageCodecs.Decode("JPX", data))
+            var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
                 Assert.True(palette.SequenceEqual(Compat.PdfCartonFontCompat.GetColorModel(image).Palette!), name);
             var (decoded, _, colourSpace, bitsPerComponent) = DecodeJpxFilter(data, false);
             Assert.True(indexes.SequenceEqual(decoded), name);
@@ -9281,17 +9383,16 @@ public sealed class ImageCodecAdapterTests
     // rendered at 72 dpi, both give these ARGB pixels.
     private static void AssertJpxImageRendersAs(byte[] data, uint[] argb)
     {
-        using (var image = JpxImage(data).GetImage())
-            AssertArgb(argb, image, "getImage");
+        AssertArgb(argb, JpxImage(data).GetImage(), "getImage");
         using var document = new PDDocument();
         var page = new PDPage(new PDRectangle(8, 4));
         document.AddPage(page);
         using (var content = new PDPageContentStream(document, page))
             content.DrawImage(JpxImage(data, document), 0, 0, 8, 4);
-        using var rendered = new PDFRenderer(document).RenderImage(0);
+        var rendered = new PDFRenderer(document).RenderImage(0);
         AssertArgb(argb, rendered, "page");
 
-        static void AssertArgb(uint[] expected, SKBitmap actual, string label)
+        static void AssertArgb(uint[] expected, PdfCartonImage actual, string label)
         {
             Assert.Equal((8, 4), (actual.Width, actual.Height));
             var pixels = new uint[32];
@@ -9303,7 +9404,7 @@ public sealed class ImageCodecAdapterTests
         }
     }
 
-    private static (byte[] Decoded, SKBitmap? SoftMask, PDJPXColorSpace ColourSpace, int BitsPerComponent) DecodeJpxFilter(
+    private static (byte[] Decoded, PdfCartonImage? SoftMask, PDJPXColorSpace ColourSpace, int BitsPerComponent) DecodeJpxFilter(
         byte[] data, bool smaskInData, DecodeOptions? options = null)
     {
         var stream = new COSStream();
@@ -9490,7 +9591,7 @@ public sealed class ImageCodecAdapterTests
 
     private static void AssertDecodesInOrder(string name, byte[] data, int[][] samples, int[] expected)
     {
-        using var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
+        var image = Compat.PdfCartonImageCodecs.Decode("JPX", data);
         var raster = Compat.PdfCartonFontCompat.GetRaster(image);
         for (var component = 0; component < expected.Length; component++)
             Assert.True(
@@ -9566,14 +9667,17 @@ public sealed class ImageCodecAdapterTests
         {
             foreach (var subsampling in new[] { 1, 2 })
             {
-                using var expected = Reader(format, data).ReadDeferred(0, Subsampled(subsampling));
-                using var image = Reader(format, data).Read(0, Subsampled(subsampling));
+                var expected = Reader(format, data).ReadDeferred(0, Subsampled(subsampling));
+                var image = Reader(format, data).Read(0, Subsampled(subsampling));
                 Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
                 using var target = new SKBitmap(image.Width, image.Height);
-                Assert.False(Compat.PdfCartonFontCompat.IsNativePending(image));
+                // Reading the size renders nothing; reading the pixels does.
+                Assert.True(Compat.PdfCartonFontCompat.IsNativePending(image));
                 using (var canvas = new SKCanvas(target))
-                using (var skImage = SKImage.FromBitmap(image))
+                using (var pixels = image.ToSKBitmap())
+                using (var skImage = SKImage.FromBitmap(pixels))
                     canvas.DrawImage(skImage, 0, 0, SKSamplingOptions.Default, null);
+                Assert.False(Compat.PdfCartonFontCompat.IsNativePending(image));
                 foreach (var (x, y) in new[] { (0, 0), (image.Width - 1, 1), (image.Width / 2, image.Height - 1) })
                 {
                     var color = unchecked((uint)Compat.PdfCartonFontCompat.GetRgb(expected, x, y));
@@ -9650,13 +9754,12 @@ public sealed class ImageReadParameterTests
         {
             var source = Reader(format, data).ReadDeferred(0, null);
             var (width, height) = (source.Width, source.Height);
-            using var image = Compat.JavaImageReader.ApplyReadParameters(
+            var image = Compat.JavaImageReader.ApplyReadParameters(
                 source, Parameters(new SKRectI(0, 0, width, height), 1, 1, 0, 0));
             Assert.True(ReferenceEquals(source, image), name);
             // A region past the image bounds is clipped to them.
             Assert.True(ReferenceEquals(image, Compat.JavaImageReader.ApplyReadParameters(
                 image, Parameters(new SKRectI(-3, -2, width + 5, height + 1), 1, 1, 0, 0))), name);
-            Assert.NotEqual(IntPtr.Zero, image.Handle);
         }
     }
 
@@ -9665,7 +9768,7 @@ public sealed class ImageReadParameterTests
     {
         foreach (var (name, format, data) in Sources())
         {
-            using var full = Reader(format, data).ReadDeferred(0, null);
+            var full = Reader(format, data).ReadDeferred(0, null);
             var (width, height) = (full.Width, full.Height);
             var colorType = full.ColorType;
             var bands = Compat.PdfCartonFontCompat.GetRaster(full).NumberOfBands;
@@ -9679,7 +9782,7 @@ public sealed class ImageReadParameterTests
                      })
             {
                 var label = $"{name} {region} {periodX}x{periodY}+{offsetX},{offsetY}";
-                using var image = Reader(format, data).ReadDeferred(
+                var image = Reader(format, data).ReadDeferred(
                     0, Parameters(region, periodX, periodY, offsetX, offsetY));
                 Assert.Equal(
                     ((region.Width - offsetX + periodX - 1) / periodX,
@@ -9714,11 +9817,11 @@ public sealed class ImageReadParameterTests
         const long raster = 255L * 255 * 3 * sizeof(int);
         var decode = Allocated(() =>
         {
-            using var image = Reader("JPEG2000", data).ReadDeferred(0, null);
+            var image = Reader("JPEG2000", data).ReadDeferred(0, null);
         });
         var region = Allocated(() =>
         {
-            using var image = Reader("JPEG2000", data).ReadDeferred(0, parameters);
+            var image = Reader("JPEG2000", data).ReadDeferred(0, parameters);
         });
 
         Assert.True(region - decode < raster,
@@ -9749,7 +9852,7 @@ public sealed class ImageReadParameterTests
 
         var raw = image.GetRawRaster();
         Assert.Equal(1, raw.NumberOfBands);
-        using var rgb = image.GetImage();
+        var rgb = image.GetImage();
         Assert.Equal((width, height), (rgb.Width, rgb.Height));
         var samples = expected.GetPixelSpan();
         var sample = new int[1];
@@ -9850,7 +9953,7 @@ public sealed class ImageReaderSizeTests
             Assert.True(decodes == Compat.JavaImageReader.DecodesOnCurrentThread, $"{name} decoded pixels.");
 
             // The decoded image has the header's size.
-            using var decoded = reader.ReadDeferred(0, null);
+            var decoded = reader.ReadDeferred(0, null);
             Assert.Equal((width, height), (decoded.Width, decoded.Height));
             Assert.Equal(decodes + 1, Compat.JavaImageReader.DecodesOnCurrentThread);
         }
@@ -9888,7 +9991,7 @@ public sealed class ImageReaderSizeTests
             using var decoded = new MemoryStream();
             var decodes = Compat.JavaImageReader.DecodesOnCurrentThread;
             var result = new JPXFilter().Decode(encoded, decoded, stream, 0);
-            using var smask = result.GetJPXSMask();
+            var smask = result.GetJPXSMask();
             Assert.True(decodes + 1 == Compat.JavaImageReader.DecodesOnCurrentThread,
                 $"{name}: {Compat.JavaImageReader.DecodesOnCurrentThread - decodes} decodes.");
             Assert.Equal(40, result.GetParameters().GetInt(COSName.Width));
@@ -9914,16 +10017,16 @@ public sealed class ImageReaderSizeTests
             Assert.Equal(decodes, Compat.JavaImageReader.DecodesOnCurrentThread);
             var parameters = new Compat.JavaImageReadParam();
             parameters.SetSourceSubsampling(2, 2, 0, 0);
-            using (var image = reader.ReadDeferred(0, parameters))
-                Assert.Equal((20, 12), (image.Width, image.Height));
+            var image = reader.ReadDeferred(0, parameters);
+            Assert.Equal((20, 12), (image.Width, image.Height));
             Assert.Equal((40, 24), (reader.GetWidth(0), reader.GetHeight(0)));
             Assert.Equal(decodes + 1, Compat.JavaImageReader.DecodesOnCurrentThread);
 
             reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(
                 DecodeFilterBitmapLifetimeTests.Jpx(17, 9, alpha: true, codestream: codestream))));
             Assert.Equal((17, 9), (reader.GetWidth(0), reader.GetHeight(0)));
-            using (var image = reader.ReadDeferred(0, null))
-                Assert.Equal((17, 9), (image.Width, image.Height));
+            var full = reader.ReadDeferred(0, null);
+            Assert.Equal((17, 9), (full.Width, full.Height));
             Assert.Equal(decodes + 2, Compat.JavaImageReader.DecodesOnCurrentThread);
         }
 
@@ -9939,8 +10042,8 @@ public sealed class ImageReaderSizeTests
         var decodes = Compat.JavaImageReader.DecodesOnCurrentThread;
         Assert.Equal((67, 20), (reader.GetWidth(0), reader.GetHeight(0)));
         Assert.Equal(decodes + 1, Compat.JavaImageReader.DecodesOnCurrentThread);
-        using (reader.ReadDeferred(0, null))
-            Assert.Equal((67, 20), (reader.GetWidth(0), reader.GetHeight(0)));
+        _ = reader.ReadDeferred(0, null);
+        Assert.Equal((67, 20), (reader.GetWidth(0), reader.GetHeight(0)));
         Assert.Equal(decodes + 2, Compat.JavaImageReader.DecodesOnCurrentThread);
 
         reader.SetInput(new Compat.JavaImageInputStream(new MemoryStream(ImageCodecAdapterTests.MixedPage())));
@@ -9985,7 +10088,7 @@ public sealed class ImageReaderSizeTests
 // source's live pixels; canvases that may record keep Skia's copy.
 public sealed class BitmapDrawCopyTests
 {
-    private static SKBitmap Page(int width, int height)
+    private static PdfCartonImage Page(int width, int height)
     {
         var page = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         var random = new Random(56);
@@ -10004,21 +10107,36 @@ public sealed class BitmapDrawCopyTests
     [Fact]
     public void RasterDrawsWrapTheSourcePixelsInsteadOfCopyingThem()
     {
-        using var page = Page(2480, 3508);
-        using var target = new SKBitmap(100, 100);
-        using (var view = Compat.PdfCartonFontCompat.DrawableImage(page, target))
-            Assert.Equal(page.GetPixels(), Pixels(view!));
-        // A canvas that may record, or a source sharing the target's pixels, gets a copy.
-        using (var copy = Compat.PdfCartonFontCompat.DrawableImage(page, null))
-            Assert.NotEqual(page.GetPixels(), Pixels(copy!));
-        using (var copy = Compat.PdfCartonFontCompat.DrawableImage(page, page))
-            Assert.NotEqual(page.GetPixels(), Pixels(copy!));
+        var page = Page(2480, 3508);
+        using var raster = new SKBitmap(100, 100);
+        // The image wraps the page's pinned pixel array (pinned here too, at
+        // the same address).
+        var pin = System.Runtime.InteropServices.GCHandle.Alloc(
+            page.Storage, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            var address = pin.AddrOfPinnedObject();
+            using (var view = Compat.PdfCartonFontCompat.DrawableImage(page, raster))
+                Assert.Equal(address, Pixels(view!));
+            // A canvas that may record, or a source sharing the target's pixels, gets a copy.
+            using (var copy = Compat.PdfCartonFontCompat.DrawableImage(page, null))
+                Assert.NotEqual(address, Pixels(copy!));
+            using (var lease = page.Lease())
+            using (var copy = Compat.PdfCartonFontCompat.DrawableImage(page, lease.Bitmap))
+                Assert.NotEqual(address, Pixels(copy!));
+        }
+        finally
+        {
+            pin.Free();
+        }
+        using var plain = page.ToSKBitmap();
         using var subset = new SKBitmap();
-        Assert.True(page.ExtractSubset(subset, new SKRectI(10, 10, 60, 60)));
-        using (var copy = Compat.PdfCartonFontCompat.DrawableImage(subset, page))
+        Assert.True(plain.ExtractSubset(subset, new SKRectI(10, 10, 60, 60)));
+        using (var copy = Compat.PdfCartonFontCompat.DrawableImage(subset, plain))
             Assert.NotEqual(subset.GetPixels(), Pixels(copy!));
 
         // A subrect draw reads the live pixels: later writes show on the next draw.
+        var target = new PdfCartonImage(new SKImageInfo(100, 100));
         using var graphics = new Compat.PdfCartonGraphics2D(target);
         graphics.DrawImage(page, 0, 0, 100, 100, 1000, 1000, 1100, 1100, null);
         Assert.Equal((uint)Compat.PdfCartonFontCompat.GetRgb(page, 1051, 1050), (uint)target.GetPixel(51, 50));
@@ -10032,7 +10150,7 @@ public sealed class BitmapDrawCopyTests
     {
         var source = Compat.PdfCartonFontCompat.CreateBitmap(64, 64, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         source.Erase(SKColors.Red);
-        return (Compat.PdfCartonFontCompat.DrawableImage(source, target)!, new WeakReference(source));
+        return (Compat.PdfCartonFontCompat.DrawableImage(source, target)!, new WeakReference(source.Storage));
     }
 
     private static void Collect()
@@ -10044,8 +10162,8 @@ public sealed class BitmapDrawCopyTests
         }
     }
 
-    // A live image, and a shader made from it, keep their source bitmap
-    // reachable until Skia releases them, and no longer.
+    // A live image, and a shader made from it, keep their source's pixel
+    // array pinned until Skia releases them, and no longer.
     [Fact]
     public void LiveImagesRetainTheirSourceUntilReleased()
     {
@@ -10110,9 +10228,9 @@ public sealed class BitmapDrawCopyTests
     [MemberData(nameof(DrawCases))]
     public void LivePixelDrawsMatchCopiedDraws(int hint, int transform)
     {
-        using var page = Page(300, 240);
+        var page = Page(300, 240);
         var info = new SKImageInfo(160, 140, SKColorType.Bgra8888, SKAlphaType.Premul);
-        using var live = new SKBitmap(info);
+        var live = new PdfCartonImage(info);
         using var copied = new SKBitmap(info);
         using var copiedCanvas = new SKCanvas(copied);
         using (var liveGraphics = new Compat.PdfCartonGraphics2D(live))
@@ -10126,7 +10244,7 @@ public sealed class BitmapDrawCopyTests
                 graphics.DrawImage(page, SKMatrix.CreateScaleTranslation(0.4f, 0.45f, 30.5f, 20.25f), null);
             }
         }
-        Assert.Equal(copied.Bytes, live.Bytes);
+        Assert.Equal(copied.Bytes, live.GetPixelSpan().ToArray());
     }
 
     // CopyArea snapshots only the source area under an integer translation;
@@ -10149,18 +10267,19 @@ public sealed class BitmapDrawCopyTests
                      (0, 0, int.MaxValue, 100, -128, 0), (0, 0, 100, int.MaxValue, 0, -100),
                  })
         {
-            using var actual = Page(300, 240);
-            using var expected = Page(300, 240);
+            var actual = Page(300, 240);
+            var expected = Page(300, 240);
             using (var graphics = new Compat.PdfCartonGraphics2D(actual))
             {
                 Configure(graphics, hint, 0);
                 graphics.SetTransform(translation);
                 graphics.CopyArea(x, y, width, height, dx, dy);
             }
-            using (var snapshot = expected.Copy())
-            using (var canvas = new SKCanvas(expected))
+            using (var snapshot = expected.ToSKBitmap())
+            using (var lease = expected.Lease())
             using (var paint = new SKPaint())
             {
+                var canvas = lease.Canvas;
                 canvas.SetMatrix(translation);
                 var options = hint switch
                 {
@@ -10171,7 +10290,7 @@ public sealed class BitmapDrawCopyTests
                 canvas.DrawBitmap(snapshot, new SKRect(x, y, x + width, y + height),
                     new SKRect(x + dx, y + dy, x + dx + width, y + dy + height), options, paint);
             }
-            Assert.True(expected.Bytes.AsSpan().SequenceEqual(actual.Bytes),
+            Assert.True(expected.GetPixelSpan().SequenceEqual(actual.GetPixelSpan()),
                 $"hint {hint} transform {transform} area ({x},{y},{width},{height}) by ({dx},{dy})");
         }
     }
@@ -10205,10 +10324,7 @@ public sealed class RenderingBitmapLifetimeTests
         var expected = new Dictionary<(int, string), string>();
         foreach (var page in Pages)
             foreach (var (name, type) in types)
-            {
-                using var image = renderer.RenderImage(page, 2, type);
-                expected[(page, name)] = Hash(image);
-            }
+                expected[(page, name)] = RenderHash(renderer, page, type);
         Settle();
         // Keep the image XObjects and the images they cache alive, so later
         // renders reuse them instead of decoding (and caching) new ones.
@@ -10222,27 +10338,27 @@ public sealed class RenderingBitmapLifetimeTests
             foreach (var page in Pages)
                 foreach (var (name, type) in types)
                 {
-                    using (var image = renderer.RenderImage(page, 2, type))
-                        Assert.Equal(expected[(page, name)], Hash(image));
+                    // The returned image is dropped, as by a caller done with it.
+                    Assert.Equal(expected[(page, name)], RenderHash(renderer, page, type));
                     AssertRenderGarbageBounded(CollectImageGarbage(bytes), page, $"page {page} as {name}");
                     // The renderer keeps the page image it drew into, as
                     // PDFBox does; a collection releases everything else.
                     AssertUnchangedButPageImage(live, bytes, renderer, $"page {page} as {name}");
                 }
         }
-        Assert.True(renderer.getPageImage() is { } kept && kept.Handle != IntPtr.Zero,
+        Assert.True(renderer.getPageImage() is not null,
             "the renderer no longer holds the page image of its last render.");
 
         // Printing rasterizes each page into an image of its own first, at
         // most the paper's size at 144 DPI, which it leaves to the collector.
         var printable = new DripSharp.PdfCarton.Printing.PDFPrintable(
             document, DripSharp.PdfCarton.Printing.Scaling.ActualSize, false, 144);
-        using var paper = Compat.PdfCartonFontCompat.CreateBitmap(
+        var paper = Compat.PdfCartonFontCompat.CreateBitmap(
             612, 792, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         var format = new Compat.JavaPageFormat();
         var printRaster = (long)(format.GetWidth() * 2) * (long)(format.GetHeight() * 2) * 4;
-        live = Compat.PdfCartonNativeBitmap.LiveCount;
-        bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        live = CompatPixels.LiveCount;
+        bytes = CompatPixels.OutstandingBytes;
         foreach (var page in Pages)
         {
             using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(paper))
@@ -10272,21 +10388,16 @@ public sealed class RenderingBitmapLifetimeTests
             name => name,
             name => (COSStream)resources.GetXObject(COSName.GetPDFName(name)).GetCOSObject());
         PDImageXObject Fresh(string name) => new(new PDStream(streams[name]), resources);
-        var expected = ImageNames.ToDictionary(name => name, name =>
-        {
-            using var image = Fresh(name).GetImage();
-            return Hash(image);
-        });
+        var expected = ImageNames.ToDictionary(name => name, name => ImageHash(() => Fresh(name).GetImage()));
         Settle();
-        var live = Compat.PdfCartonNativeBitmap.LiveCount;
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var live = CompatPixels.LiveCount;
+        var bytes = CompatPixels.OutstandingBytes;
         long left = 0;
         for (var round = 0; round < 5; round++)
         {
             foreach (var name in ImageNames)
             {
-                using (var image = Fresh(name).GetImage())
-                    Assert.Equal(expected[name], Hash(image));
+                Assert.Equal(expected[name], ImageHash(() => Fresh(name).GetImage()));
                 left = Math.Max(left, CollectImageGarbage(bytes));
                 AssertUnchanged(live, bytes, name);
             }
@@ -10299,20 +10410,40 @@ public sealed class RenderingBitmapLifetimeTests
     }
 
     // PageDrawer drops the getScaledInstance copies it draws downscaled
-    // images and stencil masks through, as Java code does, so a large copy
-    // keeps its pixels in managed memory the collector sees and frees.
+    // images and stencil masks through, as Java code does: a copy holds no
+    // native pixels, and the collector frees it.
     [Fact]
-    public void LargeScaledImageCopiesHoldManagedPixels()
+    public void ScaledImageCopiesHoldNoNativePixels()
     {
-        using var source = Compat.PdfCartonFontCompat.CreateBitmap(
+        var source = Compat.PdfCartonFontCompat.CreateBitmap(
             1000, 1000, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        var native = Compat.PdfCartonNativeBitmap.NativeBytes;
         foreach (var hints in new[] { Compat.PdfCartonFontCompat.SCALE_SMOOTH, 0 })
         {
-            using var large = Compat.PdfCartonFontCompat.ScaleImage(source, 400, 400, hints);
-            Assert.True(((Compat.PdfCartonNativeBitmap)large).HoldsManagedPixels, $"hints {hints}");
-            using var small = Compat.PdfCartonFontCompat.ScaleImage(source, 40, 40, hints);
-            Assert.False(((Compat.PdfCartonNativeBitmap)small).HoldsManagedPixels, $"hints {hints}");
+            var large = Scaled(source, 400, hints);
+            var small = Scaled(source, 40, hints);
+            Assert.Equal(native, Compat.PdfCartonNativeBitmap.NativeBytes);
+            GC.Collect();
+            Assert.False(large.IsAlive || small.IsAlive, $"hints {hints}");
         }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference Scaled(PdfCartonImage source, int size, int hints) =>
+        new(Compat.PdfCartonFontCompat.ScaleImage(source, size, size, hints));
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static string RenderHash(PDFRenderer renderer, int page, ImageType type) =>
+        Hash(renderer.RenderImage(page, 2, type));
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static string ImageHash(Func<PdfCartonImage> image) => Hash(image());
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (int, int) RenderedSize(PDFRenderer renderer, int page)
+    {
+        var image = renderer.RenderImage(page, 2, ImageType.Rgb);
+        return (image.Width, image.Height);
     }
 
     // A fill failing anywhere in the page, including inside a soft-mask or
@@ -10323,10 +10454,10 @@ public sealed class RenderingBitmapLifetimeTests
         using var document = Loader.LoadPDF(Signed(Fixture()));
         var pinned = PinImages(document.GetPage(Images));
         foreach (var page in Pages)
-            using (new PDFRenderer(document).RenderImage(page, 2, ImageType.Rgb)) { }
+            _ = new PDFRenderer(document).RenderImage(page, 2, ImageType.Rgb);
         Settle();
-        var live = Compat.PdfCartonNativeBitmap.LiveCount;
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var live = CompatPixels.LiveCount;
+        var bytes = CompatPixels.OutstandingBytes;
         foreach (var page in Pages)
         {
             var fills = CountFills(document, page);
@@ -10350,7 +10481,7 @@ public sealed class RenderingBitmapLifetimeTests
     private static int CountFills(PDDocument document, int page)
     {
         var counting = new SamplingRenderer(document, int.MaxValue, null);
-        using (counting.RenderImage(page, 2, ImageType.Rgb)) { }
+        _ = counting.RenderImage(page, 2, ImageType.Rgb);
         return counting.Fills;
     }
 
@@ -10361,13 +10492,12 @@ public sealed class RenderingBitmapLifetimeTests
     public void RecoverableGroupFailuresKeepRendering()
     {
         using var document = Loader.LoadPDF(Signed(Fixture()));
-        using (new PDFRenderer(document).RenderImage(TwoBlendedGroups, 2, ImageType.Rgb)) { }
+        _ = new PDFRenderer(document).RenderImage(TwoBlendedGroups, 2, ImageType.Rgb);
         Settle();
-        var live = Compat.PdfCartonNativeBitmap.LiveCount;
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var live = CompatPixels.LiveCount;
+        var bytes = CompatPixels.OutstandingBytes;
         var renderer = new SamplingRenderer(document, 2, () => new IOException("group content failed"));
-        using (var image = renderer.RenderImage(TwoBlendedGroups, 2, ImageType.Rgb))
-            Assert.Equal((288, 288), (image.Width, image.Height));
+        Assert.Equal((288, 288), RenderedSize(renderer, TwoBlendedGroups));
         Assert.True(renderer.Fills > 3, $"rendered {renderer.Fills} fills.");
         Assert.Equal(1, GroupsLeftOnTheBackdropStack(renderer));
         AssertRenderGarbageBounded(CollectImageGarbage(bytes), TwoBlendedGroups, "page with a failed group");
@@ -10393,12 +10523,12 @@ public sealed class RenderingBitmapLifetimeTests
     public void RenderPageToGraphicsLeavesCallerGraphicsUsable()
     {
         using var document = Loader.LoadPDF(Signed(Fixture()));
-        using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
+        var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
             144, 144, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         var pinned = PinImages(document.GetPage(Images));
         Settle();
-        var live = Compat.PdfCartonNativeBitmap.LiveCount;
-        var bytes = Compat.PdfCartonNativeBitmap.OutstandingBytes;
+        var live = CompatPixels.LiveCount;
+        var bytes = CompatPixels.OutstandingBytes;
         foreach (var page in new[] { OneMaskedFill, GroupsAndBlending, Images })
         {
             DrawIntoCallerGraphics(document, page, canvas);
@@ -10409,7 +10539,7 @@ public sealed class RenderingBitmapLifetimeTests
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static void DrawIntoCallerGraphics(PDDocument document, int page, SKBitmap canvas)
+    private static void DrawIntoCallerGraphics(PDDocument document, int page, PdfCartonImage canvas)
     {
         using var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas);
         new PDFRenderer(document).RenderPageToGraphics(page, graphics);
@@ -10430,41 +10560,21 @@ public sealed class RenderingBitmapLifetimeTests
     // PDFRenderer keeps the image it rendered the page into after
     // renderImage returns, as PDFBox does: the returned image, or the ARGB
     // image a page-level blend mode (every fixture page has one, in the
-    // shared resources) renders into before it is converted. A later
-    // renderPageToGraphics takes it as the backdrop of a non-isolated blended
-    // group; once the caller disposed it, it has no pixels left and the
-    // group renders as over no backdrop (as with a fresh renderer).
+    // shared resources) renders into before it is converted.
     [Fact]
     public void RendererKeepsItsPageImage()
     {
         using var document = Loader.LoadPDF(Signed(Fixture()));
         var renderer = new PDFRenderer(document);
-        using (var image = renderer.RenderImage(OneMaskedFill, 2, ImageType.Argb))
+        var image = renderer.RenderImage(OneMaskedFill, 2, ImageType.Argb);
             Assert.Same(image, renderer.getPageImage());
-        using (var blended = renderer.RenderImage(GroupsAndBlending, 2, ImageType.Rgb))
+        var blended = renderer.RenderImage(GroupsAndBlending, 2, ImageType.Rgb);
         {
             var pageImage = renderer.getPageImage();
             Assert.NotSame(blended, pageImage);
             Assert.Equal(Compat.PdfCartonFontCompat.TYPE_INT_ARGB,
                 Compat.PdfCartonFontCompat.GetImageType(pageImage));
-            Assert.NotEqual(IntPtr.Zero, pageImage.Handle);
         }
-        foreach (var page in new[] { TwoBlendedGroups, GroupsAndBlending })
-        {
-            using (renderer.RenderImage(page, 1, ImageType.Argb)) { }
-            Assert.True(Compat.PdfCartonFontCompat.IsDisposedImage(renderer.getPageImage()));
-            Assert.Equal(DrawnIntoGraphics(new PDFRenderer(document), page),
-                DrawnIntoGraphics(renderer, page));
-        }
-    }
-
-    private static string DrawnIntoGraphics(PDFRenderer renderer, int page)
-    {
-        using var canvas = Compat.PdfCartonFontCompat.CreateBitmap(
-            144, 144, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
-        using (var graphics = Compat.PdfCartonFontCompat.CreateGraphics(canvas))
-            renderer.RenderPageToGraphics(page, graphics);
-        return Hash(canvas);
     }
 
     // Each fill under an ExtGState soft mask renders the mask anew and drops
@@ -10487,11 +10597,11 @@ public sealed class RenderingBitmapLifetimeTests
             Settle();
             var renderer = new SamplingRenderer(document, int.MaxValue, null)
             {
-                Baseline = Compat.PdfCartonNativeBitmap.OutstandingBytes,
+                Baseline = CompatPixels.OutstandingBytes,
                 NativeBaseline = Compat.PdfCartonNativeBitmap.NativeBytes,
                 Collecting = collecting
             };
-            using (renderer.RenderImage(page, 2, ImageType.Rgb)) { }
+            _ = renderer.RenderImage(page, 2, ImageType.Rgb);
             return renderer;
         }
         var single = Rendered(OneMaskedFill, collecting: true).Peak;
@@ -10558,9 +10668,9 @@ public sealed class RenderingBitmapLifetimeTests
             if (Collecting)
             {
                 Settle();
-                Retained.Add(Compat.PdfCartonNativeBitmap.OutstandingBytes - Baseline);
+                Retained.Add(CompatPixels.OutstandingBytes - Baseline);
             }
-            Peak = Math.Max(Peak, Compat.PdfCartonNativeBitmap.OutstandingBytes - Baseline);
+            Peak = Math.Max(Peak, CompatPixels.OutstandingBytes - Baseline);
             NativePeak = Math.Max(NativePeak, Compat.PdfCartonNativeBitmap.NativeBytes - NativeBaseline);
         }
 
@@ -10572,28 +10682,28 @@ public sealed class RenderingBitmapLifetimeTests
         }
     }
 
-    private static string Hash(SKBitmap image)
+    private static string Hash(PdfCartonImage image)
     {
         using var rgba = new SKBitmap(new SKImageInfo(
             image.Width, image.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
-        Assert.True(image.CopyTo(rgba, SKColorType.Rgba8888));
+        using var rendered = image.ToSKBitmap();
+        Assert.True(rendered.CopyTo(rgba, SKColorType.Rgba8888));
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(rgba.GetPixelSpan()));
     }
 
     private static void AssertUnchanged(long live, long bytes, string name) =>
         Assert.True(
-            live == Compat.PdfCartonNativeBitmap.LiveCount &&
-            bytes == Compat.PdfCartonNativeBitmap.OutstandingBytes,
-            $"{name} left {Compat.PdfCartonNativeBitmap.LiveCount - live} bitmaps " +
-            $"({Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes} bytes) undisposed.");
+            live == CompatPixels.LiveCount &&
+            bytes == CompatPixels.OutstandingBytes,
+            $"{name} left {CompatPixels.LiveCount - live} bitmaps " +
+            $"({CompatPixels.OutstandingBytes - bytes} bytes) undisposed.");
 
     // Image decoding and drawing leave their intermediate images to the
-    // collector, as Java does (their pixels are managed memory, or native
-    // memory reported as GC pressure; see PdfCartonNativeBitmap): returns the
+    // collector, as Java does (their pixels are managed memory): returns the
     // compat bytes they left over the baseline, then collects them.
     private static long CollectImageGarbage(long bytes)
     {
-        var left = Compat.PdfCartonNativeBitmap.OutstandingBytes - bytes;
+        var left = CompatPixels.OutstandingBytes - bytes;
         Settle();
         return left;
     }
@@ -10603,9 +10713,9 @@ public sealed class RenderingBitmapLifetimeTests
     private static (long Live, long Bytes) CountersButPageImage(PDFRenderer renderer)
     {
         var kept = renderer.getPageImage();
-        var held = kept is not null && kept.Handle != IntPtr.Zero;
-        return (Compat.PdfCartonNativeBitmap.LiveCount - (held ? 1 : 0),
-            Compat.PdfCartonNativeBitmap.OutstandingBytes - (held ? (long)kept!.RowBytes * kept.Height : 0));
+        var held = kept is not null;
+        return (CompatPixels.LiveCount - (held ? 1 : 0),
+            CompatPixels.OutstandingBytes - (held && kept!.HasPixels ? kept.ByteCount : 0));
     }
 
     // A collection releases every bitmap a render left but the page image
@@ -10923,7 +11033,7 @@ public sealed class FourComponentJpegTests
         const int tolerance = 4;
         using var document = new PDDocument();
         var image = JPEGFactory.CreateFromByteArray(document, Signed(Fixture(fixture)));
-        using var rgb = image.GetImage();
+        var rgb = image.GetImage();
         Assert.Equal((61, 45), (rgb.Width, rgb.Height));
         var expected = Convert.FromHexString(colours);
         var index = 0;
@@ -11114,7 +11224,7 @@ public sealed class PathIteratorTests
             Segments(Compat.PdfCartonFontCompat.PathIterator(source, null)));
 
         // Drawing a managed path twice reuses the graphics' Skia path.
-        using var image = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+        var image = Compat.PdfCartonFontCompat.CreateBitmap(8, 8, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
         using var graphics = new Compat.PdfCartonGraphics2D(image);
         graphics.Draw(Polyline(3));
         var before = GC.GetAllocatedBytesForCurrentThread();
@@ -11161,7 +11271,7 @@ public sealed class PathIteratorTests
     {
         uint[] Paint(bool roundTrip)
         {
-            using var image = Compat.PdfCartonFontCompat.CreateBitmap(10, 6, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
+            var image = Compat.PdfCartonFontCompat.CreateBitmap(10, 6, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using var graphics = new Compat.PdfCartonGraphics2D(image);
             using var inverse = new SKPath { FillType = SKPathFillType.InverseWinding };
             inverse.AddRect(new SKRect(3, 2, 7, 4));
@@ -11274,7 +11384,7 @@ public sealed class PathIteratorTests
         ]);
         using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        using var image = new PDFRenderer(document).RenderImage(0);
+        var image = new PDFRenderer(document).RenderImage(0);
         watch.Stop();
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"rendering took {watch.Elapsed}.");
         Assert.Equal((600, 800), (image.Width, image.Height));
@@ -11299,7 +11409,7 @@ public sealed class PathIteratorTests
         ]);
         using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
         var renderer = new LinePathRenderer(document);
-        using (renderer.RenderImage(0)) { }
+        _ = renderer.RenderImage(0);
         // The l after the reset finds no current point and moves instead.
         Assert.Equal(new (double X, double Y)?[] { (40, 50), (6, 7), null, (70, 80) }, renderer.Points);
     }
@@ -11365,7 +11475,7 @@ public sealed class PathIteratorTests
         }
 
         using var document = PatternPage(200, $"20 20 160 160 re W n /Pattern cs /P1 scn\n{LargeSquaresPath()}f");
-        using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+        var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
             200, 200, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         bitmap.Erase(SKColors.Blue);
         using (var graphics = new RecordingGraphics(bitmap))
@@ -11410,7 +11520,7 @@ public sealed class PathIteratorTests
             "<< /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /BBox [40 40 160 160] " +
             "/Coords [0 0 200 0] /Extend [true true] " +
             "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [1 0 0] /N 1 >> >> >>");
-        using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+        var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
             200, 200, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         bitmap.Erase(SKColors.Blue);
         using (var graphics = new RecordingGraphics(bitmap))
@@ -11456,8 +11566,8 @@ public sealed class PathIteratorTests
         var red = new SKColor(255, 0, 0);
         // An even-odd clip with a hole, then a fill of the whole page.
         using (var document = PatternPage(100, "q 10 10 80 30 re 30 15 40 20 re W* n 1 0 0 rg 0 0 100 100 re f Q"))
-        using (var image = new PDFRenderer(document).RenderImage(0, 1))
         {
+            var image = new PDFRenderer(document).RenderImage(0, 1);
             Assert.Equal(red, image.GetPixel(20, 75));
             Assert.Equal(SKColors.White, image.GetPixel(50, 75));
             Assert.Equal(SKColors.White, image.GetPixel(50, 40));
@@ -11469,7 +11579,7 @@ public sealed class PathIteratorTests
         {
             using var document = PatternPage(
                 100, $"10 55 80 40 re 30 65 40 20 re /Pattern cs /P1 scn {fill}");
-            using var image = new PDFRenderer(document).RenderImage(0, 1);
+            var image = new PDFRenderer(document).RenderImage(0, 1);
             Assert.Equal(red, image.GetPixel(20, 25));
             Assert.Equal(holeFilled ? red : SKColors.White, image.GetPixel(50, 25));
             Assert.Equal(SKColors.White, image.GetPixel(50, 50));
@@ -11480,8 +11590,8 @@ public sealed class PathIteratorTests
         using (var document = PatternPage(
                    100, "10 10 80 80 re 20 20 20 60 re W* n 10 10 80 80 re 60 20 20 60 re W* n " +
                         "/Pattern cs /P1 scn 0 0 100 100 re 45 45 10 10 re f*"))
-        using (var image = new PDFRenderer(document).RenderImage(0, 1))
         {
+            var image = new PDFRenderer(document).RenderImage(0, 1);
             Assert.Equal(red, image.GetPixel(50, 20));
             Assert.Equal(SKColors.White, image.GetPixel(30, 50));
             Assert.Equal(SKColors.White, image.GetPixel(70, 50));
@@ -11506,15 +11616,15 @@ public sealed class PathIteratorTests
         var pdf = Path.Combine(AppContext.BaseDirectory, "Fixtures", "input", "eu-001.pdf");
         using var document = Loader.LoadPDF(new FileInfo(pdf));
 
-        using (var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
-                   595, 842, Compat.PdfCartonFontCompat.TYPE_INT_RGB))
+        var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+                   595, 842, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
         using (var graphics = new ClipRecordingGraphics(bitmap))
         {
             new PDFRenderer(document).RenderPageToGraphics(2, graphics);
             Assert.Contains((true, false), graphics.Clips);
         }
 
-        using var image = new PDFRenderer(document).RenderImage(2, 1, ImageType.Rgb);
+        var image = new PDFRenderer(document).RenderImage(2, 1, ImageType.Rgb);
         foreach (var (row, first, count, color) in new[]
                  {
                      (142, 103, 212, SKColors.White),
@@ -11577,7 +11687,7 @@ public sealed class PathIteratorTests
             "........................................",
             "........................................",
         ];
-        using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
+        var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
         var rows = Enumerable.Range(0, image.Height).Select(y => new string(
             Enumerable.Range(0, image.Width).Select(x => image.GetPixel(x, y) switch
             {
@@ -11605,7 +11715,7 @@ public sealed class PathIteratorTests
         static double Radians(double degrees) => degrees * (Math.PI / 180);
         static SKMatrix Rotated(SKMatrix start, double degrees)
         {
-            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+            var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
                 1, 1, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using var graphics = new Compat.PdfCartonGraphics2D(bitmap);
             graphics.SetTransform(start);
@@ -11652,7 +11762,7 @@ public sealed class PathIteratorTests
             RasterConversionConsumerTests.PdfStream("",
                 "2 w 0 0 200 400 re 0 0 m 200 400 l 0 400 m 200 0 l S"),
         ]));
-        using var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
+        var image = new PDFRenderer(document).RenderImage(0, 1, ImageType.Rgb);
         Assert.Equal((400, 200), (image.Width, image.Height));
         int Gray(int x, int y) => image.GetPixel(x, y).Red;
 
@@ -11685,7 +11795,7 @@ public sealed class PathIteratorTests
         static int[][] Alpha(int width, int height, bool pure, SKMatrix transform,
             Action<Compat.PdfCartonGraphics2D> draw)
         {
-            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+            var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
                 width, height, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using (var graphics = new Compat.PdfCartonGraphics2D(bitmap))
             {
@@ -11834,7 +11944,7 @@ public sealed class PathIteratorTests
     {
         static string[] Mask(Action<Compat.PdfCartonGraphics2D> clip)
         {
-            using var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
+            var bitmap = Compat.PdfCartonFontCompat.CreateBitmap(
                 10, 6, Compat.PdfCartonFontCompat.TYPE_INT_ARGB);
             using (var graphics = new Compat.PdfCartonGraphics2D(bitmap))
             {
@@ -12028,7 +12138,7 @@ public sealed class PathIteratorTests
     {
         using var document = PatternPage(
             500, $"50 120 370 320 re W n /Pattern cs /P1 scn\n{CirclePolygon(250, 250, 250, 10_000)}f");
-        using var image = new PDFRenderer(document).RenderImage(0, 1);
+        var image = new PDFRenderer(document).RenderImage(0, 1);
         var red = new SKColor(255, 0, 0);
         foreach (var (x, pdfY, inside) in new[]
                  {
@@ -12060,7 +12170,7 @@ public sealed class PathIteratorTests
                  })
         {
             using var document = PatternPage(200, clips + fill);
-            using var image = new PDFRenderer(document).RenderImage(0, 1);
+            var image = new PDFRenderer(document).RenderImage(0, 1);
             foreach (var (x, pdfY, inside) in new[]
                      {
                          (100, 100, true), (70, 100, true), (130, 100, true),
@@ -12093,7 +12203,7 @@ public sealed class PathIteratorTests
 
     // Records, for each area clip set, whether it covers PDF (200, 702) on
     // eu-001.pdf page 3's frame and (200, 695) in that frame's hole.
-    private sealed class ClipRecordingGraphics(SKBitmap bitmap) : Compat.PdfCartonGraphics2D(bitmap)
+    private sealed class ClipRecordingGraphics(PdfCartonImage bitmap) : Compat.PdfCartonGraphics2D(bitmap)
     {
         internal List<(bool Frame, bool Hole)> Clips { get; } = [];
 
@@ -12125,7 +12235,7 @@ public sealed class PathIteratorTests
 
     // Records the clip copies the graphics hands out (weakly, so they can be
     // collected) and what each fill's shape is.
-    private sealed class RecordingGraphics(SKBitmap bitmap) : Compat.PdfCartonGraphics2D(bitmap)
+    private sealed class RecordingGraphics(PdfCartonImage bitmap) : Compat.PdfCartonGraphics2D(bitmap)
     {
         internal List<WeakReference<Geometry.JavaPath2D>> Clips { get; } = [];
         internal List<string> Fills { get; } = [];
@@ -12244,7 +12354,7 @@ public sealed class PatternFillPathLifetimeTests
     {
         using var document = Loader.LoadPDF((sbyte[])(Array)PatternFillsPdf(shadingBox));
         var renderer = new PDFRenderer(document);
-        using (var warm = renderer.RenderImage(0, 1, ImageType.Rgb))
+        var warm = renderer.RenderImage(0, 1, ImageType.Rgb);
         {
             // Device row y shows PDF y 199 - y to 200 - y; squares cover x..x+3 of each 4.
             Assert.Equal(SKColors.Red, warm.GetPixel(101, 101));
@@ -12259,7 +12369,7 @@ public sealed class PatternFillPathLifetimeTests
         var baseline = Abandoned(() => { });
         var abandoned = Abandoned(() =>
         {
-            using (renderer.RenderImage(0, 1, ImageType.Rgb)) { }
+            _ = renderer.RenderImage(0, 1, ImageType.Rgb);
         });
         Assert.True(abandoned - baseline <= Fills * GarbagePerFill,
             $"{abandoned - baseline} finalizable objects after {Fills} pattern fills (baseline {baseline}).");
@@ -12345,7 +12455,7 @@ public sealed class GlyphPathLifetimeTests
     {
         using var document = TextDocument(3000, clip, fillBeforeEnd);
         var renderer = new PDFRenderer(document);
-        using (var warm = renderer.RenderImage(0, 1, ImageType.Rgb))
+        var warm = renderer.RenderImage(0, 1, ImageType.Rgb);
         {
             // Black text on a red page, or a red page fill clipped to the text.
             Assert.Equal(clip && !fillBeforeEnd ? SKColors.White : SKColors.Red,
@@ -12362,7 +12472,7 @@ public sealed class GlyphPathLifetimeTests
         var noCollection = GC.TryStartNoGCRegion(128L << 20);
         try
         {
-            using (renderer.RenderImage(0, 1, ImageType.Rgb)) { }
+            _ = renderer.RenderImage(0, 1, ImageType.Rgb);
         }
         finally
         {

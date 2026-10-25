@@ -9,6 +9,9 @@
     <PdfCartonRoot Condition="'$(PdfCartonRoot)' == ''">../../products/pdfcarton</PdfCartonRoot>
   </PropertyGroup>
   <ItemGroup>
+    <Using Include="DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage" Alias="PdfCartonImage" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="$(PdfCartonRoot)/src/DripSharp.PdfCarton/DripSharp.PdfCarton.csproj" />
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="4.150.1" />

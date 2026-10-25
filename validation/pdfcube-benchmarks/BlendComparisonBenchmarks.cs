@@ -11,7 +11,7 @@ namespace PdfCarton.Benchmarks;
 [MemoryDiagnoser]
 public class BlendComparisonBenchmarks
 {
-    private SKBitmap page = null!;
+    private PdfCartonImage page = null!;
     private PdfCartonGraphics2D graphics = null!;
 
     [GlobalSetup]
@@ -46,6 +46,5 @@ public class BlendComparisonBenchmarks
     public void Cleanup()
     {
         graphics?.Dispose();
-        page?.Dispose();
     }
 }

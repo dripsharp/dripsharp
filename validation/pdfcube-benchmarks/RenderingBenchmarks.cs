@@ -36,7 +36,7 @@ public class RenderingBenchmarks
         renderer = new PDFRenderer(document);
         // Explicitly warm the document caches even when using a short BDN job.
         // BenchmarkDotNet separately warms and measures the benchmark method.
-        using var image = renderer.RenderImage(0, 1f, ImageType.Argb);
+        var image = renderer.RenderImage(0, 1f, ImageType.Argb);
         if (image.Width == 0 || image.Height == 0)
             throw new InvalidOperationException($"Rendering produced an empty bitmap: {fixture}");
         Console.WriteLine($"PDF fixture: {fixture}; page=1; DPI=72; pixels={image.Width}x{image.Height}; ARGB");
@@ -52,7 +52,7 @@ public class RenderingBenchmarks
     [Benchmark]
     public int RenderPage()
     {
-        using var image = renderer.RenderImage(0, 1f, ImageType.Argb);
+        var image = renderer.RenderImage(0, 1f, ImageType.Argb);
         return image.Width * image.Height;
     }
 

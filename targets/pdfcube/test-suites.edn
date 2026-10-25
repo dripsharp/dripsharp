@@ -40,7 +40,7 @@
     "pdfcube-fontbox"
     {:source "consumer-tests/FontsConsumerTests.cs"
      :destination "FontsConsumerTests.cs"
-     :sha256 "a500e8806d20954377f4744c0377c6dcff61a13d389f7867bb4a945aad7da955"}
+     :sha256 "ca2b5574abf9fbb86e095e6b6402f333097f9e0be7034cea1d6f0dffd7b17860"}
     "pdfcube-xmpbox"
     {:source "consumer-tests/XmpConsumerTests.cs"
      :destination "XmpConsumerTests.cs"
@@ -48,7 +48,7 @@
     "pdfcube-pdfbox"
     {:source "consumer-tests/PdfConsumerTests.cs"
      :destination "PdfConsumerTests.cs"
-     :sha256 "a98da8e9cbc60d3faed7855961dc726b74d8cb831e6ec35abd95f13cc8b69587"}
+     :sha256 "596ebdcf5a2187ab33e4792d14f1d3aa57778787b32c3df9d1482f70a0be7df4"}
     "pdfcube-preflight"
     {:source "consumer-tests/PreflightConsumerTests.cs"
      :destination "PreflightConsumerTests.cs"

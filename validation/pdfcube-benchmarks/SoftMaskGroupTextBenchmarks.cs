@@ -34,7 +34,7 @@ public class SoftMaskGroupTextBenchmarks
     {
         document = Loader.LoadPDF((sbyte[])(Array)Fixture(Glyphs, GroupHeight));
         renderer = new PDFRenderer(document);
-        using var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
+        var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
         // Setup-only output comparison across revisions; never timed.
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var bytes = image.GetPixelSpan();
@@ -47,7 +47,7 @@ public class SoftMaskGroupTextBenchmarks
     [Benchmark]
     public int RenderPage()
     {
-        using var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
+        var image = renderer.RenderImage(0, 300f / 72f, ImageType.Rgb);
         return image.Width * image.Height;
     }
 

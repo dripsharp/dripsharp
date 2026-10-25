@@ -175,7 +175,7 @@
    "java.awt.Point"
    ["global::DripSharp.Runtime.JavaPoint" :pdfcube.type/point-int]
    "java.awt.Image"
-   ["global::SkiaSharp.SKBitmap" :pdfcube.type/skia-bitmap]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage" :pdfcube.type/image]
    "java.awt.Graphics"
    ["global::DripSharp.Runtime.PdfCartonGraphics2D" :pdfcube.type/graphics]
    "java.awt.Graphics2D"
@@ -236,7 +236,7 @@
    "java.awt.image.ImageObserver"
    ["object" :pdfcube.type/image-observer]
    "java.awt.image.BufferedImage"
-   ["global::SkiaSharp.SKBitmap" :pdfcube.type/skia-bitmap]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage" :pdfcube.type/image]
    "java.awt.image.Raster"
    ["global::DripSharp.Runtime.JavaRaster" :pdfcube.type/raster]
    "java.awt.image.WritableRaster"
@@ -328,9 +328,9 @@
    ["global::DripSharp.Runtime.JavaBufferedImageOperation"
     :pdfcube.type/buffered-image-operation]
    "java.awt.image.RenderedImage"
-   ["global::SkiaSharp.SKBitmap" :pdfcube.type/rendered-image]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage" :pdfcube.type/rendered-image]
    "java.awt.image.renderable.RenderableImage"
-   ["global::SkiaSharp.SKBitmap" :pdfcube.type/renderable-image]
+   ["global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage" :pdfcube.type/renderable-image]
    "java.text.AttributedCharacterIterator"
    ["global::DripSharp.Runtime.JavaAttributedCharacterIterator"
     :pdfcube.type/attributed-character-iterator]
@@ -1100,7 +1100,7 @@
    (fn [target arguments]
      (call-node target "GetAsTree" arguments))
 
-   ;; Not SKBitmap.Width/Height, native calls that render an image built
+   ;; Through compat, which renders an image built
    ;; from a raster (PdfCartonFontCompat.CreateImage) before its first use.
    "executable:java.awt.image.BufferedImage#getWidth()"
    (fn [target _arguments]

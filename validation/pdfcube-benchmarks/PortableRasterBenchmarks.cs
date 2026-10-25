@@ -25,7 +25,9 @@ public class PortableRasterBenchmarks
     {
         Validate();
         bitmap = new SKBitmap(new SKImageInfo(Size, Size, SKColorType.Bgra8888, SKAlphaType.Unpremul));
-        raster = PdfCartonFontCompat.GetRaster(bitmap);
+        // Compat's raster views an image (managed pixels) of the same layout.
+        raster = PdfCartonFontCompat.GetRaster(
+            new PdfCartonImage(new SKImageInfo(Size, Size, SKColorType.Bgra8888, SKAlphaType.Unpremul)));
         samples = Enumerable.Range(0, Size * Size * 4).Select(i => unchecked(i * 1299721)).ToArray();
         destination = new int[samples.Length];
         raster.SetPixels(0, 0, Size, Size, samples);

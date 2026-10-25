@@ -23,7 +23,7 @@ public class PerPixelRasterBenchmarks
     private const int Height = 3508;
     private PDDocument document = null!;
     private PDImageXObject stencil = null!;
-    private SKBitmap page = null!;
+    private PdfCartonImage page = null!;
     private PdfCartonGraphics2D graphics = null!;
 
     [GlobalSetup]
@@ -37,7 +37,7 @@ public class PerPixelRasterBenchmarks
         Array.Fill(data, (byte)0x55);
         stencil = new PDImageXObject(document, new MemoryStream(data), null!, Width, Height, 1, null!);
         stencil.SetStencil(true);
-        using (var image = stencil.GetStencilImage(JavaColor.White))
+        var image = stencil.GetStencilImage(JavaColor.White);
         {
             // Default /Decode [0 1]: set bits are transparent.
             if (image.GetPixel(0, 0) != SKColors.White || image.GetPixel(1, 0).Alpha != 0 ||
@@ -61,7 +61,7 @@ public class PerPixelRasterBenchmarks
     [Benchmark(Description = "getStencilImage 2480x3508 /ImageMask")]
     public void StencilImage()
     {
-        using var image = stencil.GetStencilImage(JavaColor.White);
+        _ = stencil.GetStencilImage(JavaColor.White);
     }
 
     [Benchmark(Description = "Reset and Multiply-fill 2480x3508 page")]
@@ -75,7 +75,6 @@ public class PerPixelRasterBenchmarks
     public void Cleanup()
     {
         graphics?.Dispose();
-        page?.Dispose();
         document?.Dispose();
     }
 }

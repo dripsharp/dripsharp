@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Isak Sky
 // SPDX-License-Identifier: Apache-2.0
 
-// java.awt.geom paths as managed data. This file is compiled into the FontBox
-// assembly only; the PDFBox assembly, which sees its internals, uses the same
-// types, so a glyph outline made by FontBox is drawn by PDFBox as it is.
+// java.awt.geom paths and java.awt.image pixels as managed data. This file is
+// compiled into the FontBox assembly only; the PDFBox assembly, which sees its
+// internals, uses the same types, so a glyph outline made by FontBox is drawn
+// by PDFBox as it is, and an image passes between them unchanged.
 #nullable enable
 
 using System;
+using System.Runtime.InteropServices;
+using System.Threading;
 using SkiaSharp;
 
 namespace DripSharp.Runtime;
@@ -689,3 +692,275 @@ public sealed class JavaPathIterator : IDisposable
 }
 
 #pragma warning restore CS0618
+
+// A java.awt.image.BufferedImage (also java.awt.Image, RenderedImage and
+// RenderableImage). As in Java, its pixels are a plain array on the managed
+// heap: it has no finalizer, owns no native object and needs no disposal, so
+// an image code drops is collected like any other garbage. Its layout is that
+// of a Skia raster with minimal row bytes and no colour space. Compat code
+// that draws into or reads the image through Skia wraps the pinned array in a
+// Skia bitmap for that call only (Lease) and releases the wrapper before it
+// returns; a Graphics2D over the image keeps its lease until dispose().
+public sealed class PdfCartonImage
+{
+    private Array? pixels;
+    // Set by RenderOnFirstUse until the render ran, with the lock it runs
+    // under and the thread running it.
+    private volatile Action<PdfCartonImage>? pendingRender;
+    private object? pendingRenderGate;
+    private int pendingRenderThread;
+    private volatile bool pixelsExposed;
+
+    // An image of info's size and pixel format (its colour space is not
+    // kept), all zero (transparent black), allocated on first access. Gray
+    // images keep one sbyte per pixel, others whole ints, which for a
+    // little-endian straight BGRA image are Java's packed 0xAARRGGBB pixels.
+    public PdfCartonImage(SKImageInfo info) : this(info, tracked: true)
+    {
+    }
+
+    // tracked: false for a compat-internal intermediate no Java code holds,
+    // which Tracked leaves out.
+    internal PdfCartonImage(SKImageInfo info, bool tracked)
+    {
+        if (info.Width <= 0 || info.Height <= 0)
+            throw new ArgumentException("Image dimensions must be positive.", nameof(info));
+        Width = info.Width;
+        Height = info.Height;
+        ColorType = info.ColorType;
+        AlphaType = info.AlphaType;
+        BytesPerPixel = info.BytesPerPixel;
+        RowBytes = info.RowBytes;
+        ByteCount = (long)RowBytes * Height;
+        // Skia's CPU paths compute pixel offsets as signed 32-bit values.
+        if (BytesPerPixel <= 0 || ByteCount > int.MaxValue)
+            throw new ArgumentException("Unsupported image size or pixel format.", nameof(info));
+        if (tracked && Tracked is { } list)
+        {
+            lock (list)
+            {
+                // Drops the collected images now and then, so the list stays
+                // about as long as the images still reachable.
+                if (list.Count >= 1024 && (list.Count & (list.Count - 1)) == 0)
+                    list.RemoveAll(reference => !reference.IsAlive);
+                list.Add(new WeakReference(this));
+            }
+        }
+    }
+
+    // Tests only: when set, every image made from then on (but compat-internal
+    // intermediates) is recorded weakly, so a test can count the images (and
+    // pixel bytes) still reachable.
+    internal static System.Collections.Generic.List<WeakReference>? Tracked;
+
+    public int Width { get; }
+    public int Height { get; }
+    internal SKColorType ColorType { get; }
+    internal SKAlphaType AlphaType { get; }
+    internal int BytesPerPixel { get; }
+    internal int RowBytes { get; }
+    internal long ByteCount { get; }
+    internal SKImageInfo Info => new(Width, Height, ColorType, AlphaType);
+
+    // Set by compat when Java code holds the pixel array itself
+    // (DataBufferInt/DataBufferByte.getData() returning the image's storage).
+    internal bool IntBacked { get; set; }
+    internal bool ByteBacked { get; set; }
+
+    // True once the array pixels were handed out to Java code.
+    internal bool PixelsExposed => pixelsExposed;
+    internal void ExposePixels() => pixelsExposed = true;
+
+    // The pixel array, allocated on first use; a due deferred render runs
+    // first (except when called from inside it).
+    internal Array Storage
+    {
+        get
+        {
+            if (pendingRender is not null) RunPendingRender();
+            var current = Volatile.Read(ref pixels);
+            if (current is not null) return current;
+            Array created = ColorType == SKColorType.Gray8 && RowBytes == Width
+                ? new sbyte[ByteCount]
+                : new int[(ByteCount + sizeof(int) - 1) / sizeof(int)];
+            return Interlocked.CompareExchange(ref pixels, created, null) ?? created;
+        }
+    }
+
+    internal bool HasPixels => Volatile.Read(ref pixels) is not null;
+
+    // The pixel bytes, row by row (RowBytes apart).
+    internal Span<byte> GetPixelSpan() => Storage switch
+    {
+        int[] ints => MemoryMarshal.AsBytes(ints.AsSpan()).Slice(0, (int)ByteCount),
+        sbyte[] bytes => MemoryMarshal.AsBytes(bytes.AsSpan()),
+        _ => throw new InvalidOperationException("Unknown pixel storage.")
+    };
+
+    // The int array of an int-backed image, the sbyte array of a
+    // byte-backed one, else null.
+    internal int[]? IntPixels => IntBacked ? Storage as int[] : null;
+    internal sbyte[]? BytePixels => ByteBacked ? Storage as sbyte[] : null;
+
+    // Defers render (run under a lock on gate) to the first access of the
+    // pixels, so an image only read through its raster never holds any.
+    internal void RenderOnFirstUse(object gate, Action<PdfCartonImage> render)
+    {
+        pendingRenderGate = gate;
+        pendingRender = render;
+    }
+
+    internal bool RenderPending => pendingRender is not null;
+
+    // Runs the deferred render now; false when none is due, or when called
+    // from inside the render.
+    internal bool RunPendingRender()
+    {
+        if (pendingRender is null ||
+            Volatile.Read(ref pendingRenderThread) == Environment.CurrentManagedThreadId)
+            return false;
+        lock (pendingRenderGate!)
+        {
+            var render = pendingRender;
+            if (render is null) return true;
+            Volatile.Write(ref pendingRenderThread, Environment.CurrentManagedThreadId);
+            try
+            {
+                render(this);
+                pendingRender = null;
+            }
+            finally
+            {
+                Volatile.Write(ref pendingRenderThread, 0);
+            }
+            return true;
+        }
+    }
+
+    // Fills every pixel with color as Skia erases. Pixels not allocated yet
+    // are zero, which is already a transparent (or, gray, black) erase.
+    internal void Erase(SKColor color)
+    {
+        if (!HasPixels && pendingRender is null &&
+            (color.Alpha == 0 && (uint)color == 0 ||
+             ColorType == SKColorType.Gray8 && color.Red == 0 && color.Green == 0 && color.Blue == 0))
+            return;
+        using var lease = Lease();
+        lease.Bitmap.Erase(color);
+    }
+
+    // Every pixel, row by row, as Skia reads it.
+    internal SKColor[] Pixels
+    {
+        get
+        {
+            using var lease = Lease();
+            return lease.Bitmap.Pixels;
+        }
+    }
+
+    // One pixel as Skia reads and writes it.
+    internal SKColor GetPixel(int x, int y)
+    {
+        using var lease = Lease();
+        return lease.Bitmap.GetPixel(x, y);
+    }
+
+    internal void SetPixel(int x, int y, SKColor color)
+    {
+        using var lease = Lease();
+        lease.Bitmap.SetPixel(x, y, color);
+    }
+
+    // Wraps the pinned pixels in a Skia bitmap until the lease is disposed.
+    internal PdfCartonPixelLease Lease() => new(this);
+
+    // A copy of the pixels as a new Skia bitmap the caller owns.
+    public SKBitmap ToSKBitmap()
+    {
+        var bitmap = new SKBitmap(Info);
+        GetPixelSpan().CopyTo(bitmap.GetPixelSpan());
+        bitmap.NotifyPixelsChanged();
+        return bitmap;
+    }
+
+    // The image encoded as PNG (or another format Skia encodes).
+    public byte[] EncodePng() => Encode(SKEncodedImageFormat.Png, 100);
+
+    public byte[] Encode(SKEncodedImageFormat format, int quality)
+    {
+        using var lease = Lease();
+        using var pixmap = lease.Bitmap.PeekPixels();
+        using var data = pixmap?.Encode(format, quality) ??
+            throw new InvalidOperationException($"Unable to encode the image as {format}.");
+        return data.ToArray();
+    }
+
+    // A copy of a Skia bitmap's pixels as an image, converted to straight
+    // BGRA (Gray8 stays gray).
+    public static PdfCartonImage FromSKBitmap(SKBitmap bitmap)
+    {
+        if (bitmap is null) throw new ArgumentNullException(nameof(bitmap));
+        var source = bitmap.Info;
+        var image = new PdfCartonImage(new SKImageInfo(
+            source.Width,
+            source.Height,
+            source.ColorType == SKColorType.Gray8 ? SKColorType.Gray8 : SKColorType.Bgra8888,
+            source.ColorType == SKColorType.Gray8 || source.AlphaType == SKAlphaType.Opaque
+                ? SKAlphaType.Opaque
+                : SKAlphaType.Unpremul));
+        using var lease = image.Lease();
+        using var from = bitmap.PeekPixels();
+        using var to = lease.Bitmap.PeekPixels();
+        if (from is null || to is null || !from.ReadPixels(to))
+            throw new InvalidOperationException("Unable to read the bitmap's pixels.");
+        return image;
+    }
+}
+
+// An image's pixel array pinned and wrapped in a Skia bitmap (and a canvas
+// on request) until Dispose, which releases the bitmap and canvas before it
+// unpins the array. Compat disposes every lease before returning, except a
+// Graphics2D's, which lives until Graphics2D.dispose(). A lease left
+// undisposed (an undisposed Graphics2D) is finalized at the first collection
+// after it became unreachable, which releases the canvas and unpins the
+// array, so the next collection can free the pixels.
+internal sealed class PdfCartonPixelLease : IDisposable
+{
+    private GCHandle handle;
+    private SKCanvas? canvas;
+    private int disposed;
+
+    internal PdfCartonPixelLease(PdfCartonImage image)
+    {
+        Image = image;
+        var pixels = image.Storage;
+        handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+        Bitmap = new SKBitmap();
+        if (!Bitmap.InstallPixels(image.Info, handle.AddrOfPinnedObject(), image.RowBytes))
+        {
+            Dispose();
+            throw new InvalidOperationException("Unable to wrap the image's pixels.");
+        }
+    }
+
+    internal PdfCartonImage Image { get; }
+    internal SKBitmap Bitmap { get; }
+    internal SKCanvas Canvas => canvas ??= new SKCanvas(Bitmap);
+
+    public void Dispose()
+    {
+        Release();
+        GC.SuppressFinalize(this);
+    }
+
+    ~PdfCartonPixelLease() => Release();
+
+    private void Release()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        canvas?.Dispose();
+        Bitmap?.Dispose();
+        if (handle.IsAllocated) handle.Free();
+    }
+}

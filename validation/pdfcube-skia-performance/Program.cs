@@ -3,6 +3,7 @@ using System.Diagnostics;
 using DripSharp.Runtime;
 using DripSharp.PdfCarton.Pdmodel.Graphics.Blend;
 using SkiaSharp;
+using PdfCartonImage = DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage;
 
 internal static class Program
 {
@@ -35,7 +36,7 @@ internal static class Program
         foreach (var alpha in new[] { SKAlphaType.Opaque, SKAlphaType.Unpremul, SKAlphaType.Premul })
         {
             if (format is SKColorType.Gray8 or SKColorType.Rgb565 && alpha != SKAlphaType.Opaque) continue;
-            using var bitmap = new SKBitmap(new SKImageInfo(5, 3, format, alpha), 64);
+            var bitmap = new PdfCartonImage(new SKImageInfo(5, 3, format, alpha));
             bitmap.GetPixelSpan().Fill(0x5a);
             var raster = PdfCartonFontCompat.GetRaster(bitmap);
             var bands = raster.NumberOfBands;
@@ -51,7 +52,6 @@ internal static class Program
             for (var i = 0; i < row.Length; i++)
                 Check(Math.Abs(result[i] - row[i]) <= (format == SKColorType.Rgb565 ? 7 : alpha == SKAlphaType.Premul ? 1 : 0),
                     $"{format}/{alpha}: channel {i}: {result[i]} != {row[i]}");
-            Check(bitmap.GetPixelSpan()[64 + 5 * bitmap.BytesPerPixel] == 0x5a, "Row padding overwritten");
             Check(bitmap.GetPixelSpan()[0] == 0x5a, "Unrelated pixel overwritten");
             // A complete pixel must retain RGB when transitioning from transparent to translucent.
             if (bands == 4)
@@ -71,7 +71,7 @@ internal static class Program
 
     private static void PremultipliedReads()
     {
-        using var bitmap = new SKBitmap(new SKImageInfo(256, 256, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var bitmap = new PdfCartonImage(new SKImageInfo(256, 256, SKColorType.Bgra8888, SKAlphaType.Premul));
         var bytes = bitmap.GetPixelSpan();
         for (var alpha = 0; alpha < 256; alpha++)
             for (var x = 0; x < 256; x++)
@@ -90,9 +90,9 @@ internal static class Program
 
     private static void ShapeAndClipBounds()
     {
-        using var direct = PdfCartonFontCompat.CreateBitmap(128, 128, PdfCartonFontCompat.TYPE_INT_RGB);
-        using var painted = PdfCartonFontCompat.CreateBitmap(128, 128, PdfCartonFontCompat.TYPE_INT_RGB);
-        void Draw(SKBitmap bitmap, bool usePaint)
+        var direct = PdfCartonFontCompat.CreateBitmap(128, 128, PdfCartonFontCompat.TYPE_INT_RGB);
+        var painted = PdfCartonFontCompat.CreateBitmap(128, 128, PdfCartonFontCompat.TYPE_INT_RGB);
+        void Draw(PdfCartonImage bitmap, bool usePaint)
         {
             bitmap.Erase(SKColors.White);
             using var graphics = new PdfCartonGraphics2D(bitmap);
@@ -128,10 +128,10 @@ internal static class Program
     {
         foreach (var join in new[] { JavaBasicStroke.JOIN_BEVEL, JavaBasicStroke.JOIN_ROUND, JavaBasicStroke.JOIN_MITER })
         {
-            using var direct = PdfCartonFontCompat.CreateBitmap(160, 160, PdfCartonFontCompat.TYPE_INT_RGB);
-            using var painted = PdfCartonFontCompat.CreateBitmap(160, 160, PdfCartonFontCompat.TYPE_INT_RGB);
-            using var blended = PdfCartonFontCompat.CreateBitmap(160, 160, PdfCartonFontCompat.TYPE_INT_RGB);
-            void Draw(SKBitmap bitmap, bool usePaint, bool useBlend)
+            var direct = PdfCartonFontCompat.CreateBitmap(160, 160, PdfCartonFontCompat.TYPE_INT_RGB);
+            var painted = PdfCartonFontCompat.CreateBitmap(160, 160, PdfCartonFontCompat.TYPE_INT_RGB);
+            var blended = PdfCartonFontCompat.CreateBitmap(160, 160, PdfCartonFontCompat.TYPE_INT_RGB);
+            void Draw(PdfCartonImage bitmap, bool usePaint, bool useBlend)
             {
                 bitmap.Erase(SKColors.White);
                 using var graphics = new PdfCartonGraphics2D(bitmap);
@@ -168,21 +168,23 @@ internal static class Program
 
     private static void CachedDrawing()
     {
-        using var source = PdfCartonFontCompat.CreateBitmap(4, 4, PdfCartonFontCompat.TYPE_INT_ARGB);
+        var source = PdfCartonFontCompat.CreateBitmap(4, 4, PdfCartonFontCompat.TYPE_INT_ARGB);
         using var target = new SKBitmap(8, 4);
         using var canvas = new SKCanvas(target);
         var raster = PdfCartonFontCompat.GetRaster(source);
         raster.SetPixel(0, 0, new[] { 255, 0, 0, 255 });
-        canvas.DrawBitmap(source, 0, 0, SKSamplingOptions.Default);
+        using (var red = source.ToSKBitmap())
+            canvas.DrawBitmap(red, 0, 0, SKSamplingOptions.Default);
         raster.SetPixel(0, 0, new[] { 0, 255, 0, 255 });
-        canvas.DrawBitmap(source, 4, 0, SKSamplingOptions.Default);
+        using (var green = source.ToSKBitmap())
+            canvas.DrawBitmap(green, 4, 0, SKSamplingOptions.Default);
         Check(target.GetPixel(0, 0).Red == 255 && target.GetPixel(4, 0).Green == 255,
             "Skia drew cached pixels after raster mutation");
     }
 
     private static void BoundedPaintAndBlend()
     {
-        using var bitmap = PdfCartonFontCompat.CreateBitmap(1024, 1024, PdfCartonFontCompat.TYPE_INT_RGB);
+        var bitmap = PdfCartonFontCompat.CreateBitmap(1024, 1024, PdfCartonFontCompat.TYPE_INT_RGB);
         bitmap.Erase(SKColors.White);
         using var graphics = new PdfCartonGraphics2D(bitmap);
         graphics.SetRenderingHint(PdfCartonRenderingHints.KEY_ANTIALIASING, PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
@@ -203,7 +205,7 @@ internal static class Program
 
     private static void BinaryBounds()
     {
-        using var bitmap = PdfCartonFontCompat.CreateBitmap(512, 512, PdfCartonFontCompat.TYPE_BYTE_BINARY);
+        var bitmap = PdfCartonFontCompat.CreateBitmap(512, 512, PdfCartonFontCompat.TYPE_BYTE_BINARY);
         using var graphics = new PdfCartonGraphics2D(bitmap);
         graphics.SetColor(SKColors.White);
         graphics.FillRect(100, 110, 3, 4);
@@ -213,7 +215,7 @@ internal static class Program
     private sealed class RecordingPaint : JavaPaint, JavaPaintContext
     {
         public SKRectI Bounds;
-        private SKBitmap? image;
+        private PdfCartonImage? image;
         public JavaPaintContext CreateContext(JavaColorModel colorModel, SKRectI deviceBounds, SKRect userBounds,
             SKMatrix transform, PdfCartonRenderingHints hints) => this;
         public int GetTransparency() => PdfCartonTransparency.OPAQUE;
@@ -221,17 +223,16 @@ internal static class Program
         public JavaRaster GetRaster(int x, int y, int width, int height)
         {
             Bounds = new SKRectI(x, y, x + width, y + height);
-            image?.Dispose();
             image = PdfCartonFontCompat.CreateBitmap(width, height, PdfCartonFontCompat.TYPE_INT_RGB);
             image.Erase(new SKColor(80, 120, 160));
             return PdfCartonFontCompat.GetRaster(image);
         }
-        public void Dispose() => image?.Dispose();
+        public void Dispose() { }
     }
 
     private static void Benchmark()
     {
-        using var bitmap = PdfCartonFontCompat.CreateBitmap(512, 512, PdfCartonFontCompat.TYPE_INT_ARGB);
+        var bitmap = PdfCartonFontCompat.CreateBitmap(512, 512, PdfCartonFontCompat.TYPE_INT_ARGB);
         var raster = PdfCartonFontCompat.GetRaster(bitmap);
         var samples = new int[512 * 512 * 4];
         for (var i = 0; i < samples.Length; i += 4)
@@ -241,7 +242,7 @@ internal static class Program
         var timer = Stopwatch.StartNew();
         for (var i = 0; i < 3; i++) raster.SetPixels(0, 0, 512, 512, samples);
         Console.WriteLine($"Raster writes: {timer.Elapsed.TotalMilliseconds:F1} ms, {GC.GetAllocatedBytesForCurrentThread() - allocated:N0} allocated bytes (3 x 512²)");
-        using var page = PdfCartonFontCompat.CreateBitmap(1024, 1024, PdfCartonFontCompat.TYPE_INT_RGB);
+        var page = PdfCartonFontCompat.CreateBitmap(1024, 1024, PdfCartonFontCompat.TYPE_INT_RGB);
         using var graphics = new PdfCartonGraphics2D(page);
         graphics.SetComposite(BlendComposite.GetInstance(BlendMode.Multiply, 1));
         graphics.SetColor(SKColors.Red);

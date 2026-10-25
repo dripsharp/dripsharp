@@ -19,6 +19,9 @@ using CoreJ2K.j2k.util;
 using JBig2Decoder.NETStandard;
 using SkiaSharp;
 
+// The managed image type lives in the FontBox assembly only.
+using PdfCartonImage = global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage;
+
 namespace DripSharp.Runtime;
 
 internal static class PdfCartonImageCodecs
@@ -31,7 +34,7 @@ internal static class PdfCartonImageCodecs
     internal static JavaRaster? ReadJpegSamples(byte[] encoded) =>
         PdfCartonJpegSamples.Decode(encoded);
 
-    internal static SKBitmap Decode(string formatName, byte[] encoded)
+    internal static PdfCartonImage Decode(string formatName, byte[] encoded)
     {
         ArgumentNullException.ThrowIfNull(formatName);
         ArgumentNullException.ThrowIfNull(encoded);
@@ -90,7 +93,7 @@ internal static class PdfCartonImageCodecs
         }
     }
 
-    private static SKBitmap DecodeJbig2(byte[] encoded)
+    private static PdfCartonImage DecodeJbig2(byte[] encoded)
     {
         var page = Jbig2PageReader.Read(encoded);
         var width = (int)page.GetWidth();
@@ -226,7 +229,7 @@ internal static class PdfCartonImageCodecs
                 .CreateDelegate(typeof(T));
     }
 
-    private static SKBitmap DecodeJpx(byte[] encoded)
+    private static PdfCartonImage DecodeJpx(byte[] encoded)
     {
         var normalized = JpxTilePartCounts.Normalize(JpxChannelDefinitions.Normalize(encoded));
         var palette = JpxIndexPalette.Read(normalized);
@@ -270,7 +273,7 @@ internal static class PdfCartonImageCodecs
 
     // A palettized JP2 decodes to its palette indexes, as jai-imageio-jpeg2000
     // 1.4.0 reads it for Java PDFBox, so JPXFilter writes the indexes.
-    private static SKBitmap DecodeIndexedJpx(byte[] encoded, JpxIndexPalette palette)
+    private static PdfCartonImage DecodeIndexedJpx(byte[] encoded, JpxIndexPalette palette)
     {
         var parameters = new ParameterList(J2kImage.GetDefaultDecoderParameterList());
         parameters["nocolorspace"] = "on";

@@ -379,31 +379,33 @@ internal static class Support
     internal static int ColorRgb(global::DripSharp.Runtime.JavaColor color) =>
         unchecked((int)(uint)(global::SkiaSharp.SKColor)color);
 
-    internal static global::SkiaSharp.SKBitmap CreateCompatibleImage(
+    internal static global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage CreateCompatibleImage(
         int width, int height, int transparency) =>
         global::DripSharp.Runtime.PdfCartonFontCompat.CreateCompatibleImage(
             width, height, transparency);
 
-    internal static bool IsAlphaPremultiplied(global::SkiaSharp.SKBitmap image) =>
+    internal static bool IsAlphaPremultiplied(global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage image) =>
         image.AlphaType == global::SkiaSharp.SKAlphaType.Premul;
 
-    internal static global::SkiaSharp.SKBitmap Subimage(
-        global::SkiaSharp.SKBitmap source,
+    // A copy of the region (the tests only read subimages).
+    internal static global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage Subimage(
+        global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage source,
         int x,
         int y,
         int width,
         int height)
     {
-        var result = new global::SkiaSharp.SKBitmap(
-            width, height, source.ColorType, source.AlphaType);
-        if (!source.ExtractSubset(
-                result,
-                new global::SkiaSharp.SKRectI(x, y, x + width, y + height)))
-        {
-            result.Dispose();
+        if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
+            (long)x + width > source.Width || (long)y + height > source.Height)
             throw new global::System.ArgumentException(
                 "Requested subimage is outside the source image.");
-        }
+        var result = new global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage(source.Info.WithSize(width, height));
+        var from = source.GetPixelSpan();
+        var to = result.GetPixelSpan();
+        var rowLength = width * source.BytesPerPixel;
+        for (int row = 0; row < height; row++)
+            from.Slice((y + row) * source.RowBytes + x * source.BytesPerPixel, rowLength)
+                .CopyTo(to.Slice(row * result.RowBytes, rowLength));
         global::DripSharp.Runtime.PdfCartonFontCompat.RegisterImageType(
             result,
             global::DripSharp.Runtime.PdfCartonFontCompat.GetImageType(source));
@@ -411,7 +413,7 @@ internal static class Support
     }
 
     internal static global::DripSharp.Runtime.JavaRaster CopyImageData(
-        global::SkiaSharp.SKBitmap source,
+        global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage source,
         global::DripSharp.Runtime.JavaRaster? destination)
     {
         global::DripSharp.Runtime.JavaRaster sourceRaster =
@@ -461,7 +463,7 @@ internal static class Support
             "Unsupported rectangular raster data layout.", nameof(values));
     }
 
-    internal static global::SkiaSharp.SKBitmap ReadImage(global::System.Uri uri)
+    internal static global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage ReadImage(global::System.Uri uri)
     {
         using global::System.IO.Stream input = uri.IsFile
             ? global::System.IO.File.OpenRead(uri.LocalPath)
@@ -470,7 +472,7 @@ internal static class Support
     }
 
     internal static bool WriteImage(
-        global::SkiaSharp.SKBitmap image,
+        global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage image,
         string format,
         global::DripSharp.Runtime.JavaFile destination)
     {
@@ -480,20 +482,18 @@ internal static class Support
                 ? global::SkiaSharp.SKEncodedImageFormat.Jpeg
                 : global::SkiaSharp.SKEncodedImageFormat.Png;
         global::System.IO.Directory.CreateDirectory(destination.DirectoryName!);
-        using global::SkiaSharp.SKImage encodedImage =
-            global::SkiaSharp.SKImage.FromBitmap(image);
-        using global::SkiaSharp.SKData data = encodedImage.Encode(encodedFormat, 100);
+        byte[] data = image.Encode(encodedFormat, 100);
         using global::System.IO.Stream output = new global::System.IO.FileStream(
             destination.OpenPath(),
             global::System.IO.FileMode.Create,
             global::System.IO.FileAccess.Write,
             global::System.IO.FileShare.None);
-        data.SaveTo(output);
+        output.Write(data, 0, data.Length);
         return true;
     }
 
     internal static bool WriteImage(
-        global::SkiaSharp.SKBitmap image,
+        global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage image,
         string format,
         global::System.IO.Stream output)
     {
@@ -502,10 +502,8 @@ internal static class Support
             format.Equals("jpeg", global::System.StringComparison.OrdinalIgnoreCase)
                 ? global::SkiaSharp.SKEncodedImageFormat.Jpeg
                 : global::SkiaSharp.SKEncodedImageFormat.Png;
-        using global::SkiaSharp.SKImage encodedImage =
-            global::SkiaSharp.SKImage.FromBitmap(image);
-        using global::SkiaSharp.SKData data = encodedImage.Encode(encodedFormat, 100);
-        data.SaveTo(output);
+        byte[] data = image.Encode(encodedFormat, 100);
+        output.Write(data, 0, data.Length);
         return true;
     }
 

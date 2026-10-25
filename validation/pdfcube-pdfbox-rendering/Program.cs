@@ -8,6 +8,7 @@ using DripSharp.Runtime;
 using DripSharp.PdfCarton;
 using DripSharp.PdfCarton.Rendering;
 using SkiaSharp;
+using PdfCartonImage = DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage;
 
 internal static class Program
 {
@@ -67,13 +68,12 @@ internal static class Program
 
     private static void RenderGraphics2D(string outputRoot)
     {
-        using var bitmap = new SKBitmap(
+        var bitmap = new PdfCartonImage(
             new SKImageInfo(
                 64,
                 64,
                 SKColorType.Bgra8888,
                 SKAlphaType.Unpremul));
-        bitmap.Erase(SKColors.Transparent);
         using (var graphics = new PdfCartonGraphics2D(bitmap))
         {
             graphics.SetRenderingHint(
@@ -110,7 +110,7 @@ internal static class Program
                 JavaAlphaComposite.GetInstance(
                     JavaAlphaComposite.SRC_OVER,
                     1f));
-            graphics.SetPaint(new JavaTexturePaint(tile, new SKRect(0, 0, 8, 8)));
+            graphics.SetPaint(new JavaTexturePaint(PdfCartonImage.FromSKBitmap(tile), new SKRect(0, 0, 8, 8)));
             using (var triangleBuilder = new SKPathBuilder())
             {
                 triangleBuilder.MoveTo(4, 56);
@@ -147,7 +147,7 @@ internal static class Program
                 TransY = 5,
                 Persp2 = 1
             };
-            graphics.DrawImage(stamp, imageTransform, null);
+            graphics.DrawImage(PdfCartonImage.FromSKBitmap(stamp), imageTransform, null);
         }
 
         WriteImage(outputRoot, "graphics2d", bitmap);
@@ -172,7 +172,7 @@ internal static class Program
         var cropBox = page.GetCropBox();
         var annotations = page.GetAnnotations().Count;
         var renderer = new PDFRenderer(document);
-        using var image = renderer.RenderImage(
+        var image = renderer.RenderImage(
             fixture.PageIndex,
             fixture.Scale,
             ImageType.Argb);
@@ -193,8 +193,9 @@ internal static class Program
     private static void WriteImage(
         string outputRoot,
         string id,
-        SKBitmap image)
+        PdfCartonImage rendered)
     {
+        using var image = rendered.ToSKBitmap();
         var bytes = new byte[checked(image.Width * image.Height * 4)];
         var offset = 0;
         for (var y = 0; y < image.Height; y++)

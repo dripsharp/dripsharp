@@ -6,6 +6,9 @@
 using System;
 using SkiaSharp;
 
+// The managed image type lives in the FontBox assembly only.
+using PdfCartonImage = global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage;
+
 namespace DripSharp.Runtime;
 
 internal static class PdfCartonImageCodecs
@@ -29,7 +32,7 @@ internal static class PdfCartonImageCodecs
         return null;
     }
 
-    internal static SKBitmap Decode(string formatName, byte[] encoded) =>
+    internal static PdfCartonImage Decode(string formatName, byte[] encoded) =>
         throw new NotSupportedException(
             $"The `{formatName}` image codec is not part of this product.");
 }

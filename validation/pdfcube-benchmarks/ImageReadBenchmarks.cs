@@ -37,14 +37,14 @@ public class ImageReadBenchmarks
     [Benchmark]
     public int FullImage()
     {
-        using var bitmap = image!.GetImage(new SKRectI(0, 0, Width, Height), 1);
+        var bitmap = image!.GetImage(new SKRectI(0, 0, Width, Height), 1);
         return bitmap.Width;
     }
 
     [Benchmark]
     public int Subsampled2()
     {
-        using var bitmap = image!.GetImage(new SKRectI(0, 0, Width, Height), 2);
+        var bitmap = image!.GetImage(new SKRectI(0, 0, Width, Height), 2);
         return bitmap.Width;
     }
 

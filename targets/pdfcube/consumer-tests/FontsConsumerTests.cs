@@ -26,11 +26,10 @@ public sealed class RasterTests
     public void BgraBulkAccessPreservesEveryByteAndSample()
     {
         foreach (var width in Enumerable.Range(1, 35).Concat(new[] { 63, 64, 65, 255, 256, 257 }))
-        foreach (var padding in new[] { 0, 4, 28 })
         {
             const int height = 5;
-            using var expected = Bitmap(width + 2, height + 2, padding);
-            using var actual = Bitmap(width + 2, height + 2, padding);
+            var expected = Bitmap(width + 2, height + 2);
+            var actual = Bitmap(width + 2, height + 2);
             expected.GetPixelSpan().Fill(0xa5);
             actual.GetPixelSpan().Fill(0xa5);
             var reference = DripSharp.Runtime.PdfCartonFontCompat.GetRaster(expected);
@@ -72,7 +71,7 @@ public sealed class RasterTests
     [Fact]
     public void BgraBulkConversionPreservesEveryRedBluePair()
     {
-        using var bitmap = Bitmap(257, 256, 8);
+        var bitmap = Bitmap(257, 256);
         var raster = DripSharp.Runtime.PdfCartonFontCompat.GetRaster(bitmap);
         var samples = new int[bitmap.Width * bitmap.Height * 4];
         for (var pixel = 0; pixel < samples.Length / 4; pixel++)
@@ -97,9 +96,6 @@ public sealed class RasterTests
         }
         Assert.Equal(samples.Select(value => (int)unchecked((byte)value)),
             raster.GetPixels(0, 0, bitmap.Width, bitmap.Height, null));
-        for (var row = 0; row < bitmap.Height - 1; row++)
-            Assert.All(bytes.Slice(row * bitmap.RowBytes + bitmap.Width * 4, 8).ToArray(),
-                value => Assert.Equal(0xa5, value));
     }
 
     [Fact]
@@ -113,8 +109,8 @@ public sealed class RasterTests
             if (format is SkiaSharp.SKColorType.Gray8 or SkiaSharp.SKColorType.Rgb565 &&
                 alpha != SkiaSharp.SKAlphaType.Opaque) continue;
             var info = new SkiaSharp.SKImageInfo(19, 5, format, alpha);
-            using var expected = new SkiaSharp.SKBitmap(info, 128);
-            using var actual = new SkiaSharp.SKBitmap(info, 128);
+            var expected = new DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage(info);
+            var actual = new DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage(info);
             expected.GetPixelSpan().Fill(0x5a);
             actual.GetPixelSpan().Fill(0x5a);
             var reference = DripSharp.Runtime.PdfCartonFontCompat.GetRaster(expected);
@@ -167,7 +163,7 @@ public sealed class RasterTests
     [Fact]
     public void BoundsAndEmptyRectanglesPreserveBuffers()
     {
-        using var bitmap = Bitmap(19, 5, 12);
+        var bitmap = Bitmap(19, 5);
         bitmap.GetPixelSpan().Fill(0xa5);
         var raster = DripSharp.Runtime.PdfCartonFontCompat.GetRaster(bitmap);
         var before = bitmap.GetPixelSpan().ToArray();
@@ -194,16 +190,18 @@ public sealed class RasterTests
     [Fact]
     public void DrawingObservesBulkMutationAndTheBitmapRemainsUsable()
     {
-        using var source = Bitmap(19, 3, 12);
+        var source = Bitmap(19, 3);
         using var target = new SkiaSharp.SKBitmap(38, 3);
         using var canvas = new SkiaSharp.SKCanvas(target);
         var raster = DripSharp.Runtime.PdfCartonFontCompat.GetRaster(source);
         int[] Solid(int red, int green) => Enumerable.Range(0, 19 * 3)
             .SelectMany(_ => new[] { red, green, 0, 255 }).ToArray();
         raster.SetPixels(0, 0, 19, 3, Solid(255, 0));
-        canvas.DrawBitmap(source, 0, 0, SkiaSharp.SKSamplingOptions.Default);
+        using (var red = source.ToSKBitmap())
+            canvas.DrawBitmap(red, 0, 0, SkiaSharp.SKSamplingOptions.Default);
         raster.SetPixels(0, 0, 19, 3, Solid(0, 255));
-        canvas.DrawBitmap(source, 19, 0, SkiaSharp.SKSamplingOptions.Default);
+        using (var lime = source.ToSKBitmap())
+            canvas.DrawBitmap(lime, 19, 0, SkiaSharp.SKSamplingOptions.Default);
         Assert.Equal(SkiaSharp.SKColors.Red, target.GetPixel(0, 0));
         Assert.Equal(SkiaSharp.SKColors.Lime, target.GetPixel(19, 0));
         Assert.Equal(SkiaSharp.SKColors.Lime, target.GetPixel(37, 2));
@@ -212,29 +210,45 @@ public sealed class RasterTests
         Assert.Equal(new[] { 0, 0, 255, 255 }, raster.GetPixels(0, 0, 1, 1, null));
     }
 
+    // FromSKBitmap copies the rows of any Skia bitmap (padded ones too) into
+    // an image of its own: gray stays gray, anything else becomes straight
+    // BGRA, and the source may change or go away afterwards.
     [Fact]
-    public void RetainedRasterHonorsReallocatedBitmapBounds()
+    public void FromSkiaBitmapCopiesRowsAndOwnsItsPixels()
     {
-        using var bitmap = Bitmap(19, 3, 12);
-        var raster = DripSharp.Runtime.PdfCartonFontCompat.GetRaster(bitmap);
-        Assert.True(bitmap.TryAllocPixels(new SkiaSharp.SKImageInfo(4, 3,
-            SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Unpremul), 32));
-        bitmap.GetPixelSpan().Fill(0xa5);
-        Assert.Throws<DripSharp.Runtime.ArgumentOutOfRangeException>(() => raster.SetPixels(4, 0, 4, 1, Samples(4)));
-        Assert.Throws<DripSharp.Runtime.ArgumentOutOfRangeException>(() => raster.GetPixels(4, 0, 4, 1, null));
-        Assert.All(bitmap.GetPixelSpan().ToArray(), value => Assert.Equal(0xa5, value));
-        Assert.Throws<DripSharp.Runtime.ArgumentOutOfRangeException>(() => raster.SetPixels(3, 0, 2, 1,
-            new[] { 255, 0, 0, 255, 0, 255, 0, 255 }));
-        Assert.Equal(SkiaSharp.SKColors.Red, bitmap.GetPixel(3, 0));
-        Assert.Equal(0xa5, bitmap.GetPixelSpan()[16]);
-        var output = Enumerable.Repeat(-1, 8).ToArray();
-        Assert.Throws<DripSharp.Runtime.ArgumentOutOfRangeException>(() => raster.GetPixels(3, 0, 2, 1, output));
-        Assert.Equal(new[] { 255, 0, 0, 255, -1, -1, -1, -1 }, output);
+        var gray = new SkiaSharp.SKImageInfo(5, 3, SkiaSharp.SKColorType.Gray8, SkiaSharp.SKAlphaType.Opaque);
+        var rgba = new SkiaSharp.SKImageInfo(5, 3, SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
+        var premul = new SkiaSharp.SKImageInfo(5, 3, SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Premul);
+        foreach (var (info, rowBytes) in new[] { (gray, 12), (rgba, 28), (premul, 20) })
+        {
+            var source = new SkiaSharp.SKBitmap(info, rowBytes);
+            var colors = new SkiaSharp.SKColor[15];
+            for (var y = 0; y < 3; y++)
+            for (var x = 0; x < 5; x++)
+            {
+                var level = (byte)(40 * x + 10 * y);
+                var color = info.ColorType == SkiaSharp.SKColorType.Gray8
+                    ? new SkiaSharp.SKColor(level, level, level)
+                    : new SkiaSharp.SKColor(level, (byte)(255 - level), 90,
+                        info.AlphaType == SkiaSharp.SKAlphaType.Premul ? (byte)255 : (byte)(100 + 30 * x));
+                source.SetPixel(x, y, color);
+                colors[y * 5 + x] = source.GetPixel(x, y);
+            }
+            var image = DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage.FromSKBitmap(source);
+            source.Erase(SkiaSharp.SKColors.Blue);
+            source.Dispose();
+            Assert.Equal((5, 3), (image.Width, image.Height));
+            Assert.Equal(info.ColorType == SkiaSharp.SKColorType.Gray8
+                ? SkiaSharp.SKColorType.Gray8 : SkiaSharp.SKColorType.Bgra8888, image.ColorType);
+            using var copy = image.ToSKBitmap();
+            for (var index = 0; index < colors.Length; index++)
+                Assert.Equal(colors[index], copy.GetPixel(index % 5, index / 5));
+        }
     }
 
-    private static SkiaSharp.SKBitmap Bitmap(int width, int height, int padding) =>
+    private static DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage Bitmap(int width, int height) =>
         new(new SkiaSharp.SKImageInfo(width, height, SkiaSharp.SKColorType.Bgra8888,
-            SkiaSharp.SKAlphaType.Unpremul), width * 4 + padding);
+            SkiaSharp.SKAlphaType.Unpremul));
 
     private static int[] Samples(int pixels)
     {

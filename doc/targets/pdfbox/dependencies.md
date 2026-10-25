@@ -140,9 +140,12 @@ strokes, PDF blend modes, and common JPEG/PNG-style codecs. Map `GeneralPath`,
 `Path2D` and `Area` to one managed path type of the compatibility layer, defined
 once in the FontBox assembly (segments as managed data, no native memory; the
 `Graphics2D` facade copies them into an `SKPath` it reuses whenever Skia draws,
-clips or intersects them), `AffineTransform` to `SKMatrix`, mutable
-`BufferedImage` to `SKBitmap`, and `Graphics2D` to a PdfCarton compatibility
-facade over `SKCanvas`.
+clips or intersects them), `AffineTransform` to `SKMatrix`, `BufferedImage`
+(and `Image`, `RenderedImage`) to one managed image type, `PdfCartonImage`,
+also defined once in the FontBox assembly (pixels in a plain managed array, no
+finalizer, no native object; compatibility code wraps them in an `SKBitmap`
+only for the length of one call, or for a `Graphics2D` until its `dispose()`),
+and `Graphics2D` to a PdfCarton compatibility facade over `SKCanvas`.
 Use the CPU raster backend for canonical differential validation.
 
 SkiaSharp is not a Java2D or general `Raster` implementation. PdfCarton must keep

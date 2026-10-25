@@ -9,7 +9,7 @@ namespace PdfCarton.Benchmarks;
 public class RasterBenchmarks
 {
     private const int Size = 512;
-    private SKBitmap bitmap = null!;
+    private PdfCartonImage bitmap = null!;
     private JavaRaster raster = null!;
     private int[] samples = null!;
     private int[] destination = null!;
@@ -46,7 +46,7 @@ public class RasterBenchmarks
     public int[] ReadPixelsAllocated() => raster.GetPixels(0, 0, Size, Size, null);
 
     [GlobalCleanup]
-    public void Cleanup() => bitmap?.Dispose();
+    public void Cleanup() { }
 }
 
 [MemoryDiagnoser]
@@ -54,7 +54,7 @@ public class SmallBlendBenchmarks
 {
     private const int GridSize = 64;
     private const int BlendCount = GridSize * GridSize;
-    private SKBitmap page = null!;
+    private PdfCartonImage page = null!;
     private PdfCartonGraphics2D graphics = null!;
 
     [GlobalSetup]
@@ -91,6 +91,5 @@ public class SmallBlendBenchmarks
     public void Cleanup()
     {
         graphics?.Dispose();
-        page?.Dispose();
     }
 }

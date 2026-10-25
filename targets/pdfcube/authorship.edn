@@ -25,9 +25,9 @@
    :source-inventory-sha256
    "7d2d928b66c8a7d5ed00dbb7b2a45deb05a33e53d3290c3c9c9681b2ad682b36"
    :public-types
-   {:count 3
+   {:count 4
     :sha256
-    "fff2d48937ce1cd8f61c8ea263497af6cd905678992499b23da976b4381bf8e1"}}
+    "f15e10f0b6d4f642ef672d4814f321ef8d4652bdd134adee2a035891a2cdc3c5"}}
   {:id :pdfcube/area-intersection
    :kind :file
    :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.AreaIntersection.cs"

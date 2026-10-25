@@ -144,7 +144,7 @@
           [["org.apache.pdfbox.pdmodel.graphics.color.PDDeviceN" "toRGBWithAttributes" 1
             "return rgbImage;"]
            ["org.apache.pdfbox.filter.DCTFilter" "readImageRaster" 2
-            "global::SkiaSharp.SKBitmap image = reader.Read(0, irp);"]
+            "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage image = reader.Read(0, irp);"]
            ["org.apache.pdfbox.filter.JPXFilter" "decode" 5
             "return result;"]
            ["org.apache.pdfbox.filter.JPXFilter" "readJPX" 3
@@ -152,7 +152,7 @@
            ["org.apache.pdfbox.filter.JBIG2Filter" "decode" 5
             "image = reader.Read(0, irp);"]
            ["org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace" "toRGBImageAWT" 2
-            (str "global::SkiaSharp.SKBitmap src = "
+            (str "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage src = "
                  "global::DripSharp.Runtime.PdfCartonFontCompat.CreateImage("
                  "colorModel, raster, false, "
                  "(global::DripSharp.Runtime.JavaHashtable<object, object>)default!);")]
@@ -173,7 +173,7 @@
 (deftest image-masking-and-drawing-are-emitted-unchanged
   (doseq [[type-name source-name parameter-count statement]
           [["org.apache.pdfbox.rendering.PageDrawer" "drawImage" 1
-            (str "global::SkiaSharp.SKBitmap renderedPaint = "
+            (str "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage renderedPaint = "
                  "global::DripSharp.Runtime.PdfCartonFontCompat.CreateBitmap(w, h, "
                  "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB);")]
            ["org.apache.pdfbox.rendering.PageDrawer" "drawBufferedImage" 3
@@ -207,14 +207,14 @@
         compat "global::DripSharp.Runtime.PdfCartonFontCompat."]
     (doseq [[kind type-name source-name parameter-count statement]
             [[:method "org.apache.pdfbox.rendering.PageDrawer" "applySoftMaskToPaint" 2
-              "global::SkiaSharp.SKBitmap image = transparencyGroup.getImage();"]
+              "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage image = transparencyGroup.getImage();"]
              [:method "org.apache.pdfbox.rendering.PageDrawer" "adjustImage" 1
-              (str "global::SkiaSharp.SKBitmap transformedGray = " compat "CreateBitmap("
+              (str "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage transformedGray = " compat "CreateBitmap("
                    "width, height, " compat "TYPE_BYTE_GRAY);")]
              [:method "org.apache.pdfbox.rendering.PageDrawer" "drawPage" 2
               "this.graphics = g;"]
              [:method "org.apache.pdfbox.rendering.PageDrawer" "showTransparencyGroupOnGraphics" 2
-              "global::SkiaSharp.SKBitmap image = group.getImage();"]
+              "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage image = group.getImage();"]
              [:constructor "org.apache.pdfbox.rendering.PageDrawer$TransparencyGroup" nil 4
               "this.image = this.create2ByteGrayAlphaImage(this.width, this.height);"]
              [:constructor "org.apache.pdfbox.rendering.GroupGraphics" nil 2
@@ -325,7 +325,7 @@
   compatibility namespace so that only a rule could change them."
   [compat]
   (mapv csharp/raw
-        [(str "global::SkiaSharp.SKBitmap image = global::" compat
+        [(str "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonImage image = global::" compat
               ".PdfCartonFontCompat.CreateBitmap(w, h, global::" compat
               ".PdfCartonFontCompat.TYPE_INT_ARGB);")
          (str "global::SkiaSharp.SKCanvas g = global::" compat
