@@ -7122,80 +7122,225 @@ public class PdfCartonGraphics2D : IDisposable
                 "Non-solid Java paints require a bitmap-backed CPU canvas.");
         }
 
-        using var source = PdfCartonFontCompat.CreateNativeBitmap(
-            bounds.Width,
-            bounds.Height,
-            PdfCartonFontCompat.TYPE_INT_ARGB);
-        source.Erase(SKColors.Transparent);
+        // Java's PaintContext.getRaster(x, y, w, h) may be asked for any part
+        // of the fill's device bounds, and Java paints, PDFBox's shading and
+        // soft-mask contexts among them, give a pixel the same colour in
+        // whichever rectangle holds it. So the context is asked for bands of
+        // at most PaintTileArea pixels, which keeps each raster it allocates
+        // (16 bytes per pixel for a PDFBox shading) off the large object
+        // heap, and each band is drawn, masked by the shape, as the whole fill
+        // would be. The bands' pixels are one managed array of this graphics,
+        // pinned only while a fill draws, that Skia wraps without allocating
+        // pixel memory of its own.
+        // A device-space mask (coverage, an aliased device path) is drawn band
+        // by band. Skia rasterizes a shape under the transform with rounding
+        // that depends on the canvas offset (rotated and skewed shapes moved
+        // by a band's offset gain or lose a level of edge coverage), so that
+        // mask is drawn once for the whole fill, as before.
+        using var shapeMask = coverage is null && devicePath is null
+            ? PdfCartonFontCompat.CreateNativeBitmap(bounds.Width, bounds.Height, PdfCartonFontCompat.TYPE_INT_ARGB)
+            : null;
+        if (shapeMask is not null)
         {
-            var raster = context.GetRaster(
-                deviceBounds.Left,
-                deviceBounds.Top,
-                deviceBounds.Width,
-                deviceBounds.Height);
-            using var paintBitmap = PdfCartonFontCompat.CreateImage(
-                context.GetColorModel(),
-                raster,
-                isRasterPremultiplied: false,
-                null);
-            using var sourceCanvas = new SKCanvas(source);
-            using var replacePaint = new SKPaint { BlendMode = SKBlendMode.Src };
-            using var paintImage = PdfCartonFontCompat.DrawableImage(paintBitmap, source);
-            sourceCanvas.DrawImage(paintImage!, 0, 0, replacePaint);
-        }
-
-        using var mask = PdfCartonFontCompat.CreateNativeBitmap(
-            bounds.Width,
-            bounds.Height,
-            PdfCartonFontCompat.TYPE_INT_ARGB);
-        mask.Erase(SKColors.Transparent);
-        using (var maskCanvas = new SKCanvas(mask))
-        {
+            shapeMask.Erase(SKColors.Transparent);
+            using var maskCanvas = new SKCanvas(shapeMask);
             ConfigureLayerCanvas(maskCanvas, bounds, deviceSpace);
             using var maskPaint = CreateDrawingPaint(stroked);
             maskPaint.Color = SKColors.White;
-            if (coverage is ({ } coverageMask, var coverageBounds))
-                PdfCartonAntialiasedFill.Draw(maskCanvas, coverageMask, coverageBounds, maskPaint);
-            else if (devicePath is not null)
-                PdfCartonAliasedFill.Draw(maskCanvas, devicePath, maskPaint, rectilinear);
-            else
-                maskCanvas.DrawPath(shape, maskPaint);
+            maskCanvas.DrawPath(shape, maskPaint);
         }
-        using (var sourceCanvas = new SKCanvas(source))
-        using (var maskPaint = new SKPaint { BlendMode = SKBlendMode.DstIn })
-        using (var maskImage = PdfCartonFontCompat.DrawableImage(mask, source))
+        var pixels = paintTilePixels ?? new int[3 * PaintTileArea];
+        // A context drawing on this graphics while it paints (no PDFBox one
+        // does) takes a fresh array.
+        paintTilePixels = null;
+        var pin = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+        var coveragePin = coverage is ({ } pinnedMask, _) ? GCHandle.Alloc(pinnedMask, GCHandleType.Pinned) : default;
+        var address = pin.AddrOfPinnedObject();
+        var paintTile = new PaintTileSlot(new SKBitmap(), address);
+        var source = new PaintTileSlot(
+            PdfCartonFontCompat.CreateTileBitmap(PdfCartonFontCompat.TYPE_INT_ARGB),
+            IntPtr.Add(address, PaintTileArea * sizeof(int)));
+        var mask = new PaintTileSlot(new SKBitmap(), IntPtr.Add(address, 2 * PaintTileArea * sizeof(int)));
+        SKCanvas? deviceCanvas = null;
+        var deviceRestore = 0;
+        try
         {
-            sourceCanvas.DrawImage(maskImage!, 0, 0, maskPaint);
+            // With an alpha composite, the masked bands are drawn as images at
+            // their device position (or, on a binary image, mapped as Java maps
+            // a sampled colour).
+            if (composite is JavaAlphaComposite && !IsBinaryDestination())
+            {
+                deviceCanvas = RequireCanvas();
+                deviceRestore = deviceCanvas.Save();
+                deviceCanvas.ResetMatrix();
+            }
+            using var replacePaint = new SKPaint { BlendMode = SKBlendMode.Src };
+            using var maskInPaint = new SKPaint { BlendMode = SKBlendMode.DstIn };
+            using var maskPaint = CreateDrawingPaint(stroked);
+            maskPaint.Color = SKColors.White;
+            using var layerPaint = composite is JavaAlphaComposite ? CreateAlphaLayerPaint() : null;
+            using var shapeMaskImage = shapeMask is null ? null : PdfCartonFontCompat.DrawableImage(shapeMask, bitmap);
+            // The coverage drawn as PdfCartonAntialiasedFill.Draw draws it.
+            using var coverageImage = coverage is { Bounds: var coverageBounds }
+                ? SKImage.FromPixels(
+                    new SKImageInfo(coverageBounds.Width, coverageBounds.Height, SKColorType.Alpha8, SKAlphaType.Premul),
+                    coveragePin.AddrOfPinnedObject(), coverageBounds.Width)
+                : null;
+            // An aliased device path drawn as PdfCartonAliasedFill.Draw draws it, its
+            // pixel runs found once for every band.
+            using var aliasedPath = devicePath is null ? null : PdfCartonAliasedFill.DrawnPath(devicePath, rectilinear,
+                new SKRect(bounds.Left - 1, bounds.Top - 1, bounds.Right + 1, bounds.Bottom + 1));
+            var rasterRenderer = new PdfCartonFontCompat.PaintRasterRenderer();
+            var tileWidth = Math.Min(bounds.Width, PaintTileArea);
+            var tileHeight = Math.Max(1, PaintTileArea / tileWidth);
+            for (var top = bounds.Top; top < bounds.Bottom; top += tileHeight)
+            {
+                for (var left = bounds.Left; left < bounds.Right; left += tileWidth)
+                {
+                    var tile = new SKRectI(left, top,
+                        Math.Min(bounds.Right, left + tileWidth), Math.Min(bounds.Bottom, top + tileHeight));
+                    var raster = context.GetRaster(tile.Left, tile.Top, tile.Width, tile.Height);
+                    var colorModel = context.GetColorModel();
+                    // Only the requested part of a larger raster is drawn.
+                    if (raster.Width > tile.Width || raster.Height > tile.Height)
+                        raster = raster.CopyRegion(0, 0, Math.Min(raster.Width, tile.Width),
+                            Math.Min(raster.Height, tile.Height));
+                    var tileInfo = new SKImageInfo(tile.Width, tile.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+                    var sourceCanvas = source.Canvas(tileInfo);
+                    var paintInfo = new SKImageInfo(raster.Width, raster.Height, SKColorType.Bgra8888,
+                        colorModel.HasAlpha ? SKAlphaType.Unpremul : SKAlphaType.Opaque);
+                    // The source is the paint's pixels drawn over transparency
+                    // with Src: an opaque pixel arrives unchanged, so a band
+                    // of only opaque pixels is rendered in place.
+                    var inPlace = false;
+                    if (paintInfo.Size == tileInfo.Size)
+                    {
+                        rasterRenderer.Render(source.Bitmap, colorModel, raster);
+                        inPlace = AllOpaque(pixels, PaintTileArea, tileInfo.Width * tileInfo.Height);
+                        if (!inPlace)
+                            Array.Copy(pixels, PaintTileArea, pixels, 0, tileInfo.Width * tileInfo.Height);
+                    }
+                    else
+                    {
+                        rasterRenderer.Render(paintTile.Install(paintInfo), colorModel, raster);
+                    }
+                    if (!inPlace)
+                    {
+                        paintTile.Install(paintInfo);
+                        source.Bitmap.Erase(SKColors.Transparent);
+                        using var paintImage = paintTile.Image();
+                        sourceCanvas.DrawImage(paintImage, 0, 0, replacePaint);
+                    }
+                    if (shapeMaskImage is not null)
+                    {
+                        sourceCanvas.DrawImage(shapeMaskImage, bounds.Left - tile.Left, bounds.Top - tile.Top, maskInPaint);
+                    }
+                    else
+                    {
+                        var maskCanvas = mask.Canvas(tileInfo);
+                        mask.Bitmap.Erase(SKColors.Transparent);
+                        var restore = maskCanvas.Save();
+                        ConfigureLayerCanvas(maskCanvas, tile, deviceSpace: true);
+                        if (coverageImage is not null)
+                            maskCanvas.DrawImage(coverageImage, coverage!.Value.Bounds.Left, coverage.Value.Bounds.Top,
+                                maskPaint);
+                        else
+                            maskCanvas.DrawPath(aliasedPath ?? devicePath!, maskPaint);
+                        maskCanvas.RestoreToCount(restore);
+                        using var maskImage = mask.Image();
+                        sourceCanvas.DrawImage(maskImage, 0, 0, maskInPaint);
+                    }
+                    if (layerPaint is null)
+                        CompositeLayer(source.Bitmap, tile);
+                    else if (deviceCanvas is null)
+                        DrawSampledIntoBinary(tile, deviceSpace: true, (target, targetBitmap, drawingPaint) =>
+                        {
+                            // The layer holds a Java paint's raster, which Java 2D maps like an image.
+                            using var layerImage = PdfCartonFontCompat.DrawableImage(source.Bitmap, targetBitmap);
+                            target.DrawImage(layerImage!, tile.Left, tile.Top, drawingPaint);
+                        }, layerPaint);
+                    else
+                        using (BeginDrawing(tile))
+                        using (var layerImage = source.Image())
+                            deviceCanvas.DrawImage(layerImage, tile.Left, tile.Top, layerPaint);
+                }
+            }
         }
-        if (composite is JavaAlphaComposite)
-            DrawAlphaLayer(source, bounds);
-        else
-            CompositeLayer(source, bounds);
+        finally
+        {
+            deviceCanvas?.RestoreToCount(deviceRestore);
+            paintTile.Dispose();
+            source.Dispose();
+            mask.Dispose();
+            if (coveragePin.IsAllocated) coveragePin.Free();
+            pin.Free();
+            paintTilePixels = pixels;
+        }
     }
 
-    private void DrawAlphaLayer(SKBitmap source, SKRectI bounds)
+    // The most pixels in one band: PDFBox's int[w * h * 4] of a band
+    // (81,920 bytes) stays below the 85,000-byte large object threshold.
+    private const int PaintTileArea = 5120;
+
+    // RenderPaintLayer's band pixels: the paint's, the masked source's and
+    // the mask's, PaintTileArea each.
+    private int[]? paintTilePixels;
+
+    // A bitmap over pixels RenderPaintLayer owns, with a canvas on it, both
+    // remade only when the tile's size changes: a raster canvas draws
+    // straight into the pixels, so it serves every tile of one size. Skia
+    // allocates no pixel memory for it and frees none.
+    private sealed class PaintTileSlot(SKBitmap bitmap, IntPtr pixels) : IDisposable
     {
-        var activeCanvas = RequireCanvas();
-        var restore = activeCanvas.Save();
-        activeCanvas.ResetMatrix();
-        using var drawingPaint = CreateImagePaint();
-        ApplyFallbackComposite(drawingPaint);
-        if (IsBinaryDestination())
+        private SKCanvas? canvas;
+        private SKImageInfo info;
+
+        internal SKBitmap Bitmap => bitmap;
+
+        internal SKBitmap Install(SKImageInfo tileInfo)
         {
-            // The layer holds a Java paint's raster, which Java 2D maps like an image.
-            activeCanvas.RestoreToCount(restore);
-            DrawSampledIntoBinary(bounds, deviceSpace: true, (target, targetBitmap, paint) =>
-            {
-                using var layerImage = PdfCartonFontCompat.DrawableImage(source, targetBitmap);
-                target.DrawImage(layerImage!, bounds.Left, bounds.Top, paint);
-            }, drawingPaint);
-            return;
+            if (info == tileInfo) return bitmap;
+            canvas?.Dispose();
+            canvas = null;
+            if (!bitmap.InstallPixels(tileInfo, pixels, tileInfo.RowBytes))
+                throw new InvalidOperationException("Unable to install paint tile pixels.");
+            info = tileInfo;
+            return bitmap;
         }
-        ApplyDestinationLuma(drawingPaint);
-        using (BeginDrawing(bounds))
-        using (var image = PdfCartonFontCompat.DrawableImage(source, bitmap))
-            activeCanvas.DrawImage(image!, bounds.Left, bounds.Top, drawingPaint);
-        activeCanvas.RestoreToCount(restore);
+
+        internal SKCanvas Canvas(SKImageInfo tileInfo)
+        {
+            Install(tileInfo);
+            return canvas ??= new SKCanvas(bitmap);
+        }
+
+        // An image of the pixels as they are now, for one draw.
+        internal SKImage Image() =>
+            SKImage.FromPixels(info, pixels, info.RowBytes) ??
+            throw new InvalidOperationException("Unable to wrap paint tile pixels.");
+
+        public void Dispose()
+        {
+            canvas?.Dispose();
+            bitmap.Dispose();
+        }
+    }
+
+    // True when the count BGRA pixels from start all have alpha 255.
+    private static bool AllOpaque(int[] pixels, int start, int count)
+    {
+        for (var index = start; index < start + count; index++)
+            if ((uint)pixels[index] < 0xff000000u) return false;
+        return true;
+    }
+
+    // The paint a masked paint layer is drawn with under an alpha composite.
+    private SKPaint CreateAlphaLayerPaint()
+    {
+        var drawingPaint = CreateImagePaint();
+        ApplyFallbackComposite(drawingPaint);
+        if (!IsBinaryDestination()) ApplyDestinationLuma(drawingPaint);
+        return drawingPaint;
     }
 
     private bool IsBinaryDestination() =>
@@ -7216,9 +7361,12 @@ public class PdfCartonGraphics2D : IDisposable
             bounds.Width, bounds.Height, PdfCartonFontCompat.TYPE_INT_RGB);
         using (var copyCanvas = new SKCanvas(copy))
         {
+            // The live pixels: DrawBitmap would copy the whole destination
+            // first, once per band of a paint fill.
             using (var replacePaint = new SKPaint { BlendMode = SKBlendMode.Src })
-                copyCanvas.DrawBitmap(
-                    destination,
+            using (var destinationImage = PdfCartonFontCompat.DrawableImage(destination, copy))
+                copyCanvas.DrawImage(
+                    destinationImage!,
                     new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),
                     new SKRect(0, 0, bounds.Width, bounds.Height),
                     replacePaint);
@@ -8256,6 +8404,13 @@ internal static class PdfCartonAliasedFill
         using var spans = Spans(devicePath, canvas.LocalClipBounds);
         canvas.DrawPath(spans, paint);
     }
+
+    // The path Draw draws for any canvas whose clip lies within clip:
+    // devicePath itself when rectilinear, else its pixel runs within clip,
+    // whole-pixel rectangles that a smaller clip only cuts. Null when it is
+    // devicePath itself.
+    internal static SKPath? DrawnPath(SKPath devicePath, bool rectilinear, SKRect clip) =>
+        rectilinear ? null : Spans(devicePath, clip);
 
     // The pixels whose centres lie inside the path (lines only, as
     // DevicePath makes it), left and top edges included, as one integer
@@ -10818,14 +10973,28 @@ internal static class PdfCartonFontCompat
         JavaRaster raster)
     {
         if (TryRenderSampleRows(bitmap, colorModel, raster)) return;
+        float[]? components = null;
+        int[]? samples = null;
+        object? pixel = null;
+        RenderRasterPixels(bitmap, colorModel, raster, ref components, ref samples, ref pixel);
+    }
+
+    // RenderRaster's conversion of each pixel, with buffers a caller may reuse.
+    private static void RenderRasterPixels(
+        SKBitmap bitmap,
+        JavaColorModel colorModel,
+        JavaRaster raster,
+        ref float[]? components,
+        ref int[]? samples,
+        ref object? pixel)
+    {
         var width = bitmap.Width;
         var count = colorModel.NumberOfComponents;
         var alphaIndex = colorModel.NumberOfColorComponents;
         var hasAlpha = colorModel.HasAlpha;
         var colorSpace = colorModel.DrawingSpace;
-        var components = new float[checked(width * count)];
-        int[]? samples = null;
-        object? pixel = null;
+        if (components is null || components.Length < checked(width * count))
+            components = new float[checked(width * count)];
         Span<float> rgb = stackalloc float[3];
         using var output = new PdfCartonPixels(bitmap);
         for (var y = 0; y < bitmap.Height; y++)
@@ -10872,6 +11041,67 @@ internal static class PdfCartonFontCompat
 
     internal static byte ComponentByte(float value) =>
         unchecked((byte)(int)JavaCompat.Round(JavaCompat.Clamp(value, 0f, 1f) * 255f));
+
+    // A compat-internal intermediate of image type type, as CreateNativeBitmap
+    // makes one, but without pixels: its user installs pixels it owns.
+    internal static SKBitmap CreateTileBitmap(int type)
+    {
+        var bitmap = new SKBitmap();
+        ImageMetadataByBitmap.Set(bitmap, new ImageMetadata(type, new JavaColorModel(type)));
+        return bitmap;
+    }
+
+    // Renders a paint context's rasters, one tile after another, each into a
+    // bitmap of its size and alpha type as CreateImage(colorModel, raster,
+    // false, null) renders it, keeping the row converter (whose tables cost
+    // a colour conversion per sample value) and the buffers from tile to tile.
+    internal sealed class PaintRasterRenderer
+    {
+        private JavaColorModel? colorModel;
+        private (bool, bool, int, int, int, bool) layout;
+        private RasterRowConverter? converter;
+        private int[]? samples;
+        private SKColor[]? row;
+        private float[]? components;
+        private object? pixel;
+
+        internal void Render(SKBitmap bitmap, JavaColorModel model, JavaRaster raster)
+        {
+            ArgumentNullException.ThrowIfNull(model);
+            ArgumentNullException.ThrowIfNull(raster);
+            if (raster.NumberOfBands != model.RasterBandCount)
+                throw new ArgumentException(
+                    "Raster band count does not match the color model.",
+                    nameof(raster));
+            // What CreateRowConverter reads of the raster.
+            var rasterLayout = (raster.HasSampleStorage, raster.IsSinglePixelPacked, raster.NumberOfBands,
+                raster.TransferType, raster.PackedPixelBits, (long)raster.Width * raster.Height >= 65536);
+            if (!ReferenceEquals(model, colorModel) || rasterLayout != layout)
+            {
+                colorModel = model;
+                layout = rasterLayout;
+                converter = model.CreateRowConverter(raster);
+                pixel = null;
+            }
+            if (converter is null)
+            {
+                RenderRasterPixels(bitmap, model, raster, ref components, ref samples, ref pixel);
+                return;
+            }
+            var width = raster.Width;
+            if (samples is null || samples.Length < width * raster.NumberOfBands)
+                samples = new int[width * raster.NumberOfBands];
+            if (row is null || row.Length < width) row = new SKColor[width];
+            var colors = row.AsSpan(0, width);
+            using var output = new PdfCartonPixels(bitmap);
+            for (var y = 0; y < raster.Height; y++)
+            {
+                raster.ReadRowSamples(y, samples);
+                converter.Convert(samples, colors);
+                output.SetRow(y, colors);
+            }
+        }
+    }
 
     internal static SKBitmap CreateImage(
         JavaColorModel colorModel,

@@ -2364,6 +2364,166 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // A paint is asked for its raster a band at a time, as Java's
+    // PaintContext.getRaster contract allows, so a large axial or radial
+    // shading fill allocates no raster of its own size: each of PDFBox's
+    // int[w * h * 4] arrays stays below the 85,000-byte large object heap
+    // threshold, and compat allocates per band, not per pixel (a whole-fill
+    // image used to cost 4 bytes per device pixel on top of the rasters).
+    // Every device pixel is asked for once, and pixels across band seams
+    // are the context's own colours.
+    [Fact]
+    public void LargeShadingFillsAskForBandSizedRasters()
+    {
+        const int width = 1224, height = 1584;
+        foreach (var shadingEntries in new[]
+                 {
+                     "/ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1224 300] /Function << " +
+                     "/FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true]",
+                     "/ShadingType 3 /ColorSpace /DeviceRGB /Coords [612 792 10 600 780 900] /Function << " +
+                     "/FunctionType 2 /Domain [0 1] /C0 [1 1 0] /C1 [0 0.5 0.25] /N 1.5 >> /Extend [true true]",
+                 })
+        {
+            var pdf = SequentialPdf(
+            [
+                "<< /Type /Catalog /Pages 2 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Shading << /Sh1 << " +
+                shadingEntries + " >> >> >> /Contents 4 0 R >>",
+                PdfStream("", "/Sh1 sh"),
+            ]);
+            using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
+            var shading = document.GetPage(0).GetResources().GetShading(COSName.GetPDFName("Sh1"));
+            var paint = new TileRecordingPaint(shading.ToPaint(new DripSharp.PdfCarton.Util.Matrix()), 4096);
+            using var image = Compat.PdfCartonFontCompat.CreateBitmap(
+                width, height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+            var area = new SKRect(0, 0, width, height);
+            using (var graphics = new Compat.PdfCartonGraphics2D(image))
+            {
+                graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                    Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
+                graphics.SetPaint(paint);
+                var allocated = MeasureFill(graphics, area);
+                var compatAllocated = allocated - paint.RasterAllocated;
+                // An int[] of n elements takes 24 + 4n bytes.
+                Assert.All(paint.Requests, request => Assert.True(24 + 16L * request.Width * request.Height < 85_000,
+                    $"a {request.Width}x{request.Height} raster was asked for."));
+                Assert.All(paint.Requests, request => Assert.True(SKRectI.Create(width, height).Contains(request)));
+                Assert.Equal((long)width * height, paint.Requests.Sum(request => (long)request.Width * request.Height));
+                Assert.Equal(paint.Requests.Count, paint.Requests.Distinct().Count());
+                // The bands' pixel array (3 x 5,120 ints), then a few small
+                // objects per band.
+                var bands = paint.Requests.Count;
+                Assert.True(compatAllocated < 64 * 1024 + bands * 2048L,
+                    $"{bands} bands allocated {compatAllocated} bytes besides the rasters " +
+                    $"({paint.RasterAllocated} bytes).");
+            }
+
+            using var context = shading.ToPaint(new DripSharp.PdfCarton.Util.Matrix()).CreateContext(
+                new Compat.JavaColorModel(Compat.PdfCartonFontCompat.TYPE_INT_RGB), new SKRectI(0, 0, width, height),
+                area, SKMatrix.Identity, new Compat.PdfCartonRenderingHints(null));
+            const int left = 40, top = 101, size = 150; // across bands
+            var raster = context.GetRaster(left, top, size, size);
+            var samples = raster.GetPixels(0, 0, size, size, (int[]?)null);
+            for (var y = 0; y < size; y++)
+            {
+                for (var x = 0; x < size; x++)
+                {
+                    var offset = (y * size + x) * 4;
+                    var expected = new SKColor((byte)samples[offset], (byte)samples[offset + 1], (byte)samples[offset + 2]);
+                    Assert.Equal(expected, image.GetPixel(left + x, top + y));
+                }
+            }
+        }
+    }
+
+    // An aliased fill's pixel runs are found once per fill, not once per
+    // band: a zigzag of 4,000 edges over a page-sized shading fill costs
+    // its edge lists once (re-finding them per band cost over 100 MB).
+    [Fact]
+    public void AliasedShadingFillsFindTheirPixelRunsOnce()
+    {
+        const int width = 1224, height = 1584, teeth = 1000;
+        var pdf = SequentialPdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Shading << /Sh1 << " +
+            "/ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1224 0] /Function << /FunctionType 2 " +
+            "/Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true] >> >> >> /Contents 4 0 R >>",
+            PdfStream("", "/Sh1 sh"),
+        ]);
+        using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
+        var shading = document.GetPage(0).GetResources().GetShading(COSName.GetPDFName("Sh1"));
+        var paint = new TileRecordingPaint(shading.ToPaint(new DripSharp.PdfCarton.Util.Matrix()), 4096);
+        using var path = new SKPath();
+#pragma warning disable CS0618 // SKPath mutation is SkiaSharp m150's Java GeneralPath bridge.
+        path.MoveTo(0.3f, 0.3f);
+        for (var tooth = 0; tooth < teeth; tooth++)
+        {
+            var y = (tooth + 0.5f) * height / teeth;
+            path.LineTo(width - 0.3f, y);
+            path.LineTo(width * 0.4f + tooth % 7, y + 0.5f * height / teeth);
+        }
+        path.LineTo(0.3f, height - 0.3f);
+        path.Close();
+#pragma warning restore CS0618
+        using var image = Compat.PdfCartonFontCompat.CreateBitmap(width, height, Compat.PdfCartonFontCompat.TYPE_INT_RGB);
+        using (var graphics = new Compat.PdfCartonGraphics2D(image))
+        {
+            graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+            graphics.SetPaint(paint);
+            var allocated = MeasureFill(graphics, path);
+            var compatAllocated = allocated - paint.RasterAllocated;
+            var bands = paint.Requests.Count;
+            Assert.True(bands > 100, $"{bands} bands.");
+            Assert.True(compatAllocated < 4L * 1024 * 1024 + bands * 2048L,
+                $"{bands} bands allocated {compatAllocated} bytes besides the rasters.");
+        }
+        // Inside the solid left part, the shading's colour-table entry for x = 20.5.
+        Assert.Equal(new SKColor(250, 0, 4), image.GetPixel(20, height / 2));
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining |
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+    private static long MeasureFill(Compat.PdfCartonGraphics2D graphics, object shape)
+    {
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        graphics.Fill(shape);
+        return GC.GetAllocatedBytesForCurrentThread() - allocated;
+    }
+
+    // Records the rasters asked of inner's contexts and what they allocate.
+    private sealed class TileRecordingPaint(Compat.JavaPaint inner, int capacity) : Compat.JavaPaint
+    {
+        internal List<SKRectI> Requests { get; } = new(capacity);
+        internal long RasterAllocated { get; private set; }
+
+        public Compat.JavaPaintContext CreateContext(Compat.JavaColorModel colorModel, SKRectI deviceBounds,
+            SKRect userBounds, SKMatrix transform, Compat.PdfCartonRenderingHints hints) =>
+            new Context(this, inner.CreateContext(colorModel, deviceBounds, userBounds, transform, hints));
+
+        public int GetTransparency() => inner.GetTransparency();
+
+        private sealed class Context(TileRecordingPaint owner, Compat.JavaPaintContext context) : Compat.JavaPaintContext
+        {
+            public Compat.JavaColorModel GetColorModel() => context.GetColorModel();
+
+            public Compat.JavaRaster GetRaster(int x, int y, int width, int height)
+            {
+                owner.Requests.Add(SKRectI.Create(x, y, width, height));
+                var before = GC.GetAllocatedBytesForCurrentThread();
+                var raster = context.GetRaster(x, y, width, height);
+                owner.RasterAllocated += GC.GetAllocatedBytesForCurrentThread() - before;
+                return raster;
+            }
+
+            public void Dispose() => context.Dispose();
+        }
+    }
+
     private static byte[] RenderAt150Dpi(byte[] pdf, out long allocated)
     {
         using var document = Loader.LoadPDF(IccRenderFixtures.Signed(pdf));
