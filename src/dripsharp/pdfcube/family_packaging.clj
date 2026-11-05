@@ -62,7 +62,7 @@
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
-     {:id "System.Formats.Asn1" :version "10.0.0"}
+     {:id "System.Formats.Asn1" :version "10.0.13"}
      {:id "System.Memory" :version "4.6.3"}
      {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 93
@@ -91,7 +91,7 @@
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "System.Memory" :version "4.6.3"}
-     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}
+     {:id "System.Security.Cryptography.Pkcs" :version "10.0.13"}
      {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
     :resources 22
     :package-files (into common-legal-files codec-legal-files)}
@@ -114,7 +114,7 @@
 
 (def ^:private external-package-contract
   #{{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
-    {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}
+    {:id "Microsoft.Bcl.Cryptography" :version "10.0.13"}
     {:id "Microsoft.CSharp" :version "4.7.0"}
     {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
      :version "10.0.0"}
@@ -127,12 +127,12 @@
     {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}
     {:id "System.Buffers" :version "4.6.1"}
     {:id "System.Diagnostics.DiagnosticSource" :version "10.0.0"}
-    {:id "System.Formats.Asn1" :version "10.0.0"}
+    {:id "System.Formats.Asn1" :version "10.0.13"}
     {:id "System.Memory" :version "4.6.3"}
     {:id "System.Numerics.Vectors" :version "4.6.1"}
     {:id "System.Runtime.CompilerServices.Unsafe" :version "6.1.2"}
     {:id "System.Security.Cryptography.Cng" :version "5.0.0"}
-    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}
+    {:id "System.Security.Cryptography.Pkcs" :version "10.0.13"}
     {:id "System.Text.Encoding.CodePages" :version "10.0.0"}
     {:id "System.Threading.Tasks.Extensions" :version "4.6.3"}})
 

@@ -2802,7 +2802,7 @@
     :destination
     {:kind :microsoft-package
      :id "System.Security.Cryptography.Pkcs"
-     :version "10.0.0"
+     :version "10.0.13"
      :capabilities
      ["System.Security.Cryptography.Pkcs"
       "System.Formats.Asn1"
@@ -2852,12 +2852,12 @@
 
 (def ^:private asn1-package
   {:id "System.Formats.Asn1"
-   :version "10.0.0"
+   :version "10.0.13"
    :projection :netstandard-compatibility})
 
 (def ^:private pkcs-package
   {:id "System.Security.Cryptography.Pkcs"
-   :version "10.0.0"
+   :version "10.0.13"
    :projection :microsoft-package})
 
 (def ^:private skia-package
@@ -2994,7 +2994,7 @@
      :project-file "DripSharp.PdfCarton.PackageConsumer.csproj"
      :framework-omitted-packages
      [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
-      {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}]
+      {:id "Microsoft.Bcl.Cryptography" :version "10.0.13"}]
      :compile-types
      ["DripSharp.PdfCarton.Cos.COSDocument"
       "DripSharp.PdfCarton.Pdmodel.PDDocument"]
@@ -3035,7 +3035,7 @@
      :project-file "DripSharp.PdfCarton.Preflight.PackageConsumer.csproj"
      :framework-omitted-packages
      [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
-      {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}]
+      {:id "Microsoft.Bcl.Cryptography" :version "10.0.13"}]
      :source-path
      "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Preflight.FocusedConsumer.cs"
      :success-message "DripSharp.PdfCarton.Preflight focused behavior passed."}
@@ -3116,16 +3116,15 @@
                 :dependency dependency}))
       (when-not (case projection
                   :microsoft-package
-                  (and (contains?
-                        #{"Microsoft.Extensions.Logging.Abstractions"
-                          "System.Security.Cryptography.Pkcs"}
-                        id)
-                       (= "10.0.0" version))
+                  (contains?
+                   #{["Microsoft.Extensions.Logging.Abstractions" "10.0.0"]
+                     ["System.Security.Cryptography.Pkcs" "10.0.13"]}
+                   [id version])
                   :netstandard-compatibility
                   (contains?
                    #{["Microsoft.CSharp" "4.7.0"]
                      ["System.Memory" "4.6.3"]
-                     ["System.Formats.Asn1" "10.0.0"]
+                     ["System.Formats.Asn1" "10.0.13"]
                      ["System.Text.Encoding.CodePages" "10.0.0"]}
                    [id version])
                   :skia-sharp

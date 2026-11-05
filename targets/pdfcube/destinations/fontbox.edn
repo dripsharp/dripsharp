@@ -72,7 +72,7 @@
    :version "4.6.3"
    :projection :netstandard-compatibility}
   {:id "System.Formats.Asn1"
-   :version "10.0.0"
+   :version "10.0.13"
    :projection :netstandard-compatibility}
   {:id "System.Text.Encoding.CodePages"
    :version "10.0.0"

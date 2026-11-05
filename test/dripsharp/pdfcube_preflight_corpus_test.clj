@@ -75,7 +75,7 @@
 
 (def ^:private exact-preflight-framework-omissions
   [{:id "Microsoft.Bcl.AsyncInterfaces" :version "10.0.0"}
-   {:id "Microsoft.Bcl.Cryptography" :version "10.0.0"}])
+   {:id "Microsoft.Bcl.Cryptography" :version "10.0.13"}])
 
 (def ^:private preflight-version "3.0.8-alpha.6")
 
@@ -88,7 +88,7 @@
 
 (def ^:private external-package-versions
   {"Microsoft.Bcl.AsyncInterfaces" "10.0.0"
-   "Microsoft.Bcl.Cryptography" "10.0.0"
+   "Microsoft.Bcl.Cryptography" "10.0.13"
    "Microsoft.CSharp" "4.7.0"
    "Microsoft.Extensions.DependencyInjection.Abstractions" "10.0.0"
    "Microsoft.Extensions.Logging.Abstractions" "10.0.0"
@@ -100,12 +100,12 @@
    "SkiaSharp.NativeAssets.Win32" "4.150.1"
    "System.Buffers" "4.6.1"
    "System.Diagnostics.DiagnosticSource" "10.0.0"
-   "System.Formats.Asn1" "10.0.0"
+   "System.Formats.Asn1" "10.0.13"
    "System.Memory" "4.6.3"
    "System.Numerics.Vectors" "4.6.1"
    "System.Runtime.CompilerServices.Unsafe" "6.1.2"
    "System.Security.Cryptography.Cng" "5.0.0"
-   "System.Security.Cryptography.Pkcs" "10.0.0"
+   "System.Security.Cryptography.Pkcs" "10.0.13"
    "System.Text.Encoding.CodePages" "10.0.0"
    "System.Threading.Tasks.Extensions" "4.6.3"})
 

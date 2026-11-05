@@ -43,7 +43,7 @@ complete 21-package set at these exact versions:
 | Package | Locked version | Closure role |
 | --- | --- | --- |
 | `Microsoft.Bcl.AsyncInterfaces` | `10.0.0` | Transitive logging dependency. |
-| `Microsoft.Bcl.Cryptography` | `10.0.0` | Transitive PKCS dependency. |
+| `Microsoft.Bcl.Cryptography` | `10.0.13` | Transitive PKCS dependency. |
 | `Microsoft.CSharp` | `4.7.0` | Direct `netstandard2.0` compatibility dependency. |
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | `10.0.0` | Transitive logging dependency. |
 | `Microsoft.Extensions.Logging.Abstractions` | `10.0.0` | Direct logging mapping. |
@@ -55,12 +55,12 @@ complete 21-package set at these exact versions:
 | `SkiaSharp.NativeAssets.Win32` | `4.150.1` | Transitive Windows native deployment asset. |
 | `System.Buffers` | `4.6.1` | Transitive memory and logging dependency. |
 | `System.Diagnostics.DiagnosticSource` | `10.0.0` | Transitive logging dependency. |
-| `System.Formats.Asn1` | `10.0.0` | Direct ASN.1 compatibility and transitive PKCS dependency. |
+| `System.Formats.Asn1` | `10.0.13` | Direct ASN.1 compatibility and transitive PKCS dependency. |
 | `System.Memory` | `4.6.3` | Direct `netstandard2.0` compatibility dependency. |
 | `System.Numerics.Vectors` | `4.6.1` | Transitive memory dependency. |
 | `System.Runtime.CompilerServices.Unsafe` | `6.1.2` | Transitive memory, diagnostics, and task dependency. |
 | `System.Security.Cryptography.Cng` | `5.0.0` | Transitive PKCS dependency. |
-| `System.Security.Cryptography.Pkcs` | `10.0.0` | Direct CMS/PKCS mapping. |
+| `System.Security.Cryptography.Pkcs` | `10.0.13` | Direct CMS/PKCS mapping. |
 | `System.Text.Encoding.CodePages` | `10.0.0` | Direct `netstandard2.0` encoding compatibility dependency. |
 | `System.Threading.Tasks.Extensions` | `4.6.3` | Transitive async-interface dependency. |
 
@@ -73,7 +73,7 @@ partitioning packages absent from the execution restore into exact
 `packagesToPrune` evidence and a target-owned framework dependency-group
 contract. At the current locked versions, the `net10.0` dependency groups omit
 `Microsoft.Bcl.AsyncInterfaces` `10.0.0` from the logging chain and
-`Microsoft.Bcl.Cryptography` `10.0.0` from the PKCS chain. The consumer proof
+`Microsoft.Bcl.Cryptography` `10.0.13` from the PKCS chain. The consumer proof
 requires exactly those omissions when they are in a selected package's
 published closure and rejects a missing, additional, or wrong-version omission.
 Each `targets/pdfcube/destinations/*.edn` package-consumer contract pins the

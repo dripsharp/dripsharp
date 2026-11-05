@@ -48,7 +48,7 @@
     {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
     {:id "SkiaSharp.NativeAssets.macOS" :version "4.150.1"}
     {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}
-    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}})
+    {:id "System.Security.Cryptography.Pkcs" :version "10.0.13"}})
 
 (def expected-consumer-target-framework
   "net10.0")
