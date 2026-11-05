@@ -3807,6 +3807,9 @@ public sealed class JavaTexturePaint : JavaPaint
     // sampled in managed code.
     internal sealed class TexturePaintContext : JavaPaintContext
     {
+        // In device pixels; see the constructor.
+        private const float NearestEdgeBias = 1f / 1024;
+
         private readonly PdfCartonImage image;
         private readonly SKMatrix deviceFromImage;
         private readonly SKSamplingOptions sampling;
@@ -3840,8 +3843,13 @@ public sealed class JavaTexturePaint : JavaPaint
             // takes texel floor(u), or blends floor(u) and the next texel by
             // frac(u). Skia maps pixel centres and samples texel centres, so
             // shift by half a device pixel and, when filtering, half a texel.
+            // A corner exactly on a texel edge takes the texel before it in
+            // Java, at every edge; Skia's nearest sampling does so too except
+            // at the edge where the tile repeats. Moving the sample point a
+            // hair back makes every such corner fall inside the earlier texel.
+            var shift = filter ? 0.5f : 0.5f + NearestEdgeBias;
             var matrix = SKMatrix.Concat(
-                SKMatrix.CreateTranslation(0.5f, 0.5f),
+                SKMatrix.CreateTranslation(shift, shift),
                 SKMatrix.Concat(
                     userToDevice,
                     SKMatrix.CreateScaleTranslation(
@@ -8992,14 +9000,22 @@ internal static class PdfCartonAntialiasedFill
     internal static void Draw(SKCanvas canvas, byte[] mask, SKRectI bounds, SKPaint paint)
     {
         var pinned = GCHandle.Alloc(mask, GCHandleType.Pinned);
+        var shader = paint.Shader;
+        // Skia evaluates the shader of an alpha-only image in the image's own
+        // coordinates, so a device-space shader (a texture paint's) would move
+        // with the mask's corner; its local matrix moves it back.
+        using var placed = shader?.WithLocalMatrix(
+            SKMatrix.CreateTranslation(-bounds.Left, -bounds.Top));
         try
         {
             var info = new SKImageInfo(bounds.Width, bounds.Height, SKColorType.Alpha8, SKAlphaType.Premul);
             using var image = SKImage.FromPixels(info, pinned.AddrOfPinnedObject(), bounds.Width);
+            if (placed is not null) paint.Shader = placed;
             canvas.DrawImage(image, bounds.Left, bounds.Top, paint);
         }
         finally
         {
+            if (placed is not null) paint.Shader = shader;
             pinned.Free();
         }
     }

@@ -3466,6 +3466,64 @@ public sealed class RasterConversionConsumerTests
         }
     }
 
+    // A device pixel whose corner lies exactly on a texel edge takes the
+    // texel before that edge in Java 2D, at every edge, including where the
+    // tile repeats; and the pattern stays anchored to user space whichever
+    // fill path draws it (an antialiased path fill draws through a coverage
+    // mask placed at the shape's corner). The tile is 2x2 blue/yellow,
+    // anchored at (0, 0, 8, 8), so a texel covers 4 device pixels and pixel
+    // (x, y) shows texel (ceil(x / 4) - 1, ceil(y / 4) - 1), as Java 2D's
+    // TexturePaint draws it in the graphics2d rendering differential.
+    [Fact]
+    public void TexturePaintEdgesAndMaskedFillsKeepJavasPhase()
+    {
+        var blue = new SKColor(20, 40, 220, 255);
+        var yellow = new SKColor(240, 210, 20, 255);
+        var tile = new PdfCartonImage(new SKImageInfo(2, 2, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        tile.SetPixel(0, 0, blue);
+        tile.SetPixel(1, 0, yellow);
+        tile.SetPixel(0, 1, yellow);
+        tile.SetPixel(1, 1, blue);
+        foreach (var antialias in new[] { false, true })
+            foreach (var asPath in new[] { false, true })
+                foreach (var (left, top) in new[] { (0, 0), (4, 30), (6, 31) })
+                {
+                    var image = new PdfCartonImage(new SKImageInfo(40, 40, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+                    using (var graphics = new Compat.PdfCartonGraphics2D(image))
+                    {
+                        graphics.SetRenderingHint(Compat.PdfCartonRenderingHints.KEY_ANTIALIASING,
+                            antialias
+                                ? Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON
+                                : Compat.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF);
+                        graphics.SetPaint(new Compat.JavaTexturePaint(tile, new SKRect(0, 0, 8, 8)));
+                        if (asPath)
+                        {
+                            using var builder = new SKPathBuilder();
+                            builder.MoveTo(left, top);
+                            builder.LineTo(40, top);
+                            builder.LineTo(40, 40);
+                            builder.LineTo(left, 40);
+                            builder.Close();
+                            using var path = builder.Detach();
+                            graphics.Fill(path);
+                        }
+                        else
+                        {
+                            graphics.FillRect(left, top, 40 - left, 40 - top);
+                        }
+                    }
+                    using var pixels = image.ToSKBitmap();
+                    for (var y = top; y < 40; y++)
+                        for (var x = left; x < 40; x++)
+                        {
+                            var texel = (x + 3) / 4 - 1 + (y + 3) / 4 - 1;
+                            var expected = texel % 2 == 0 ? blue : yellow;
+                            Assert.True(pixels.GetPixel(x, y) == expected,
+                                $"antialias={antialias} path={asPath} at ({left},{top}): ({x},{y}) is {pixels.GetPixel(x, y)}, not {expected}.");
+                        }
+                }
+    }
+
     private static readonly int[][] InterpolationTexels =
     [
         [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0],
