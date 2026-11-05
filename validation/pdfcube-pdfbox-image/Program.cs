@@ -78,7 +78,7 @@ internal static class Program
                 SampleSummary(raw));
 
             var region = Region(image.GetWidth(), image.GetHeight());
-            using var sampled = image.GetImage(region, 2);
+            var sampled = image.GetImage(region, 2);
             Observe(
                 "region-subsampling",
                 id,
@@ -147,7 +147,7 @@ internal static class Program
                 2,
                 8,
                 PDDeviceRGB.Instance);
-            using var decoded = image.GetImage();
+            var decoded = image.GetImage();
         }
         catch (Exception)
         {

@@ -455,7 +455,8 @@ internal static class Program
     private static void ObserveRenderedPixels(
         PDDocument document, string id, string family)
     {
-        using var bitmap = new PDFRenderer(document).RenderImage(0, 1);
+        var image = new PDFRenderer(document).RenderImage(0, 1);
+        using var bitmap = image.ToSKBitmap();
         var points = new[] { (25, 25), (75, 25), (25, 75), (75, 75) };
         Observe(
             family,

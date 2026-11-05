@@ -144,19 +144,19 @@ internal static class FontRenderProbe
             }
             int width = (int)Math.Floor(box.GetWidth() * scale), height = (int)Math.Floor(box.GetHeight() * scale);
             if (width < 1 || height < 1 || width > 512 || height > 512) throw new ArgumentException("Raster bounds");
-            using var image = new PDFRenderer(doc).RenderImage(index, scale, ImageType.Argb);
+            var image = new PDFRenderer(doc).RenderImage(index, scale, ImageType.Argb);
+            using var bitmap = image.ToSKBitmap();
             var imageId = id + "-p" + index;
             Row(key + "/image", image.Width + "," + image.Height);
             var rgba = new byte[checked(image.Width * image.Height * 4)]; int offset = 0;
             for (int y = 0; y < image.Height; y++) for (int x = 0; x < image.Width; x++)
             {
-                var pixel = image.GetPixel(x, y);
+                var pixel = bitmap.GetPixel(x, y);
                 rgba[offset++] = pixel.Red; rgba[offset++] = pixel.Green;
                 rgba[offset++] = pixel.Blue; rgba[offset++] = pixel.Alpha;
             }
             File.WriteAllBytes(Path.Combine(output, imageId + ".rgba"), rgba);
-            using var png = image.Encode(SKEncodedImageFormat.Png, 100);
-            using var file = File.Create(Path.Combine(output, imageId + ".png")); png.SaveTo(file);
+            File.WriteAllBytes(Path.Combine(output, imageId + ".png"), image.EncodePng());
         }
     }
 }

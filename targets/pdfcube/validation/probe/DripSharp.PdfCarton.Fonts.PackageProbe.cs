@@ -305,7 +305,7 @@ internal static class Program
         {
             openSansFont = Type1Font.CreateWithPFB(input);
         }
-        using var path = openSansFont.GetPath("A");
+        var path = openSansFont.GetPath("A");
         Observe(
             "type1",
             "open-sans",
@@ -694,9 +694,9 @@ internal static class Program
             invisibleSubsetter.WriteToStream(invisibleOutput);
             using var invisible = new TTFParser(true).Parse(
                 new RandomAccessReadBuffer(ToSigned(invisibleOutput.ToArray())));
-            using var aPath = invisible.GetPath("A");
-            using var bPath = invisible.GetPath("B");
-            using var zwnjPath = invisible.GetPath("uni200C");
+            var aPath = invisible.GetPath("A");
+            var bPath = invisible.GetPath("B");
+            var zwnjPath = invisible.GetPath("uni200C");
             Observe(
                 "subsetting",
                 "forced-invisible-encoding",
