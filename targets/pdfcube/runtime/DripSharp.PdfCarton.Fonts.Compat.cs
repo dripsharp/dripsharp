@@ -3807,9 +3807,6 @@ public sealed class JavaTexturePaint : JavaPaint
     // sampled in managed code.
     internal sealed class TexturePaintContext : JavaPaintContext
     {
-        // In device pixels; see the constructor.
-        private const float NearestEdgeBias = 1f / 1024;
-
         private readonly PdfCartonImage image;
         private readonly SKMatrix deviceFromImage;
         private readonly SKSamplingOptions sampling;
@@ -3846,8 +3843,9 @@ public sealed class JavaTexturePaint : JavaPaint
             // A corner exactly on a texel edge takes the texel before it in
             // Java, at every edge; Skia's nearest sampling does so too except
             // at the edge where the tile repeats. Moving the sample point a
-            // hair back makes every such corner fall inside the earlier texel.
-            var shift = filter ? 0.5f : 0.5f + NearestEdgeBias;
+            // hair back makes every such corner fall inside the earlier texel
+            // (PdfCartonGraphics2D.NearestEdgeBias).
+            var shift = filter ? 0.5f : 0.5f + PdfCartonGraphics2D.NearestEdgeBias;
             var matrix = SKMatrix.Concat(
                 SKMatrix.CreateTranslation(shift, shift),
                 SKMatrix.Concat(
@@ -5999,6 +5997,13 @@ public class PdfCartonGraphics2D : IDisposable
     private int restoreCount;
     private bool disposed;
     private SKSamplingOptions samplingOptions = SKSamplingOptions.Default;
+    // Java 2D samples an image or a texture at each device pixel and, for
+    // nearest neighbour, a sample position exactly on the edge between two
+    // source pixels takes the pixel before the edge; Skia's nearest sampling
+    // does not always. Drawing the source this far right of and below where
+    // it belongs (in device pixels) makes such positions fall inside the
+    // earlier pixel.
+    internal const float NearestEdgeBias = 1f / 1024;
     private JavaColor color = new(SKColors.Black);
     private JavaColor background = new(SKColors.Transparent);
     private JavaPaint paint;
@@ -6175,16 +6180,22 @@ public class PdfCartonGraphics2D : IDisposable
         PdfCartonFontCompat.EnsureNativePixels(image);
         RenderImageLayer(
             image,
-            (layer, view, imagePaint) => layer.DrawImage(
-                view,
-                new SKRect(sourceX1, sourceY1, sourceX2, sourceY2),
-                new SKRect(
-                    destinationX1,
-                    destinationY1,
-                    destinationX2,
-                    destinationY2),
-                samplingOptions,
-                imagePaint),
+            (layer, view, imagePaint) =>
+            {
+                var restore = layer.Save();
+                BiasNearestSampling(layer);
+                layer.DrawImage(
+                    view,
+                    new SKRect(sourceX1, sourceY1, sourceX2, sourceY2),
+                    new SKRect(
+                        destinationX1,
+                        destinationY1,
+                        destinationX2,
+                        destinationY2),
+                    samplingOptions,
+                    imagePaint);
+                layer.RestoreToCount(restore);
+            },
             new SKRect(Math.Min(destinationX1, destinationX2), Math.Min(destinationY1, destinationY2),
                 Math.Max(destinationX1, destinationX2), Math.Max(destinationY1, destinationY2)));
         return true;
@@ -6297,6 +6308,7 @@ public class PdfCartonGraphics2D : IDisposable
             (layer, view, imagePaint) =>
             {
                 var restore = layer.Save();
+                BiasNearestSampling(layer);
                 layer.Concat(imageTransform);
                 layer.DrawImage(
                     view,
@@ -6308,6 +6320,15 @@ public class PdfCartonGraphics2D : IDisposable
             },
             imageTransform.MapRect(new SKRect(0, 0, image.Width, image.Height)));
         return true;
+    }
+
+    // See NearestEdgeBias.
+    private void BiasNearestSampling(SKCanvas layer)
+    {
+        if (samplingOptions != SKSamplingOptions.Default) return;
+        layer.SetMatrix(SKMatrix.Concat(
+            SKMatrix.CreateTranslation(NearestEdgeBias, NearestEdgeBias),
+            layer.TotalMatrix));
     }
 
     public virtual void DrawRenderableImage(PdfCartonImage image, SKMatrix imageTransform) =>

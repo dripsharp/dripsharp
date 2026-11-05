@@ -3524,6 +3524,46 @@ public sealed class RasterConversionConsumerTests
                 }
     }
 
+    // Nearest-neighbour image drawing takes the source pixel before an edge
+    // that a device sample lands on exactly, as Java 2D does. This is
+    // PDFPrintable's fixed-DPI print of a 160x60 crop box shrunk onto a
+    // 100x100 page: the page is rendered at 2x and the 20x20 black square
+    // drawn back at 0.3125 from y = 31.25, so row 37's sample maps to source
+    // row 20.0 exactly. Java PDFBox prints black in columns 0-5 and rows
+    // 31-37 (42 pixels; the printing differential's fixed-dpi row).
+    [Fact]
+    public void ScaledNearestImagesTakeThePixelBeforeAnEdgeLikeJava()
+    {
+        using var square = new SKBitmap(new SKImageInfo(40, 40, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        square.Erase(SKColors.Transparent);
+        for (var y = 0; y < 20; y++)
+            for (var x = 0; x < 20; x++)
+                square.SetPixel(x, y, SKColors.Black);
+        var page = new PdfCartonImage(new SKImageInfo(60, 60, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        using (var graphics = new Compat.PdfCartonGraphics2D(page))
+        {
+            graphics.SetColor(SKColors.White);
+            graphics.FillRect(0, 0, 60, 60);
+            graphics.Translate(0, 31.25);
+            graphics.Scale(0.3125, 0.3125);
+            graphics.DrawImage(PdfCartonImage.FromSKBitmap(square), 0, 0, null);
+        }
+        using var pixels = page.ToSKBitmap();
+        int left = 60, top = 60, right = -1, bottom = -1, count = 0;
+        for (var y = 0; y < 60; y++)
+            for (var x = 0; x < 60; x++)
+            {
+                var color = pixels.GetPixel(x, y);
+                if (Math.Min(color.Red, Math.Min(color.Green, color.Blue)) >= 64) continue;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+                right = Math.Max(right, x);
+                bottom = Math.Max(bottom, y);
+                count++;
+            }
+        Assert.Equal((0, 31, 5, 37, 42), (left, top, right, bottom, count));
+    }
+
     private static readonly int[][] InterpolationTexels =
     [
         [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0],
