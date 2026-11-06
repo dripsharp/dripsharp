@@ -67,6 +67,8 @@ def preflight(host):
 
 
 def project(version, legacy=False):
+    # The consumer tests are the product's own test sources, some of which use
+    # internals granted to DripSharp.PdfCarton.Tests; build them under that name.
     references = f'<PackageReference Include="DripSharp.PdfCarton" Version="{version}" />'
     if legacy:
         references += '<PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net481" Version="1.0.3" PrivateAssets="all" />'
@@ -75,6 +77,7 @@ def project(version, legacy=False):
     return f'''<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
 <TargetFramework>{'net481' if legacy else 'net10.0'}</TargetFramework>
 <OutputType>{'Exe' if legacy else 'Library'}</OutputType>
+{'' if legacy else '<AssemblyName>DripSharp.PdfCarton.Tests</AssemblyName>'}
 <IsTestProject>{'false' if legacy else 'true'}</IsTestProject>
 <ImplicitUsings>enable</ImplicitUsings><Nullable>{'disable' if legacy else 'enable'}</Nullable>
 <LangVersion>latest</LangVersion><PlatformTarget>x64</PlatformTarget><TreatWarningsAsErrors>true</TreatWarningsAsErrors>

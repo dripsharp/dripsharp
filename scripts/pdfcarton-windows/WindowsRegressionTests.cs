@@ -51,7 +51,7 @@ public class WindowsRegressionTests
             }
             using var reopened = Loader.LoadPDF(new FileInfo(pdf));
             Assert.Contains("Windows discovered font", new PDFTextStripper().GetText(reopened));
-            using var image = new PDFRenderer(reopened).RenderImage(0);
+            var image = new PDFRenderer(reopened).RenderImage(0);
             Assert.True(image.Width > 0 && image.Height > 0);
             Console.WriteLine($"Windows discovered {discovered.Count} fonts; PDF saved, reloaded and rendered with native Skia.");
         }
