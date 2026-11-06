@@ -75,6 +75,9 @@ class WindowsRunnerTests(unittest.TestCase):
             self.assertTrue((Path(root)/'smoke/ReleaseSmokePdfTests.cs').is_file())
             self.assertIn('<AssemblyName>DripSharp.PdfCarton.Tests</AssemblyName>', (Path(root)/'smoke/smoke.csproj').read_text())
             self.assertNotIn('AssemblyName', (Path(root)/'legacy/legacy.csproj').read_text())
+            for name in runner.UPSTREAM_FIXTURES:
+                self.assertTrue((Path(root)/'smoke/Fixtures'/name).is_file())
+            self.assertIn('DisableTestParallelization = true', (Path(root)/'smoke/SerialSuite.cs').read_text())
             self.assertTrue((Path(root)/'smoke/IoConsumerTests.cs').is_file())
 
     def test_publish_order_and_failure_fences(self):

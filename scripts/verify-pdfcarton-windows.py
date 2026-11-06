@@ -29,6 +29,9 @@ from copy import copy
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORT = ROOT / 'scripts/pdfcarton-windows'
+# Upstream fixtures the consumer tests read from the product test project.
+PRODUCT_FIXTURES = ROOT / 'products/pdfcarton/tests/DripSharp.PdfCarton.Tests/Fixtures'
+UPSTREAM_FIXTURES = ('input/eu-001.pdf', 'modules/pdfbox/target/pdfs/PDFBOX-3947-670064.pdf')
 
 
 def digest(path):
@@ -98,6 +101,14 @@ def stage_inputs(upload, version):
             text = text.split('// Bulk raster access')[0]
         (upload / 'smoke' / source.name).write_text(text)
     shutil.copytree(sources / 'fixtures', upload / 'smoke/Fixtures')
+    for name in UPSTREAM_FIXTURES:
+        target = upload / 'smoke/Fixtures' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PRODUCT_FIXTURES / name, target)
+    # Run serially, as the product suite does: some consumer tests count
+    # process-wide bitmaps and caches.
+    (upload / 'smoke/SerialSuite.cs').write_text(
+        '[assembly: Xunit.CollectionBehavior(DisableTestParallelization = true)]\n')
     shutil.copy2(SUPPORT / 'WindowsRegressionTests.cs', upload / 'smoke')
     shutil.copy2(SUPPORT / 'LegacyExceptions.cs', upload / 'legacy')
     shutil.copy2(SUPPORT / 'run.ps1', upload)
