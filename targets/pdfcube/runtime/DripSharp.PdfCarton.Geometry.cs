@@ -878,10 +878,21 @@ public sealed class PdfCartonImage
     // A copy of the pixels as a new Skia bitmap the caller owns.
     public SKBitmap ToSKBitmap()
     {
+        // Resolve the pixels first: a deferred render can throw, and must not
+        // leave a native bitmap behind for the finalizer.
+        var source = GetPixelSpan();
         var bitmap = new SKBitmap(Info);
-        GetPixelSpan().CopyTo(bitmap.GetPixelSpan());
-        bitmap.NotifyPixelsChanged();
-        return bitmap;
+        try
+        {
+            source.CopyTo(bitmap.GetPixelSpan());
+            bitmap.NotifyPixelsChanged();
+            return bitmap;
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
     }
 
     // The image encoded as PNG (or another format Skia encodes).

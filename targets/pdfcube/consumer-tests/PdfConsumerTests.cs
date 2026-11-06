@@ -2091,6 +2091,13 @@ public sealed class RasterConversionConsumerTests
         Assert.Contains("Palette index 200", error.Message);
         error = Assert.ThrowsAny<ArgumentException>(() => image.GetPixel(3, 1));
         Assert.Contains("Palette index 200", error.Message);
+        // Exporting fails the same way each time, before any native bitmap
+        // is allocated for the copy.
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            error = Assert.ThrowsAny<ArgumentException>(() => image.ToSKBitmap());
+            Assert.Contains("Palette index 200", error.Message);
+        }
     }
 
     [Fact]
