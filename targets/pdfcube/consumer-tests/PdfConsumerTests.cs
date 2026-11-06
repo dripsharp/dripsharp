@@ -5083,18 +5083,24 @@ public sealed class RasterConversionConsumerTests
             var image = Compat.PdfCartonFontCompat.CreateBitmap(Size, Size, type);
             var values = new int[Size * Size];
             _ = Compat.PdfCartonFontCompat.GetRgb(image, 0, 0, Size, Size, values, 0, Size);
-            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            // Each round's best is kept, for allocation as for time: a per-read
+            // allocation shows in every round, while a one-off runtime
+            // allocation on this thread (seen under full-suite load) cannot.
+            var allocated = long.MaxValue;
             var elapsed = TimeSpan.MaxValue;
             for (var round = 0; round < 3; round++)
             {
+                var roundAllocated = GC.GetAllocatedBytesForCurrentThread();
                 var roundStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 for (var repeat = 0; repeat < 10; repeat++)
                     _ = Compat.PdfCartonFontCompat.GetRgb(image, 0, 0, Size, Size, values, 0, Size);
                 var roundElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(roundStarted);
+                roundAllocated = GC.GetAllocatedBytesForCurrentThread() - roundAllocated;
                 if (roundElapsed < elapsed) elapsed = roundElapsed;
+                if (roundAllocated < allocated) allocated = roundAllocated;
             }
-            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
-            Assert.True(allocated < 1024, $"type {type}: 30 bulk reads allocated {allocated} bytes.");
+            // Less than one (24-byte) object per read.
+            Assert.True(allocated < 10 * 24, $"type {type}: 10 bulk reads allocated {allocated} bytes.");
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
             var sum = 0L;
             for (var y = 0; y < Size; y++)
