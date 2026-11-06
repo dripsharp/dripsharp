@@ -96,7 +96,7 @@
              (:kind (ex-data error)))))))
 
 (deftest aggregate-package-identity-and-boundary-are-checked-independently
-  (let [identity {:id "DripSharp.PdfCarton" :version "3.0.8-alpha.7" :sha256 "abc"}
+  (let [identity {:id "DripSharp.PdfCarton" :version "3.0.8-alpha.8" :sha256 "abc"}
         consumer {:packages ["DripSharp.PdfCarton"]}
         run (fn [package]
               (#'pdfbox-differential/run-slice!
@@ -140,7 +140,7 @@
            {:id "System.Memory" :version "4.6.3"}
            {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
           "DripSharp.PdfCarton.Fonts"
-          [{:id "DripSharp.PdfCarton.IO" :version "3.0.8-alpha.7"}
+          [{:id "DripSharp.PdfCarton.IO" :version "3.0.8-alpha.8"}
            {:id "Microsoft.CSharp" :version "4.7.0"}
            {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
            {:id "SkiaSharp" :version "4.150.1"}
@@ -149,8 +149,8 @@
            {:id "System.Memory" :version "4.6.3"}
            {:id "System.Text.Encoding.CodePages" :version "10.0.0"}]
           "DripSharp.PdfCarton"
-          [{:id "DripSharp.PdfCarton.Fonts" :version "3.0.8-alpha.7"}
-           {:id "DripSharp.PdfCarton.IO" :version "3.0.8-alpha.7"}
+          [{:id "DripSharp.PdfCarton.Fonts" :version "3.0.8-alpha.8"}
+           {:id "DripSharp.PdfCarton.IO" :version "3.0.8-alpha.8"}
            {:id "Microsoft.CSharp" :version "4.7.0"}
            {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
            {:id "SkiaSharp" :version "4.150.1"}
